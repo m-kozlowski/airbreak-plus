@@ -588,17 +588,19 @@ class ASFirmwarePatches(object):
         print("  graph: %dB at 0xFD000" % len(data))
 
     def patch_squarewave(self):
-        """Add squarewave pressure mode"""
-        data, ver = self._load_versioned_bin('squarewave')
+        """Add Squarewave pressure mode"""
+        # data, ver = self._load_versioned_bin('squarewave')
+        data, ver = self._load_versioned_bin('tophwave')
         if data is None:
             return
         FPTR = {'0401': 0xf9778, '0402': 0xf99f0}
         fptr = FPTR.get(ver)
         if fptr is None:
-            print("  patch_squarewave: skipped (unsupported CDX version %s)" % self.asf.cdx_ver)
+            print("  patch_tophwave: skipped (unsupported CDX version %s)" % self.asf.cdx_ver)
+            # print("  patch_squarewave: skipped (unsupported CDX version %s)" % self.asf.cdx_ver)
             return
         self._patch_pointer(data, 0xfd400, fptr)
-        print("  squarewave: %dB at 0xFD400" % len(data))
+        print("  tophwave: %dB at 0xFD400" % len(data))
 
     def patch_asv_task_wrapper(self):
         """Suppress ASV backup breathing rate"""
@@ -823,9 +825,9 @@ if __name__ == "__main__":
         {'arg':"patch-logos",           'desc':"Change start-up logos.",                                'default':False, 'function':'patch_logos'},
         {'arg':"patch-fw-serialmonitor",'desc':"Add monitor binary running on USART3 accessory port.",  'default':False, 'function':'patch_uart3_monitor'},
         {'arg':"patch-fw-breath",       'desc':"Add breath binary to allow direct pressure control.",   'default':False, 'function':'patch_breath'},
-        {'arg':"patch-fw-common-code",  'desc':"Inject shared code library (required by graph, squarewave, etc.).", 'default':False, 'function':'patch_common_code'},
+        {'arg':"patch-fw-common-code",  'desc':"Inject shared code library (required by graph, tophwave, etc.).", 'default':False, 'function':'patch_common_code'},
         {'arg':"patch-fw-graph",        'desc':"Add graph binary to allow graphing of pressures.",      'default':False, 'function':'patch_graph'},
-        {'arg':"patch-fw-squarewave",   'desc':"Add squarewave pressure mode.",                         'default':False, 'function':'patch_squarewave'},
+        {'arg':"patch-fw-squarewave",   'desc':"Add Tophwave pressure mode.",                          'default':False, 'function':'patch_squarewave'},
         {'arg':"patch-fw-asv-wrapper",  'desc':"Suppress ASV backup breathing rate.",                   'default':False, 'function':'patch_asv_task_wrapper'},
         {'arg':"patch-fw-vauto-wrapper",'desc':"Add VAuto/ASV pressure shaping wrapper.",               'default':False, 'function':'patch_wrapper_limit_max_pdiff'},
         {'arg':"patch-fw-vidspoof",     'desc':"Hook MOP write to dynamically set VID per therapy mode.", 'default':True, 'function':'patch_vid_spoof'},

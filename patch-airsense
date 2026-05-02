@@ -353,14 +353,16 @@ patch_code_graph() {
 
 patch_code_squarewave() {
     local ver=${CDX_VER#SX567-}
-    local BIN=build/squarewave_${ver}.bin
+    # local BIN=build/squarewave_${ver}.bin
+    local BIN=build/tophwave_${ver}.bin
     local FPTR
     case "$ver" in
         0401) FPTR=0xf9778 ;;
         0402) FPTR=0xf99f0 ;;
         *) echo "  patch_code_squarewave: unsupported $ver"; return 1 ;;
     esac
-    echo "Patching Squarewave ($ver)"
+    # echo "Patching Squarewave ($ver)"
+    echo "Patching Tophwave ($ver)"
     patch_pointer "$BIN" 0xfd400 "$FPTR" "$(le_thumb_ptr 0x80fd400)"
 }
 

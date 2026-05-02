@@ -149,7 +149,7 @@ int MAIN start(void)
 	LCD_FillRect_Alt(pos_x, top + HEIGHT_FLOW, 4, 1);
 	LCD_FillRect_Alt(pos_x, top + HEIGHT_FLOW + HEIGHT_PRES, 4, 1);
 
-	draw_asv_plus_watermark(185, 156);
+	// draw_asv_plus_watermark(185, 156);
 
 	// restore the old clipping rectangle
 	clip[0] = old_x0;
