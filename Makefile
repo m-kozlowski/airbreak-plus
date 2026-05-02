@@ -30,23 +30,23 @@ $(BUILD):
 
 # unlocked stock-ish
 $(BUILD)/stm32-patched.bin: patch-airsense $(S10_CODE_BINS) $(VID_SPOOF_BINS)
-	./patch-airsense stm32.bin $@
+	FW_LABEL=SX567-0401-ABP ./patch-airsense stm32.bin $@
 
 # graph overlay injected
 $(BUILD)/stm32-graph.bin: patch-airsense $(S10_CODE_BINS) $(VID_SPOOF_BINS)
-	PATCH_CODE=1 ./patch-airsense stm32.bin $@
+	FW_LABEL=SX567-0401-GRPH PATCH_CODE=1 ./patch-airsense stm32.bin $@
 
 # Custom ASV algorithm in VAuto slot + ASV backup-rate suppression + squarewave mode
 $(BUILD)/stm32-asv-plus.bin: patch-airsense $(S10_CODE_BINS) $(VID_SPOOF_BINS)
-	PATCH_CODE=1 PATCH_ASV_TASK_WRAPPER=1 PATCH_VAUTO_WRAPPER=1 PATCH_S=1 ./patch-airsense stm32.bin $@
+	FW_LABEL=SX567-0401-ASV+ PATCH_CODE=1 PATCH_ASV_TASK_WRAPPER=1 PATCH_VAUTO_WRAPPER=1 PATCH_S=1 ./patch-airsense stm32.bin $@
 
 # Custom ASV in VAuto slot + backup-rate suppression, no squarewave
 $(BUILD)/stm32-asv-plus_no-squarewave.bin: patch-airsense $(S10_CODE_BINS) $(VID_SPOOF_BINS)
-	PATCH_CODE=1 PATCH_ASV_TASK_WRAPPER=1 PATCH_VAUTO_WRAPPER=1 ./patch-airsense stm32.bin $@
+	FW_LABEL=SX567-0401-ASVN PATCH_CODE=1 PATCH_ASV_TASK_WRAPPER=1 PATCH_VAUTO_WRAPPER=1 ./patch-airsense stm32.bin $@
 
 # Custom ASV in VAuto slot + squarewave, stock ASV backup-rate preserved
 $(BUILD)/stm32-asv-plus_with-backup.bin: patch-airsense $(S10_CODE_BINS) $(VID_SPOOF_BINS)
-	PATCH_CODE=1 PATCH_VAUTO_WRAPPER=1 PATCH_S=1 ./patch-airsense stm32.bin $@
+	FW_LABEL=SX567-0401-ASVB PATCH_CODE=1 PATCH_VAUTO_WRAPPER=1 PATCH_S=1 ./patch-airsense stm32.bin $@
 
 binaries: $(S10_CODE_BINS) $(VID_SPOOF_BINS)
 

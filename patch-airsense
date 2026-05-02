@@ -46,6 +46,31 @@ if [ ! -r "$IN" ]; then
     die "$IN: can not open input file"
 fi
 
+check_hash() {
+    HASH=$(sha256sum "$IN" | awk '{print $1}')
+    if [[ $HASH == "6790b548e0b37c57bc118772d4a04a599c0b74b16cd92e821071b9c7ba5ab711" ]] ; then
+        echo "$IN: AirCurve 10 VAuto 37051-SX567-0401 binary identified"
+    elif [[ $HASH == "9953f60b8bd8482614b946b5850976759ef834262315f9d40cc063ce8ef10070" ]] ; then
+        echo "$IN: AirCurve 10 CS PaceWave 37113-SX567-0401 binary identified"
+    elif [[ $HASH == "7071d0ea64ef4b51466abfeb075015f4606e803140a08423e0134a5db372db36" ]] ; then
+        echo "$IN: AirCurve 10 VAuto 37164-SX567-0401 binary identified"
+    elif [[ $HASH == "533b91127aa22e05b933db203ad56c449dc12a8c3fd62f57bd88c472a8061775" ]] ; then
+        echo "$IN: AirSense 10 AutoSet 37028-SX567-0401 binary identified"
+    elif [[ $HASH == "aa79d2e4f9114f8f9162b52a321eb4cf4d123db9ad55d4c2e08b5716fcaea25f" ]] ; then
+        echo "$IN: AirSense 10 AutoSet 37090-SX567-0401 binary identified"
+    elif [[ $HASH == "9e312f87d1a169195bb5ff6cf026e820837c39e578ca13340e1d29bf7d63dbd0" ]] ; then
+        echo "$IN: AirSense 10 AutoSet 37101-SX567-0401 binary identified"
+    elif [[ $HASH == "7ad0812dbe3a4cc79dc85df9781e64fdb9b2da75be957c1515188abac65d30ad" ]] ; then
+        echo "$IN: AirSense 10 Elite 37117-SX567-0401 binary identified"
+    elif [[ $HASH == "860563488a1475b6aa4829ff4a370225bb8c56d89c913a2413d61fecb637ab12" ]] ; then
+        echo "$IN: AirSense 10 Elite 37123-SX567-0401 binary identified"
+    elif [[ $HASH == "5bd9b8b44b094c150c7ef996236fa4fe38421a08ce6b09811bb6ecb8955fc85a" ]] ; then
+        echo "$IN: AirSense 10 AutoSet For Her 37105-SX567-0401 binary identified"
+    else
+        die "$IN: Unidentified binary. Confirm its version is 0401 and that its binary has the same section layout"
+    fi
+}
+
 patch() {
     offset=`printf "%d" $1`
     if [ $DEBUG_PATCH ] ; then
@@ -193,6 +218,7 @@ find_var() {
 }
 
 
+check_hash
 cp "$IN" "$OUT" || die "$OUT: copy failed"
 detect_platform
 
@@ -751,6 +777,20 @@ patch_edf_merge() {
     python3 ./python/edf_ccx_merge.py "$OUT" -o "$OUT" --force || die "EDF merge failed"
 }
 
+patch_fw_label() {
+    if [[ -z "$FW_LABEL" ]]; then
+        return 0
+    fi
+
+    local max_len=16
+    if (( ${#FW_LABEL} >= max_len )); then
+        die "FW_LABEL too long: '$FW_LABEL' must be at most $(( max_len - 1 )) characters"
+    fi
+
+    echo "Patching firmware label: $FW_LABEL"
+    printf '%-*s' "$max_len" "$FW_LABEL" | tr ' ' '\0' | patch "$CDX_OFF"
+}
+
 
 motor_nagscreen () {
 
@@ -821,6 +861,7 @@ patch_crc() {
 
 patch_tamper
 patch_psu_id
+patch_fw_label
 
 if [[ $PATCH_BACKUP_RATE == 1 ]] ; then
     asv_disable_backup_rate

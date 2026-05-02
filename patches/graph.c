@@ -23,6 +23,28 @@ STATIC void LCD_FillRect_Alt(int x, int y, int w, int h) {
 	LCD_FillRect2(x, y, x+w-1, y+h-1);
 }
 
+STATIC void draw_cell(int x, int y, int col, int row) {
+	LCD_FillRect_Alt(x + col * 3, y + row * 3, 2, 2);
+}
+
+STATIC void draw_char3x5(int x, int y, unsigned pattern) {
+	for (int row = 0; row < 5; row++) {
+		for (int col = 0; col < 3; col++) {
+			if (pattern & (1 << (14 - (row * 3 + col)))) draw_cell(x, y, col, row);
+		}
+	}
+}
+
+STATIC void draw_asv_plus_watermark(int x, int y) {
+	GUI_SetColor(0x101010);
+	LCD_FillRect_Alt(x - 2, y - 2, 53, 19);
+	GUI_SetColor(0x00FF88);
+	draw_char3x5(x,      y, 0x7B6F); // A
+	draw_char3x5(x + 12, y, 0x73E7); // S
+	draw_char3x5(x + 24, y, 0x5B51); // V
+	draw_char3x5(x + 39, y, 0x05D0); // +
+}
+
 // Replaces `gui_fill_rect_set_colors`
 int MAIN start(void) {
 	// don't do anything if we are not in an active therapy mode
@@ -104,6 +126,8 @@ int MAIN start(void) {
 	LCD_FillRect_Alt(pos_x, top, 4, 1);
 	LCD_FillRect_Alt(pos_x, top + HEIGHT_FLOW, 4, 1);
 	LCD_FillRect_Alt(pos_x, top + HEIGHT_FLOW + HEIGHT_PRES, 4, 1);
+
+	draw_asv_plus_watermark(185, 156);
 
 	// restore the old clipping rectangle
 	clip[0] = old_x0;
