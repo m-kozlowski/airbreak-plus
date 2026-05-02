@@ -782,13 +782,14 @@ patch_fw_label() {
         return 0
     fi
 
-    local max_len=16
-    if (( ${#FW_LABEL} >= max_len )); then
-        die "FW_LABEL too long: '$FW_LABEL' must be at most $(( max_len - 1 )) characters"
+    local max_label_len=14
+    local field_len=16
+    if (( ${#FW_LABEL} > max_label_len )); then
+        die "FW_LABEL too long: '$FW_LABEL' must be at most $max_label_len characters"
     fi
 
     echo "Patching firmware label: $FW_LABEL"
-    printf '%-*s' "$max_len" "$FW_LABEL" | tr ' ' '\0' | patch "$CDX_OFF"
+    printf '%-*s' "$field_len" "$FW_LABEL" | tr ' ' '\0' | patch "$CDX_OFF"
 }
 
 
