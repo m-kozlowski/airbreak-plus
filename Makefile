@@ -12,7 +12,6 @@ S10_CODE_VERSIONS := 0401 0402
 S10_CODE_BINS = $(foreach v,$(S10_CODE_VERSIONS),\
 	$(BUILD)/common_code_$(v).bin \
 	$(BUILD)/graph_$(v).bin \
-	$(BUILD)/tophwave_$(v).bin \
 	$(BUILD)/squarewave_$(v).bin \
 	$(BUILD)/asv_task_wrapper_$(v).bin \
 	$(BUILD)/wrapper_limit_max_pdiff_$(v).bin \
@@ -64,7 +63,7 @@ binaries: $(S10_CODE_BINS) $(VID_SPOOF_BINS)
 # Code cave layout
 #   0x80fcfa0  vid_spoof                (  96 B)
 #   0x80fd000  graph                    (1024 B)
-#   0x80fd400  squarewave/tophwave      ( 768 B)
+#   0x80fd400  squarewave               ( 768 B)
 #   0x80fd700  asv_task_wrapper         ( 256 B)
 #   0x80fd800  common_code              (5120 B)
 #   0x80fec00  backlight_adapt          (1024 B)
@@ -74,7 +73,6 @@ binaries: $(S10_CODE_BINS) $(VID_SPOOF_BINS)
 
 graph-offset := 0x80fd000
 squarewave-offset := 0x80fd400
-tophwave-offset := 0x80fd400
 asv_task_wrapper-offset := 0x80fd700
 common_code-offset := 0x80fd800
 backlight_adapt-offset := 0x80fec00
@@ -99,12 +97,6 @@ $(BUILD)/graph_$(1).elf: $(BUILD)/graph.o $(BUILD)/s10_$(1)_stubs.o | $(BUILD)
 $(BUILD)/squarewave_$(1).elf: $(BUILD)/squarewave.o $(BUILD)/s10_$(1)_stubs.o | $(BUILD)
 	$$(LD) --nostdlib --no-dynamic-linker \
 		--Ttext $(squarewave-offset) \
-		--just-symbols=$$(BUILD)/common_code_$(1).elf \
-		--entry start --sort-section=name -o $$@ $$^
-
-$(BUILD)/tophwave_$(1).elf: $(BUILD)/tophwave.o $(BUILD)/s10_$(1)_stubs.o | $(BUILD)
-	$$(LD) --nostdlib --no-dynamic-linker \
-		--Ttext $(tophwave-offset) \
 		--just-symbols=$$(BUILD)/common_code_$(1).elf \
 		--entry start --sort-section=name -o $$@ $$^
 
@@ -136,12 +128,6 @@ AS := $(CC)
 LD := $(CROSS)ld
 OBJCOPY := $(CROSS)objcopy
 HOST_CC ?= gcc
-
-test: $(BUILD)/test_tophwave
-	$(BUILD)/test_tophwave
-
-$(BUILD)/test_tophwave: tests/test_tophwave.c $(SRC)/tophwave.c $(SRC)/common_code.c $(SRC)/common_code.h $(SRC)/stubs.h | $(BUILD)
-	$(HOST_CC) -ffunction-sections -fdata-sections -Wall -Wextra -Wno-builtin-declaration-mismatch -Wno-unused-variable -Wno-unused-parameter -I$(SRC) tests/test_tophwave.c -Wl,--gc-sections -o $@
 
 CFLAGS ?= \
 	-g \
