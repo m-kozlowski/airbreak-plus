@@ -28,7 +28,7 @@ static float *cmd_ps = &fvars[0x29]; // (cmH2O)
 static float *cmd_epap = &fvars[0x28]; // (cmH2O)
 static float *cmd_ipap = &fvars[0x2a]; // (cmH2O) This is set to epap+ps somewhere else, no point in writing directly to it
 
-static float *cmd_epap_ramp = &fvars[0x2d]; // (cmH2O)
+static float *cmd_epap_ramp = &fvars[0x2d]; // (cmH2O) 
 
 static const float *leak_basal = &fvars[0x22]; // I believe this to be basal unintentional leak (L/min)
 static const float *leak = &fvars[0x24]; // Unintentional leak (L/min) - this is what flow_compensated incorporates
@@ -92,7 +92,7 @@ static const   int *pap_timer = &ivars[0];
 // Or used to figure out how to add extra signals..?
 // float *report_epap = &fvars[0xC5];
 // float *report_ipap = &fvars[0xC4];
-// b9, be might be TV, ba, bb might be MV
+// b9, be might be TV, ba, bb might be MV 
 
 // const float *asv_epap_min = &fvars[0x11];
 // const float *asv_epap_max = &fvars[0x10];
@@ -238,7 +238,7 @@ typedef struct {
 
 void init_tracking(tracking_t *tr);
 tracking_t* get_tracking();
-void update_tracking(tracking_t *tr);
+void update_tracking(tracking_t *tr); 
 
 #include "my_asv.h"
 #include "feat_triggercycle.h"

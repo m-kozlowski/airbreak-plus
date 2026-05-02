@@ -63,7 +63,7 @@ int MAIN start(void) {
 
 	int pressure = rescale(p_actual, p_min, p_max, HEIGHT_PRES);
 	int command = rescale(p_command, p_min, p_max, HEIGHT_PRES);
-	int error = -p_error * ( HEIGHT_PRES / (p_max-p_min) * 3.0f); // Error
+	int error = -p_error * ( HEIGHT_PRES / (p_max-p_min) * 3.0f); // Error 
 
 	GUI_SetColor(0x000000);
 	LCD_FillRect(pos_x, top - 1, pos_x + 11, bottom + 1);
