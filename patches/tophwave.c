@@ -35,27 +35,28 @@ STATIC uint32 seconds_to_pap_ticks(float seconds)
 
 STATIC float simple_wave(tophwave_input_t in)
 {
-    const uint32 rampTime = seconds_to_pap_ticks(in.s_rise_time);
+    const uint32 rampUpTime = seconds_to_pap_ticks(in.trigger);
+    const uint32 rampDownTime = seconds_to_pap_ticks(in.cycle);
     const uint32 waitTime = seconds_to_pap_ticks(1);
     const float minPressure = 3.2f;
     const float maxPressure = 5.4f;
-    const uint32 cycleTime = waitTime * 2 + rampTime * 2;
+    const uint32 cycleTime = waitTime * 2 + rampUpTime + rampDownTime;
     const uint32 t = in.pap_tick % cycleTime;
 
     if (t < waitTime)
     {
         return minPressure;
     }
-    if (t < waitTime + rampTime)
+    if (t < waitTime + rampUpTime)
     {
-        return remap(t - waitTime, 0, rampTime, minPressure, maxPressure);
+        return remap(t - waitTime, 0, rampUpTime, minPressure, maxPressure);
     }
-    if (t < waitTime * 2 + rampTime)
+    if (t < waitTime * 2 + rampUpTime)
     {
         return maxPressure;
     }
 
-    return remap(t - waitTime * 2 - rampTime, 0, rampTime, maxPressure, minPressure);
+    return remap(t - waitTime * 2 - rampUpTime, 0, rampDownTime, maxPressure, minPressure);
 }
 
 STATIC tophwave_output_t tophwave_compute(tophwave_input_t in)

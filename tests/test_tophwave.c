@@ -107,7 +107,8 @@ static void test_inhale_pressure_support_clamps_to_ips(void)
 static void test_simple_wave_waits_at_min_pressure(void)
 {
     tophwave_input_t in = base_input();
-    in.s_rise_time = 0.1f;
+    in.trigger = 0.1f;
+    in.cycle = 0.2f;
 
     in.pap_tick = 0;
     expect_near("simple wave starts at min", simple_wave(in), 3.2f);
@@ -118,7 +119,8 @@ static void test_simple_wave_waits_at_min_pressure(void)
 static void test_simple_wave_ramps_up_after_wait(void)
 {
     tophwave_input_t in = base_input();
-    in.s_rise_time = 0.1f;
+    in.trigger = 0.1f;
+    in.cycle = 0.2f;
 
     in.pap_tick = 100;
     expect_near("simple wave ramp up start", simple_wave(in), 3.2f);
@@ -131,7 +133,8 @@ static void test_simple_wave_ramps_up_after_wait(void)
 static void test_simple_wave_waits_at_max_pressure(void)
 {
     tophwave_input_t in = base_input();
-    in.s_rise_time = 0.1f;
+    in.trigger = 0.1f;
+    in.cycle = 0.2f;
 
     in.pap_tick = 110;
     expect_near("simple wave waits at max start", simple_wave(in), 5.4f);
@@ -142,13 +145,14 @@ static void test_simple_wave_waits_at_max_pressure(void)
 static void test_simple_wave_ramps_down_and_wraps(void)
 {
     tophwave_input_t in = base_input();
-    in.s_rise_time = 0.1f;
+    in.trigger = 0.1f;
+    in.cycle = 0.2f;
 
     in.pap_tick = 210;
     expect_near("simple wave ramp down start", simple_wave(in), 5.4f);
-    in.pap_tick = 215;
-    expect_near("simple wave ramp down midpoint", simple_wave(in), 4.3f);
     in.pap_tick = 220;
+    expect_near("simple wave ramp down midpoint", simple_wave(in), 4.3f);
+    in.pap_tick = 230;
     expect_near("simple wave wraps to min", simple_wave(in), 3.2f);
 }
 
