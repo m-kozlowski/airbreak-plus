@@ -174,6 +174,11 @@ read_u32() {
             printf "%d\n", unpack("V", $b)'
 }
 
+write_u32() {
+    local value=$(printf "%d" "$1")
+    perl -e 'print pack("V", $ARGV[0])' "$value" | patch "$2"
+}
+
 declare -A _globals_cache
 
 # return the absolute pointer stored in globals[$1]
@@ -778,20 +783,35 @@ patch_edf_merge() {
 }
 
 patch_fw_label() {
-    if [[ -z "$FW_LABEL" ]]; then
+    if [[ -z "$PATCHED_FIRMWARE_VERSION" ]]; then
         return 0
     fi
 
     local max_label_len=14
     local field_len=16
-    if (( ${#FW_LABEL} > max_label_len )); then
-        die "FW_LABEL too long: '$FW_LABEL' must be at most $max_label_len characters"
+    if (( ${#PATCHED_FIRMWARE_VERSION} > max_label_len )); then
+        die "PATCHED_FIRMWARE_VERSION too long: '$PATCHED_FIRMWARE_VERSION' must be at most $max_label_len characters"
     fi
 
-    echo "Patching firmware label: $FW_LABEL"
-    printf '%-*s' "$field_len" "$FW_LABEL" | tr ' ' '\0' | patch "$CDX_OFF"
+    echo "Patching firmware label: $PATCHED_FIRMWARE_VERSION"
+    printf '%-*s' "$field_len" "$PATCHED_FIRMWARE_VERSION" | tr ' ' '\0' | patch "$CDX_OFF"
 }
 
+patch_home_label() {
+    if [[ -z "$PATCHED_FIRMWARE_VERSION" ]]; then
+        return 0
+    fi
+
+    # Replaces the "Home" string with the firmware version (based on git SHA) for easy identifcation.
+    local home_off=0x17500
+    local field_len=16
+    if ! printf 'Home' | check_patch "$home_off"; then
+        die "Home label not found at 0x$(printf '%X' "$home_off")"
+    fi
+
+    echo "Patching Home label: $PATCHED_FIRMWARE_VERSION"
+    printf '%-*s' "$field_len" "$PATCHED_FIRMWARE_VERSION" | tr ' ' '\0' | patch "$home_off"
+}
 
 motor_nagscreen () {
 
@@ -863,6 +883,7 @@ patch_crc() {
 patch_tamper
 patch_psu_id
 patch_fw_label
+patch_home_label
 
 if [[ $PATCH_BACKUP_RATE == 1 ]] ; then
     asv_disable_backup_rate
