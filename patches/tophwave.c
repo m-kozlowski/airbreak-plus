@@ -16,6 +16,9 @@ typedef struct
     float epap;
     float ips;
     float s_rise_time;
+    float trigger;
+    float cycle;
+    uint32 pap_tick;
 } tophwave_input_t;
 
 typedef struct
@@ -25,10 +28,19 @@ typedef struct
     float cmd_ipap;
 } tophwave_output_t;
 
-STATIC float simple_wave(uint32 tick, uint32 rampTime, uint32 waitTime, float minPressure, float maxPressure)
+STATIC uint32 seconds_to_pap_ticks(float seconds)
 {
+    return max(1u, (uint32)(seconds * 100.0f));
+}
+
+STATIC float simple_wave(tophwave_input_t in)
+{
+    const uint32 rampTime = seconds_to_pap_ticks(in.s_rise_time);
+    const uint32 waitTime = seconds_to_pap_ticks(1);
+    const float minPressure = 3.2f;
+    const float maxPressure = 5.4f;
     const uint32 cycleTime = waitTime * 2 + rampTime * 2;
-    const uint32 t = tick % cycleTime;
+    const uint32 t = in.pap_tick % cycleTime;
 
     if (t < waitTime)
     {
@@ -44,11 +56,6 @@ STATIC float simple_wave(uint32 tick, uint32 rampTime, uint32 waitTime, float mi
     }
 
     return remap(t - waitTime * 2 - rampTime, 0, rampTime, maxPressure, minPressure);
-}
-
-STATIC uint32 seconds_to_pap_ticks(float seconds)
-{
-    return max(1u, (uint32)(seconds * 100.0f));
 }
 
 STATIC tophwave_output_t tophwave_compute(tophwave_input_t in)
@@ -90,7 +97,6 @@ STATIC tophwave_output_t tophwave_compute(tophwave_input_t in)
 
 void MAIN start(int param_1)
 {
-    /*
     tracking_t *tr = get_tracking();
 
     tophwave_input_t in;
@@ -105,7 +111,11 @@ void MAIN start(int param_1)
     in.epap = s_epap;
     in.ips = s_ips;
     in.s_rise_time = s_rise_time_f;
+    in.trigger = sens_trigger;
+    in.cycle = sens_cycle;
+    in.pap_tick = *pap_timer;
 
+    /*
     tophwave_output_t out = tophwave_compute(in);
 
     *cmd_ps = out.cmd_ps;
@@ -113,9 +123,7 @@ void MAIN start(int param_1)
     *cmd_ipap = out.cmd_ipap;
     */
 
-    const uint32 rampTime = seconds_to_pap_ticks(s_rise_time_f);
-    const uint32 waitTime = seconds_to_pap_ticks(1);
-    const float pressure = simple_wave(*pap_timer, rampTime, waitTime, 3.2, 5.4);
+    const float pressure = simple_wave(in);
 
     *cmd_ps = 0.0f;
     *cmd_epap = pressure;
