@@ -35,6 +35,8 @@ STATIC uint32 seconds_to_pap_ticks(float seconds)
 
 STATIC float simple_wave(tophwave_input_t in)
 {
+    return sens_trigger;
+
     const uint32 rampUpTime = seconds_to_pap_ticks(in.trigger);
     const uint32 rampDownTime = seconds_to_pap_ticks(in.cycle);
     const uint32 waitTime = seconds_to_pap_ticks(1);
