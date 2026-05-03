@@ -89,8 +89,8 @@ set PTR_TRIGGERCYCLE 5
 # This avoids guessed fixed RAM addresses and avoids changing the shared pointer table layout.
 set FEATURE_DEBUG_OFFSET 8
 set VAUTO_DEBUG_FIELDS {
-	mode st_inhaling st_just_started st_pre_trigger current_eps ps ps1 new_ps
-	returned_ps feat_eps feat_ips_fa asv_factor final_ips volume volume_max ti te
+	mode is_inhaling phase_just_started pre_trigger_ticks current_eps runtime_ps_center normalized_ps target_ps
+	returned_cmd_ps feature_eps feature_ips_flow_assist asv_factor final_ips volume volume_max ti te
 	config_trigger_raw config_cycle_raw config_max_ipap config_min_epap config_ps config_ti_min config_ti_max
 }
 # The runtime trigger/cycle fvars are actively overwritten by custom trigger/cycle code:
