@@ -84,13 +84,21 @@ proc ra {} {
 
 set MAGIC_PTR_ADDR 0x20000be0
 set PTR_FEATURES 4
+set PTR_TRIGGERCYCLE 5
+# vauto_debug_t is embedded after features_t.eps and features_t.ips_fa.
+# This avoids guessed fixed RAM addresses and avoids changing the shared pointer table layout.
 set FEATURE_DEBUG_OFFSET 8
 set VAUTO_DEBUG_FIELDS {
 	mode st_inhaling st_just_started st_pre_trigger current_eps ps ps1 new_ps
 	returned_ps feat_eps feat_ips_fa asv_factor final_ips volume volume_max ti te
 }
+# The runtime trigger/cycle fvars are actively overwritten by custom trigger/cycle code:
+#   trigger: -5.0 guarantees trigger, 999.0 suppresses trigger
+#   cycle:    0.95 guarantees cycle, -0.5 suppresses cycle
+# The set_* values are read from triggercycle_t.real_trigger/real_cycle.
+# The pressure bounds are runtime values; UI values are estimated as bound +/- PS/2.
 set VAUTO_SETTING_FIELDS {
-	trigger cycle eff_ipap_max eff_epap_min ps derived_set_max_ipap derived_set_min_epap ti_min_s ti_max_s
+	runtime_trigger_lpm set_trigger_lpm runtime_cycle_raw set_cycle_raw runtime_ipap_bound runtime_epap_bound ps ui_max_ipap_est ui_min_epap_est ti_min_s ti_max_s
 }
 
 proc u32_to_float {val} {
@@ -103,23 +111,52 @@ proc u32_at {addr} {
 }
 
 proc read_fvar {index} {
+	# 0401 fvars base. For 0402 this is 0x2000e954; update if using an SX567-0402 image.
 	set raw [lindex [read_memory [expr {0x2000e948 + ($index * 4)}] 32 1] 0]
 	return [u32_to_float $raw]
 }
 
 proc read_ivar {index} {
+	# 0401 ivars base. For 0402 this is 0x2000e75c; update if using an SX567-0402 image.
 	return [u32_at [expr {0x2000e750 + ($index * 4)}]]
 }
 
+proc ptr_table_entry {index} {
+	global MAGIC_PTR_ADDR
+	set table [u32_at [expr {$MAGIC_PTR_ADDR + 4}]]
+	return [u32_at [expr {$table + ($index * 4)}]]
+}
+
+proc read_float_at {addr} {
+	return [u32_to_float [u32_at $addr]]
+}
+
+proc triggercycle_addr {} {
+	global PTR_TRIGGERCYCLE
+	set addr [ptr_table_entry $PTR_TRIGGERCYCLE]
+	if {$addr == 0} {
+		error "trigger/cycle state is not allocated yet; start therapy first"
+	}
+	return $addr
+}
+
 proc vdbg_settings {} {
-	set trigger [read_fvar 0x7]
-	set cycle [read_fvar 0x8]
+	# fvars[0x7]/[0x8] are the active runtime thresholds and may be sentinel values.
+	set runtime_trigger [read_fvar 0x7]
+	set runtime_cycle [read_fvar 0x8]
+	set trc [triggercycle_addr]
+	# real_trigger/real_cycle preserve the underlying user-selected thresholds.
+	set real_trigger [read_float_at [expr {$trc + 4}]]
+	set real_cycle [read_float_at [expr {$trc + 12}]]
+	# fvars[0x9]/[0xa] are PS-adjusted runtime bounds, not direct UI config storage.
 	set eff_ipap_max [read_fvar 0x9]
 	set eff_epap_min [read_fvar 0xa]
 	set ps [read_fvar 0xb]
 	set values ""
-	lappend values $trigger
-	lappend values $cycle
+	lappend values $runtime_trigger
+	lappend values $real_trigger
+	lappend values $runtime_cycle
+	lappend values $real_cycle
 	lappend values $eff_ipap_max
 	lappend values $eff_epap_min
 	lappend values $ps

@@ -31,6 +31,8 @@ typedef struct
 {
   float eps;    // EPS (cmH2O) - used to prevent instant jumps in pressure in case of autotriggering
   float ips_fa; // Flow-Assist IPS (cmH2O) - currently used to augment pretrigger effort
+  // Debug snapshot read by tcl/airsense-info.tcl. It lives inside the existing
+  // PTR_FEATURES allocation so we do not write to guessed RAM or add a pointer-table slot.
   vauto_debug_t dbg;
 } features_t;
 
@@ -113,6 +115,8 @@ STATIC float calculate_vauto_exhale_ps(float ps1, float current_eps, tracking_t 
     else
     {
       float eps1 = 0.0f;
+      // volume_max can still be zero near therapy startup or odd phase transitions.
+      // Keep eps1 at zero instead of creating NaN/Inf from volume / volume_max.
       if (tr->current.volume_max > 0.0f)
       {
         eps1 = remap01c(tr->current.volume / tr->current.volume_max, 0.10f, 0.7f);
@@ -140,6 +144,8 @@ STATIC float calculate_vauto_exhale_ps(float ps1, float current_eps, tracking_t 
 
 STATIC float calculate_vauto_ps(tracking_t *tr, asv_data_t *asv, features_t *feat)
 {
+  // These VAuto fvars are runtime bounds, not direct clinician-menu settings.
+  // The UI Max IPAP / Min EPAP values can be reconstructed as bound +/- PS/2.
   float current_eps = clamp((*cmd_epap - vauto_ps) * 0.2f, 0.4f, 1.6f);
 
   const float ps = *cmd_ps + vauto_ps / 2.0f;
@@ -151,6 +157,7 @@ STATIC float calculate_vauto_ps(tracking_t *tr, asv_data_t *asv, features_t *fea
 
   const float returned_ps = *cmd_ps + (new_ps - ps); // Correction for the bizarre way VAuto handles the *cmd_ps fvar
 
+  // Snapshot after calculating side effects so Tcl sees the values used for this tick.
   feat->dbg.mode = (float)*therapy_mode;
   feat->dbg.st_inhaling = tr->st_inhaling ? 1.0f : 0.0f;
   feat->dbg.st_just_started = tr->st_just_started ? 1.0f : 0.0f;
