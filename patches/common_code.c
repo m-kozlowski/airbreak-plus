@@ -86,6 +86,7 @@ void *get_pointer(ptr_index index, int size, void (*init_fn)(void *))
 
 void init_history(history_t *hist)
 {
+  hist->last_time = tim_read_tim5();
   for (int i = 0; i < HISTORY_LENGTH; i++)
   {
     hist->flow[i] = 0.0f;

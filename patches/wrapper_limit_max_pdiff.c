@@ -45,6 +45,74 @@ STATIC float reshape_vauto_ps(float ps1, float mult)
   return ps1;
 }
 
+STATIC float calculate_vauto_inhale_ps(float ps1, float current_eps, tracking_t *tr, asv_data_t *asv, features_t *feat)
+{
+  float new_ps = remap(ps1, 0.0f, 1.0f, feat->eps, vauto_ps - INSTANT_PS) + INSTANT_PS;
+  bool toggle = (ti_min <= 150);
+  if (toggle)
+  { // Disable if Ti min is set to above 0.1s
+    float new_ps1 = reshape_vauto_ps(ps1, asv->asv_factor);
+    new_ps = remap(new_ps1, 0.0f, 1.0f, feat->eps, vauto_ps - INSTANT_PS) + INSTANT_PS * asv->asv_factor;
+  }
+
+  feat->ips_fa = 0.0f;
+  feat->eps = min(feat->eps + 0.01f * current_eps, 0.0f);
+
+  asv->final_ips = max(asv->final_ips, new_ps);
+  return new_ps;
+}
+
+STATIC float calculate_vauto_exhale_ps(float ps1, float current_eps, tracking_t *tr, asv_data_t *asv, features_t *feat)
+{
+  if (tr->current.ti >= 0.7f)
+  {
+    current_eps = max(0.0f, current_eps - (asv->final_ips - vauto_ps) * 0.25f);
+    if (tr->st_just_started)
+    {
+      feat->eps = -current_eps;
+    }
+    else
+    {
+      float eps1 = 0.0f;
+      if (tr->current.volume_max > 0.0f)
+      {
+        eps1 = remap01c(tr->current.volume / tr->current.volume_max, 0.10f, 0.7f);
+        eps1 = sqrtf(eps1);
+      }
+      eps1 = min(eps1, remap01c(tr->current.te, max(1.2f, tr->recent.te * 0.8f), max(0.4f, tr->recent.te * 0.4f)));
+      feat->eps = max(feat->eps, -current_eps * eps1);
+    }
+  }
+
+  float new_ps1 = ps1 * ps1 * 0.75f + 0.25f * ps1;
+  float new_ps = remap(new_ps1, 0.0f, 1.0f, feat->eps, asv->final_ips);
+
+  if (tr->st_pre_trigger > 0)
+  {
+    feat->ips_fa = min(tr->st_pre_trigger, 2) * 0.2f;
+  };
+  if (*flow_compensated <= 0.0f)
+  {
+    feat->ips_fa = 0.0f;
+  }
+  new_ps += feat->ips_fa;
+  return new_ps;
+}
+
+STATIC float calculate_vauto_ps(tracking_t *tr, asv_data_t *asv, features_t *feat)
+{
+  float current_eps = clamp((*cmd_epap - vauto_ps) * 0.2f, 0.4f, 1.6f);
+
+  const float ps = *cmd_ps + vauto_ps / 2.0f;
+  const float ps1 = (ps / vauto_ps); // 0.0 to 1.0
+
+  float new_ps = tr->st_inhaling
+                     ? calculate_vauto_inhale_ps(ps1, current_eps, tr, asv, feat)
+                     : calculate_vauto_exhale_ps(ps1, current_eps, tr, asv, feat);
+
+  return *cmd_ps + (new_ps - ps); // Correction for the bizarre way VAuto handles the *cmd_ps fvar
+}
+
 void MAIN start()
 {
   history_t *hist = get_history();
@@ -57,9 +125,6 @@ void MAIN start()
   features_t *feat = GET_PTR(PTR_FEATURES, features_t, init_features);
 
   apply_jitter(true);
-
-  float dps = 0.0f;
-  bool toggle = (ti_min <= 150);
 
   triggercycle_t *trc = get_triggercycle();
   trc->custom_trigger = trc->custom_cycle = false; // Default state is off.
@@ -79,58 +144,7 @@ void MAIN start()
 
   if (*therapy_mode == MODE_VAUTO)
   {
-    float current_eps = clamp((*cmd_epap - vauto_ps) * 0.2f, 0.4f, 1.6f);
-
-    int t = hist->tick;
-    const float ps = *cmd_ps + vauto_ps / 2.0f;
-    const float ps1 = (ps / vauto_ps); // 0.0 to 1.0
-
-    if (tr->st_inhaling)
-    {
-      new_ps = remap(ps1, 0.0f, 1.0f, feat->eps, vauto_ps - INSTANT_PS) + INSTANT_PS;
-      if (toggle)
-      { // Disable if Ti min is set to above 0.1s
-        float new_ps1 = reshape_vauto_ps(ps1, asv->asv_factor);
-        new_ps = remap(new_ps1, 0.0f, 1.0f, feat->eps, vauto_ps - INSTANT_PS) + INSTANT_PS * asv->asv_factor;
-      }
-
-      feat->ips_fa = 0.0f;
-      feat->eps = min(feat->eps + 0.01f * current_eps, 0.0f);
-
-      asv->final_ips = max(asv->final_ips, new_ps);
-    }
-    else
-    { // Exhaling
-      if (tr->current.ti >= 0.7f)
-      {
-        current_eps = max(0.0f, current_eps - (asv->final_ips - vauto_ps) * 0.25f);
-        if (tr->st_just_started)
-        {
-          feat->eps = -current_eps;
-        }
-        else
-        {
-          float eps1 = remap01c(tr->current.volume / tr->current.volume_max, 0.10f, 0.7f);
-          eps1 = sqrtf(eps1);
-          eps1 = min(eps1, remap01c(tr->current.te, max(1.2f, tr->recent.te * 0.8f), max(0.4f, tr->recent.te * 0.4f)));
-          feat->eps = max(feat->eps, -current_eps * eps1);
-        }
-      }
-      float new_ps1 = ps1 * ps1 * 0.75f + 0.25f * ps1;
-      new_ps = remap(new_ps1, 0.0f, 1.0f, feat->eps, asv->final_ips);
-
-      if (tr->st_pre_trigger > 0)
-      {
-        feat->ips_fa = min(tr->st_pre_trigger, 2) * 0.2f;
-      };
-      if (*flow_compensated <= 0.0f)
-      {
-        feat->ips_fa = 0.0f;
-      }
-      new_ps += feat->ips_fa;
-    }
-
-    new_ps = *cmd_ps + (new_ps - ps); // Correction for the bizarre way VAuto handles the *cmd_ps fvar
+    new_ps = calculate_vauto_ps(tr, asv, feat);
   }
 
   const float orig_ps = *cmd_ps;
