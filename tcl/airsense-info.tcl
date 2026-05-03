@@ -82,6 +82,122 @@ proc ra {} {
 	p
 }
 
+set MAGIC_PTR_ADDR 0x20000be0
+set PTR_FEATURES 4
+set FEATURE_DEBUG_OFFSET 8
+set VAUTO_DEBUG_FIELDS {
+	mode st_inhaling st_just_started st_pre_trigger current_eps ps ps1 new_ps
+	returned_ps feat_eps feat_ips_fa asv_factor final_ips volume volume_max ti te
+}
+set VAUTO_SETTING_FIELDS {
+	trigger cycle eff_ipap_max eff_epap_min ps derived_set_max_ipap derived_set_min_epap ti_min_s ti_max_s
+}
+
+proc u32_to_float {val} {
+	binary scan [binary format i $val] f result
+	return $result
+}
+
+proc u32_at {addr} {
+	return [lindex [read_memory $addr 32 1] 0]
+}
+
+proc read_fvar {index} {
+	set raw [lindex [read_memory [expr {0x2000e948 + ($index * 4)}] 32 1] 0]
+	return [u32_to_float $raw]
+}
+
+proc read_ivar {index} {
+	return [u32_at [expr {0x2000e750 + ($index * 4)}]]
+}
+
+proc vdbg_settings {} {
+	set trigger [read_fvar 0x7]
+	set cycle [read_fvar 0x8]
+	set eff_ipap_max [read_fvar 0x9]
+	set eff_epap_min [read_fvar 0xa]
+	set ps [read_fvar 0xb]
+	set values ""
+	lappend values $trigger
+	lappend values $cycle
+	lappend values $eff_ipap_max
+	lappend values $eff_epap_min
+	lappend values $ps
+	lappend values [expr {$eff_ipap_max + ($ps / 2.0)}]
+	lappend values [expr {$eff_epap_min - ($ps / 2.0)}]
+	lappend values [expr {[read_ivar 0x5] * 0.01}]
+	lappend values [expr {[read_ivar 0x6] * 0.01}]
+	return $values
+}
+
+proc print_table {title names values} {
+	echo $title
+	echo "+----------------------+------------+"
+	echo "| field                | value      |"
+	echo "+----------------------+------------+"
+	foreach name $names value $values {
+		echo [format "| %-20s | %10.4f |" $name $value]
+	}
+	echo "+----------------------+------------+"
+}
+
+proc vdbg_addr {} {
+	global MAGIC_PTR_ADDR PTR_FEATURES FEATURE_DEBUG_OFFSET
+	set magic [u32_at $MAGIC_PTR_ADDR]
+	if {$magic != 0x07e49002} {
+		error "debug pointer table is not initialized yet; start therapy with the debug firmware first"
+	}
+	set table [u32_at [expr {$MAGIC_PTR_ADDR + 4}]]
+	set features [u32_at [expr {$table + ($PTR_FEATURES * 4)}]]
+	if {$features == 0} {
+		error "VAuto feature/debug state is not allocated yet; start therapy in VAuto first"
+	}
+	return [expr {$features + $FEATURE_DEBUG_OFFSET}]
+}
+
+proc vdbg {{samples 1} {delay 100}} {
+	global VAUTO_DEBUG_FIELDS VAUTO_SETTING_FIELDS
+	for {set j 0} {$j < $samples} {incr j} {
+		set raw_values [read_memory [vdbg_addr] 32 [llength $VAUTO_DEBUG_FIELDS]]
+		set debug_values ""
+		foreach raw $raw_values {
+			lappend debug_values [u32_to_float $raw]
+		}
+		if {$samples > 1} {
+			echo [format "sample %d/%d" [expr {$j + 1}] $samples]
+		}
+		print_table "VAuto settings" $VAUTO_SETTING_FIELDS [vdbg_settings]
+		print_table "VAuto debug" $VAUTO_DEBUG_FIELDS $debug_values
+		after $delay
+	}
+}
+
+proc vdbg_csv {{samples 200} {delay 100} {fname ""}} {
+	global VAUTO_DEBUG_FIELDS VAUTO_SETTING_FIELDS
+	if {$fname eq ""} {
+		set channel stdout
+	} else {
+		set channel [open $fname w]
+	}
+	puts $channel "time_ms,[join $VAUTO_SETTING_FIELDS ,],[join $VAUTO_DEBUG_FIELDS ,]"
+	for {set j 0} {$j < $samples} {incr j} {
+		set values [read_memory [vdbg_addr] 32 [llength $VAUTO_DEBUG_FIELDS]]
+		set row [clock milliseconds]
+		foreach value [vdbg_settings] {
+			append row [format ",%.6f" $value]
+		}
+		foreach raw $values {
+			append row [format ",%.6f" [u32_to_float $raw]]
+		}
+		puts $channel $row
+		after $delay
+	}
+	if {$fname ne ""} {
+		close $channel
+		echo "Wrote $fname"
+	}
+}
+
 proc h {} {
 	echo "Airsense S10 Custom Firmware Debug Commands:"
 	echo "\tlt \[val\] : set low pressure time interval (seconds)"
@@ -90,5 +206,7 @@ proc h {} {
 	echo "\tlp \[val\] : set low pressure value (cm-h2O, 0-30))"
 	echo "\tra       : reset override values to clinician menu settings"
 	echo "\tp        : print all values"
+	echo "\tvdbg \[samples\] \[delay_ms\] : print VAuto debug snapshot(s)"
+	echo "\tvdbg_csv \[samples\] \[delay_ms\] \[file\] : dump VAuto debug snapshots as CSV"
 	echo "\th        : show this help screen"
 }

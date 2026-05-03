@@ -8,14 +8,53 @@ const float EPS = 1.2f;
 
 typedef struct
 {
+  float mode;
+  float st_inhaling;
+  float st_just_started;
+  float st_pre_trigger;
+  float current_eps;
+  float ps;
+  float ps1;
+  float new_ps;
+  float returned_ps;
+  float feat_eps;
+  float feat_ips_fa;
+  float asv_factor;
+  float final_ips;
+  float volume;
+  float volume_max;
+  float ti;
+  float te;
+} vauto_debug_t;
+
+typedef struct
+{
   float eps;    // EPS (cmH2O) - used to prevent instant jumps in pressure in case of autotriggering
   float ips_fa; // Flow-Assist IPS (cmH2O) - currently used to augment pretrigger effort
+  vauto_debug_t dbg;
 } features_t;
 
 STATIC void init_features(features_t *feat)
 {
   feat->eps = 0.0f;
   feat->ips_fa = 0.0f;
+  feat->dbg.mode = 0.0f;
+  feat->dbg.st_inhaling = 0.0f;
+  feat->dbg.st_just_started = 0.0f;
+  feat->dbg.st_pre_trigger = 0.0f;
+  feat->dbg.current_eps = 0.0f;
+  feat->dbg.ps = 0.0f;
+  feat->dbg.ps1 = 0.0f;
+  feat->dbg.new_ps = 0.0f;
+  feat->dbg.returned_ps = 0.0f;
+  feat->dbg.feat_eps = 0.0f;
+  feat->dbg.feat_ips_fa = 0.0f;
+  feat->dbg.asv_factor = 0.0f;
+  feat->dbg.final_ips = 0.0f;
+  feat->dbg.volume = 0.0f;
+  feat->dbg.volume_max = 0.0f;
+  feat->dbg.ti = 0.0f;
+  feat->dbg.te = 0.0f;
 }
 
 // +1 pointer address: 0x000f93d0. Original function address: 0x080bc992
@@ -110,7 +149,27 @@ STATIC float calculate_vauto_ps(tracking_t *tr, asv_data_t *asv, features_t *fea
                      ? calculate_vauto_inhale_ps(ps1, current_eps, tr, asv, feat)
                      : calculate_vauto_exhale_ps(ps1, current_eps, tr, asv, feat);
 
-  return *cmd_ps + (new_ps - ps); // Correction for the bizarre way VAuto handles the *cmd_ps fvar
+  const float returned_ps = *cmd_ps + (new_ps - ps); // Correction for the bizarre way VAuto handles the *cmd_ps fvar
+
+  feat->dbg.mode = (float)*therapy_mode;
+  feat->dbg.st_inhaling = tr->st_inhaling ? 1.0f : 0.0f;
+  feat->dbg.st_just_started = tr->st_just_started ? 1.0f : 0.0f;
+  feat->dbg.st_pre_trigger = (float)tr->st_pre_trigger;
+  feat->dbg.current_eps = current_eps;
+  feat->dbg.ps = ps;
+  feat->dbg.ps1 = ps1;
+  feat->dbg.new_ps = new_ps;
+  feat->dbg.returned_ps = returned_ps;
+  feat->dbg.feat_eps = feat->eps;
+  feat->dbg.feat_ips_fa = feat->ips_fa;
+  feat->dbg.asv_factor = asv->asv_factor;
+  feat->dbg.final_ips = asv->final_ips;
+  feat->dbg.volume = tr->current.volume;
+  feat->dbg.volume_max = tr->current.volume_max;
+  feat->dbg.ti = tr->current.ti;
+  feat->dbg.te = tr->current.te;
+
+  return returned_ps;
 }
 
 void MAIN start()
