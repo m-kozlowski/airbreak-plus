@@ -95,10 +95,14 @@ set VAUTO_DEBUG_FIELDS {
 # The runtime trigger/cycle fvars are actively overwritten by custom trigger/cycle code:
 #   trigger: -5.0 guarantees trigger, 999.0 suppresses trigger
 #   cycle:    0.95 guarantees cycle, -0.5 suppresses cycle
-# The set_* values are read from triggercycle_t.real_trigger/real_cycle.
-# The pressure bounds are runtime values; UI values are estimated as bound +/- PS/2.
-set VAUTO_SETTING_FIELDS {
-	runtime_trigger_lpm set_trigger_lpm runtime_cycle_raw set_cycle_raw runtime_ipap_bound runtime_epap_bound ps ui_max_ipap_est ui_min_epap_est ti_min_s ti_max_s
+# The config_* trigger/cycle values are read from triggercycle_t.real_trigger/real_cycle.
+# Direct UI config storage is not wired in here yet; config_* pressure/timing values are
+# reconstructed from runtime therapy-manager values using the observed firmware transforms.
+set VAUTO_CONFIG_FIELDS {
+	config_trigger_lpm config_cycle_raw config_max_ipap_est config_min_epap_est config_ps config_ti_min_s_est config_ti_max_s_est
+}
+set VAUTO_RUNTIME_FIELDS {
+	runtime_trigger_lpm runtime_cycle_raw runtime_ipap_bound runtime_epap_bound runtime_ps runtime_ti_min_s runtime_ti_max_s
 }
 
 proc u32_to_float {val} {
@@ -140,28 +144,38 @@ proc triggercycle_addr {} {
 	return $addr
 }
 
-proc vdbg_settings {} {
+proc vdbg_config_values {} {
 	# fvars[0x7]/[0x8] are the active runtime thresholds and may be sentinel values.
-	set runtime_trigger [read_fvar 0x7]
-	set runtime_cycle [read_fvar 0x8]
 	set trc [triggercycle_addr]
 	# real_trigger/real_cycle preserve the underlying user-selected thresholds.
-	set real_trigger [read_float_at [expr {$trc + 4}]]
-	set real_cycle [read_float_at [expr {$trc + 12}]]
+	set config_trigger [read_float_at [expr {$trc + 4}]]
+	set config_cycle [read_float_at [expr {$trc + 12}]]
 	# fvars[0x9]/[0xa] are PS-adjusted runtime bounds, not direct UI config storage.
-	set eff_ipap_max [read_fvar 0x9]
-	set eff_epap_min [read_fvar 0xa]
+	set runtime_ipap_bound [read_fvar 0x9]
+	set runtime_epap_bound [read_fvar 0xa]
 	set ps [read_fvar 0xb]
+	set ti_min_raw [read_ivar 0x5]
+	set ti_max_raw [read_ivar 0x6]
 	set values ""
-	lappend values $runtime_trigger
-	lappend values $real_trigger
-	lappend values $runtime_cycle
-	lappend values $real_cycle
-	lappend values $eff_ipap_max
-	lappend values $eff_epap_min
+	lappend values $config_trigger
+	lappend values $config_cycle
+	lappend values [expr {$runtime_ipap_bound + ($ps / 2.0)}]
+	lappend values [expr {$runtime_epap_bound - ($ps / 2.0)}]
 	lappend values $ps
-	lappend values [expr {$eff_ipap_max + ($ps / 2.0)}]
-	lappend values [expr {$eff_epap_min - ($ps / 2.0)}]
+	# The config/UART tooling documents bilevel timing as raw / 50 seconds.
+	lappend values [expr {$ti_min_raw / 50.0}]
+	lappend values [expr {$ti_max_raw / 50.0}]
+	return $values
+}
+
+proc vdbg_runtime_values {} {
+	set values ""
+	lappend values [read_fvar 0x7]
+	lappend values [read_fvar 0x8]
+	lappend values [read_fvar 0x9]
+	lappend values [read_fvar 0xa]
+	lappend values [read_fvar 0xb]
+	# The wrapper runtime macros use ivar * 10 ms.
 	lappend values [expr {[read_ivar 0x5] * 0.01}]
 	lappend values [expr {[read_ivar 0x6] * 0.01}]
 	return $values
@@ -193,7 +207,7 @@ proc vdbg_addr {} {
 }
 
 proc vdbg {{samples 1} {delay 100}} {
-	global VAUTO_DEBUG_FIELDS VAUTO_SETTING_FIELDS
+	global VAUTO_DEBUG_FIELDS VAUTO_CONFIG_FIELDS VAUTO_RUNTIME_FIELDS
 	for {set j 0} {$j < $samples} {incr j} {
 		set raw_values [read_memory [vdbg_addr] 32 [llength $VAUTO_DEBUG_FIELDS]]
 		set debug_values ""
@@ -203,24 +217,28 @@ proc vdbg {{samples 1} {delay 100}} {
 		if {$samples > 1} {
 			echo [format "sample %d/%d" [expr {$j + 1}] $samples]
 		}
-		print_table "VAuto settings" $VAUTO_SETTING_FIELDS [vdbg_settings]
-		print_table "VAuto debug" $VAUTO_DEBUG_FIELDS $debug_values
+		print_table "VAuto config" $VAUTO_CONFIG_FIELDS [vdbg_config_values]
+		print_table "VAuto runtime" $VAUTO_RUNTIME_FIELDS [vdbg_runtime_values]
+		print_table "VAuto calculated" $VAUTO_DEBUG_FIELDS $debug_values
 		after $delay
 	}
 }
 
 proc vdbg_csv {{samples 200} {delay 100} {fname ""}} {
-	global VAUTO_DEBUG_FIELDS VAUTO_SETTING_FIELDS
+	global VAUTO_DEBUG_FIELDS VAUTO_CONFIG_FIELDS VAUTO_RUNTIME_FIELDS
 	if {$fname eq ""} {
 		set channel stdout
 	} else {
 		set channel [open $fname w]
 	}
-	puts $channel "time_ms,[join $VAUTO_SETTING_FIELDS ,],[join $VAUTO_DEBUG_FIELDS ,]"
+	puts $channel "time_ms,[join $VAUTO_CONFIG_FIELDS ,],[join $VAUTO_RUNTIME_FIELDS ,],[join $VAUTO_DEBUG_FIELDS ,]"
 	for {set j 0} {$j < $samples} {incr j} {
 		set values [read_memory [vdbg_addr] 32 [llength $VAUTO_DEBUG_FIELDS]]
 		set row [clock milliseconds]
-		foreach value [vdbg_settings] {
+		foreach value [vdbg_config_values] {
+			append row [format ",%.6f" $value]
+		}
+		foreach value [vdbg_runtime_values] {
 			append row [format ",%.6f" $value]
 		}
 		foreach raw $values {
