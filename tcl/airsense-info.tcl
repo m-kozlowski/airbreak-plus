@@ -101,7 +101,7 @@ proc u32_at {addr} {
 proc vdbg_addr {} {
 	global MAGIC_PTR_ADDR PTR_VAUTO_DEBUG
 	set magic [u32_at $MAGIC_PTR_ADDR]
-	if {$magic != 0x07e49001} {
+	if {$magic != 0x07e49002} {
 		error "debug pointer table is not initialized yet; start therapy in VAuto first"
 	}
 	set table [u32_at [expr {$MAGIC_PTR_ADDR + 4}]]

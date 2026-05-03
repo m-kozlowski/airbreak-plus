@@ -175,7 +175,6 @@ void MAIN start()
   update_asv_data(asv, tr);
 
   features_t *feat = GET_PTR(PTR_FEATURES, features_t, init_features);
-  vauto_debug_t *dbg = GET_PTR(PTR_VAUTO_DEBUG, vauto_debug_t, init_vauto_debug);
 
   apply_jitter(true);
 
@@ -197,6 +196,7 @@ void MAIN start()
 
   if (*therapy_mode == MODE_VAUTO)
   {
+    vauto_debug_t *dbg = GET_PTR(PTR_VAUTO_DEBUG, vauto_debug_t, init_vauto_debug);
     new_ps = calculate_vauto_ps(tr, asv, feat, dbg);
   }
 
