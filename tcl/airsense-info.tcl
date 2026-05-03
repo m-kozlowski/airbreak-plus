@@ -82,72 +82,6 @@ proc ra {} {
 	p
 }
 
-set MAGIC_PTR_ADDR 0x20000be0
-set PTR_VAUTO_DEBUG 6
-set VAUTO_DEBUG_FIELDS {
-	mode st_inhaling st_just_started st_pre_trigger current_eps ps ps1 new_ps
-	returned_ps feat_eps feat_ips_fa asv_factor final_ips volume volume_max ti te
-}
-
-proc u32_to_float {val} {
-	binary scan [binary format i $val] f result
-	return $result
-}
-
-proc u32_at {addr} {
-	return [lindex [read_memory $addr 32 1] 0]
-}
-
-proc vdbg_addr {} {
-	global MAGIC_PTR_ADDR PTR_VAUTO_DEBUG
-	set magic [u32_at $MAGIC_PTR_ADDR]
-	if {$magic != 0x07e49002} {
-		error "debug pointer table is not initialized yet; start therapy in VAuto first"
-	}
-	set table [u32_at [expr {$MAGIC_PTR_ADDR + 4}]]
-	set addr [u32_at [expr {$table + ($PTR_VAUTO_DEBUG * 4)}]]
-	if {$addr == 0} {
-		error "VAuto debug snapshot is not allocated yet; start therapy in VAuto first"
-	}
-	return $addr
-}
-
-proc vdbg {{samples 1} {delay 100}} {
-	global VAUTO_DEBUG_FIELDS
-	for {set j 0} {$j < $samples} {incr j} {
-		set values [read_memory [vdbg_addr] 32 [llength $VAUTO_DEBUG_FIELDS]]
-		set line ""
-		foreach name $VAUTO_DEBUG_FIELDS raw $values {
-			append line [format "%s=%.4f " $name [u32_to_float $raw]]
-		}
-		echo $line
-		after $delay
-	}
-}
-
-proc vdbg_csv {{samples 200} {delay 100} {fname ""}} {
-	global VAUTO_DEBUG_FIELDS
-	if {$fname eq ""} {
-		set channel stdout
-	} else {
-		set channel [open $fname w]
-	}
-	puts $channel "time_ms,[join $VAUTO_DEBUG_FIELDS ,]"
-	for {set j 0} {$j < $samples} {incr j} {
-		set values [read_memory [vdbg_addr] 32 [llength $VAUTO_DEBUG_FIELDS]]
-		set row [clock milliseconds]
-		foreach raw $values {
-			append row [format ",%.6f" [u32_to_float $raw]]
-		}
-		puts $channel $row
-		after $delay
-	}
-	if {$fname ne ""} {
-		close $channel
-		echo "Wrote $fname"
-	}
-}
-
 proc h {} {
 	echo "Airsense S10 Custom Firmware Debug Commands:"
 	echo "\tlt \[val\] : set low pressure time interval (seconds)"
@@ -156,7 +90,5 @@ proc h {} {
 	echo "\tlp \[val\] : set low pressure value (cm-h2O, 0-30))"
 	echo "\tra       : reset override values to clinician menu settings"
 	echo "\tp        : print all values"
-	echo "\tvdbg \[samples\] \[delay_ms\] : print VAuto debug snapshot(s)"
-	echo "\tvdbg_csv \[samples\] \[delay_ms\] \[file\] : dump VAuto debug snapshots as CSV"
 	echo "\th        : show this help screen"
 }
