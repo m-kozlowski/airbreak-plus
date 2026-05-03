@@ -91,15 +91,15 @@ set FEATURE_DEBUG_OFFSET 8
 set VAUTO_DEBUG_FIELDS {
 	mode st_inhaling st_just_started st_pre_trigger current_eps ps ps1 new_ps
 	returned_ps feat_eps feat_ips_fa asv_factor final_ips volume volume_max ti te
+	config_trigger_raw config_cycle_raw config_max_ipap config_min_epap config_ps config_ti_min config_ti_max
 }
 # The runtime trigger/cycle fvars are actively overwritten by custom trigger/cycle code:
 #   trigger: -5.0 guarantees trigger, 999.0 suppresses trigger
 #   cycle:    0.95 guarantees cycle, -0.5 suppresses cycle
-# The config_* trigger/cycle values are read from triggercycle_t.real_trigger/real_cycle.
-# Direct UI config storage is not wired in here yet; config_* pressure/timing values are
-# reconstructed from runtime therapy-manager values using the observed firmware transforms.
+# The config_* values come from firmware variable_get_g8(var_id), captured in vauto_debug_t.
+# Pressure and timing config values are scaled raw/50, matching python/resmed_config.py.
 set VAUTO_CONFIG_FIELDS {
-	config_trigger_lpm config_cycle_raw config_max_ipap_est config_min_epap_est config_ps config_ti_min_s_est config_ti_max_s_est
+	config_trigger_raw config_cycle_raw config_max_ipap config_min_epap config_ps config_ti_min_s config_ti_max_s
 }
 set VAUTO_RUNTIME_FIELDS {
 	runtime_trigger_lpm runtime_cycle_raw runtime_ipap_bound runtime_epap_bound runtime_ps runtime_ti_min_s runtime_ti_max_s
@@ -144,28 +144,8 @@ proc triggercycle_addr {} {
 	return $addr
 }
 
-proc vdbg_config_values {} {
-	# fvars[0x7]/[0x8] are the active runtime thresholds and may be sentinel values.
-	set trc [triggercycle_addr]
-	# real_trigger/real_cycle preserve the underlying user-selected thresholds.
-	set config_trigger [read_float_at [expr {$trc + 4}]]
-	set config_cycle [read_float_at [expr {$trc + 12}]]
-	# fvars[0x9]/[0xa] are PS-adjusted runtime bounds, not direct UI config storage.
-	set runtime_ipap_bound [read_fvar 0x9]
-	set runtime_epap_bound [read_fvar 0xa]
-	set ps [read_fvar 0xb]
-	set ti_min_raw [read_ivar 0x5]
-	set ti_max_raw [read_ivar 0x6]
-	set values ""
-	lappend values $config_trigger
-	lappend values $config_cycle
-	lappend values [expr {$runtime_ipap_bound + ($ps / 2.0)}]
-	lappend values [expr {$runtime_epap_bound - ($ps / 2.0)}]
-	lappend values $ps
-	# The config/UART tooling documents bilevel timing as raw / 50 seconds.
-	lappend values [expr {$ti_min_raw / 50.0}]
-	lappend values [expr {$ti_max_raw / 50.0}]
-	return $values
+proc vdbg_config_values {debug_values} {
+  return [lrange $debug_values 17 23]
 }
 
 proc vdbg_runtime_values {} {
@@ -195,7 +175,7 @@ proc print_table {title names values} {
 proc vdbg_addr {} {
 	global MAGIC_PTR_ADDR PTR_FEATURES FEATURE_DEBUG_OFFSET
 	set magic [u32_at $MAGIC_PTR_ADDR]
-	if {$magic != 0x07e49002} {
+	if {$magic != 0x07e49003} {
 		error "debug pointer table is not initialized yet; start therapy with the debug firmware first"
 	}
 	set table [u32_at [expr {$MAGIC_PTR_ADDR + 4}]]
@@ -217,7 +197,7 @@ proc vdbg {{samples 1} {delay 100}} {
 		if {$samples > 1} {
 			echo [format "sample %d/%d" [expr {$j + 1}] $samples]
 		}
-		print_table "VAuto config" $VAUTO_CONFIG_FIELDS [vdbg_config_values]
+		print_table "VAuto config" $VAUTO_CONFIG_FIELDS [vdbg_config_values $debug_values]
 		print_table "VAuto runtime" $VAUTO_RUNTIME_FIELDS [vdbg_runtime_values]
 		print_table "VAuto calculated" $VAUTO_DEBUG_FIELDS $debug_values
 		after $delay
@@ -235,14 +215,18 @@ proc vdbg_csv {{samples 200} {delay 100} {fname ""}} {
 	for {set j 0} {$j < $samples} {incr j} {
 		set values [read_memory [vdbg_addr] 32 [llength $VAUTO_DEBUG_FIELDS]]
 		set row [clock milliseconds]
-		foreach value [vdbg_config_values] {
+		set debug_values ""
+		foreach raw $values {
+			lappend debug_values [u32_to_float $raw]
+		}
+		foreach value [vdbg_config_values $debug_values] {
 			append row [format ",%.6f" $value]
 		}
 		foreach value [vdbg_runtime_values] {
 			append row [format ",%.6f" $value]
 		}
-		foreach raw $values {
-			append row [format ",%.6f" [u32_to_float $raw]]
+		foreach value $debug_values {
+			append row [format ",%.6f" $value]
 		}
 		puts $channel $row
 		after $delay

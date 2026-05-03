@@ -62,7 +62,7 @@ typedef struct
 // NSTUB defines magic_ptr as an absolute symbol at the RAM address.
 extern magic_ptr_t magic_ptr __attribute__((section(".absolute")));
 #define magic_ptr_p (&magic_ptr)
-const unsigned MAGIC = 0x07E49002;
+const unsigned MAGIC = 0x07E49003;
 
 void *get_pointer(ptr_index index, int size, void (*init_fn)(void *))
 {

@@ -25,6 +25,13 @@ typedef struct
   float volume_max;
   float ti;
   float te;
+  float config_trigger_raw;
+  float config_cycle_raw;
+  float config_max_ipap;
+  float config_min_epap;
+  float config_ps;
+  float config_ti_min;
+  float config_ti_max;
 } vauto_debug_t;
 
 typedef struct
@@ -57,10 +64,18 @@ STATIC void init_features(features_t *feat)
   feat->dbg.volume_max = 0.0f;
   feat->dbg.ti = 0.0f;
   feat->dbg.te = 0.0f;
+  feat->dbg.config_trigger_raw = 0.0f;
+  feat->dbg.config_cycle_raw = 0.0f;
+  feat->dbg.config_max_ipap = 0.0f;
+  feat->dbg.config_min_epap = 0.0f;
+  feat->dbg.config_ps = 0.0f;
+  feat->dbg.config_ti_min = 0.0f;
+  feat->dbg.config_ti_max = 0.0f;
 }
 
 // +1 pointer address: 0x000f93d0. Original function address: 0x080bc992
 extern void pressure_limit_max_difference();
+extern int variable_get_g8(int var_id);
 
 // Reshapes PS in 0.0-1.0 format to differently shaped slopes with `mult` times the AUC, first increasing slope before magnitude
 // Only using ^4 shape, because going to ^8 and above is very jarring and results in bad premature cycling
@@ -175,6 +190,15 @@ STATIC float calculate_vauto_ps(tracking_t *tr, asv_data_t *asv, features_t *fea
   feat->dbg.volume_max = tr->current.volume_max;
   feat->dbg.ti = tr->current.ti;
   feat->dbg.te = tr->current.te;
+  // Direct config values read through the firmware variable accessor.
+  // Pressure and timing config values use raw/50 scaling in resmed_config.py.
+  feat->dbg.config_trigger_raw = (float)variable_get_g8(0x0246);
+  feat->dbg.config_cycle_raw = (float)variable_get_g8(0x0245);
+  feat->dbg.config_max_ipap = (float)variable_get_g8(0x01D6) / 50.0f;
+  feat->dbg.config_min_epap = (float)variable_get_g8(0x01D5) / 50.0f;
+  feat->dbg.config_ps = (float)variable_get_g8(0x01D7) / 50.0f;
+  feat->dbg.config_ti_min = (float)variable_get_g8(0x01DC) / 50.0f;
+  feat->dbg.config_ti_max = (float)variable_get_g8(0x01DD) / 50.0f;
 
   return returned_ps;
 }
