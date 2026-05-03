@@ -1,3 +1,27 @@
+# Make everything
+
+`make`
+
+# Patch the bin
+
+./patch-airsense stm32.bin stm32-toph.bin
+
+# Pass usbipd to WSL
+
+.\bind-stlink-wsl.ps1
+
+# Run OpenOCD
+
+sudo openocd -f interface/stlink-v2.cfg -f 'tcl/airsense.cfg'
+
+# Connect to machine
+
+telnet localhost 4444
+
+# Flash it
+
+flash_new stm32-asv-plus.bin
+
 # Running notes
 
 These notes cover the WSL/OpenOCD workflow used for dumping, patching, and flashing an AirCurve/AirSense 10 image from this checkout.
