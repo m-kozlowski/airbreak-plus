@@ -6,8 +6,6 @@
 const float INSTANT_PS = 0.45f;
 const float EPS = 1.2f;
 
-#define VAUTO_DEBUG_ADDR 0x20001f10
-
 typedef struct
 {
   float eps;    // EPS (cmH2O) - used to prevent instant jumps in pressure in case of autotriggering
@@ -35,7 +33,26 @@ typedef struct
   float te;
 } vauto_debug_t;
 
-static volatile vauto_debug_t *const vauto_debug = (vauto_debug_t *)VAUTO_DEBUG_ADDR;
+STATIC void init_vauto_debug(vauto_debug_t *dbg)
+{
+  dbg->mode = 0.0f;
+  dbg->st_inhaling = 0.0f;
+  dbg->st_just_started = 0.0f;
+  dbg->st_pre_trigger = 0.0f;
+  dbg->current_eps = 0.0f;
+  dbg->ps = 0.0f;
+  dbg->ps1 = 0.0f;
+  dbg->new_ps = 0.0f;
+  dbg->returned_ps = 0.0f;
+  dbg->feat_eps = 0.0f;
+  dbg->feat_ips_fa = 0.0f;
+  dbg->asv_factor = 0.0f;
+  dbg->final_ips = 0.0f;
+  dbg->volume = 0.0f;
+  dbg->volume_max = 0.0f;
+  dbg->ti = 0.0f;
+  dbg->te = 0.0f;
+}
 
 STATIC void init_features(features_t *feat)
 {
@@ -70,7 +87,7 @@ STATIC float reshape_vauto_ps(float ps1, float mult)
   return ps1;
 }
 
-float calculate_vauto_ps(tracking_t *tr, asv_data_t *asv, features_t *feat)
+float calculate_vauto_ps(tracking_t *tr, asv_data_t *asv, features_t *feat, vauto_debug_t *dbg)
 {
   float new_ps = *cmd_ps;
 
@@ -127,23 +144,23 @@ float calculate_vauto_ps(tracking_t *tr, asv_data_t *asv, features_t *feat)
 
   const float returned_ps = *cmd_ps + (new_ps - ps); // Correction for the bizarre way VAuto handles the *cmd_ps fvar
 
-  vauto_debug->mode = (float)*therapy_mode;
-  vauto_debug->st_inhaling = tr->st_inhaling ? 1.0f : 0.0f;
-  vauto_debug->st_just_started = tr->st_just_started ? 1.0f : 0.0f;
-  vauto_debug->st_pre_trigger = (float)tr->st_pre_trigger;
-  vauto_debug->current_eps = current_eps;
-  vauto_debug->ps = ps;
-  vauto_debug->ps1 = ps1;
-  vauto_debug->new_ps = new_ps;
-  vauto_debug->returned_ps = returned_ps;
-  vauto_debug->feat_eps = feat->eps;
-  vauto_debug->feat_ips_fa = feat->ips_fa;
-  vauto_debug->asv_factor = asv->asv_factor;
-  vauto_debug->final_ips = asv->final_ips;
-  vauto_debug->volume = tr->current.volume;
-  vauto_debug->volume_max = tr->current.volume_max;
-  vauto_debug->ti = tr->current.ti;
-  vauto_debug->te = tr->current.te;
+  dbg->mode = (float)*therapy_mode;
+  dbg->st_inhaling = tr->st_inhaling ? 1.0f : 0.0f;
+  dbg->st_just_started = tr->st_just_started ? 1.0f : 0.0f;
+  dbg->st_pre_trigger = (float)tr->st_pre_trigger;
+  dbg->current_eps = current_eps;
+  dbg->ps = ps;
+  dbg->ps1 = ps1;
+  dbg->new_ps = new_ps;
+  dbg->returned_ps = returned_ps;
+  dbg->feat_eps = feat->eps;
+  dbg->feat_ips_fa = feat->ips_fa;
+  dbg->asv_factor = asv->asv_factor;
+  dbg->final_ips = asv->final_ips;
+  dbg->volume = tr->current.volume;
+  dbg->volume_max = tr->current.volume_max;
+  dbg->ti = tr->current.ti;
+  dbg->te = tr->current.te;
 
   return returned_ps;
 }
@@ -158,6 +175,7 @@ void MAIN start()
   update_asv_data(asv, tr);
 
   features_t *feat = GET_PTR(PTR_FEATURES, features_t, init_features);
+  vauto_debug_t *dbg = GET_PTR(PTR_VAUTO_DEBUG, vauto_debug_t, init_vauto_debug);
 
   apply_jitter(true);
 
@@ -179,7 +197,7 @@ void MAIN start()
 
   if (*therapy_mode == MODE_VAUTO)
   {
-    new_ps = calculate_vauto_ps(tr, asv, feat);
+    new_ps = calculate_vauto_ps(tr, asv, feat, dbg);
   }
 
   const float orig_ps = *cmd_ps;

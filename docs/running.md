@@ -14,6 +14,9 @@
 
 sudo openocd -f interface/stlink-v2.cfg -f 'tcl/airsense.cfg'
 
+You can check debug values with
+`vdbg`
+
 # Connect to machine
 
 telnet localhost 4444
