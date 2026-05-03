@@ -6,11 +6,36 @@
 const float INSTANT_PS = 0.45f;
 const float EPS = 1.2f;
 
+#define VAUTO_DEBUG_ADDR 0x20001f10
+
 typedef struct
 {
   float eps;    // EPS (cmH2O) - used to prevent instant jumps in pressure in case of autotriggering
   float ips_fa; // Flow-Assist IPS (cmH2O) - currently used to augment pretrigger effort
 } features_t;
+
+typedef struct
+{
+  float mode;
+  float st_inhaling;
+  float st_just_started;
+  float st_pre_trigger;
+  float current_eps;
+  float ps;
+  float ps1;
+  float new_ps;
+  float returned_ps;
+  float feat_eps;
+  float feat_ips_fa;
+  float asv_factor;
+  float final_ips;
+  float volume;
+  float volume_max;
+  float ti;
+  float te;
+} vauto_debug_t;
+
+static volatile vauto_debug_t *const vauto_debug = (vauto_debug_t *)VAUTO_DEBUG_ADDR;
 
 STATIC void init_features(features_t *feat)
 {
@@ -100,7 +125,27 @@ float calculate_vauto_ps(tracking_t *tr, asv_data_t *asv, features_t *feat)
     new_ps += feat->ips_fa;
   }
 
-  return *cmd_ps + (new_ps - ps); // Correction for the bizarre way VAuto handles the *cmd_ps fvar
+  const float returned_ps = *cmd_ps + (new_ps - ps); // Correction for the bizarre way VAuto handles the *cmd_ps fvar
+
+  vauto_debug->mode = (float)*therapy_mode;
+  vauto_debug->st_inhaling = tr->st_inhaling ? 1.0f : 0.0f;
+  vauto_debug->st_just_started = tr->st_just_started ? 1.0f : 0.0f;
+  vauto_debug->st_pre_trigger = (float)tr->st_pre_trigger;
+  vauto_debug->current_eps = current_eps;
+  vauto_debug->ps = ps;
+  vauto_debug->ps1 = ps1;
+  vauto_debug->new_ps = new_ps;
+  vauto_debug->returned_ps = returned_ps;
+  vauto_debug->feat_eps = feat->eps;
+  vauto_debug->feat_ips_fa = feat->ips_fa;
+  vauto_debug->asv_factor = asv->asv_factor;
+  vauto_debug->final_ips = asv->final_ips;
+  vauto_debug->volume = tr->current.volume;
+  vauto_debug->volume_max = tr->current.volume_max;
+  vauto_debug->ti = tr->current.ti;
+  vauto_debug->te = tr->current.te;
+
+  return returned_ps;
 }
 
 void MAIN start()

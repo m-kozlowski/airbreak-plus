@@ -82,6 +82,53 @@ proc ra {} {
 	p
 }
 
+set VAUTO_DEBUG_ADDR 0x20001f10
+set VAUTO_DEBUG_FIELDS {
+	mode st_inhaling st_just_started st_pre_trigger current_eps ps ps1 new_ps
+	returned_ps feat_eps feat_ips_fa asv_factor final_ips volume volume_max ti te
+}
+
+proc u32_to_float {val} {
+	binary scan [binary format i $val] f result
+	return $result
+}
+
+proc vdbg {{samples 1} {delay 100}} {
+	global VAUTO_DEBUG_ADDR VAUTO_DEBUG_FIELDS
+	for {set j 0} {$j < $samples} {incr j} {
+		set values [read_memory $VAUTO_DEBUG_ADDR 32 [llength $VAUTO_DEBUG_FIELDS]]
+		set line ""
+		foreach name $VAUTO_DEBUG_FIELDS raw $values {
+			append line [format "%s=%.4f " $name [u32_to_float $raw]]
+		}
+		echo $line
+		after $delay
+	}
+}
+
+proc vdbg_csv {{samples 200} {delay 100} {fname ""}} {
+	global VAUTO_DEBUG_ADDR VAUTO_DEBUG_FIELDS
+	if {$fname eq ""} {
+		set channel stdout
+	} else {
+		set channel [open $fname w]
+	}
+	puts $channel "time_ms,[join $VAUTO_DEBUG_FIELDS ,]"
+	for {set j 0} {$j < $samples} {incr j} {
+		set values [read_memory $VAUTO_DEBUG_ADDR 32 [llength $VAUTO_DEBUG_FIELDS]]
+		set row [clock milliseconds]
+		foreach raw $values {
+			append row [format ",%.6f" [u32_to_float $raw]]
+		}
+		puts $channel $row
+		after $delay
+	}
+	if {$fname ne ""} {
+		close $channel
+		echo "Wrote $fname"
+	}
+}
+
 proc h {} {
 	echo "Airsense S10 Custom Firmware Debug Commands:"
 	echo "\tlt \[val\] : set low pressure time interval (seconds)"
@@ -90,5 +137,7 @@ proc h {} {
 	echo "\tlp \[val\] : set low pressure value (cm-h2O, 0-30))"
 	echo "\tra       : reset override values to clinician menu settings"
 	echo "\tp        : print all values"
+	echo "\tvdbg \[samples\] \[delay_ms\] : print VAuto debug snapshot(s)"
+	echo "\tvdbg_csv \[samples\] \[delay_ms\] \[file\] : dump VAuto debug snapshots as CSV"
 	echo "\th        : show this help screen"
 }
