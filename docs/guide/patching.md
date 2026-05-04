@@ -13,6 +13,8 @@ sudo pacman -S arm-none-eabi-gcc       # Arch
 brew install arm-none-eabi-gcc         # macOS
 ```
 
+On Windows, see [WSL2 setup](wsl_setup.md).
+
 ## Quick start
 
 ### Default patch (recommended)
