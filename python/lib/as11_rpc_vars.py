@@ -6,7 +6,12 @@ types, stream/event ids, etc.).
 Contents:
     VAR_GROUPS                   Get/Set firmware-subtree-keyed var groups
     resolve_group/expand_groups  helpers for CLI --group expansion
-    SPOOL_TYPES                  StartSpool valid spool_type values
+    SPOOL_REGISTRY               single source of truth for StartSpool spool types
+    SPOOL_TYPES                  StartSpool valid spool_type values (derived)
+    SPOOL_GROUPS                 grouped display order for `known spools` (derived)
+    SPOOL_FORMATS                per-type format hint (derived)
+    SPOOL_FAMILIES               per-type protobuf family (derived)
+    SPOOL_FIELDS                 wire_field -> [spool_type, ...] autodetect (derived)
     STREAM_DATA_IDS              StartStream valid data_ids
     EVENT_IDS                    SubscribeEvent valid event names
     VAR_NAMES                    [(long_name, short_tag), ...] every known var
@@ -247,46 +252,285 @@ def expand_groups(group_names: list[str]) -> list[str]:
 
 
 
-SPOOL_TYPES: list[str] = [
-    # session & usage
-    "Summary",
-    "UsageEvents-TherapyStatusEvents",
-    "TherapyEvents-RespiratoryEvents",
-    "TherapyOneMinutePeriodic",
-    "SettingProfilesCollection",
-    "ConfigurationProfilesCollection",
-    # system state / activity
-    "SystemActivityEvents-FrequentActivityEvents",
-    "SystemActivityEvents-SporadicActivityEvents",
-    "SystemExceptionEvents-SystemErrors",
-    "SystemExceptionEvents-RecoverableErrors",
-    "SystemExceptionEvents-HumidifierErrors",
-    "SystemExceptionEvents-HeatedTubeErrors",
-    "DiagnosticExceptionEvents-AppErrors",
-    "DiagnosticExceptionEvents-FatalErrors",
-    "DiagnosticExceptionEvents-ResettableErrors",
-    "DiagnosticExceptionEvents-AlarmAppErrors",
-    "DiagnosticTenMinutePeriodic",
-    # alarms
-    "alarmEvents",
-    "alarmDiagnosticEvents",
-    # ui / survey / checks
-    "GUIActivityEvents",
-    "SurveyEvents",
-    "SoundcheckVector",
-    "AcousticSignatureV2",
-    # metrics
-    "MachineMetrics",
-    "MemoryMetrics",
-    "CellularActivityEvents",
-    "CellularDataUsage",
-    # high-rate / ambient signals
-    "atmosphericPressure10min",
-    "RespiratoryFlow6p25Hz",
-    "MaskPressure6p25Hz",
-    "InspiratoryPressure0p5Hz",
-    "Leak0p5Hz",
-]
+# Single source of truth for spool types. Each entry covers:
+#   group       display group used by `known spools`/--list-types
+#   format      one-line human description of the on-wire payload
+#   family      structural class used for dispatch in as11_spool.py
+#               (one of: summary, profile, config, event, periodic,
+#                periodic_compressed, metric, rc03, diag_vector,
+#                diag_blob, audio)
+#   wire_field  outer protobuf field number observed on a populated
+#               spool, or None when the spool has not yet been seen
+#               with data on a test device. Multiple spools may share
+#               a wire_field (event subfamilies do).
+#   gate_var    name of the firmware setting that must be enabled for
+#               the dispatcher to accept this spool. Optional.
+#
+# Insertion order is preserved and drives both SPOOL_TYPES and the
+# grouped display in SPOOL_GROUPS, so keep entries clustered by group.
+SPOOL_REGISTRY: dict[str, dict] = {
+    # session/profile data
+    "Summary": {
+        "group": "session/profile data",
+        "format": "summary protobuf",
+        "family": "summary",
+        "wire_field": 2,
+    },
+    "SettingProfilesCollection": {
+        "group": "session/profile data",
+        "format": "profile snapshot protobuf",
+        "family": "profile",
+        "wire_field": 3,
+    },
+    "ConfigurationProfilesCollection": {
+        "group": "session/profile data",
+        "format": "config snapshot protobuf",
+        "family": "config",
+        "wire_field": 23,
+    },
+
+    # therapy data
+    "UsageEvents-TherapyStatusEvents": {
+        "group": "therapy data",
+        "format": "event protobuf",
+        "family": "event",
+        "wire_field": 6,
+    },
+    "TherapyEvents-RespiratoryEvents": {
+        "group": "therapy data",
+        "format": "event protobuf",
+        "family": "event",
+        "wire_field": None,
+    },
+    "TherapyOneMinutePeriodic": {
+        "group": "therapy data",
+        "format": "periodic protobuf",
+        "family": "periodic",
+        "wire_field": 5,
+    },
+
+    # system and diagnostic events
+    "SystemActivityEvents-FrequentActivityEvents": {
+        "group": "system and diagnostic events",
+        "format": "event protobuf",
+        "family": "event",
+        "wire_field": 10,
+    },
+    "SystemActivityEvents-SporadicActivityEvents": {
+        "group": "system and diagnostic events",
+        "format": "event protobuf",
+        "family": "event",
+        "wire_field": 10,
+    },
+    "SystemExceptionEvents-SystemErrors": {
+        "group": "system and diagnostic events",
+        "format": "error event protobuf",
+        "family": "event",
+        "wire_field": None,
+    },
+    "SystemExceptionEvents-RecoverableErrors": {
+        "group": "system and diagnostic events",
+        "format": "error event protobuf",
+        "family": "event",
+        "wire_field": 7,
+    },
+    "SystemExceptionEvents-HumidifierErrors": {
+        "group": "system and diagnostic events",
+        "format": "error event protobuf",
+        "family": "event",
+        "wire_field": None,
+    },
+    "SystemExceptionEvents-HeatedTubeErrors": {
+        "group": "system and diagnostic events",
+        "format": "error event protobuf",
+        "family": "event",
+        "wire_field": None,
+    },
+    "DiagnosticExceptionEvents-AppErrors": {
+        "group": "system and diagnostic events",
+        "format": "error event protobuf",
+        "family": "event",
+        "wire_field": 9,
+    },
+    "DiagnosticExceptionEvents-FatalErrors": {
+        "group": "system and diagnostic events",
+        "format": "error event protobuf",
+        "family": "event",
+        "wire_field": None,
+    },
+    "DiagnosticExceptionEvents-ResettableErrors": {
+        "group": "system and diagnostic events",
+        "format": "error event protobuf",
+        "family": "event",
+        "wire_field": None,
+    },
+    "DiagnosticExceptionEvents-AlarmAppErrors": {
+        "group": "system and diagnostic events",
+        "format": "error event protobuf",
+        "family": "event",
+        "wire_field": None,
+    },
+    "GUIActivityEvents": {
+        "group": "system and diagnostic events",
+        "format": "event protobuf",
+        "family": "event",
+        "wire_field": 13,
+    },
+    "SurveyEvents": {
+        "group": "system and diagnostic events",
+        "format": "event protobuf",
+        "family": "event",
+        "wire_field": None,
+    },
+    "alarmEvents": {
+        "group": "system and diagnostic events",
+        "format": "event protobuf",
+        "family": "event",
+        "wire_field": None,
+    },
+    "alarmDiagnosticEvents": {
+        "group": "system and diagnostic events",
+        "format": "event protobuf",
+        "family": "event",
+        "wire_field": None,
+    },
+
+    # periodic metrics
+    "DiagnosticTenMinutePeriodic": {
+        "group": "periodic metrics",
+        "format": "periodic compressed (two-stream)",
+        "family": "periodic_compressed",
+        "wire_field": 17,
+    },
+    "MachineMetrics": {
+        "group": "periodic metrics",
+        "format": "metric snapshot",
+        "family": "metric",
+        "wire_field": 8,
+    },
+    "MemoryMetrics": {
+        "group": "periodic metrics",
+        "format": "metric snapshot",
+        "family": "metric",
+        "wire_field": 16,
+    },
+    "CellularActivityEvents": {
+        "group": "periodic metrics",
+        "format": "event protobuf",
+        "family": "event",
+        "wire_field": 12,
+    },
+    "CellularDataUsage": {
+        "group": "periodic metrics",
+        "format": "metric snapshot",
+        "family": "metric",
+        "wire_field": 22,
+    },
+
+    # archived signals
+    "atmosphericPressure10min": {
+        "group": "archived signals",
+        "format": "periodic compressed (two-stream)",
+        "family": "periodic_compressed",
+        "wire_field": None,
+    },
+    "RespiratoryFlow6p25Hz": {
+        "group": "archived signals",
+        "format": "RC03 compressed signal",
+        "family": "rc03",
+        "wire_field": 18,
+    },
+    "MaskPressure6p25Hz": {
+        "group": "archived signals",
+        "format": "RC03 compressed signal",
+        "family": "rc03",
+        "wire_field": 19,
+    },
+    "InspiratoryPressure0p5Hz": {
+        "group": "archived signals",
+        "format": "RC03 compressed signal",
+        "family": "rc03",
+        "wire_field": 21,
+    },
+    "Leak0p5Hz": {
+        "group": "archived signals",
+        "format": "RC03 compressed signal",
+        "family": "rc03",
+        "wire_field": 20,
+    },
+
+    # diagnostic blobs
+    "SoundcheckVector": {
+        "group": "diagnostic blobs",
+        "format": "diagnostic vector",
+        "family": "diag_vector",
+        "wire_field": 15,
+    },
+    "AcousticSignatureV2": {
+        "group": "diagnostic blobs",
+        "format": "diagnostic acoustic blob",
+        "family": "diag_blob",
+        "wire_field": None,
+    },
+    "RecordedSound": {
+        "group": "diagnostic blobs",
+        "format": "audio recording (gated by SoundDownloadAllowed)",
+        "family": "audio",
+        "wire_field": None,
+        "gate_var": "SoundDownloadAllowed",
+    },
+}
+
+
+def _build_spool_groups() -> list[tuple[str, list[str]]]:
+    """Group entries by `group`, preserving registry insertion order."""
+    out: list[tuple[str, list[str]]] = []
+    by_title: dict[str, list[str]] = {}
+    for name, info in SPOOL_REGISTRY.items():
+        title = info["group"]
+        if title not in by_title:
+            by_title[title] = []
+            out.append((title, by_title[title]))
+        by_title[title].append(name)
+    return out
+
+
+SPOOL_TYPES: list[str] = list(SPOOL_REGISTRY)
+
+SPOOL_GROUPS: list[tuple[str, list[str]]] = _build_spool_groups()
+
+SPOOL_FORMATS: dict[str, str] = {
+    name: info["format"] for name, info in SPOOL_REGISTRY.items()
+}
+
+SPOOL_FAMILIES: dict[str, str] = {
+    name: info["family"] for name, info in SPOOL_REGISTRY.items()
+}
+
+
+def _build_spool_fields() -> dict[int, list[str]]:
+    """Map outer-wrapper wire field number -> list of spool names."""
+    out: dict[int, list[str]] = {}
+    for name, info in SPOOL_REGISTRY.items():
+        field = info.get("wire_field")
+        if field is None:
+            continue
+        out.setdefault(field, []).append(name)
+    return out
+
+
+SPOOL_FIELDS: dict[int, list[str]] = _build_spool_fields()
+
+
+def spool_info(spool_type: str) -> dict | None:
+    """Return the registry entry for spool_type, or None."""
+    return SPOOL_REGISTRY.get(spool_type)
+
+
+def spool_types_in_family(family: str) -> list[str]:
+    """All spool types whose `family` field equals `family`."""
+    return [name for name, info in SPOOL_REGISTRY.items()
+            if info["family"] == family]
 # Direct StartStream names embedded in the 15.8.4 APPL image.
 STREAM_DIRECT_GROUPS = [
     ("live waveform/control data IDs", [

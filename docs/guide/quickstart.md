@@ -30,6 +30,8 @@ Requires opening the device and connecting a SWD programmer to read the flash.
 - Python 3.10+
 - arm-none-eabi-gcc
 
+On Windows, see [WSL2 setup](wsl_setup.md) for installing the toolchain.
+
 ## Steps
 
 ### 1. [Device disassembly](disassembly.md)
@@ -94,6 +96,7 @@ UART:
 
 | Guide | Content |
 |-------|---------|
+| [WSL2 setup (Windows)](wsl_setup.md) | Bootstrapping the build environment on Windows |
 | [Disassembly](disassembly.md) | Opening the device |
 | [SWD wiring](wiring.md) | Programming header connections |
 | [Serial connection](serial_connection.md) | UART accessory port |

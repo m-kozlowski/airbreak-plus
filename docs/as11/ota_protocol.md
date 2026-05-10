@@ -143,6 +143,13 @@ as11_keys::key 0
 The helper refuses all-00/all-ff reads as suspicious. Treat the printed value
 as device secret material; do not paste it into logs or public docs.
 
+`python/as11_config.py devices ota-key <alias> --key-file <path>` can store
+device's OTA key in the existing BLE credential record; see
+[as11_config devices](../tools/as11_config.md#devices).  
+`python/as11_flash.py` uses stored BLE `otaKey` values for authenticated apply 
+when `--key`, `--key-file`, and `AS11_OTA_KEY` are not set.  
+Explicit command-line keys still take precedence.
+
 ## Common primary header
 
 Both known OTA formats start with a 0x58-byte primary header:

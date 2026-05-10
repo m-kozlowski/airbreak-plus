@@ -821,20 +821,26 @@ class S11FirmwarePatches(object):
         return n_changed
 
     def unlock_languages(self):
-        """Unlock language availability masks."""
+        """Unlock language availability and prevent persisted narrowing."""
         n_changed = 0
         n_unchanged = 0
         n_missing = 0
-        mask = 0x07FFFFFF
+        default_mask = 0x07FFFFFF
+        # editable_mask=0 forces all configured language bits on at boot
+        # but prevents overriding mask with as11_config set LanguageConfiguration
+        # editable_mask=0x07FFFFFF allows changing LanguageConfiguration but also
+        # requires manually changgin LanguageConfiguration for the new languages to appear
+        editable_mask = 0x00000000
         lnc_rows = self.asf.find_descriptors_by_name("LanguageConfiguration", ("g3",))
         if not lnc_rows:
             print("  language LanguageConfiguration not found")
             n_missing += 1
         for row in lnc_rows:
             off = row["offset"]
-            if self.asf.u32(off + 8) != mask or self.asf.u32(off + 12) != mask:
-                self.asf.write_u32(off + 8, mask)
-                self.asf.write_u32(off + 12, mask)
+            if (self.asf.u32(off + 8) != default_mask
+                    or self.asf.u32(off + 12) != editable_mask):
+                self.asf.write_u32(off + 8, default_mask)
+                self.asf.write_u32(off + 12, editable_mask)
                 n_changed += 1
             else:
                 n_unchanged += 1

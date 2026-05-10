@@ -227,8 +227,9 @@ Stream payloads are returned as notifications, usually with method
 `StreamData`. Accepted names include direct signal names such as `Leak-50hz`,
 `PatientFlow-100hz`, `MaskPressure-TwoSecond`, `HeartRate`, and `SpO2`, plus
 summary/statistic names such as `Summary-Leak-50`.
-The [EDF reference](edf_signals.md) maps the generated EDF signals to useful
-direct stream names where a direct name exists.
+Known stream data IDs and EDF-oriented aliases are listed in
+[AS11 RPC Stream Reference](rpc_streams.md). The generated EDF file layout is
+documented separately in [AirSense 11 EDF Signal Reference](edf_signals.md).
 
 ## Spool RPC
 
@@ -237,8 +238,93 @@ pulls. The firmware starts pushing notifications immediately after the request
 arrives, so clients must install the notification handler before issuing the
 first spool RPC.
 
-Important note: `PullSpoolFragments` looks like a read, but it advances a
-cursor. It should not be blindly retried after a framing failure.
+Start one spool round:
+
+```json
+{
+  "spoolAddress": {
+    "Summary": {
+      "fromDateTime": "2026-04-29T00:00:00.000Z"
+    }
+  },
+  "maxSpoolSize": 4096
+}
+```
+
+Response:
+
+```json
+{"spoolId": 12}
+```
+
+Pull fragments for that spool id:
+
+```json
+{
+  "spoolId": 12,
+  "maxFragmentSize": 4096,
+  "maxNotifications": 0
+}
+```
+
+Observed request fields:
+
+| RPC | Field | Meaning |
+|-----|-------|---------|
+| `StartSpool` | `spoolAddress` | Object with exactly one spool type key |
+| `StartSpool` | `spoolAddress.<type>.fromDateTime` | Lower bound timestamp for the requested spool |
+| `StartSpool` | `maxSpoolSize` | Maximum raw bytes to collect in this round |
+| `PullSpoolFragments` | `spoolId` | Id returned by `StartSpool` |
+| `PullSpoolFragments` | `maxFragmentSize` | Maximum raw bytes per `SpoolFragment` notification |
+| `PullSpoolFragments` | `maxNotifications` | Notification count limit; `0` means no explicit limit |
+
+Parameter checks seen on 15.8.4.0:
+
+| Parameter shape | Result |
+|-----------------|--------|
+| `{"Summary":{"fromDateTime":"..."}}` | accepted |
+| `{"Summary":{}}` | `Invalid Params` |
+| `{"Summary":{"FromDateTime":"..."}}` | `Invalid Params` |
+| `{"Summary":{"fromdatetime":"..."}}` | `Invalid Params` |
+| `{"Summary":{"toDateTime":"..."}}` | `Invalid Params` |
+
+When a round does not contain all available data, the terminal `SpoolFragment`
+contains `nextSpoolAddress`, which is another address object of the same
+shape and should be passed back to `StartSpool` for the next round.
+
+Fragments arrive as notifications:
+
+```json
+{
+  "method": "SpoolFragment",
+  "params": {
+    "seq": 0,
+    "data": "<base64>",
+    "status": "SPOOL_COMPLETE_MORE_DATA_PENDING",
+    "spoolHash": "<SHA256 of concatenated raw data>",
+    "nextSpoolAddress": {
+      "Summary": {
+        "fromDateTime": "2026-04-29T11:00:00.000Z"
+      }
+    }
+  }
+}
+```
+
+Known terminal statuses:
+
+| Status | Meaning |
+|--------|---------|
+| `SPOOL_INCOMPLETE` | More fragments are expected for the current round |
+| `SPOOL_COMPLETE_MORE_DATA_PENDING` | This round is complete, but another round is available |
+| `SPOOL_COMPLETE_NO_MORE_DATA` | This round is complete and no continuation is pending |
+
+`PullSpoolFragments` looks like a read, but it advances a cursor. It should
+not be blindly retried after a framing failure. Each `StartSpool` creates a
+fresh cursor keyed to the supplied `fromDateTime`.
+
+Known spool types, payload families, wire field numbers, and inner record
+shapes are listed in [AS11 RPC Spool Reference](rpc_spools.md).
 
 ## Method sets
 

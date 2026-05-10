@@ -25,7 +25,7 @@ Apply-mode decision:
     (no flag)              verify-only; stop after CheckUpgradeFile
 
 Authenticated apply key resolution: --key HEX32, --key-file PATH, $AS11_OTA_KEY,
-built-in DEFAULT_K_OTA_HEX
+or stored BLE device otaKey.
 
 """
 
@@ -35,6 +35,7 @@ import argparse
 import binascii
 import hashlib
 import hmac
+import json
 import logging
 import os
 import re
@@ -187,8 +188,7 @@ DESC_PRESETS = {
     },
 }
 
-# K_ota is the 32-byte HMAC key the OTA verifier signs authenticated-apply tags with
-DEFAULT_K_OTA_HEX = "9bc3e80b872227305052e5d045d8297ee90b0ddb49212a91bdad4ebbaa981368"
+BLE_CRED_FILE = Path.home() / ".as11_ble.json"
 
 
 
@@ -411,30 +411,100 @@ def resolve_block(raw: str) -> TargetRegion:
     return TARGETS[code]
 
 
-def parse_key(key_hex: str | None, key_file: str | None) -> bytes:
-    """Resolve K_ota. Precedence: --key > --key-file > DEFAULT_K_OTA_HEX"""
+def normalize_key_hex(text: str, *, source: str) -> bytes:
+    clean = "".join(text.split())
+    try:
+        raw = bytes.fromhex(clean)
+    except ValueError as exc:
+        raise SystemExit(f"{source}: K_ota must be hex: {exc}") from exc
+    if len(raw) != 32:
+        raise SystemExit(f"K_ota must be exactly 32 bytes, got {len(raw)} "
+                         f"(source: {source})")
+    return raw
+
+
+def load_ble_credentials_for_keys() -> dict:
+    if not BLE_CRED_FILE.exists():
+        return {}
+    try:
+        data = json.loads(BLE_CRED_FILE.read_text())
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"{BLE_CRED_FILE}: invalid JSON: {exc}") from exc
+    if not isinstance(data, dict):
+        raise SystemExit(f"{BLE_CRED_FILE}: expected object at top level")
+    return data
+
+
+def find_credential_target(creds: dict, target: str) -> tuple[str, dict] | None:
+    target_upper = target.upper()
+    for addr, data in creds.items():
+        if addr.upper() == target_upper:
+            return addr, data
+        if isinstance(data, dict) and data.get("alias") == target:
+            return addr, data
+    return None
+
+
+def stored_ota_key_for_device(args) -> tuple[str, str] | None:
+    """Return (hex_key, source_label) for a BLE device credential otaKey."""
+    try:
+        spec = _resolve_device_spec(args)
+    except SystemExit:
+        return None
+    if not spec.startswith("ble:"):
+        return None
+    target = spec[4:]
+    if not target:
+        return None
+
+    found = find_credential_target(load_ble_credentials_for_keys(), target)
+    if found is None:
+        return None
+    addr, data = found
+    if not isinstance(data, dict):
+        return None
+    key_hex = data.get("otaKey")
+    if not key_hex:
+        return None
+    alias = data.get("alias")
+    label = f"stored otaKey for {alias or addr}"
+    return key_hex, label
+
+
+def parse_key(key_hex: str | None, key_file: str | None,
+              stored_key: tuple[str, str] | None = None) -> bytes:
+    """Resolve K_ota.
+
+    Precedence: --key > --key-file > AS11_OTA_KEY > stored BLE otaKey.
+    """
     if key_hex and key_file:
         raise SystemExit("pass only one of --key / --key-file")
     if key_hex:
-        raw = bytes.fromhex(key_hex.strip())
+        raw = normalize_key_hex(key_hex, source="--key")
         source = "--key"
     elif key_file:
         data = Path(key_file).read_bytes()
         if len(data) == 32:
             raw = data
         else:
-            raw = bytes.fromhex(data.decode("ascii").strip())
+            raw = normalize_key_hex(
+                data.decode("ascii"), source=f"--key-file {key_file}"
+            )
         source = f"--key-file {key_file}"
+    elif os.environ.get("AS11_OTA_KEY"):
+        raw = normalize_key_hex(os.environ["AS11_OTA_KEY"],
+                                source="AS11_OTA_KEY")
+        source = "AS11_OTA_KEY"
+    elif stored_key:
+        key_hex, source = stored_key
+        raw = normalize_key_hex(key_hex, source=source)
+        log.info("using %s", source)
     else:
-        raw = bytes.fromhex(DEFAULT_K_OTA_HEX)
-        source = "built-in DEFAULT_K_OTA_HEX"
-        log.warning("no --key/--key-file passed; using %s. "
-                    "If ApplyAuthenticatedUpgrade fails with -11306, "
-                    "K_ota is per-device and you need to extract your own.",
-                    source)
-    if len(raw) != 32:
-        raise SystemExit(f"K_ota must be exactly 32 bytes, got {len(raw)} "
-                         f"(source: {source})")
+        raise SystemExit(
+            "authenticated apply needs an OTA key: pass --key, --key-file, "
+            "set AS11_OTA_KEY, store one with `as11_config.py devices "
+            "ota-key <alias>` for BLE aliases."
+        )
     return raw
 
 
@@ -1121,7 +1191,8 @@ def _upload_kwargs_from_args(args) -> dict:
     apply_mode = resolve_apply_mode(args)
     if apply_mode == APPLY_AUTHENTICATED:
         key = parse_key(getattr(args, "key", None),
-                        getattr(args, "key_file", None))
+                        getattr(args, "key_file", None),
+                        stored_key=stored_ota_key_for_device(args))
     else:
         key = b""   # unused downstream; phase_apply guards on mode
     return dict(
@@ -1400,7 +1471,8 @@ def _add_upload_args(p: argparse.ArgumentParser) -> None:
     """Upload + apply options."""
     p.add_argument("--apply", action="store_true",
                    help="after CheckUpgradeFile succeeds, call "
-                        "ApplyAuthenticatedUpgrade (uses --key or default K_ota)")
+                        "ApplyAuthenticatedUpgrade (uses --key, "
+                        "AS11_OTA_KEY, or stored BLE otaKey)")
     p.add_argument("--apply-authenticated", action="store_true",
                    help="synonym for --apply")
     p.add_argument("--apply-plain", action="store_true",
@@ -1410,7 +1482,7 @@ def _add_upload_args(p: argparse.ArgumentParser) -> None:
                    help="send resetSettingsToDefault=true with --apply-plain "
                         "(default sends false to preserve settings)")
     p.add_argument("--key", metavar="HEX32",
-                   help="K_ota as 64 hex chars (env: AS11_OTA_KEY)")
+                   help="K_ota as 64 hex chars")
     p.add_argument("--key-file", metavar="PATH",
                    help="K_ota as a 32-byte binary file or a hex-text file")
     p.add_argument("--block-delay", type=float, default=0.0, metavar="SECONDS",

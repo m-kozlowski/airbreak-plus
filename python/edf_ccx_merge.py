@@ -538,6 +538,8 @@ def detect_variant(data, g):
         return "VAuto", n
     elif n == 82 and "S.AV.StartPress" in names:
         return "CS_PaceWave", n
+    elif n == 76 and "S.C.Press" in names and "S.AS.MaxPress" not in names:
+        return "Elite", n
     else:
         return f"Unknown({n}sig)", n
 

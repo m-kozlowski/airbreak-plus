@@ -140,9 +140,7 @@ project reference image:
 Start OpenOCD:
 
 ```bash
-openocd -f interface/stlink.cfg \
-        -c "adapter speed 4000" \
-        -f target/stm32g0x.cfg
+openocd -f interface/stlink.cfg -f target/stm32g0x.cfg
 ```
 
 In another terminal:
@@ -150,16 +148,12 @@ In another terminal:
 ```bash
 telnet localhost 4444
 reset halt
-stm32l4x unlock 0
-```
+stm32l4x option_write 0 0x20 0xffdfffaa
+stm32l4x option_write 0 0x2C 0x000000FF
+stm32l4x option_write 0 0x30 0x000000FF
+stm32l4x option_load 0
 
-Power-cycle the adapter after unlocking. Then program the replacement firmware:
-
-```bash
-openocd -f interface/stlink.cfg \
-        -c "adapter speed 4000" \
-        -f target/stm32g0x.cfg \
-        -c "program /path/to/STM32G0B1_Slcan2.5_WeActUSB2CANFDV1_0x*.bin 0x08000000 verify reset exit"
+program /path/to/STM32G0B1_Slcan2.5_WeActUSB2CANFDV1_0x*.bin 0x08000000 verify reset
 ```
 
 

@@ -17,9 +17,9 @@ var_id	uart	edf_signal	resmed_name	notes
 0x000F	FSN			
 0x0010	HID		HEIGHT_UNIT	
 0x0011	MDB			
-0x0012	RSS			
-0x0013	DRX			
-0x0014	DTX			
+0x0012	RSS			CAL 0012 serial request/reply buffer; Calibration Serial Request/Reply
+0x0013	DRX			CAL 0012 raw serial RX buffer; Calibration Serial RX
+0x0014	DTX			CAL 0012 raw serial TX buffer; Calibration Serial TX
 0x0015	EXW			
 0x0016	EXR			
 0x0017	CRX			
@@ -191,20 +191,20 @@ var_id	uart	edf_signal	resmed_name	notes
 0x00BD	PHM	PatientHours	PATIENT_HRS_LOW_RES	Patient Hours
 0x00BE	FBD		FIRST_BREATH_DAY	First Breath Day
 0x00BF	FTD		FIRST_THERAPY_DAY	First Therapy Day
-0x00C0	BFL		BLOWER_FLOW	
-0x00C1	FID		FLASH_ID	
-0x00C2	FLG			Flow calibration something?
-0x00C3	FLW		ADC_FLOW	
-0x00C4	FLZ		FLOW_ZERO	Flow calibration something?
-0x00C5	BPR		BLOWER_PRESS	
-0x00C6	CPR		CAL_PRESSURE	
-0x00C7	PRS		ADC_PRESSURE	
-0x00C8	PSH		HI_PRS_SCALE	Pressure calibration something?
-0x00C9	PZH		HI_PRSS_ZERO	Pressure calibration something?
-0x00CA	NOS		ADC_NOISE	
-0x00CB	NSE		AUD_NOISE	
-0x00CC	SNB			Motor calibration something? PWM freq?
-0x00CD	SNZ		SNORE_ZERO	
+0x00C0	BFL			
+0x00C1	FID			
+0x00C2	FLG			Flow Gain
+0x00C3	FLW			
+0x00C4	FLZ		FLOW_ZERO	Flow Zero
+0x00C5	BPR			
+0x00C6	CPR		CAL_PRESSURE	Calibration Pressure Setpoint
+0x00C7	PRS			
+0x00C8	PSH		HI_PRS_SCALE	Pressure Gain
+0x00C9	PZH		HI_PRSS_ZERO	Pressure Zero
+0x00CA	NOS			
+0x00CB	NSE			
+0x00CC	SNB			
+0x00CD	SNZ			
 0x00CE	PVD			
 0x00CF	PVR			
 0x00D0	RIR			
@@ -525,8 +525,8 @@ var_id	uart	edf_signal	resmed_name	notes
 0x020B	ZOX			
 0x020C	ZPK			
 0x020D	MOP	Mode	OPERATING_MODE	Therapy Mode
-0x020E	ROP		RUNNING_MODE	Run Mode Request
-0x020F	ZRM		PROD_RUN_MODE	Run Mode
+0x020E	ROP		RUNNING_MODE	Modes: 0000=Standby, 0001=Normal, 0002=Power Recovery, 0003=Power Save, 0004=Calibration, 0005=Upgrade; ROP=0004 requests calibration mode; Run Mode Request
+0x020F	ZRM		PROD_RUN_MODE	Modes: 0000=Reset, 0001=Standby, 0002=Backup, 0003=Reset Compliance, 0004=Therapy, 0005=Mask Fit, 0006=Calibration, 0007=System Error, 0008=Power Save, 0009=Learn Target, 000A=Upgrade, 000B=Upgrade Prep; ZRM=0006 indicates calibration mode; Run Mode
 0x0210	BLL		JUMP_TO_PROGRAM	Jump to Bootloader
 0x0211	BLS		BOOTLOADER_STATUS	Bootloader Status
 0x0212	LAN		LANGUAGE	Language
@@ -587,13 +587,13 @@ var_id	uart	edf_signal	resmed_name	notes
 0x0249	HTC			
 0x024A	IMF			
 0x024B	BOL			
-0x024C	CAL		CALIBRATION	
+0x024C	CAL		CALIBRATION	Calibration service selector; values: 0001=pressure controller, 0005=LCD/display test, 0006=pressure loop with unidentified KPD/KPT controls, 0007=pressure controller with ROT status, 000A=status bit collector into SDT, 000B=EEPROM/SD maintenance via ETR, 000C=RSS string/transport-ish test, 0010=SD card read/write self-test via CDS, 0012=serial/comm test via PBR/DTX/DRX/RSS; active when ZRM=0006; Calibration Service Select
 0x024D	MDC			
 0x024E	LCD			
 0x024F	LET		AVG_EXP_TIME	
 0x0250	RES		RESISTANCE	
-0x0251	ROT			
-0x0252	PBR			
+0x0251	ROT			Rotary encoder value exported by CAL 0007; Rotary Encoder Position
+0x0252	PBR			CAL 0012 raw serial parameter/buffer; Calibration Serial Parameter
 0x0253	CDS			
 0x0254	SDC			
 0x0255	SCS			
@@ -642,8 +642,8 @@ var_id	uart	edf_signal	resmed_name	notes
 0x0280	ZCR			
 0x0281	CYM			
 0x0282	ERC			
-0x0283	ERE			
-0x0284	ETR			
+0x0283	ERE			eep:0 formatting status/control variable
+0x0284	ETR			CAL=000B EEPROM/SD command; values: 0000=idle/reset, 0001=zero EEPROM logical pages, 0002=format/reinitialize eep:0 FAT filesystem, 0003=raw EEPROM to SD EEPROM.dat, 0004=SD EEPROM.dat to raw EEPROM, 0005=eep:0 tree to mmc:0:EEPROM, 0006=mmc:0:EEPROM fixed table to eep:0; EEPROM Transfer Request
 0x0285	FON			
 0x0286	KPM			
 0x0287	CMS			

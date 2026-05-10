@@ -1,1185 +1,1193 @@
-var_id	tag	cdx_name	array	notes
-0x0000	AAS		g1	INACT; value=40
-0x0001	ABS		g1	INACT; value=64
-0x0002	ADU		g1	value=192
-0x0003	AEU		g1	value=192
-0x0004	AHD		g1	INACT; value=64
-0x0005	ASN		g1	INACT; value=64
-0x0006	AUI		g1	INACT; value=64
-0x0007	SP3		g1	value=25
-0x0008	AVU		g1	value=150
-0x0009	IAR		g1	value=192
-0x000A	BTV	BluetoothApplicationIdentifier	g1	value=32
-0x000B	BBV	BluetoothBootloaderIdentifier	g1	value=32
-0x000C	BA0		g1	value=13
-0x000D	BP0		g1	value=65
-0x000E	BFI		g1	value=13
-0x000F	BMF		g1	value=13
-0x0010	BTN	BluetoothName	g1	value=20
-0x0011	BPK		g1	value=4
-0x0012	BPM	BluetoothProductModel	g1	value=50
-0x0013	BPP	BluetoothProductProvider	g1	value=50
-0x0014	BID	BootloaderIdentifier	g1	value=64
-0x0015	CMD	CamlData	g1	value=2000
-0x0016	CDP	CellularDataPreamble	g1	value=64
-0x0017	CCD	SIMID	g1	value=20
-0x0018	CIE	IMEI	g1	value=15
-0x0019	CIM	IMSI	g1	value=15
-0x001A	CPM	CellularProductModel	g1	value=50
-0x001B	CPP	CellularProductProvider	g1	value=50
-0x001C	CSI	CellularApplicationIdentifier	g1	value=100
-0x001D	CLA	AccessPointName	g1	value=128
-0x001E	CLU	ServiceHost	g1	value=192
-0x001F	PUR		g1	value=192
-0x0020	CID	ConfigurationIdentifier	g1	value=64
-0x0021	CP3		g1	value=25
-0x0022	CP1		g1	value=12
-0x0023	DAT		g1	value=32
-0x0024	DVT		g1	value=32
-0x0025	DEJ		g1	value=32
-0x0026	DEH		g1	value=32
-0x0027	IAT		g1	value=32
-0x0028	DCE		g1	value=32
-0x0029	DTC		g1	value=32
-0x002A	DPD		g1	value=32
-0x002B	DAA		g1	value=32
-0x002C	DEF		g1	value=32
-0x002D	DEL		g1	value=32
-0x002E	DER		g1	value=32
-0x002F	DOT		g1	value=32
-0x0030	DTT		g1	value=32
-0x0031	URI		g1	value=192
-0x0032	DGE		g1	value=32
-0x0033	IPT		g1	value=32
-0x0034	MLT		g1	value=32
-0x0035	DMT		g1	value=32
-0x0036	MPT		g1	value=32
-0x0037	DMF		g1	value=32
-0x0038	DRT		g1	value=32
-0x0039	DCT		g1	value=32
-0x003A	DSF		g1	value=32
-0x003B	DDT		g1	value=32
-0x003C	SVE		g1	value=32
-0x003D	DNF		g1	value=32
-0x003E	DNS		g1	value=32
-0x003F	DHT		g1	value=32
-0x0040	DHE		g1	value=32
-0x0041	DEV		g1	value=32
-0x0042	DET		g1	value=32
-0x0043	DTF		g1	value=32
-0x0044	DPT		g1	value=32
-0x0045	DUT		g1	value=32
-0x0046	DMV	DataModelVersionIdentifier	g1	value=32
-0x0047	UDI	FdaUniqueDeviceIdentifier	g1	value=86
-0x0048	FGT		g1	value=16
-0x0049	FSN		g1	value=16
-0x004A	AAG		g1	value=30
-0x004B	GCD		g1	value=29
-0x004C	ANA		g1	value=1
-0x004D	GSD		g1	value=32
-0x004E	HPI		g1	value=32
-0x004F	HSN		g1	value=18
-0x0050	HVI		g1	value=16
-0x0051	IUR		g1	value=192
-0x0052	LAB		g1	value=64
-0x0053	LAI		g1	value=64
-0x0054	LFB		g1	value=64
-0x0055	LFS		g1	value=64
-0x0056	LCT		g1	value=128
-0x0057	LUR		g1	value=192
-0x0058	MD0		g1	value=1368
-0x0059	MD1		g1	value=1368
-0x005A	MSM		g1	value=30
-0x005B	MUR		g1	value=192
-0x005C	QCD		g1	value=8
-0x005D	QCO		g1	value=16
-0x005E	QCV		g1	value=8
-0x005F	OAA		g1	value=13
-0x0060	OAN		g1	value=30
-0x0061	ON0		g1	value=30
-0x0062	ON1		g1	value=30
-0x0063	ON2		g1	value=30
-0x0064	ON3		g1	value=30
-0x0065	ON4		g1	value=30
-0x0066	OSN		g1	value=30
-0x0067	PCB	HardwareIdentifier	g1	value=50
-0x0068	MAD	ApplicationData	g1	value=1024
-0x0069	PCD	ProductCode	g1	value=10
-0x006A	PGI	ProductGeographicIdentifier	g1	value=60
-0x006B	PNA	ProductName	g1	value=32
-0x006C	PVI	ProfileVariantIdentifier	g1	value=36
-0x006D	RUR		g1	value=192
-0x006E	SRN	SerialNumber	g1	value=18
-0x006F	SVC		g1	value=3
-0x0070	SID	ApplicationIdentifier	g1	value=64
-0x0071	SP1		g1	value=12
-0x0072	GUD	UniversalIdentifier	g1	value=36
-0x0073	ZRG		g1	value=16
-0x0074	ABH	AmbientHumidity-Estimated	g2	0..100 step 0.1
-0x0075	FLW	RawFlow	g2	-30000..30000 step 1
-0x0076	PRS	AdcPressure	g2	0..4095 step 1
-0x0077	ATH		g2	0..4095 step 1
-0x0078	ATL		g2	0..4095 step 1
-0x0079	ATM		g2	0..4095 step 1
-0x007A	HMA	HerAuto-MaxPressure	g2	active_vids=3; 4..20 step 0.2; modes=HerAuto
-0x007B	HMI	HerAuto-MinPressure	g2	active_vids=3; 4..20 step 0.2; modes=HerAuto
-0x007C	HSP	HerAuto-StartPressure	g2	active_vids=3; 4..20 step 0.2
-0x007D	AHI	Summary-ApneaHypopneaIndex	g2	0..240 step 0.1
-0x007E	AHC		g2	0..4095 step 1
-0x007F	ASC	Summary-ApneaIndex	g2	0..240 step 0.1
-0x0080	TAE		g2	-2147483647..2147483647 step 1
-0x0081	AAU		g2	0..2147483647 step 1
-0x0082	ADI		g2	1..64 step 1
-0x0083	AEI		g2	1..64 step 1
-0x0084	AIU		g2	0..2147483647 step 1
-0x0085	ACV		g2	0..2147483647 step 1
-0x0086	ESR		g2	0..2147483647 step 1
-0x0087	AVC		g2	0..2147483647 step 1
-0x0088	ATF		g2	0..2147483647 step 1
-0x0089	LPR		g2	-10..45 step 0.02
-0x008A	LPF		g2	-10..45 step 0.02
-0x008B	AV9		g2	INACT; 0..30 step 0.125
-0x008C	AVA		g2	INACT; 0..30 step 0.125
-0x008D	AVM		g2	INACT; 0..30 step 0.125
-0x008E	AHR	RawAmbHumidity	g2	0..65535 step 1
-0x008F	ALS	AmbientLight	g2	0..120000 step 1
-0x0090	APS		g2	-2147483647..2147483647 step 1
-0x0091	ATR	RawAmbTemperature	g2	0..65535 step 1
-0x0092	AVS		g2	0..2147483647 step 1
-0x0093	APC		g2	0..3000 step 1
-0x0094	ATC		g2	0..3000 step 1
-0x0095	DUR		g2	0..120 step 1
-0x0096	APP		g2	0..20 step 0.2
-0x0097	AP5	ApneaTreatmentPressure-50hz	g2	0..20 step 0.2
-0x0098	APV	ApneaAlarmThreshold	g2	INACT; 10..60 step 1
-0x0099	AID		g2	0..2147483647 step 1
-0x009A	ASP		g2	-10..45 step 0.2
-0x009B	APT		g2	0..2147483647 step 1
-0x009C	XD1	ASVAuto-MaxExpiratoryPressure	g2	active_vids=12; 4..15 step 0.2; modes=ASVAuto
-0x009D	XD3	ASVAuto-MaxPressureSupport	g2	active_vids=12; 5..20 step 0.2; modes=ASVAuto
-0x009E	XD2	ASVAuto-MinExpiratoryPressure	g2	active_vids=12; 4..15 step 0.2; modes=ASVAuto
-0x009F	XD4	ASVAuto-MinPressureSupport	g2	active_vids=12; 0..6 step 0.2; modes=ASVAuto
-0x00A0	XD0	ASVAuto-StartPressure	g2	active_vids=12; 4..15 step 0.2
-0x00A1	XC2	ASV-MaxPressureSupport	g2	active_vids=12; 5..20 step 0.2; modes=ASV
-0x00A2	XC3	ASV-MinPressureSupport	g2	active_vids=12; 0..6 step 0.2; modes=ASV
-0x00A3	XC1	ASV-TargetExpiratoryPressure	g2	active_vids=12; 4..15 step 0.2; modes=ASV
-0x00A4	XC0	ASV-StartPressure	g2	active_vids=12; 4..15 step 0.2
-0x00A5	IAI		g2	1..64 step 1
-0x00A6	NSE		g2	0..4095 step 1
-0x00A7	ATP		g2	4..25 step 0.2
-0x00A8	AT5	AutoSetTreatmentPressure-50hz	g2	4..25 step 0.2
-0x00A9	LKP		g2	0..2 step 0.02
-0x00AA	AAH		g2	0..100 step 0.1
-0x00AB	AUM	Summary-AmbientHumidity-50	g2	0..100 step 0.1
-0x00AC	AAP		g2	INACT; 700..1100 step 1
-0x00AD	ABP	HeatedTubePWMMinuteAverage	g2	0..100 step 0.1
-0x00AE	AHM	Summary-HeatedTubePower-50	g2	0..100 step 0.1
-0x00AF	HTA	HeatedTubeOutletTemperatureMinuteAverage	g2	0..40 step 0.1
-0x00B0	HTE	Summary-HeatedTubeTemperature-50	g2	0..40 step 0.1
-0x00B1	HHT	HumidifierPlateTemperatureMinuteAverage	g2	0..100 step 0.1
-0x00B2	HHE	Summary-HumidifierTemperature-50	g2	0..100 step 0.1
-0x00B3	AHP	HumidifierPWMMinuteAverage	g2	0..100 step 0.1
-0x00B4	APM	Summary-HumidifierPower-50	g2	0..100 step 0.1
-0x00B5	AIP	InspiratoryPressure-OneMinute	g2	0..50 step 0.2
-0x00B6	AFL		g2	-4..4 step 0.01
-0x00B7	BFM	Summary-BlowerFlow-50	g2	-4..4 step 0.01
-0x00B8	BPA	BlowerPressure-OneMinute	g2	-10..45 step 0.02
-0x00B9	AEP		g2	0..30 step 0.2
-0x00BA	HRV		g2	0..300 step 1
-0x00BB	AIE		g2	0..400 step 1
-0x00BC	MAP	MaskPressure-OneMinute	g2	0..40 step 0.2
-0x00BD	RFA		g2	-2..3 step 0.01
-0x00BE	RFM	Summary-RespiratoryFlow-5	g2	-2..3 step 0.01
-0x00BF	R95	Summary-RespiratoryFlow-95	g2	-2..3 step 0.01
-0x00C0	SAV		g2	0..100 step 1
-0x00C1	ATI		g2	0..4 step 1
-0x00C2	AIC		g2	0..4095 step 1
-0x00C3	EX5		g2	0..10 step 1
-0x00C4	IN5		g2	0..10 step 1; modes=Spont,ST,Timed,VAuto,iVAPS,PAC
-0x00C5	BIP		g2	0..50 step 0.2
-0x00C6	BML		g2	0..2 step 0.02
-0x00C7	BMR		g2	0..40 step 0.2
-0x00C8	BRF		g2	-2..3 step 0.01
-0x00C9	MKI	InspiratoryPressure-TwoSecond	g2	0..50 step 0.2
-0x00CA	BFT	BlowerFlow-100hz	g2	-4..4 step 0.01
-0x00CB	BFL		g2	-4..4 step 0.01
-0x00CC	HFL		g2	-4..4 step 0.01
-0x00CD	BFF		g2	-4..4 step 0.01
-0x00CE	BPT	BlowerPressure-100hz	g2	-10..45 step 0.02
-0x00CF	BPR		g2	-10..45 step 0.02
-0x00D0	HPR		g2	-10..45 step 0.02
-0x00D1	BP5	Summary-BlowerPressure-5	g2	-10..45 step 0.02
-0x00D2	BP9	Summary-BlowerPressure-95	g2	-10..45 step 0.02
-0x00D3	BPF		g2	-10..45 step 0.02
-0x00D4	BPS	BlowerPressureMonitoring	g2	-10..45 step 0.02
-0x00D5	BFC		g2	0..2147483647 step 1
-0x00D6	BCV		g2	0..1 step 1
-0x00D7	BLC		g2	0..2147483647 step 1
-0x00D8	BRC		g2	0..2147483647 step 1
-0x00D9	BXC		g2	0..2147483647 step 1
-0x00DA	BTC		g2	0..2147483647 step 1
-0x00DB	BUC		g2	0..5 step 1
-0x00DC	BCD		g2	1..65535 step 1
-0x00DD	BLE		g2	0..65535 step 1
-0x00DE	MV5		g2	0..30 step 0.125; modes=Spont,ST,Timed,VAuto,ASV,ASVAuto,iVAPS,PAC
-0x00DF	MVH	MinuteVentilation-50hz	g2	0..30 step 0.125
-0x00E0	MV6	MinuteVentilation	g2	0..30 step 0.125
-0x00E1	MV2		g2	0..30 step 0.125
-0x00E2	CBP		g2	0..1 step 1
-0x00E3	BCP	PeriodicBrokerContactPeriod	g2	60..31536000 step 1
-0x00E4	CSC	Summary-ObstructiveApneaIndex	g2	active_vids=3,7; 0..240 step 0.1
-0x00E5	BGT		g2	0..2147483647 step 1
-0x00E6	CPR	CalibrationPressure	g2	0..45 step 0.2
-0x00E7	CSO		g2	-2147483647..2147483647 step 1
-0x00E8	ZIS		g2	0..2147483647 step 1
-0x00E9	SDU		g2	0..2147483647 step 1
-0x00EA	ZCT		g2	0..2147483647 step 1
-0x00EB	PTS		g2	0..2147483647 step 1
-0x00EC	CAC		g2	0..4095 step 1
-0x00ED	AVF		g2	0..30 step 0.125
-0x00EE	PCS		g2	0..3000 step 1
-0x00EF	TCS		g2	0..3000 step 1
-0x00F0	DDD	DownloadBytesDelta	g2	0..2147483647 step 1
-0x00F1	DTD		g2	0..2147483647 step 1
-0x00F2	DTU		g2	0..2147483647 step 1
-0x00F3	DUD	UploadBytesDelta	g2	0..2147483647 step 1
-0x00F4	QS2		g2	0..7 step 1
-0x00F5	QS3		g2	-20..0 step 1
-0x00F6	QS4		g2	-20..0 step 1
-0x00F7	QCN		g2	-140..0 step 1
-0x00F8	CDC		g2	0..44 step 1
-0x00F9	CCF		g2	0..2147483647 step 1
-0x00FA	PC0		g2	0..1000 step 1
-0x00FB	PC1		g2	0..1000 step 1
-0x00FC	PC2		g2	0..1000 step 1
-0x00FD	PC3		g2	0..1000 step 1
-0x00FE	PC4		g2	0..1000 step 1
-0x00FF	CLP	ServicePort	g2	1..65535 step 1
-0x0100	L19		g2	0..100 step 1
-0x0101	CED	LastEraseDataDateTime	g2	0..2147483647 step 1
-0x0102	CAF		g2	0..24836 step 1
-0x0103	CCC		g2	0..2147483647 step 1
-0x0104	PUI		g2	1..64 step 1
-0x0105	IPC	Cpap-SetPressure	g2	4..20 step 0.2; modes=CPAP
-0x0106	CSP	CpapSetPressure	g2	0..40 step 0.2
-0x0107	ZPR		g2	20..10000 step 20
-0x0108	CP2		g2	0..2147483647 step 1
-0x0109	CRW		g2	0..2147483647 step 1
-0x010A	CSD		g2	0..1440 step 1
-0x010B	CSE		g2	0..2147483647 step 1
-0x010C	CSS		g2	0..2147483647 step 1
-0x010D	DSS	DataCollectAndSend	g2	0..2147483647 step 1
-0x010E	ADS	DataCollectAndSendAsync	g2	0..2147483647 step 1
-0x010F	DBP		g2	1..64 step 1
-0x0110	EID		g2	1..64 step 1
-0x0111	PRI		g2	1..64 step 1
-0x0112	SPR		g2	1..64 step 1
-0x0113	ZS2		g2	0..2147483647 step 1
-0x0114	DSM		g2	-2147483647..2147483647 step 1
-0x0115	DSD		g2	0..24836 step 1
-0x0116	DST		g2	0..2147483647 step 1
-0x0117	DDC		g2	0..2147483647 step 1
-0x0118	D0A		g2	0..24836 step 1
-0x0119	DDU		g2	0..2147483647 step 1
-0x011A	D00		g2	-2147483647..2147483647 step 1
-0x011B	D01		g2	-2147483647..2147483647 step 1
-0x011C	D02		g2	-2147483647..2147483647 step 1
-0x011D	D03		g2	-2147483647..2147483647 step 1
-0x011E	D04		g2	-2147483647..2147483647 step 1
-0x011F	D05		g2	-2147483647..2147483647 step 1
-0x0120	D06		g2	-2147483647..2147483647 step 1
-0x0121	D07		g2	-2147483647..2147483647 step 1
-0x0122	D08		g2	-2147483647..2147483647 step 1
-0x0123	D09		g2	-2147483647..2147483647 step 1
-0x0124	ZS1		g2	0..2147483647 step 1
-0x0125	DRD		g2	0..2147483647 step 1
-0x0126	DIT		g2	0..2147483647 step 1
-0x0127	EAI		g2	1..2147483647 step 1
-0x0128	EIC	CepstrumAverageCount	g2	1..2147483647 step 1
-0x0129	ESC		g2	-2147483647..2147483647 step 1
-0x012A	EST	CepstrumStartDelay	g2	0..2147483647 step 1
-0x012B	MKE	ExpiratoryPressure-TwoSecond	g2	0..30 step 0.2
-0x012C	ZTI		g2	0..2147483647 step 1
-0x012D	EMS	EraseMediaSignature	g2	0..2147483647 step 1
-0x012E	ZLV		g2	0..2147483647 step 1
-0x012F	RDP		g2	0..2147483647 step 1
-0x0130	EXP	ExpiratoryPressure	g2	0..30 step 0.2
-0x0131	EP5	ExpiratoryPressure-50hz	g2	0..30 step 0.2
-0x0132	ESP	ExpirationSetPressure	g2	0..40 step 0.2
-0x0133	EXT	ExpiratoryDuration	g2	active_vids=7,10; 0..120 step 1
-0x0134	EPR	EprPressure	g2	active_vids=3,7; 1..3 step 1; modes=CPAP,AutoSet,HerAuto
-0x0135	PE9	Summary-ExpiratoryPressure-95	g2	0..30 step 0.2
-0x0136	PEA	Summary-ExpiratoryPressure-100	g2	0..30 step 0.2
-0x0137	PEM	Summary-ExpiratoryPressure-50	g2	0..30 step 0.2
-0x0138	ZAE		g2	0..9999 step 1
-0x0139	TLU		g2	0..2147483647 step 1
-0x013A	LKF	Leak	g2	0..2 step 0.02
-0x013B	LK5	Leak-50hz	g2	0..2 step 0.02
-0x013C	ZLF		g2	0..120 step 0.1; modes=Spont,ST,Timed,VAuto,ASV,ASVAuto,iVAPS,PAC
-0x013D	MKF	MaskPressure-TwoSecond	g2	0..40 step 0.2
-0x013E	FBD		g2	0..24836 step 1
-0x013F	FES		g2	-2147483647..2147483647 step 1
-0x0140	FTS		g2	0..24836 step 1
-0x0141	FE0		g2	0..2147483647 step 1
-0x0142	FM0		g2	0..2147483647 step 1
-0x0143	FW0		g2	0..2147483647 step 1
-0x0144	FE1		g2	0..2147483647 step 1
-0x0145	FM1		g2	0..2147483647 step 1
-0x0146	FW1		g2	0..2147483647 step 1
-0x0147	FE2		g2	0..2147483647 step 1
-0x0148	FM2		g2	0..2147483647 step 1
-0x0149	FWC		g2	0..2147483647 step 1
-0x014A	FLP		g2	0..20 step 0.2
-0x014B	FL5	FlowLimitationTreatmentPressure-50hz	g2	0..20 step 0.2
-0x014C	FLG	FlowGain	g2	0.499878..2 step 0.0002442
-0x014D	FLZ	FlowOffset	g2	-20000..20000 step 1
-0x014E	FID		g2	0..2147483647 step 1
-0x014F	FFL	FlowLimitation	g2	active_vids=3,7,12; 0..1 step 1
-0x0150	FF5	FlowLimitation-50hz	g2	0..1 step 1
-0x0151	APN		g2	-2147483647..2147483647 step 1
-0x0152	GDM		g2	0..2147483647 step 1
-0x0153	GTC		g2	16..30 step 1
-0x0154	GTF		g2	60..86 step 2
-0x0155	AHL		g2	-2147483647..2147483647 step 1
-0x0156	LCL		g2	-2147483647..2147483647 step 1
-0x0157	ALM		g2	-2147483647..2147483647 step 1
-0x0158	ZMD		g2	0..255 step 1
-0x0159	ZMO		g2	0..255 step 1
-0x015A	ZML		g2	0..255 step 1
-0x015B	ZUF		g2	0..2147483647 step 1
-0x015C	ZCL		g2	0..2147483647 step 1
-0x015D	ZCM		g2	0..2147483647 step 1
-0x015E	ZUD		g2	0..2147483647 step 1
-0x015F	ZUT		g2	0..2147483647 step 1
-0x0160	ZUR		g2	0..2147483647 step 1
-0x0161	ZCS		g2	0..2147483647 step 1
-0x0162	ZRD		g2	0..2147483647 step 1
-0x0163	ZST		g2	0..2147483647 step 1
-0x0164	ANV		g2	-2147483647..2147483647 step 1
-0x0165	ACL		g2	-2147483647..2147483647 step 1
-0x0166	PCL		g2	-2147483647..2147483647 step 1
-0x0167	AUA		g2	-2147483647..2147483647 step 1
-0x0168	HRT	HeartRate	g2	0..300 step 1
-0x0169	HR9	Summary-HeartRate-95	g2	0..300 step 1
-0x016A	HRX	Summary-HeartRate-100	g2	0..300 step 1
-0x016B	HRM	Summary-HeartRate-50	g2	0..300 step 1
-0x016C	HTL	HeatedTubeCurrent	g2	0..3300 step 1
-0x016D	TPC		g2	0..3750 step 1
-0x016E	HP2		g2	0..1 step 0.01
-0x016F	HP1		g2	0..1 step 0.01
-0x0170	HP0		g2	0..1 step 0.01
-0x0171	HBP	HeatedTubePWM	g2	0..100 step 0.1
-0x0172	HTT	HeatedTubeOutletTemperature	g2	0..40 step 0.1
-0x0173	HBT		g2	0..2147483647 step 1
-0x0174	HTU		g2	16..30 step 1
-0x0175	HTS	HeatedTubeTemperature	g2	15.6..30 step 0.1
-0x0176	HVL		g2	-4..4 step 0.01
-0x0177	PZH	PressureOffset	g2	0..4096 step 1
-0x0178	PSH	PressureGain	g2	0.00976562..1.000977 step 0.00024414
-0x0179	RRR		g2	0..90 step 5; modes=Spont,ST,Timed,VAuto,ASV,ASVAuto,iVAPS,PAC
-0x017A	RR5	RespiratoryRate-50hz	g2	0..90 step 5
-0x017B	RR6	RespiratoryRate	g2	0..90 step 5
-0x017C	RR2		g2	0..90 step 5
-0x017D	HSC	Summary-HypopneaIndex	g2	0..240 step 0.1
-0x017E	HDR		g2	-8..50 step 1
-0x017F	AGT		g2	0..2147483647 step 1
-0x0180	HAH		g2	0..1 step 0.01
-0x0181	HAT	AmbientTemperature-Estimated	g2	0..100 step 1
-0x0182	HPT	HumidifierPlateTemperature	g2	0..100 step 0.1
-0x0183	HU2		g2	0..1 step 0.01
-0x0184	HU1		g2	0..1 step 0.01
-0x0185	HU0		g2	0..1 step 0.01
-0x0186	HUP	HumidifierPWM	g2	0..100 step 0.1
-0x0187	HME		g2	1..8 step 1
-0x0188	HMS	HumidifierLevel	g2	1..8 step 1
-0x0189	HYC		g2	0..4095 step 1
-0x018A	ILS		g2	4..20 step 1
-0x018B	IPS		g2	0..2147483647 step 1
-0x018C	INP	InspiratoryPressure	g2	0..50 step 0.2
-0x018D	INH	InspiratoryPressure-50hz	g2	0..50 step 0.2
-0x018E	ISP	InspirationSetPressure	g2	0..40 step 0.2
-0x018F	INT	InspiratoryDuration	g2	active_vids=7,10; 0..10 step 1
-0x0190	IUI		g2	1..64 step 1
-0x0191	IS9	Summary-InspiratoryDuration-95	g2	active_vids=7,10; 0..10 step 1
-0x0192	ISA	Summary-InspiratoryDuration-100	g2	active_vids=7,10; 0..10 step 1
-0x0193	ISM	Summary-InspiratoryDuration-50	g2	active_vids=7,10; 0..10 step 1
-0x0194	ZDS		g2	0..4 step 0.01
-0x0195	EPI	iVAPS-TargetExpiratoryPressure	g2	INACT; 2..25 step 0.2
-0x0196	PHT	iVAPS-PatientHeight	g2	INACT; -2147483647..2147483647 step 5
-0x0197	PHI		g2	INACT; iVAPS-PatientHeight inches sibling; 44..100 step 2
-0x0198	ZIC	LearnTargetsSetDuration	g2	INACT; 5..20 step 5
-0x0199	ZIE	LearnTargetsExpiratoryPressure	g2	INACT; 2..25 step 0.2
-0x019A	ZLP	LearnTargetsPressureSupport	g2	INACT; 0..28 step 0.2
-0x019B	IMX	iVAPS-MaxExpiratoryPressure	g2	INACT; 2..25 step 0.2
-0x019C	WPA	iVAPS-MaxPressureSupport	g2	INACT; 4..30 step 0.2; modes=iVAPS
-0x019D	ZLL		g2	0..8 step 0.2
-0x019E	IMN	iVAPS-MinExpiratoryPressure	g2	INACT; 2..25 step 0.2
-0x019F	WPM	iVAPS-MinPressureSupport	g2	INACT; 4..30 step 0.2; modes=iVAPS
-0x01A0	ZMV		g2	0..230 step 0.1; modes=iVAPS
-0x01A1	IRL	iVAPS-FallTime	g2	INACT; 0.1..0.7 step 0.1; modes=iVAPS
-0x01A2	IEX		g2	0..200 step 1; modes=iVAPS
-0x01A3	IEN		g2	0..200 step 1; modes=iVAPS
-0x01A4	IRT	iVAPS-RiseTime	g2	INACT; 150..900 step 0.05; modes=iVAPS
-0x01A5	IVX	iVAPS-SetMaxInspiratoryTime	g2	INACT; 0.3..4 step 0.1; modes=iVAPS
-0x01A6	IVN	iVAPS-SetMinInspiratoryTime	g2	INACT; 0.1..4 step 0.1; modes=iVAPS
-0x01A7	IVS	iVAPS-StartPressure	g2	INACT; 2..25 step 0.2
-0x01A8	IBR	iVAPS-TargetRespiratoryRate	g2	INACT; 0..50 step 1; modes=iVAPS
-0x01A9	ITV	iVAPS-TargetAlveolarVentilation	g2	INACT; 0..30 step 0.1; modes=iVAPS
-0x01AA	ZVK		g2	0..230000 step 0.1; modes=iVAPS
-0x01AB	ZTV		g2	0..230000 step 1; modes=iVAPS
-0x01AC	PI9	Summary-InspiratoryPressure-95	g2	0..50 step 0.2
-0x01AD	IER		g2	0..400 step 1; modes=Spont,ST,Timed,VAuto,iVAPS,PAC
-0x01AE	IET	IeRatio	g2	active_vids=7,10; 0..400 step 1
-0x01AF	IE2		g2	active_vids=7,10; 0..400 step 1
-0x01B0	PIA	Summary-InspiratoryPressure-100	g2	0..50 step 0.2
-0x01B1	PIM	Summary-InspiratoryPressure-50	g2	0..50 step 0.2
-0x01B2	IE9	Summary-IeRatio-95	g2	active_vids=7,10; 0..400 step 1
-0x01B3	IEA	Summary-IeRatio-100	g2	active_vids=7,10; 0..400 step 1
-0x01B4	IEM	Summary-IeRatio-50	g2	active_vids=7,10; 0..400 step 1
-0x01B5	KPT	ButtonRegMap	g2	0..255 step 1
-0x01B6	PIN		g2	0..240 step 0.1
-0x01B7	LBT		g2	0..2147483647 step 1
-0x01B8	LDT	LastDataPostDateTime	g2	-2147483647..2147483647 step 1
-0x01B9	ZFE		g2	0..24836 step 1
-0x01BA	PLL		g2	0..3 step 0.02
-0x01BB	LMS	LastMachineServiceDateTime	g2	0..2147483647 step 1
-0x01BC	OUD		g2	0..1440 step 1
-0x01BD	LI9		g2	0..50 step 0.2
-0x01BE	LPD		g2	0..1440 step 1
-0x01BF	DSC		g2	0..24836 step 1
-0x01C0	LK7	Summary-Leak-75	g2	0..2 step 0.02
-0x01C1	LK9	Summary-Leak-95	g2	0..2 step 0.02
-0x01C2	LUI		g2	1..64 step 1
-0x01C3	LMX	Summary-Leak-100	g2	0..2 step 0.02
-0x01C4	LKM	Summary-Leak-50	g2	0..2 step 0.02
-0x01C5	ZLR		g2	0..51 step 1
-0x01C6	ZLA		g2	0..31 step 0.1
-0x01C7	ZIT		g2	0..1200 step 1
-0x01C8	ZS3		g2	0..2147483647 step 1
-0x01C9			g2	0..2147483647 step 1
-0x01CA			g2	0..315360000 step 1
-0x01CB			g2	0..315360000 step 1
-0x01CC			g2	0..315360000 step 1
-0x01CD	LHM		g2	0..315360000 step 1
-0x01CE	LMA		g2	0..10 step 1
-0x01CF	LMT	LowMinuteVentAlarmThreshold	g2	INACT; 1..10 step 0.5
-0x01D0	LAH		g2	0..240 step 0.1
-0x01D1	LAS		g2	0..240 step 0.1
-0x01D2	LVA		g2	0..30 step 0.125
-0x01D3	LCI		g2	0..240 step 0.1
-0x01D4	LD4		g2	0..365 step 1
-0x01D5	LDU		g2	0..365 step 1
-0x01D6	LPE		g2	0..30 step 0.2
-0x01D7	LIT		g2	0..10 step 1
-0x01D8	LPI		g2	0..50 step 0.2
-0x01D9	LIE		g2	0..400 step 1
-0x01DA	LLK		g2	0..2 step 0.02
-0x01DB	LMV		g2	0..30 step 0.125
-0x01DC	LOS		g2	0..240 step 0.1
-0x01DD	LAU		g2	0..1440 step 1
-0x01DE	LSU		g2	0..525600 step 1
-0x01DF	LRR		g2	0..90 step 1
-0x01E0	LCR		g2	0..100 step 1
-0x01E1	LTR		g2	0..100 step 1
-0x01E2	LTM		g2	0..30 step 0.125
-0x01E3	LTD		g2	0..365 step 1
-0x01E4	LTV		g2	0..4 step 1
-0x01E5	SMA		g2	0..100 step 1
-0x01E6	MFL		g2	-4..4 step 0.01
-0x01E7	MKP	MaskPressure	g2	0..40 step 0.2
-0x01E8	PMA	Summary-MeanMaskPressure-100	g2	0..40 step 0.2
-0x01E9	PM9	Summary-MeanMaskPressure-95	g2	0..40 step 0.2
-0x01EA	MUI		g2	1..64 step 1
-0x01EB	MSP	Summary-MeanMaskPressure-50	g2	0..40 step 0.2
-0x01EC	MK1	MaskPressure-100hz	g2	0..40 step 0.2
-0x01ED	MAL		g2	-2147483647..2147483647 step 1
-0x01EE	MCP		g2	25..30 step 0.2
-0x01EF	IVP		g2	20..20 step 0.2
-0x01F0	ZPU		g2	0..100 step 1
-0x01F1	MPA	AutoSet-MaxPressure	g2	active_vids=3; 4..20 step 0.2; modes=AutoSet
-0x01F2	MRD	MaxRampDownTime	g2	INACT; -2147483647..2147483647 step 5
-0x01F3	MRT	MaxRampTime	g2	INACT; 5..45 step 5
-0x01F4	XMP		g2	4..30 step 1
-0x01F5	MTK		g2	-2147483647..2147483647 step 1
-0x01F6	MCA		g2	0..2147483647 step 1
-0x01F7	MIT		g2	0..2147483647 step 1
-0x01F8	A1M		g2	INACT; 0..30 step 0.125
-0x01F9	MIS		g2	active_vids=7,10; 0..10 step 1
-0x01FA	MVT		g2	0..30 step 0.125
-0x01FB	MTT		g2	0..30 step 0.125
-0x01FC	AAV	AlveolarMinuteVentilation	g2	INACT; 0..30 step 0.125; modes=iVAPS
-0x01FD	A2S		g2	INACT; 0..30 step 0.125
-0x01FE	MED		g2	-2147483647..2147483647 step 1
-0x01FF	MGC		g2	-2147483647..2147483647 step 1
-0x0200	MGF		g2	-2147483647..2147483647 step 1
-0x0201	MFI		g2	-2147483647..2147483647 step 1
-0x0202	MRS		g2	-2147483647..2147483647 step 1
-0x0203	MRU		g2	-2147483647..2147483647 step 1
-0x0204	MSR		g2	-2147483647..2147483647 step 1
-0x0205	MID	PlatformIdentifier	g2	1..99 step 1
-0x0206	MGN		g2	-2147483647..2147483647 step 1
-0x0207	HPF		g2	0..2147483647 step 1
-0x0208	MPI	AutoSet-MinPressure	g2	active_vids=3; 4..20 step 0.2; modes=AutoSet
-0x0209	VT9	Summary-MinuteVentilation-95	g2	0..30 step 0.125
-0x020A	VTA	Summary-MinuteVentilation-100	g2	0..30 step 0.125
-0x020B	VTM	Summary-MinuteVentilation-50	g2	0..30 step 0.125
-0x020C	SMB		g2	-2147483647..2147483647 step 1
-0x020D	MC0		g2	-2147483647..2147483647 step 1
-0x020E	MC1		g2	-2147483647..2147483647 step 1
-0x020F	CUR	MotorCurrent	g2	-4095..4095 step 1
-0x0210	MMR		g2	0..2147483647 step 1
-0x0211	MPB		g2	0..35000 step 1
-0x0212	MPL		g2	0..50000 step 1
-0x0213	SPD	MotorSpeed	g2	0..50000 step 1
-0x0214	ZS5		g2	0..2147483647 step 1
-0x0215	OSC	Summary-CentralApneaIndex	g2	active_vids=3,7; 0..240 step 0.1
-0x0216	OAC		g2	0..4095 step 1
-0x0217	RR1		g2	0..90 step 5
-0x0218	L17		g2	0..100 step 1
-0x0219	OUC		g2	0..2147483647 step 1
-0x021A	OPP	SetPressureWithoutCAD	g2	0..30 step 0.2
-0x021B	OAT		g2	-1..2147483647 step 1
-0x021C	PA2	PAC-TargetExpiratoryPressure	g2	INACT; 2..25 step 0.2; modes=PAC
-0x021D	P12	PAC-FallTime	g2	INACT; 0.1..0.7 step 0.1; modes=PAC
-0x021E	PA9		g2	-2147483647..2147483647 step 1; modes=PAC
-0x021F	PA8		g2	0..200 step 1; modes=PAC
-0x0220	PA1	PAC-TargetInspiratoryPressure	g2	INACT; 4..25 step 0.2; modes=PAC
-0x0221	P10		g2	0..100 step 1; modes=PAC
-0x0222	PA6	PAC-SetRespiratoryRate	g2	INACT; 0..50 step 1; modes=PAC
-0x0223	PA4	PAC-RiseTime	g2	INACT; 0.15..0.9 step 0.05; modes=PAC
-0x0224	PA0	PAC-StartPressure	g2	INACT; 2..25 step 0.2; modes=PAC
-0x0225	PA5	PAC-SetInspiratoryTime	g2	INACT; 0.3..4 step 0.1; modes=PAC
-0x0226	PHR	TOTAL_USED_HOURS_NAME	g2	0..87600 step 1
-0x0227	PUD		g2	0..1440 step 1
-0x0228	PUS		g2	0..1440 step 1
-0x0229	TCH	PhantomTouch	g2	0..2147483647 step 1
-0x022A	HCL	HumidifierPlateCurrent	g2	0..3500 step 1
-0x022B	PPC		g2	0..3750 step 1
-0x022C	PPS		g2	0..60000 step 1
-0x022D	PVD	DataVersionIdentifier	g2	1..999 step 1
-0x022E	PDD		g2	-2147483647..2147483647 step 1
-0x022F	PAH		g2	0..240 step 0.1
-0x0230	PAS		g2	0..240 step 0.1
-0x0231	PAV		g2	0..30 step 0.125
-0x0232	PCI		g2	0..240 step 0.1
-0x0233	PPE		g2	0..30 step 0.2
-0x0234	PIS		g2	0..10 step 1
-0x0235	PPI		g2	0..50 step 0.2
-0x0236	PIE		g2	0..200 step 1
-0x0237	PL7		g2	0..3 step 0.02
-0x0238	PL9		g2	0..3 step 0.02
-0x0239	PMT		g2	0..30 step 0.125
-0x023A	PVT		g2	0..30 step 0.125
-0x023B	POS		g2	0..240 step 0.1
-0x023C	PRR		g2	0..90 step 1
-0x023D	PVC		g2	0..100 step 1
-0x023E	PVS		g2	0..100 step 1
-0x023F	PST		g2	0..2147483647 step 1
-0x0240	PSS		g2	0..1440 step 1
-0x0241	PAT		g2	0..4 step 1
-0x0242	APX		g2	-2147483647..2147483647 step 1
-0x0243	LP3		g2	0..100 step 1
-0x0244	LP2		g2	0..100 step 1
-0x0245	LP1		g2	0..100 step 1
-0x0246	LP0		g2	0..100 step 1
-0x0247	LP5		g2	0..100 step 1
-0x0248	LP6		g2	0..100 step 1
-0x0249	PSP		g2	0..25 step 1; modes=Spont,ST,Timed,VAuto,ASV,ASVAuto,iVAPS,PAC
-0x024A	LP4		g2	0..100 step 1
-0x024B	PID		g2	0..2147483647 step 1
-0x024C	ZRC	RemainingRampTime	g2	0..45 step 1
-0x024D	ZR5	RemainingRampTime-50hz	g2	0..45 step 1
-0x024E	RDD	RemainingRampDownTime	g2	INACT; 0..45 step 1
-0x024F	SRT	RampDownTime	g2	INACT; -2147483647..2147483647 step 5
-0x0250	RMT	RampTime	g2	5..45 step 5; modes=CPAP,AutoSet,HerAuto,Spont,ST,Timed,VAuto,ASV,ASVAuto,iVAPS,PAC
-0x0251	RAL	RawAmbLight	g2	0..85000 step 1
-0x0252	LKR		g2	-1..4 step 0.02
-0x0253	NOS		g2	0..4095 step 1
-0x0254	RQT		g2	0..2147483647 step 1
-0x0255	RET		g2	0..2147483647 step 1
-0x0256	RCR		g2	0..100 step 1
-0x0257	RTR		g2	0..100 step 1
-0x0258	RID	RegionIdentifier	g2	0..99 step 1
-0x0259	MDF		g2	0..2147483647 step 1
-0x025A	MDM		g2	0..2147483647 step 1
-0x025B	MDT		g2	0..2147483647 step 1
-0x025C	MDW		g2	0..2147483647 step 1
-0x025D	FUC		g2	0..2147483647 step 1
-0x025E	MUC		g2	0..2147483647 step 1
-0x025F	TUC		g2	0..2147483647 step 1
-0x0260	WUC		g2	0..2147483647 step 1
-0x0261	RCF		g2	0..2147483647 step 1
-0x0262	RCM		g2	0..2147483647 step 1
-0x0263	RCT		g2	0..2147483647 step 1
-0x0264	RCH		g2	0..2147483647 step 1
-0x0265	RTF	ReminderFilterDate	g2	0..2147483647 step 1
-0x0266	RTM	ReminderMaskDate	g2	0..2147483647 step 1
-0x0267	RTT	ReminderTubingDate	g2	0..2147483647 step 1
-0x0268	RTH	ReminderHumidifierDate	g2	0..2147483647 step 1
-0x0269	RLC	RequestLCDColour	g2	0..16777215 step 1
-0x026A	RUI		g2	1..64 step 1
-0x026B	RFL	PatientFlow	g2	-2..3 step 0.01
-0x026C	RF5	PatientFlow-100hz	g2	-2..3 step 0.01
-0x026D	RFU		g2	-2..3 step 0.01
-0x026E	RR9	Summary-RespiratoryRate-95	g2	0..90 step 1
-0x026F	RRA	Summary-RespiratoryRate-100	g2	0..90 step 1
-0x0270	RRM	Summary-RespiratoryRate-50	g2	0..90 step 1
-0x0271	RDC		g2	0..4095 step 1
-0x0272	RCC	Summary-ReraIndex	g2	active_vids=3; 0..240 step 0.1
-0x0273	ZS6		g2	0..2147483647 step 1
-0x0274	CUD	LastTherapyUseDateTime	g2	0..2147483647 step 1
-0x0275	SCS		g2	0..1440 step 1
-0x0276	MHU	MachineRunMeter	g2	0..315360000 step 1; modes=CPAP,AutoSet,HerAuto,Spont,ST,Timed,VAuto,ASV,ASVAuto,iVAPS,PAC
-0x0277	MHR	MotorRunMeter	g2	0..315360000 step 1
-0x0278	MHS	MotorRunSinceLastServiceMeter	g2	0..315360000 step 1
-0x0279	ZSE		g2	0..2147483647 step 1
-0x027A	ZDD		g2	0..24836 step 1
-0x027B	ZDT		g2	0..2147483647 step 1
-0x027C	CPD		g2	0..1440 step 1
-0x027D	PHM	TherapyRunMeter	g2	0..315360000 step 1
-0x027E	SW0		g2	0..2147483647 step 1
-0x027F	SLT		g2	0..2147483647 step 1
-0x0280	PR2	AdcPressureMonitoring	g2	0..4095 step 1
-0x0281	PS1	PressureMonitorGain	g2	0.00976562..1.000977 step 0.00024414
-0x0282	PZ1	PressureMonitorOffset	g2	0..4096 step 1
-0x0283	SMD		g2	0..24836 step 1
-0x0284	SMT		g2	0..2147483647 step 1
-0x0285	SHC	SettingsHistoryChangeCount	g2	0..2147483647 step 1
-0x0286	SHU		g2	0..2147483647 step 1
-0x0287	SAD		g2	0..24836 step 1
-0x0288	SAT		g2	0..2147483647 step 1
-0x0289	CFL	MotorFlowDrive	g2	0..3 step 0.01
-0x028A	SSD	SetMotorSpeed	g2	2000..47500 step 1
-0x028B	SPP		g2	0..30 step 0.2
-0x028C	SPH	SetPressure-100hz	g2	0..30 step 0.2
-0x028D	SFP		g2	0..2147483647 step 1
-0x028E	SFQ		g2	0..2147483647 step 1
-0x028F	SPC		g2	0..2147483647 step 1
-0x0290	SRQ		g2	0..2147483647 step 1
-0x0291	SFK	RawLeak	g2	-1..4 step 0.02
-0x0292	SF5	RawLeak-50hz	g2	-1..4 step 0.02
-0x0293	SVB		g2	-2147483647..2147483647 step 1
-0x0294	SNI	SnoreIndex	g2	0..5 step 0.02
-0x0295	SN5	SnoreIndex-50hz	g2	0..5 step 0.02
-0x0296	SRP		g2	0..20 step 0.2
-0x0297	SR5	SnoreTreatmentPressure-50hz	g2	0..20 step 0.2
-0x0298	ZS8		g2	0..2147483647 step 1
-0x0299	MCS		g2	0..2147483647 step 1
-0x029A	SSC	SoundcheckTestCount	g2	1..255 step 1
-0x029B	L20		g2	0..100 step 1
-0x029C	SAO	SpO2	g2	0..100 step 1
-0x029D	SO9	Summary-SpO2-95	g2	0..100 step 1
-0x029E	SOX	Summary-SpO2-100	g2	0..100 step 1
-0x029F	SOM	Summary-SpO2-50	g2	0..100 step 1
-0x02A0	SAU		g2	0..1440 step 1
-0x02A1	TBB		g2	0..65535 step 1
-0x02A2	SBC		g2	0..65535 step 1
-0x02A3	VCR	Summary-SpontCyclePercentage	g2	active_vids=7,10; 0..100 step 1
-0x02A4	VSR	Summary-SpontTriggerPercentage	g2	active_vids=7,10; 0..100 step 1
-0x02A5	SP2		g2	0..2147483647 step 1
-0x02A6	SKF		g2	-2147483647..2147483647 step 1
-0x02A7	STU	AutoSet-StartPressure	g2	active_vids=3; 4..20 step 0.2
-0x02A8	STP	Cpap-StartPressure	g2	4..20 step 0.2
-0x02A9	SVD	StorageVersionId	g2	3..3 step 1
-0x02AA	XA2	ST-TargetExpiratoryPressure	g2	active_vids=10; 2..25 step 0.2; modes=ST
-0x02AB	XAP	ST-FallTime	g2	INACT; 0.1..0.7 step 0.1; modes=ST
-0x02AC	XF1		g2	active_vids=10; 0..200 step 1; modes=ST
-0x02AD	XF0		g2	active_vids=10; 0..200 step 1; modes=ST
-0x02AE	XA1	ST-TargetInspiratoryPressure	g2	active_vids=10; 4..25 step 0.2; modes=ST
-0x02AF	XA6	ST-SetRespiratoryRate	g2	active_vids=10; 0..50 step 1
-0x02B0	XAA	ST-RiseTime	g2	active_vids=10; 0.15..0.9 step 0.05; modes=ST
-0x02B1	XA3	ST-StartPressure	g2	active_vids=10; 2..25 step 0.2
-0x02B2	XAD	ST-TargetRespiratoryRate	g2	INACT; 0..50 step 1
-0x02B3	XA7	ST-SetMaxInspiratoryTime	g2	active_vids=10; 0.3..4 step 0.1; modes=ST
-0x02B4	XA8	ST-SetMinInspiratoryTime	g2	active_vids=10; 0.1..4 step 0.1; modes=ST
-0x02B5	PUN		g2	0..255 step 1
-0x02B6	PPD		g2	0..1440 step 1
-0x02B7	SNC		g2	0..2147483647 step 1
-0x02B8	SSV		g2	-2147483647..2147483647 step 1
-0x02B9	ZRE		g2	0..2147483647 step 1
-0x02BA	SCL		g2	0..3750 step 1
-0x02BB	SCM		g2	0..5000 step 1
-0x02BC	SCG		g2	1000..3000 step 1
-0x02BD	ZPM		g2	0..2147483647 step 1
-0x02BE	SET		g2	0..2147483647 step 1
-0x02BF	STK		g2	0..2147483647 step 1
-0x02C0	ZZ2	Spont-TargetExpiratoryPressure	g2	active_vids=7,10; 2..25 step 0.2; modes=Spont
-0x02C1	Z17	Spont-FallTime	g2	INACT; 0.1..0.7 step 0.1; modes=Spont
-0x02C2	Z15		g2	-2147483647..2147483647 step 1; modes=Spont
-0x02C3	Z14		g2	0..200 step 1
-0x02C4	Z13		g2	0..200 step 1
-0x02C5	ZZ1	Spont-TargetInspiratoryPressure	g2	active_vids=7,10; 4..25 step 0.2; modes=Spont
-0x02C6	ZZ6		g2	10..10 step 1
-0x02C7	Z10	Spont-RiseTime	g2	active_vids=7,10; 0.15..0.9 step 0.05; modes=Spont
-0x02C8	ZZ3	Spont-StartPressure	g2	active_vids=7,10; 2..25 step 0.2
-0x02C9	ZZ7	Spont-SetMaxInspiratoryTime	g2	active_vids=7,10; 0.3..4 step 0.1; modes=Spont
-0x02CA	ZZ8	Spont-SetMinInspiratoryTime	g2	active_vids=7,10; 0.1..4 step 0.1; modes=Spont
-0x02CB	TGT		g2	active_vids=12; 0..30 step 0.125; modes=ASV,ASVAuto
-0x02CC	TVP	TargetMinuteVentilation	g2	active_vids=12; 0..30 step 0.125
-0x02CD	VA9	Summary-TargetMinuteVentilation-95	g2	active_vids=12; 0..30 step 0.125
-0x02CE	VAA	Summary-TargetMinuteVentilation-100	g2	active_vids=12; 0..30 step 0.125
-0x02CF	VAM	Summary-TargetMinuteVentilation-50	g2	active_vids=12; 0..30 step 0.125
-0x02D0	ZT5		g2	0..65535 step 1
-0x02D1	S11		g2	0..100 step 1
-0x02D2	L07		g2	0..100 step 1
-0x02D3	ZT2		g2	0..65535 step 1
-0x02D4	S10		g2	0..100 step 1
-0x02D5	L04		g2	0..100 step 1
-0x02D6	ZMN		g2	0..65535 step 1
-0x02D7	ZT7		g2	0..65535 step 1
-0x02D8	ZT6		g2	0..65535 step 1
-0x02D9	ZT3		g2	0..65535 step 1
-0x02DA	S20		g2	0..100 step 1
-0x02DB	L05		g2	0..100 step 1
-0x02DC	S44		g2	0..100 step 1
-0x02DD	ZT4		g2	0..65535 step 1
-0x02DE	S40		g2	0..100 step 1
-0x02DF	L06		g2	0..100 step 1
-0x02E0	ZT1		g2	0..65535 step 1
-0x02E1	SCC		g2	0..100 step 1
-0x02E2	L22		g2	0..100 step 1
-0x02E3	L16		g2	0..100 step 1
-0x02E4	SMC		g2	0..100 step 1
-0x02E5	ZTM		g2	0..65535 step 1
-0x02E6	L08		g2	0..100 step 1
-0x02E7	L15		g2	0..100 step 1
-0x02E8	L13		g2	0..100 step 1
-0x02E9	L21		g2	0..100 step 1
-0x02EA	L12		g2	0..100 step 1
-0x02EB	L11		g2	0..100 step 1
-0x02EC	L23		g2	0..100 step 1
-0x02ED	L24		g2	0..100 step 1
-0x02EE	L14		g2	0..100 step 1
-0x02EF	SPS		g2	0..100 step 1
-0x02F0	SPL		g2	0..100 step 1
-0x02F1	SEE		g2	0..100 step 1
-0x02F2	SM0		g2	0..100 step 1
-0x02F3	SM1		g2	0..100 step 1
-0x02F4	SM2		g2	0..100 step 1
-0x02F5	ZTS		g2	0..65535 step 1
-0x02F6	TDP	TestDrivePressure	g2	4..10 step 0.2
-0x02F7	TDM		g2	0..1440 step 1
-0x02F8	SCT		g2	0..2147483647 step 1
-0x02F9	TID	TidalVolume	g2	0..4 step 1
-0x02FA	TI5	TidalVolume-50hz	g2	0..4 step 1
-0x02FB	TDD		g2	0..4 step 1
-0x02FC	ZTD		g2	0..4000 step 1; modes=Spont,ST,Timed,VAuto,ASV,ASVAuto,iVAPS,PAC
-0x02FD	TD2		g2	0..4 step 1
-0x02FE	TBC		g2	0..65535 step 1
-0x02FF	SBD		g2	0..65535 step 1
-0x0300	ZS7		g2	0..2147483647 step 1
-0x0301	TZO	TimeZoneOffset	g2	-720..840 step 60
-0x0302	L03		g2	0..100 step 1
-0x0303	L02		g2	0..100 step 1
-0x0304	TCT		g2	0..2147483647 step 1
-0x0305	TPS		g2	0..60000 step 1
-0x0306	L18		g2	0..100 step 1
-0x0307	XB2	Timed-TargetExpiratoryPressure	g2	active_vids=10; 2..25 step 0.2; modes=Timed
-0x0308	XBA	Timed-FallTime	g2	INACT; 0.1..0.7 step 0.1; modes=Timed
-0x0309	XB8		g2	active_vids=10; 0..200 step 1; modes=Timed
-0x030A	XB1	Timed-TargetInspiratoryPressure	g2	active_vids=10; 4..25 step 0.2; modes=Timed
-0x030B	XB4	Timed-SetRespiratoryRate	g2	active_vids=10; 5..50 step 1; modes=Timed
-0x030C	XB7	Timed-RiseTime	g2	active_vids=10; 0.15..0.9 step 0.05; modes=Timed
-0x030D	XB0	Timed-StartPressure	g2	active_vids=10; 2..25 step 0.2
-0x030E	XB5	Timed-SetInspiratoryTime	g2	active_vids=10; 0.3..4 step 0.1; modes=Timed
-0x030F	USC	Summary-UnknownApneaIndex	g2	active_vids=3,7; 0..240 step 0.1
-0x0310	UAC		g2	0..4095 step 1
-0x0311	OAP	UpgradeAbandonPeriod	g2	86400..31536000 step 1
-0x0312	UFS		g2	0..2147483647 step 1
-0x0313	ORP	UpgradeReportPeriod	g2	60..31536000 step 1
-0x0314	VTD	VALOTriggerSeconds	g2	20..3600 step 1
-0x0315	VID	VariantIdentifier	g2	0..99 step 1
-0x0316	XE1	VAuto-MaxInspiratoryPressure	g2	active_vids=7; 4..25 step 0.2; modes=VAuto
-0x0317	XE2	VAuto-MinExpiratoryPressure	g2	active_vids=7; 4..25 step 0.2; modes=VAuto
-0x0318	XE3	VAuto-SetPressureSupport	g2	active_vids=7; 0..10 step 0.2; modes=VAuto
-0x0319	XE0	VAuto-StartPressure	g2	active_vids=7; 4..25 step 0.2
-0x031A	XE4	VAuto-SetMaxInspiratoryTime	g2	active_vids=7; 0.3..4 step 0.1; modes=VAuto
-0x031B	XE5	VAuto-SetMinInspiratoryTime	g2	active_vids=7; 0.1..4 step 0.1; modes=VAuto
-0x031C	TV9	Summary-TidalVolume-95	g2	0..4 step 1
-0x031D	TVA	Summary-TidalVolume-100	g2	0..4 step 1
-0x031E	TVM	Summary-TidalVolume-50	g2	0..4 step 1
-0x031F	ZSS		g2	0..2147483647 step 1
-0x0320	AST		g3	bits=5 fixed=0x00000000 editable=0x0000001f
-0x0321	SDS		g3	bits=7 fixed=0x00000000 editable=0x0000007f
-0x0322	SYC		g3	bits=7 fixed=0x00000000 editable=0x0000007f
-0x0323	SY1		g3	bits=7 fixed=0x00000000 editable=0x0000007f
-0x0324	ZOX		g3	bits=11 fixed=0x00000000 editable=0x000007ff
-0x0325	CLS	CurrentLEDState	g3	bits=4 fixed=0x00000000 editable=0x0000000f
-0x0326	FIF		g3	bits=30 fixed=0x00000000 editable=0x3fffffff
-0x0327	ZF1		g3	bits=2 fixed=0x00000000 editable=0x00000003
-0x0328	SYH		g3	bits=6 fixed=0x00000000 editable=0x0000003f
-0x0329	SY2		g3	bits=4 fixed=0x00000000 editable=0x0000000f
-0x032A	ZOY		g3	bits=1 fixed=0x00000000 editable=0x00000001
-0x032B	LNC	LanguageConfiguration	g3	bits=27 fixed=0x000000a3 editable=0x07ffffff
-0x032C	REM		g3	bits=3 fixed=0x00000000 editable=0x00000007
-0x032D	ZPC		g3	bits=14 fixed=0x00000000 editable=0x00003fff
-0x032E	OCS		g3	bits=3 fixed=0x00000000 editable=0x00000007
-0x032F	AER	ActiveAlarms	g3	INACT; bits=9 fixed=0x00000000 editable=0x00000000
-0x0330	RSA		g3	bits=4 fixed=0x00000000 editable=0x0000000f
-0x0331	RSE		g3	bits=4 fixed=0x00000000 editable=0x0000000f
-0x0332	RLS	RequestLEDState	g3	bits=4 fixed=0x00000000 editable=0x0000000f
-0x0333	ZPK		g3	bits=1 fixed=0x00000000 editable=0x00000001
-0x0334	FMS		g3	bits=6 fixed=0x00000000 editable=0x0000003f
-0x0335	SMS		g3	bits=6 fixed=0x00000000 editable=0x0000003f
-0x0336	UMS		g3	bits=6 fixed=0x00000000 editable=0x0000003f
-0x0337	LCS	LCDConnector	g3	bits=2 fixed=0x00000000 editable=0x00000003
-0x0338	TEC		g3	bits=4 fixed=0x00000000 editable=0x0000000f
-0x0339	TEG		g3	bits=8 fixed=0x00000000 editable=0x000000ff
-0x033A	ABF	AntiBacterialFilter	g5	2 opts mask=0x00000003
-0x033B	ASL		g5	2 opts mask=0x00000003
-0x033C	TLT		g5	2 opts mask=0x00000003
-0x033D	AKO		g5	7 opts mask=0x0000007f
-0x033E	ABC		g5	2 opts mask=0x00000003
-0x033F	AFS		g5	5 opts mask=0x0000001f
-0x0340	AGC		g5	2 opts mask=0x00000003
-0x0341	AMS		g5	2 opts mask=0x00000003
-0x0342	AMQ		g5	2 opts mask=0x00000003
-0x0343	ACY		g5	3 opts mask=0x00000007
-0x0344	ATT		g5	3 opts mask=0x00000007
-0x0345	ALT		g5	4 opts mask=0x0000000f
-0x0346	ATQ		g5	4 opts mask=0x0000000f
-0x0347	AUP		g5	2 opts mask=0x00000003
-0x0348	AUS		g5	5 opts mask=0x0000001f
-0x0349	AVO		g5	3 opts mask=0x00000007
-0x034A	AVP		g5	4 opts mask=0x0000000f
-0x034B	AVQ	AlarmVolumeLevel	g5	INACT; 3 opts mask=0x00000000
-0x034C	ANC	ApneaAlarmEnable	g5	INACT; 2 opts mask=0x00000000
-0x034D	AET	RespiratoryEvent	g5	8 opts mask=0x000000ff
-0x034E	AFF		g5	2 opts mask=0x00000003
-0x034F	AFC	AutoSetComfort	g5	active_vids=3; 2 opts mask=0x00000003; modes=AutoSet
-0x0350	AKM		g5	4 opts mask=0x0000000f
-0x0351	BTR		g5	2 opts mask=0x00000001
-0x0352	BTE	TriggerCycleEvent	g5	6 opts mask=0x0000003f
-0x0353	BAS		g5	2 opts mask=0x00000003
-0x0354	BCO		g5	8 opts mask=0x000000ff
-0x0355	BCR		g5	2 opts mask=0x00000003
-0x0356	BDS		g5	2 opts mask=0x00000003
-0x0357	BNP	BluetoothPassthrough	g5	2 opts mask=0x00000003
-0x0358	BRS		g5	2 opts mask=0x00000003
-0x0359	BSC		g5	2 opts mask=0x00000003
-0x035A	BTU		g5	2 opts mask=0x00000003
-0x035B	ZLE		g5	2 opts mask=0x00000003
-0x035C	CEN		g5	active_vids=3,7; 2 opts mask=0x00000003
-0x035D	CAL		g5	15 opts mask=0x00007fff
-0x035E	MEN	CALEnable	g5	2 opts mask=0x00000003
-0x035F	CMM	CalManufacturingMode	g5	2 opts mask=0x00000003
-0x0360	CST	CALStatus	g5	7 opts mask=0x0000007f
-0x0361	ZCC		g5	6 opts mask=0x0000003f
-0x0362	ZSD		g5	2 opts mask=0x00000003
-0x0363	ZCU		g5	2 opts mask=0x00000003
-0x0364	CDT		g5	2 opts mask=0x00000003
-0x0365	CCA	CareCheckInAvailable	g5	2 opts mask=0x00000003
-0x0366	CCT		g5	5 opts mask=0x00000002
-0x0367	SCP		g5	3 opts mask=0x00000007
-0x0368	CDM	DataMode	g5	2 opts mask=0x00000003
-0x0369	CDR		g5	2 opts mask=0x00000003
-0x036A	ZHA		g5	2 opts mask=0x00000003
-0x036B	CCO	ClimateControl	g5	2 opts mask=0x00000003
-0x036C	CRA		g5	3 opts mask=0x00000007
-0x036D	CFC	ClinicalConfirmation	g5	2 opts mask=0x00000003
-0x036E	CNM		g5	9 opts mask=0x000001ff
-0x036F	CMT		g5	3 opts mask=0x00000007
-0x0370	SCF	ConfirmStopEnable	g5	INACT; 2 opts mask=0x00000000
-0x0371	C11	Cpap-TriggerSensitivity	g5	INACT; 7 opts mask=0x00000000; modes=CPAP
-0x0372	C12		g5	INACT; 7 opts mask=0x00000000
-0x0373	CSR		g5	3 opts mask=0x00000007
-0x0374	PTD		g5	5 opts mask=0x0000001f
-0x0375	CPS		g5	2 opts mask=0x00000001
-0x0376	SSY	CycleDisplayFormat	g5	2 opts mask=0x00000003
-0x0377	DLS		g5	2 opts mask=0x00000003
-0x0378	DAS		g5	2 opts mask=0x00000003
-0x0379	DAV		g5	2 opts mask=0x00000003
-0x037A	DEI		g5	INACT; 2 opts mask=0x00000000
-0x037B	DEG		g5	INACT; 2 opts mask=0x00000000
-0x037C	ADP		g5	INACT; 2 opts mask=0x00000000
-0x037D	DCA		g5	2 opts mask=0x00000003
-0x037E	DUC		g5	2 opts mask=0x00000003
-0x037F	DCP		g5	2 opts mask=0x00000003
-0x0380	DEE		g5	2 opts mask=0x00000003
-0x0381	DOP		g5	2 opts mask=0x00000003
-0x0382	DTP		g5	2 opts mask=0x00000003
-0x0383	DGA		g5	2 opts mask=0x00000003
-0x0384	DIP		g5	2 opts mask=0x00000003
-0x0385	DML		g5	2 opts mask=0x00000003
-0x0386	DMM		g5	2 opts mask=0x00000003
-0x0387	DMP		g5	2 opts mask=0x00000003
-0x0388	DMA		g5	2 opts mask=0x00000003
-0x0389	DRF		g5	2 opts mask=0x00000003
-0x038A	DDN		g5	2 opts mask=0x00000003
-0x038B	DSV		g5	2 opts mask=0x00000003
-0x038C	DDS		g5	2 opts mask=0x00000003
-0x038D	SVA		g5	2 opts mask=0x00000003
-0x038E	DDY		g5	2 opts mask=0x00000003
-0x038F	DDE		g5	2 opts mask=0x00000003
-0x0390	DTE		g5	2 opts mask=0x00000003
-0x0391	DDP		g5	2 opts mask=0x00000003
-0x0392	DUE		g5	2 opts mask=0x00000003
-0x0393	ZWD		g5	2 opts mask=0x00000003
-0x0394	ADC		g5	2 opts mask=0x00000001
-0x0395	DCS		g5	3 opts mask=0x00000007
-0x0396	DIS	DeviceIdStatus	g5	2 opts mask=0x00000003
-0x0397	DAH	DisplayAHI	g5	2 opts mask=0x00000003
-0x0398	DHA		g5	2 opts mask=0x00000001
-0x0399	TCD		g5	6 opts mask=0x0000003f
-0x039A	DSA	SoundDownloadAllowed	g5	2 opts mask=0x00000003
-0x039B	EBW		g5	2 opts mask=0x00000003
-0x039C	RSD		g5	4 opts mask=0x0000000f
-0x039D	ECD	EndCapDetection	g5	2 opts mask=0x00000003
-0x039E	EPA	EprEnablePatientAccess	g5	active_vids=3,7; 2 opts mask=0x00000003; modes=CPAP,AutoSet,HerAuto
-0x039F	EPX	EprEnable	g5	active_vids=3,7; 2 opts mask=0x00000003; modes=CPAP,AutoSet,HerAuto
-0x03A0	EPT	EprType	g5	active_vids=3,7; 2 opts mask=0x00000003; modes=CPAP,AutoSet,HerAuto
-0x03A1	ZWR		g5	2 opts mask=0x00000003
-0x03A2	ERS		g5	2 opts mask=0x00000003
-0x03A3	EXH	ExternalHumidifier	g5	INACT; 2 opts mask=0x00000000
-0x03A4	FIS		g5	2 opts mask=0x00000003
-0x03A5	FBP		g5	4 opts mask=0x0000000f
-0x03A6	FIO		g5	2 opts mask=0x00000003
-0x03A7	FSC		g5	2 opts mask=0x00000003
-0x03A8	FIP		g5	2 opts mask=0x00000003
-0x03A9	IRF	IsFileSystemReady	g5	3 opts mask=0x00000007
-0x03AA	QFC	FlightMode	g5	2 opts mask=0x00000003
-0x03AB	ZLM		g5	active_vids=3; 2 opts mask=0x00000003
-0x03AC	FON		g5	10 opts mask=0x0000000f
-0x03AD	ZUM		g5	2 opts mask=0x00000003
-0x03AE	CMC		g5	2 opts mask=0x00000003
-0x03AF	GHT		g5	3 opts mask=0x00000007
-0x03B0	GMH		g5	3 opts mask=0x00000007
-0x03B1	GHM		g5	3 opts mask=0x00000007
-0x03B2	GRM		g5	3 opts mask=0x00000007
-0x03B3	GRY		g5	1 opts mask=0x00000001
-0x03B4	GRD		g5	2 opts mask=0x00000003
-0x03B5	GRZ		g5	1 opts mask=0x00000001
-0x03B6	ZUI		g5	10 opts mask=0x000003ff
-0x03B7	GOM		g5	MODE_SELECTOR; 11 opts mask=0x00000007
-0x03B8	GED		g5	2 opts mask=0x00000003
-0x03B9	GDF		g5	13 opts mask=0x0000124b
-0x03BA	GNM		g5	13 opts mask=0x0000124b
-0x03BB	GDT		g5	13 opts mask=0x0000124b
-0x03BC	GDH		g5	13 opts mask=0x0000124b
-0x03BD	GTZ		g5	27 opts mask=0x07ffffff
-0x03BE	HAA		g5	INACT; 2 opts mask=0x00000000
-0x03BF	HCO		g5	2 opts mask=0x00000003
-0x03C0	HCS		g5	2 opts mask=0x00000003
-0x03C1	CPT		g5	2 opts mask=0x00000003
-0x03C2	HTB		g5	3 opts mask=0x00000007
-0x03C3	HTP	HeatedTubePower	g5	2 opts mask=0x00000003
-0x03C4	HTX	HeatedTubeSettingEnable	g5	3 opts mask=0x00000007
-0x03C5	HUT		g5	2 opts mask=0x00000003
-0x03C6	HTC		g5	9 opts mask=0x000001ff
-0x03C7	HLA	HighLeakAlarmEnable	g5	INACT; 2 opts mask=0x00000000
-0x03C8	HPM		g5	2 opts mask=0x00000003
-0x03C9	HPA		g5	2 opts mask=0x00000003
-0x03CA	HSS		g5	2 opts mask=0x00000001
-0x03CB	TBT	TubeType	g5	3 opts mask=0x00000003
-0x03CC	HOF		g5	3 opts mask=0x00000007
-0x03CD	ZHT	Summary-TubeConnected	g5	5 opts mask=0x00000017
-0x03CE	ZHR	TubeConnected	g5	5 opts mask=0x0000001f
-0x03CF	HTR		g5	6 opts mask=0x0000003f
-0x03D0	HUM		g5	2 opts mask=0x00000003
-0x03D1	HUC	Summary-HumidifierConnected	g5	3 opts mask=0x00000003
-0x03D2	HCR	HumidifierConnected	g5	3 opts mask=0x00000003
-0x03D3	HUE		g5	8 opts mask=0x000000ff
-0x03D4	HON		g5	2 opts mask=0x00000003
-0x03D5	HPW	HumidifierPower	g5	2 opts mask=0x00000003
-0x03D6	HMX	HumidifierSettingEnable	g5	2 opts mask=0x00000003
-0x03D7	MUT		g5	2 opts mask=0x00000003
-0x03D8	HUS		g5	10 opts mask=0x000003ff
-0x03D9	TC0		g5	3 opts mask=0x00000007
-0x03DA	IMF		g5	2 opts mask=0x00000003
-0x03DB	ZBR		g5	2 opts mask=0x00000003
-0x03DC	IAS		g5	2 opts mask=0x00000003
-0x03DD	ZPW		g5	2 opts mask=0x00000003
-0x03DE	ZRP	IsRamping	g5	2 opts mask=0x00000003
-0x03DF	RPD	IsRampingDown	g5	INACT; 2 opts mask=0x00000000
-0x03E0	ITS		g5	2 opts mask=0x00000003
-0x03E1	BVP		g5	2 opts mask=0x00000003
-0x03E2	IEU	iVAPS-AutoEPAPEnable	g5	INACT; 2 opts mask=0x00000000; modes=iVAPS
-0x03E3	IHU	HeightDisplayUnit	g5	INACT; 2 opts mask=0x00000000; modes=iVAPS
-0x03E4	ZIX		g5	4 opts mask=0x0000000f
-0x03E5	VCS	iVAPS-CycleSensitivity	g5	INACT; 7 opts mask=0x00000000
-0x03E6	VCV		g5	INACT; 7 opts mask=0x00000000
-0x03E7	VCP		g5	INACT; 7 opts mask=0x00000000
-0x03E8	IRZ	iVAPS-FallTimeEnable	g5	INACT; 2 opts mask=0x00000000; modes=iVAPS
-0x03E9	IRC	iVAPS-RiseTimeEnable	g5	INACT; 2 opts mask=0x00000000; modes=iVAPS
-0x03EA	VTS	iVAPS-TriggerSensitivity	g5	INACT; 7 opts mask=0x00000000; modes=iVAPS
-0x03EB	VAQ		g5	INACT; 7 opts mask=0x00000000
-0x03EC	FSO		g5	2 opts mask=0x00000003
-0x03ED	KPM		g5	10 opts mask=0x000003ff
-0x03EE	ZPA		g5	2 opts mask=0x00000003
-0x03EF	ZOA		g5	2 opts mask=0x00000003
-0x03F0	LAN	Language	g5	27 opts mask=0x07ffffff; modes=CPAP,AutoSet,HerAuto,Spont,ST,Timed,VAuto,ASV,ASVAuto,iVAPS,PAC
-0x03F1	LRE		g5	4 opts mask=0x0000000f
-0x03F2	LST		g5	4 opts mask=0x0000000f
-0x03F3	LTS	LCDTouchStatus	g5	3 opts mask=0x00000007
-0x03F4	LCA		g5	2 opts mask=0x00000003
-0x03F5	TLM	LearnMode	g5	2 opts mask=0x00000003; modes=iVAPS
-0x03F6	ZLC		g5	7 opts mask=0x0000007f
-0x03F7	ZLS		g5	4 opts mask=0x0000000f
-0x03F8	LSC		g5	3 opts mask=0x00000007
-0x03F9	LMC	LowMinuteVentAlarmEnable	g5	INACT; 2 opts mask=0x00000000
-0x03FA	MFT		g5	2 opts mask=0x00000003
-0x03FB	ZFM		g5	3 opts mask=0x00000007
-0x03FC	MKD	MaskSenseToggle	g5	2 opts mask=0x00000003
-0x03FD	MST		g5	2 opts mask=0x00000003
-0x03FE	MSK	MaskType	g5	4 opts mask=0x00000007
-0x03FF	ZMS		g5	2 opts mask=0x00000003
-0x0400	MIC	MicrophoneEnabled	g5	2 opts mask=0x00000003
-0x0401	MOW		g5	2 opts mask=0x00000003
-0x0402	MOK		g5	4 opts mask=0x0000000f
-0x0403	QCS		g5	6 opts mask=0x0000003f
-0x0404	QNC		g5	2 opts mask=0x00000003
-0x0405	AAA		g5	12 opts mask=0x00000fff
-0x0406	MER		g5	2 opts mask=0x00000003
-0x0407	ZME		g5	2 opts mask=0x00000003
-0x0408	BMT	MotorType	g5	2 opts mask=0x00000003
-0x0409	AIR		g5	2 opts mask=0x00000003
-0x040A	MAI	CareCheckToggle	g5	2 opts mask=0x00000003
-0x040B	MAM		g5	2 opts mask=0x00000003
-0x040C	MAS	MyAirScreens	g5	2 opts mask=0x00000003
-0x040D	NMA	NonVentedMaskAlarmEnable	g5	INACT; 2 opts mask=0x00000000
-0x040E	MOP	ActiveTherapyProfile	g5	MODE_SELECTOR; 11 opts mask=0x00000007
-0x040F	OUM		g5	2 opts mask=0x00000003
-0x0410	OUS	OtaUpgradeStatus	g5	6 opts mask=0x0000003f
-0x0411	OFC		g5	3 opts mask=0x00000007
-0x0412	OXS		g5	5 opts mask=0x0000001f
-0x0413	OTD		g5	2 opts mask=0x00000003
-0x0414	OUI		g5	4 opts mask=0x0000000f
-0x0415	P11	PAC-FallTimeEnable	g5	INACT; 2 opts mask=0x00000000; modes=PAC
-0x0416	PA3	PAC-RiseTimeEnable	g5	INACT; 2 opts mask=0x00000000; modes=PAC
-0x0417	PA7	PAC-TriggerSensitivity	g5	INACT; 7 opts mask=0x00000000; modes=PAC
-0x0418	PAQ		g5	INACT; 7 opts mask=0x00000000
-0x0419	ACC	PatientView	g5	2 opts mask=0x00000003
-0x041A	PDR		g5	2 opts mask=0x00000003
-0x041B	PMS	PeripheralMsg	g5	2 opts mask=0x00000003
-0x041C	ZEA		g5	2 opts mask=0x00000003
-0x041D	PSM		g5	10 opts mask=0x000003ff
-0x041E	KEY	PhantomKey	g5	12 opts mask=0x00000e6f
-0x041F	PKP		g5	2 opts mask=0x00000003
-0x0420	PTF		g5	2 opts mask=0x00000003
-0x0421	ZPV		g5	2 opts mask=0x00000003
-0x0422	P90		g5	2 opts mask=0x00000001
-0x0423	ZRM	FGState	g5	12 opts mask=0x000007ff
-0x0424	PSC	PowerSupplyCapacity	g5	2 opts mask=0x00000003
-0x0425	PSD		g5	2 opts mask=0x00000003
-0x0426	PSU	PowerSupplyType	g5	3 opts mask=0x00000007
-0x0427	CYM		g5	3 opts mask=0x00000007
-0x0428	QNT		g5	2 opts mask=0x00000003
-0x0429	RMA	RampEnable	g5	3 opts mask=0x00000007
-0x042A	RDE	RampDownEnable	g5	INACT; 2 opts mask=0x00000000
-0x042B	DPE	RampDownEnablePatientAccess	g5	INACT; 2 opts mask=0x00000000
-0x042C	RDS		g5	3 opts mask=0x00000007
-0x042D	RPE	RampEnablePatientAccess	g5	INACT; 2 opts mask=0x00000000
-0x042E	RPS		g5	2 opts mask=0x00000001
-0x042F	IRS	IsReadyForShipping	g5	3 opts mask=0x00000007
-0x0430	RQH		g5	2 opts mask=0x00000003
-0x0431	RFP		g5	2 opts mask=0x00000003
-0x0432	RYS	RecoverableError	g5	4 opts mask=0x0000000f
-0x0433	ARE		g5	10 opts mask=0x000003ff
-0x0434	RUM		g5	13 opts mask=0x00001fff
-0x0435	RIF	ReminderFilterEnable	g5	2 opts mask=0x00000003
-0x0436	RIM	ReminderMaskEnable	g5	2 opts mask=0x00000003
-0x0437	RIT	ReminderTubingEnable	g5	2 opts mask=0x00000003
-0x0438	RIC	ReminderHumidifierEnable	g5	2 opts mask=0x00000003
-0x0439	RSM		g5	5 opts mask=0x0000001f
-0x043A	RSC		g5	2 opts mask=0x00000003
-0x043B	RDF	ReminderFilterPeriod	g5	13 opts mask=0x0000124a
-0x043C	RDM	ReminderMaskPeriod	g5	13 opts mask=0x0000124a
-0x043D	RDT	ReminderTubingPeriod	g5	13 opts mask=0x0000124a
-0x043E	RDH	ReminderHumidifierPeriod	g5	13 opts mask=0x0000124a
-0x043F	RST	RequestSDCardTest	g5	2 opts mask=0x00000003
-0x0440	RTS	RequestTestDriveState	g5	2 opts mask=0x00000003
-0x0441	REV		g5	3 opts mask=0x00000007
-0x0442	RES		g5	5 opts mask=0x0000001b
-0x0443	RLL		g5	2 opts mask=0x00000003
-0x0444	ROP		g5	6 opts mask=0x0000003f
-0x0445	SRM		g5	2 opts mask=0x00000003
-0x0446	STA		g5	2 opts mask=0x00000003
-0x0447	SSS	SDCardSocketStatus	g5	3 opts mask=0x00000007
-0x0448	STS	SDCardTestStatus	g5	3 opts mask=0x00000007
-0x0449	SDC		g5	2 opts mask=0x00000003
-0x044A	SBE	SecurityStatus	g5	2 opts mask=0x00000003
-0x044B	SBA		g5	2 opts mask=0x00000003
-0x044C	ZKA		g5	2 opts mask=0x00000003
-0x044D	SPM		g5	2 opts mask=0x00000003
-0x044E	SRC		g5	2 opts mask=0x00000003
-0x044F	ZWT		g5	2 opts mask=0x00000003
-0x0450	SCA		g5	2 opts mask=0x00000003
-0x0451	SD0		g5	2 opts mask=0x00000003
-0x0452	ZTH		g5	2 opts mask=0x00000003
-0x0453	ZLH		g5	2 opts mask=0x00000003
-0x0454	CCZ		g5	2 opts mask=0x00000003
-0x0455	SLS	LanguageSelection	g5	2 opts mask=0x00000003
-0x0456	DMS		g5	2 opts mask=0x00000003
-0x0457	SOS	OobxOnStartup	g5	2 opts mask=0x00000003
-0x0458	ABU		g5	2 opts mask=0x00000003
-0x0459	SVI		g5	2 opts mask=0x00000003
-0x045A	SVP		g5	6 opts mask=0x0000003f
-0x045B	SMN		g5	2 opts mask=0x00000003
-0x045C	SVN		g5	2 opts mask=0x00000003
-0x045D	SST	SmartStart	g5	2 opts mask=0x00000003
-0x045E	SME		g5	2 opts mask=0x00000003
-0x045F	GSP		g5	2 opts mask=0x00000003
-0x0460	SSP	SmartStop	g5	2 opts mask=0x00000003
-0x0461	SCK	SoundcheckRunFrequency	g5	4 opts mask=0x0000000f
-0x0462	SCH		g5	2 opts mask=0x00000003
-0x0463	SCO	SoundcheckFeatureToggle	g5	2 opts mask=0x00000003
-0x0464	STT	SoundcheckStatus	g5	5 opts mask=0x0000001f
-0x0465	SSE	SplashScreenDisplaySelection	g5	2 opts mask=0x00000003
-0x0466	SCY		g5	5 opts mask=0x0000001f
-0x0467	SPN		g5	3 opts mask=0x00000007
-0x0468	SOD		g5	3 opts mask=0x00000007
-0x0469	XAB	ST-CycleSensitivity	g5	active_vids=10; 7 opts mask=0x00000000
-0x046A	XAX		g5	active_vids=10; 7 opts mask=0x00000000
-0x046B	XAS		g5	active_vids=10; 7 opts mask=0x00000000
-0x046C	XAM	ST-FallTimeEnable	g5	INACT; 2 opts mask=0x00000000; modes=ST
-0x046D	XAC	ST-IntelligentBackupRateEnable	g5	INACT; 2 opts mask=0x00000000; modes=ST
-0x046E	XA9	ST-RiseTimeEnable	g5	active_vids=10; 2 opts mask=0x00000000; modes=ST
-0x046F	ZU1	ST-TriggerSensitivity	g5	active_vids=10; 7 opts mask=0x00000000; modes=ST
-0x0470	ZU2		g5	active_vids=10; 7 opts mask=0x00000000
-0x0471	SYT		g5	3 opts mask=0x00000007
-0x0472	SDR		g5	2 opts mask=0x00000003
-0x0473	STC		g5	34 opts mask=0xffffffff
-0x0474	FSE	SystemError	g5	23 opts mask=0x007fffff
-0x0475	SEM		g5	5 opts mask=0x0000001f
-0x0476	XSS		g5	2 opts mask=0x00000003
-0x0477	Z12	Spont-CycleSensitivity	g5	active_vids=7,10; 7 opts mask=0x00000000
-0x0478	Z18		g5	active_vids=7,10; 7 opts mask=0x00000000
-0x0479	Z19		g5	active_vids=7,10; 7 opts mask=0x00000000
-0x047A	ZZ4	Spont-EasyBreatheEnable	g5	active_vids=7; 2 opts mask=0x00000000; modes=Spont
-0x047B	Z16	Spont-FallTimeEnable	g5	INACT; 2 opts mask=0x00000000; modes=Spont
-0x047C	ZZ5	Spont-RespiratoryRateEnable	g5	active_vids=7,10; 2 opts mask=0x00000000; modes=Spont
-0x047D	ZZ9	Spont-RiseTimeEnable	g5	active_vids=7,10; 2 opts mask=0x00000000; modes=Spont
-0x047E	Z11	Spont-TriggerSensitivity	g5	active_vids=7,10; 7 opts mask=0x00000000; modes=Spont
-0x047F	Z07		g5	active_vids=7,10; 7 opts mask=0x00000000
-0x0480	TMU	TemperatureUnit	g5	2 opts mask=0x00000003; modes=CPAP,AutoSet,HerAuto,Spont,ST,Timed,VAuto,ASV,ASVAuto,iVAPS,PAC
-0x0481	TDS	TestDriveState	g5	2 opts mask=0x00000003
-0x0482	TRT		g5	2 opts mask=0x00000003
-0x0483	TDT	TestDriveType	g5	2 opts mask=0x00000003
-0x0484	TLF	TherapyLEDAlwaysOn	g5	INACT; 2 opts mask=0x00000000
-0x0485	ZTE		g5	2 opts mask=0x00000003
-0x0486	THS	StatusEvent	g5	10 opts mask=0x000000ff
-0x0487	CSM		g5	3 opts mask=0x00000007
-0x0488	TUB		g5	3 opts mask=0x00000007
-0x0489	TMM		g5	3 opts mask=0x00000007
-0x048A	TZG		g5	2 opts mask=0x00000003
-0x048B	TZE		g5	2 opts mask=0x00000003
-0x048C	TUD	TotalUsedHoursDisplayToggle	g5	2 opts mask=0x00000003
-0x048D	ZLT		g5	2 opts mask=0x00000003
-0x048E	TAT		g5	2 opts mask=0x00000003
-0x048F	TRG		g5	9 opts mask=0x000001ff
-0x0490	TSS		g5	3 opts mask=0x00000001
-0x0491	TCV		g5	9 opts mask=0x000001ff
-0x0492	TOM		g5	MODE_SELECTOR; 11 opts mask=0x000007ff
-0x0493	TXC	TxLink2Connected	g5	3 opts mask=0x00000007
-0x0494	XB9	Timed-FallTimeEnable	g5	INACT; 2 opts mask=0x00000000; modes=Timed
-0x0495	XB6	Timed-RiseTimeEnable	g5	active_vids=10; 2 opts mask=0x00000000; modes=Timed
-0x0496	ZBO		g5	2 opts mask=0x00000003
-0x0497	IRU	IsReadyForUpgrade	g5	3 opts mask=0x00000007
-0x0498	UPM		g5	2 opts mask=0x00000003
-0x0499	UPK		g5	2 opts mask=0x00000003
-0x049A	UPS		g5	2 opts mask=0x00000003
-0x049B	UPT		g5	3 opts mask=0x00000007
-0x049C	UTY		g5	2 opts mask=0x00000003
-0x049D	XE7	VAuto-CycleSensitivity	g5	active_vids=7; 7 opts mask=0x00000000; modes=VAuto
-0x049E	XE6	VAuto-TriggerSensitivity	g5	active_vids=7; 7 opts mask=0x00000000; modes=VAuto
-0x049F	WUP		g5	2 opts mask=0x00000003
+array	tag	cdx_name	var_id_14_8_3_0	var_id_15_8_4_0	notes
+g1	AAS		0x0000	0x0000	INACT; value=40
+g1	ABS		0x0001	0x0001	INACT; value=64
+g1	ADU			0x0002	value=192
+g1	AEU			0x0003	value=192
+g1	AHD		0x0002	0x0004	INACT; value=64
+g1	ASN		0x0003	0x0005	INACT; value=64
+g1	AUI		0x0004	0x0006	INACT; value=64
+g1	SP3		0x0005	0x0007	value=25
+g1	AVU		0x0006	0x0008	value=150
+g1	IAR			0x0009	value=192
+g1	BTV	BluetoothApplicationIdentifier	0x0007	0x000A	value=32
+g1	BBV	BluetoothBootloaderIdentifier	0x0008	0x000B	value=32
+g1	BA0		0x0009	0x000C	value=13
+g1	BP0		0x000A	0x000D	value=65
+g1	BFI		0x000B	0x000E	value=13
+g1	BMF		0x000C	0x000F	value=13
+g1	BTN	BluetoothName	0x000D	0x0010	value=20
+g1	BPK		0x000E	0x0011	value=4
+g1	BPM	BluetoothProductModel	0x000F	0x0012	value=50
+g1	BPP	BluetoothProductProvider	0x0010	0x0013	value=50
+g1	BID	BootloaderIdentifier	0x0011	0x0014	value=64
+g1	CMD	CamlData	0x0012	0x0015	value=2000
+g1	CDP	CellularDataPreamble	0x0013	0x0016	value=64
+g1	CCD	SIMID	0x0014	0x0017	value=20
+g1	CIE	IMEI	0x0015	0x0018	value=15
+g1	CIM	IMSI	0x0016	0x0019	value=15
+g1	CPM	CellularProductModel	0x0017	0x001A	value=50
+g1	CPP	CellularProductProvider	0x0018	0x001B	value=50
+g1	CSI	CellularApplicationIdentifier	0x0019	0x001C	value=100
+g1	CLA	AccessPointName	0x001A	0x001D	value=128
+g1	CLU	ServiceHost	0x001B	0x001E	value=192
+g1	PUR		0x001C	0x001F	value=192
+g1	CID	ConfigurationIdentifier	0x001D	0x0020	value=64
+g1	CP3		0x001E	0x0021	value=25
+g1	CP1		0x001F	0x0022	value=12
+g1	DAT		0x0020	0x0023	value=32
+g1	DVT		0x0021	0x0024	value=32
+g1	DEJ		0x0022	0x0025	value=32
+g1	DEH		0x0023	0x0026	value=32
+g1	IAT			0x0027	value=32
+g1	DCE		0x0024	0x0028	value=32
+g1	DTC		0x0025	0x0029	value=32
+g1	DPD		0x0026	0x002A	value=32
+g1	DAA			0x002B	value=32
+g1	DEF		0x0027	0x002C	value=32
+g1	DEL		0x0028	0x002D	value=32
+g1	DER		0x0029	0x002E	value=32
+g1	DOT		0x002A	0x002F	value=32
+g1	DTT		0x002B	0x0030	value=32
+g1	URI		0x002C	0x0031	value=192
+g1	DGE		0x002D	0x0032	value=32
+g1	IPT		0x002E	0x0033	value=32
+g1	MLT		0x002F	0x0034	value=32
+g1	DMT		0x0030	0x0035	value=32
+g1	MPT		0x0031	0x0036	value=32
+g1	DMF		0x0032	0x0037	value=32
+g1	DRT		0x0033	0x0038	value=32
+g1	DCT		0x0034	0x0039	value=32
+g1	DSF		0x0035	0x003A	value=32
+g1	DDT		0x0036	0x003B	value=32
+g1	SVE		0x0037	0x003C	value=32
+g1	DNF		0x0038	0x003D	value=32
+g1	DNS		0x0039	0x003E	value=32
+g1	DHT		0x003A	0x003F	value=32
+g1	DHE		0x003B	0x0040	value=32
+g1	DEV		0x003C	0x0041	value=32
+g1	DET		0x003D	0x0042	value=32
+g1	DTF		0x003E	0x0043	value=32
+g1	DPT		0x003F	0x0044	value=32
+g1	DUT		0x0040	0x0045	value=32
+g1	DMV	DataModelVersionIdentifier	0x0041	0x0046	value=32
+g1	UDI	FdaUniqueDeviceIdentifier	0x0042	0x0047	value=86
+g1	FGT		0x0043	0x0048	value=16
+g1	FSN		0x0044	0x0049	value=16
+g1	AAG		0x0045	0x004A	value=30
+g1	GCD		0x0046	0x004B	value=29
+g1	ANA		0x0047	0x004C	value=1
+g1	GSD		0x0048	0x004D	value=32
+g1	HPI		0x0049	0x004E	value=32
+g1	HSN		0x004A	0x004F	value=18
+g1	HVI		0x004B	0x0050	value=16
+g1	IUR		0x004C	0x0051	value=192
+g1	LAB		0x004D	0x0052	value=64
+g1	LAI		0x004E	0x0053	value=64
+g1	LFB		0x004F	0x0054	value=64
+g1	LFS		0x0050	0x0055	value=64
+g1	LCT		0x0051	0x0056	value=128
+g1	LUR		0x0052	0x0057	value=192
+g1	MD0		0x0053	0x0058	value=1368
+g1	MD1		0x0054	0x0059	value=1368
+g1	MSM		0x0055	0x005A	value=30
+g1	MUR		0x0056	0x005B	value=192
+g1	QCD		0x0057	0x005C	value=8
+g1	QCO		0x0058	0x005D	value=16
+g1	QCV		0x0059	0x005E	value=8
+g1	OAA		0x005A	0x005F	value=13
+g1	OAN		0x005B	0x0060	value=30
+g1	ON0		0x005C	0x0061	value=30
+g1	ON1		0x005D	0x0062	value=30
+g1	ON2		0x005E	0x0063	value=30
+g1	ON3		0x005F	0x0064	value=30
+g1	ON4		0x0060	0x0065	value=30
+g1	OSN		0x0061	0x0066	value=30
+g1	PCB	HardwareIdentifier	0x0062	0x0067	value=50
+g1	MAD	ApplicationData	0x0063	0x0068	value=1024
+g1	PCD	ProductCode	0x0064	0x0069	value=10
+g1	PGI	ProductGeographicIdentifier	0x0065	0x006A	value=60
+g1	PNA	ProductName	0x0066	0x006B	value=32
+g1	PVI	ProfileVariantIdentifier	0x0067	0x006C	value=36
+g1	RUR		0x0068	0x006D	value=192
+g1	SRN	SerialNumber	0x0069	0x006E	value=18
+g1	SVC		0x006A	0x006F	value=3
+g1	SID	ApplicationIdentifier	0x006B	0x0070	value=64
+g1	SP1		0x006C	0x0071	value=12
+g1	GUD	UniversalIdentifier	0x006D	0x0072	value=36
+g1	ZRG		0x006E	0x0073	value=16
+g2	ABH	AmbientHumidity-Estimated	0x006F	0x0074	0..100 step 0.1
+g2	FLW	RawFlow	0x0070	0x0075	-30000..30000 step 1
+g2	PRS	AdcPressure	0x0071	0x0076	0..4095 step 1
+g2	ATH			0x0077	0..4095 step 1
+g2	ATL			0x0078	0..4095 step 1
+g2	ATM			0x0079	0..4095 step 1
+g2	HMA	HerAuto-MaxPressure	0x0072	0x007A	active_vids=3; 4..20 step 0.2; modes=HerAuto
+g2	HMI	HerAuto-MinPressure	0x0073	0x007B	active_vids=3; 4..20 step 0.2; modes=HerAuto
+g2	HSP	HerAuto-StartPressure	0x0074	0x007C	active_vids=3; 4..20 step 0.2
+g2	AHI	Summary-ApneaHypopneaIndex	0x0075	0x007D	0..240 step 0.1
+g2	AHC		0x0076	0x007E	0..4095 step 1
+g2	ASC	Summary-ApneaIndex	0x0077	0x007F	0..240 step 0.1
+g2	TAE			0x0080	-2147483647..2147483647 step 1
+g2	AAU		0x0078	0x0081	0..2147483647 step 1
+g2	ADI			0x0082	1..64 step 1
+g2	AEI			0x0083	1..64 step 1
+g2	AIU		0x0079	0x0084	0..2147483647 step 1
+g2	ACV		0x007A	0x0085	0..2147483647 step 1
+g2	ESR		0x007B	0x0086	0..2147483647 step 1
+g2	AVC		0x007C	0x0087	0..2147483647 step 1
+g2	ATF		0x007D	0x0088	0..2147483647 step 1
+g2	LPR		0x007E	0x0089	-10..45 step 0.02
+g2	LPF		0x007F	0x008A	-10..45 step 0.02
+g2	AV9		0x0080	0x008B	INACT; 0..30 step 0.125
+g2	AVA		0x0081	0x008C	INACT; 0..30 step 0.125
+g2	AVM		0x0082	0x008D	INACT; 0..30 step 0.125
+g2	AHR	RawAmbHumidity	0x0083	0x008E	0..65535 step 1
+g2	ALS	AmbientLight	0x0084	0x008F	0..120000 step 1
+g2	APS			0x0090	-2147483647..2147483647 step 1
+g2	ATR	RawAmbTemperature	0x0085	0x0091	0..65535 step 1
+g2	AVS		0x0086	0x0092	0..2147483647 step 1
+g2	APC		0x0087	0x0093	0..3000 step 1
+g2	ATC		0x0088	0x0094	0..3000 step 1
+g2	DUR		0x0089	0x0095	0..120 step 1
+g2	APP		0x008A	0x0096	0..20 step 0.2
+g2	AP5	ApneaTreatmentPressure-50hz	0x008B	0x0097	0..20 step 0.2
+g2	APV	ApneaAlarmThreshold	0x008C	0x0098	INACT; 10..60 step 1
+g2	AID		0x008D	0x0099	0..2147483647 step 1
+g2	ASP		0x008E	0x009A	-10..45 step 0.2
+g2	APT		0x008F	0x009B	0..2147483647 step 1
+g2	XD1	ASVAuto-MaxExpiratoryPressure	0x0090	0x009C	active_vids=12; 4..15 step 0.2; modes=ASVAuto
+g2	XD3	ASVAuto-MaxPressureSupport	0x0091	0x009D	active_vids=12; 5..20 step 0.2; modes=ASVAuto
+g2	XD2	ASVAuto-MinExpiratoryPressure	0x0092	0x009E	active_vids=12; 4..15 step 0.2; modes=ASVAuto
+g2	XD4	ASVAuto-MinPressureSupport	0x0093	0x009F	active_vids=12; 0..6 step 0.2; modes=ASVAuto
+g2	XD0	ASVAuto-StartPressure	0x0094	0x00A0	active_vids=12; 4..15 step 0.2
+g2	XC2	ASV-MaxPressureSupport	0x0095	0x00A1	active_vids=12; 5..20 step 0.2; modes=ASV
+g2	XC3	ASV-MinPressureSupport	0x0096	0x00A2	active_vids=12; 0..6 step 0.2; modes=ASV
+g2	XC1	ASV-TargetExpiratoryPressure	0x0097	0x00A3	active_vids=12; 4..15 step 0.2; modes=ASV
+g2	XC0	ASV-StartPressure	0x0098	0x00A4	active_vids=12; 4..15 step 0.2
+g2	IAI			0x00A5	1..64 step 1
+g2	NSE		0x0099	0x00A6	0..4095 step 1
+g2	ATP		0x009A	0x00A7	4..25 step 0.2
+g2	AT5	AutoSetTreatmentPressure-50hz	0x009B	0x00A8	4..25 step 0.2
+g2	LKP		0x009C	0x00A9	0..2 step 0.02
+g2	AAH		0x009D	0x00AA	0..100 step 0.1
+g2	AUM	Summary-AmbientHumidity-50	0x009E	0x00AB	0..100 step 0.1
+g2	AAP			0x00AC	INACT; 700..1100 step 1
+g2	ABP	HeatedTubePWMMinuteAverage	0x009F	0x00AD	0..100 step 0.1
+g2	AHM	Summary-HeatedTubePower-50	0x00A0	0x00AE	0..100 step 0.1
+g2	HTA	HeatedTubeOutletTemperatureMinuteAverage	0x00A1	0x00AF	0..40 step 0.1
+g2	HTE	Summary-HeatedTubeTemperature-50	0x00A2	0x00B0	0..40 step 0.1
+g2	HHT	HumidifierPlateTemperatureMinuteAverage	0x00A3	0x00B1	0..100 step 0.1
+g2	HHE	Summary-HumidifierTemperature-50	0x00A4	0x00B2	0..100 step 0.1
+g2	AHP	HumidifierPWMMinuteAverage	0x00A5	0x00B3	0..100 step 0.1
+g2	APM	Summary-HumidifierPower-50	0x00A6	0x00B4	0..100 step 0.1
+g2	AIP	InspiratoryPressure-OneMinute	0x00A7	0x00B5	0..50 step 0.2
+g2	AFL		0x00A8	0x00B6	-4..4 step 0.01
+g2	BFM	Summary-BlowerFlow-50	0x00A9	0x00B7	-4..4 step 0.01
+g2	BPA	BlowerPressure-OneMinute	0x00AA	0x00B8	-10..45 step 0.02
+g2	AEP		0x00AB	0x00B9	0..30 step 0.2
+g2	HRV		0x00AC	0x00BA	0..300 step 1
+g2	AIE		0x00AD	0x00BB	0..400 step 1
+g2	MAP	MaskPressure-OneMinute	0x00AE	0x00BC	0..40 step 0.2
+g2	RFA		0x00AF	0x00BD	-2..3 step 0.01
+g2	RFM	Summary-RespiratoryFlow-5	0x00B0	0x00BE	-2..3 step 0.01
+g2	R95	Summary-RespiratoryFlow-95	0x00B1	0x00BF	-2..3 step 0.01
+g2	SAV		0x00B2	0x00C0	0..100 step 1
+g2	ATI		0x00B3	0x00C1	0..4 step 1
+g2	AIC		0x00B4	0x00C2	0..4095 step 1
+g2	EX5		0x00B5	0x00C3	0..10 step 1
+g2	IN5		0x00B6	0x00C4	0..10 step 1; modes=Spont,ST,Timed,VAuto,iVAPS,PAC
+g2	BIP		0x00B7	0x00C5	0..50 step 0.2
+g2	BML		0x00B8	0x00C6	0..2 step 0.02
+g2	BMR		0x00B9	0x00C7	0..40 step 0.2
+g2	BRF		0x00BA	0x00C8	-2..3 step 0.01
+g2	MKI	InspiratoryPressure-TwoSecond	0x00BB	0x00C9	0..50 step 0.2
+g2	BFT	BlowerFlow-100hz	0x00BC	0x00CA	-4..4 step 0.01
+g2	BFL		0x00BD	0x00CB	-4..4 step 0.01
+g2	HFL		0x00BE	0x00CC	-4..4 step 0.01
+g2	BFF		0x00BF	0x00CD	-4..4 step 0.01
+g2	BPT	BlowerPressure-100hz	0x00C0	0x00CE	-10..45 step 0.02
+g2	BPR		0x00C1	0x00CF	-10..45 step 0.02
+g2	HPR		0x00C2	0x00D0	-10..45 step 0.02
+g2	BP5	Summary-BlowerPressure-5	0x00C3	0x00D1	-10..45 step 0.02
+g2	BP9	Summary-BlowerPressure-95	0x00C4	0x00D2	-10..45 step 0.02
+g2	BPF		0x00C5	0x00D3	-10..45 step 0.02
+g2	BPS	BlowerPressureMonitoring	0x00C6	0x00D4	-10..45 step 0.02
+g2	BFC		0x00C7	0x00D5	0..2147483647 step 1
+g2	BCV		0x00C8	0x00D6	0..1 step 1
+g2	BLC		0x00C9	0x00D7	0..2147483647 step 1
+g2	BRC		0x00CA	0x00D8	0..2147483647 step 1
+g2	BXC		0x00CB	0x00D9	0..2147483647 step 1
+g2	BTC		0x00CC	0x00DA	0..2147483647 step 1
+g2	BUC		0x00CD	0x00DB	0..5 step 1
+g2	BCD		0x00CE	0x00DC	1..65535 step 1
+g2	BLE		0x00CF	0x00DD	0..65535 step 1
+g2	MV5		0x00D0	0x00DE	0..30 step 0.125; modes=Spont,ST,Timed,VAuto,ASV,ASVAuto,iVAPS,PAC
+g2	MVH	MinuteVentilation-50hz	0x00D1	0x00DF	0..30 step 0.125
+g2	MV6	MinuteVentilation	0x00D2	0x00E0	0..30 step 0.125
+g2	MV2		0x00D3	0x00E1	0..30 step 0.125
+g2	CBP		0x00D4	0x00E2	0..1 step 1
+g2	BCP	PeriodicBrokerContactPeriod	0x00D5	0x00E3	60..31536000 step 1
+g2	CSC	Summary-ObstructiveApneaIndex	0x00D6	0x00E4	active_vids=3,7; 0..240 step 0.1
+g2	BGT		0x00D7	0x00E5	0..2147483647 step 1
+g2	CPR	CalibrationPressure	0x00D8	0x00E6	0..45 step 0.2
+g2	CSO		0x00D9	0x00E7	-2147483647..2147483647 step 1
+g2	ZIS		0x00DA	0x00E8	0..2147483647 step 1
+g2	SDU		0x00DB	0x00E9	0..2147483647 step 1
+g2	ZCT		0x00DC	0x00EA	0..2147483647 step 1
+g2	PTS		0x00DD	0x00EB	0..2147483647 step 1
+g2	CAC		0x00DE	0x00EC	0..4095 step 1
+g2	AVF		0x00DF	0x00ED	0..30 step 0.125
+g2	PCS		0x00E0	0x00EE	0..3000 step 1
+g2	TCS		0x00E1	0x00EF	0..3000 step 1
+g2	DDD	DownloadBytesDelta	0x00E2	0x00F0	0..2147483647 step 1
+g2	DTD		0x00E3	0x00F1	0..2147483647 step 1
+g2	DTU		0x00E4	0x00F2	0..2147483647 step 1
+g2	DUD	UploadBytesDelta	0x00E5	0x00F3	0..2147483647 step 1
+g2	QS2		0x00E6	0x00F4	0..7 step 1
+g2	QS3		0x00E7	0x00F5	-20..0 step 1
+g2	QS4		0x00E8	0x00F6	-20..0 step 1
+g2	QCN		0x00E9	0x00F7	-140..0 step 1
+g2	CDC		0x00EA	0x00F8	0..44 step 1
+g2	CCF		0x00EB	0x00F9	0..2147483647 step 1
+g2	PC0		0x00EC	0x00FA	0..1000 step 1
+g2	PC1		0x00ED	0x00FB	0..1000 step 1
+g2	PC2		0x00EE	0x00FC	0..1000 step 1
+g2	PC3		0x00EF	0x00FD	0..1000 step 1
+g2	PC4		0x00F0	0x00FE	0..1000 step 1
+g2	CLP	ServicePort	0x00F1	0x00FF	1..65535 step 1
+g2	L19		0x00F2	0x0100	0..100 step 1
+g2	CED	LastEraseDataDateTime	0x00F3	0x0101	0..2147483647 step 1
+g2	CAF		0x00F4	0x0102	0..24836 step 1
+g2	CCC		0x00F5	0x0103	0..2147483647 step 1
+g2	PUI		0x00F6	0x0104	1..64 step 1
+g2	IPC	Cpap-SetPressure	0x00F7	0x0105	4..20 step 0.2; modes=CPAP
+g2	CSP	CpapSetPressure	0x00F8	0x0106	0..40 step 0.2
+g2	ZPR		0x00F9	0x0107	20..10000 step 20
+g2	CP2		0x00FA	0x0108	0..2147483647 step 1
+g2	CRW		0x00FB	0x0109	0..2147483647 step 1
+g2	CSD		0x00FC	0x010A	0..1440 step 1
+g2	CSE		0x00FD	0x010B	0..2147483647 step 1
+g2	CSS		0x00FE	0x010C	0..2147483647 step 1
+g2	DSS	DataCollectAndSend	0x00FF	0x010D	0..2147483647 step 1
+g2	ADS	DataCollectAndSendAsync	0x0100	0x010E	0..2147483647 step 1
+g2	DBP		0x0101	0x010F	1..64 step 1
+g2	EID		0x0102	0x0110	1..64 step 1
+g2	PRI		0x0103	0x0111	1..64 step 1
+g2	SPR		0x0104	0x0112	1..64 step 1
+g2	ZS2		0x0105	0x0113	0..2147483647 step 1
+g2	DSM		0x0106	0x0114	-2147483647..2147483647 step 1
+g2	DSD		0x0107	0x0115	0..24836 step 1
+g2	DST		0x0108	0x0116	0..2147483647 step 1
+g2	DDC		0x0109	0x0117	0..2147483647 step 1
+g2	D0A		0x010A	0x0118	0..24836 step 1
+g2	DDU		0x010B	0x0119	0..2147483647 step 1
+g2	D00		0x010C	0x011A	-2147483647..2147483647 step 1
+g2	D01		0x010D	0x011B	-2147483647..2147483647 step 1
+g2	D02		0x010E	0x011C	-2147483647..2147483647 step 1
+g2	D03		0x010F	0x011D	-2147483647..2147483647 step 1
+g2	D04		0x0110	0x011E	-2147483647..2147483647 step 1
+g2	D05		0x0111	0x011F	-2147483647..2147483647 step 1
+g2	D06		0x0112	0x0120	-2147483647..2147483647 step 1
+g2	D07		0x0113	0x0121	-2147483647..2147483647 step 1
+g2	D08		0x0114	0x0122	-2147483647..2147483647 step 1
+g2	D09		0x0115	0x0123	-2147483647..2147483647 step 1
+g2	ZS1		0x0116	0x0124	0..2147483647 step 1
+g2	DRD		0x0117	0x0125	0..2147483647 step 1
+g2	DIT		0x0118	0x0126	0..2147483647 step 1
+g2	EAI		0x0119	0x0127	1..2147483647 step 1
+g2	EIC	CepstrumAverageCount	0x011A	0x0128	1..2147483647 step 1
+g2	ESC		0x011B	0x0129	-2147483647..2147483647 step 1
+g2	EST	CepstrumStartDelay	0x011C	0x012A	0..2147483647 step 1
+g2	MKE	ExpiratoryPressure-TwoSecond	0x011D	0x012B	0..30 step 0.2
+g2	ZTI		0x011E	0x012C	0..2147483647 step 1
+g2	EMS	EraseMediaSignature	0x011F	0x012D	0..2147483647 step 1
+g2	ZLV		0x0120	0x012E	0..2147483647 step 1
+g2	RDP		0x0121	0x012F	0..2147483647 step 1
+g2	EXP	ExpiratoryPressure	0x0122	0x0130	0..30 step 0.2
+g2	EP5	ExpiratoryPressure-50hz	0x0123	0x0131	0..30 step 0.2
+g2	ESP	ExpirationSetPressure	0x0124	0x0132	0..40 step 0.2
+g2	EXT	ExpiratoryDuration	0x0125	0x0133	active_vids=7,10; 0..120 step 1
+g2	EPR	EprPressure	0x0126	0x0134	active_vids=3,7; 1..3 step 1; modes=CPAP,AutoSet,HerAuto
+g2	PE9	Summary-ExpiratoryPressure-95	0x0127	0x0135	0..30 step 0.2
+g2	PEA	Summary-ExpiratoryPressure-100	0x0128	0x0136	0..30 step 0.2
+g2	PEM	Summary-ExpiratoryPressure-50	0x0129	0x0137	0..30 step 0.2
+g2	ZAE		0x012A	0x0138	0..9999 step 1
+g2	TLU		0x012B	0x0139	0..2147483647 step 1
+g2	LKF	Leak	0x012C	0x013A	0..2 step 0.02
+g2	LK5	Leak-50hz	0x012D	0x013B	0..2 step 0.02
+g2	ZLF		0x012E	0x013C	0..120 step 0.1; modes=Spont,ST,Timed,VAuto,ASV,ASVAuto,iVAPS,PAC
+g2	MKF	MaskPressure-TwoSecond	0x012F	0x013D	0..40 step 0.2
+g2	FBD		0x0130	0x013E	0..24836 step 1
+g2	FES		0x0131	0x013F	-2147483647..2147483647 step 1
+g2	FTS		0x0132	0x0140	0..24836 step 1
+g2	FE0		0x0133	0x0141	0..2147483647 step 1
+g2	FM0		0x0134	0x0142	0..2147483647 step 1
+g2	FW0		0x0135	0x0143	0..2147483647 step 1
+g2	FE1		0x0136	0x0144	0..2147483647 step 1
+g2	FM1		0x0137	0x0145	0..2147483647 step 1
+g2	FW1		0x0138	0x0146	0..2147483647 step 1
+g2	FE2		0x0139	0x0147	0..2147483647 step 1
+g2	FM2		0x013A	0x0148	0..2147483647 step 1
+g2	FWC		0x013B	0x0149	0..2147483647 step 1
+g2	FLP		0x013C	0x014A	0..20 step 0.2
+g2	FL5	FlowLimitationTreatmentPressure-50hz	0x013D	0x014B	0..20 step 0.2
+g2	FLG	FlowGain	0x013E	0x014C	0.499878..2 step 0.0002442
+g2	FLZ	FlowOffset	0x013F	0x014D	-20000..20000 step 1
+g2	FID		0x0140	0x014E	0..2147483647 step 1
+g2	FFL	FlowLimitation	0x0141	0x014F	active_vids=3,7,12; 0..1 step 1
+g2	FF5	FlowLimitation-50hz	0x0142	0x0150	0..1 step 1
+g2	APN		0x0143	0x0151	-2147483647..2147483647 step 1
+g2	GDM		0x0144	0x0152	0..2147483647 step 1
+g2	GTC		0x0145	0x0153	16..30 step 1
+g2	GTF		0x0146	0x0154	60..86 step 2
+g2	AHL		0x0147	0x0155	-2147483647..2147483647 step 1
+g2	LCL			0x0156	-2147483647..2147483647 step 1
+g2	ALM		0x0148	0x0157	-2147483647..2147483647 step 1
+g2	ZMD		0x0149	0x0158	0..255 step 1
+g2	ZMO		0x014A	0x0159	0..255 step 1
+g2	ZML		0x014B	0x015A	0..255 step 1
+g2	ZUF		0x014C	0x015B	0..2147483647 step 1
+g2	ZCL		0x014D	0x015C	0..2147483647 step 1
+g2	ZCM		0x014E	0x015D	0..2147483647 step 1
+g2	ZUD		0x014F	0x015E	0..2147483647 step 1
+g2	ZUT		0x0150	0x015F	0..2147483647 step 1
+g2	ZUR		0x0151	0x0160	0..2147483647 step 1
+g2	ZCS		0x0152	0x0161	0..2147483647 step 1
+g2	ZRD		0x0153	0x0162	0..2147483647 step 1
+g2	ZST		0x0154	0x0163	0..2147483647 step 1
+g2	ANV		0x0155	0x0164	-2147483647..2147483647 step 1
+g2	ACL			0x0165	-2147483647..2147483647 step 1
+g2	PCL			0x0166	-2147483647..2147483647 step 1
+g2	AUA		0x0156	0x0167	-2147483647..2147483647 step 1
+g2	HRT	HeartRate	0x0157	0x0168	0..300 step 1
+g2	HR9	Summary-HeartRate-95	0x0158	0x0169	0..300 step 1
+g2	HRX	Summary-HeartRate-100	0x0159	0x016A	0..300 step 1
+g2	HRM	Summary-HeartRate-50	0x015A	0x016B	0..300 step 1
+g2	HTL	HeatedTubeCurrent	0x015B	0x016C	0..3300 step 1
+g2	TPC		0x015C	0x016D	0..3750 step 1
+g2	HP2		0x015D	0x016E	0..1 step 0.01
+g2	SPT		0x016E		14.8.3.0 only; 0..2147483647 step 1
+g2	HP1		0x015E	0x016F	0..1 step 0.01
+g2	SQT		0x016F		14.8.3.0 only; 0..2147483647 step 1
+g2	HP0		0x015F	0x0170	0..1 step 0.01
+g2	HBP	HeatedTubePWM	0x0160	0x0171	0..100 step 0.1
+g2	HTT	HeatedTubeOutletTemperature	0x0161	0x0172	0..40 step 0.1
+g2	HBT		0x0162	0x0173	0..2147483647 step 1
+g2	HTU		0x0163	0x0174	16..30 step 1
+g2	HTS	HeatedTubeTemperature	0x0164	0x0175	15.6..30 step 0.1
+g2	HVL		0x0165	0x0176	-4..4 step 0.01
+g2	PZH	PressureOffset	0x0166	0x0177	0..4096 step 1
+g2	PSH	PressureGain	0x0167	0x0178	0.00976562..1.000977 step 0.00024414
+g2	RRR		0x0168	0x0179	0..90 step 5; modes=Spont,ST,Timed,VAuto,ASV,ASVAuto,iVAPS,PAC
+g2	RR5	RespiratoryRate-50hz	0x0169	0x017A	0..90 step 5
+g2	RR6	RespiratoryRate	0x016A	0x017B	0..90 step 5
+g2	RR2		0x016B	0x017C	0..90 step 5
+g2	HSC	Summary-HypopneaIndex	0x016C	0x017D	0..240 step 0.1
+g2	HDR		0x016D	0x017E	-8..50 step 1
+g2	AGT		0x0170	0x017F	0..2147483647 step 1
+g2	HAH		0x0171	0x0180	0..1 step 0.01
+g2	HAT	AmbientTemperature-Estimated	0x0172	0x0181	0..100 step 1
+g2	HPT	HumidifierPlateTemperature	0x0173	0x0182	0..100 step 0.1
+g2	HU2		0x0174	0x0183	0..1 step 0.01
+g2	HU1		0x0175	0x0184	0..1 step 0.01
+g2	HU0		0x0176	0x0185	0..1 step 0.01
+g2	HUP	HumidifierPWM	0x0177	0x0186	0..100 step 0.1
+g2	HME		0x0178	0x0187	1..8 step 1
+g2	HMS	HumidifierLevel	0x0179	0x0188	1..8 step 1
+g2	HYC		0x017A	0x0189	0..4095 step 1
+g2	ILS		0x017B	0x018A	4..20 step 1
+g2	IPS		0x017C	0x018B	0..2147483647 step 1
+g2	INP	InspiratoryPressure	0x017D	0x018C	0..50 step 0.2
+g2	INH	InspiratoryPressure-50hz	0x017E	0x018D	0..50 step 0.2
+g2	ISP	InspirationSetPressure	0x017F	0x018E	0..40 step 0.2
+g2	INT	InspiratoryDuration	0x0180	0x018F	active_vids=7,10; 0..10 step 1
+g2	IUI		0x0181	0x0190	1..64 step 1
+g2	IS9	Summary-InspiratoryDuration-95	0x0182	0x0191	active_vids=7,10; 0..10 step 1
+g2	ISA	Summary-InspiratoryDuration-100	0x0183	0x0192	active_vids=7,10; 0..10 step 1
+g2	ISM	Summary-InspiratoryDuration-50	0x0184	0x0193	active_vids=7,10; 0..10 step 1
+g2	ZDS		0x0185	0x0194	0..4 step 0.01
+g2	EPI	iVAPS-TargetExpiratoryPressure	0x0186	0x0195	INACT; 2..25 step 0.2
+g2	PHT	iVAPS-PatientHeight	0x0187	0x0196	INACT; -2147483647..2147483647 step 5
+g2	PHI		0x0188	0x0197	INACT; iVAPS-PatientHeight inches sibling; 44..100 step 2
+g2	ZIC	LearnTargetsSetDuration	0x0189	0x0198	INACT; 5..20 step 5
+g2	ZIE	LearnTargetsExpiratoryPressure	0x018A	0x0199	INACT; 2..25 step 0.2
+g2	ZLP	LearnTargetsPressureSupport	0x018B	0x019A	INACT; 0..28 step 0.2
+g2	IMX	iVAPS-MaxExpiratoryPressure	0x018C	0x019B	INACT; 2..25 step 0.2
+g2	WPA	iVAPS-MaxPressureSupport	0x018D	0x019C	INACT; 4..30 step 0.2; modes=iVAPS
+g2	ZLL		0x018E	0x019D	0..8 step 0.2
+g2	IMN	iVAPS-MinExpiratoryPressure	0x018F	0x019E	INACT; 2..25 step 0.2
+g2	WPM	iVAPS-MinPressureSupport	0x0190	0x019F	INACT; 4..30 step 0.2; modes=iVAPS
+g2	ZMV		0x0191	0x01A0	0..230 step 0.1; modes=iVAPS
+g2	IRL	iVAPS-FallTime	0x0192	0x01A1	INACT; 0.1..0.7 step 0.1; modes=iVAPS
+g2	IEX		0x0193	0x01A2	0..200 step 1; modes=iVAPS
+g2	IEN		0x0194	0x01A3	0..200 step 1; modes=iVAPS
+g2	IRT	iVAPS-RiseTime	0x0195	0x01A4	INACT; 150..900 step 0.05; modes=iVAPS
+g2	IVX	iVAPS-SetMaxInspiratoryTime	0x0196	0x01A5	INACT; 0.3..4 step 0.1; modes=iVAPS
+g2	IVN	iVAPS-SetMinInspiratoryTime	0x0197	0x01A6	INACT; 0.1..4 step 0.1; modes=iVAPS
+g2	IVS	iVAPS-StartPressure	0x0198	0x01A7	INACT; 2..25 step 0.2
+g2	IBR	iVAPS-TargetRespiratoryRate	0x0199	0x01A8	INACT; 0..50 step 1; modes=iVAPS
+g2	ITV	iVAPS-TargetAlveolarVentilation	0x019A	0x01A9	INACT; 0..30 step 0.1; modes=iVAPS
+g2	ZVK		0x019B	0x01AA	0..230000 step 0.1; modes=iVAPS
+g2	ZTV		0x019C	0x01AB	0..230000 step 1; modes=iVAPS
+g2	PI9	Summary-InspiratoryPressure-95	0x019D	0x01AC	0..50 step 0.2
+g2	IER		0x019E	0x01AD	0..400 step 1; modes=Spont,ST,Timed,VAuto,iVAPS,PAC
+g2	IET	IeRatio	0x019F	0x01AE	active_vids=7,10; 0..400 step 1
+g2	IE2		0x01A0	0x01AF	active_vids=7,10; 0..400 step 1
+g2	PIA	Summary-InspiratoryPressure-100	0x01A1	0x01B0	0..50 step 0.2
+g2	PIM	Summary-InspiratoryPressure-50	0x01A2	0x01B1	0..50 step 0.2
+g2	IE9	Summary-IeRatio-95	0x01A3	0x01B2	active_vids=7,10; 0..400 step 1
+g2	IEA	Summary-IeRatio-100	0x01A4	0x01B3	active_vids=7,10; 0..400 step 1
+g2	IEM	Summary-IeRatio-50	0x01A5	0x01B4	active_vids=7,10; 0..400 step 1
+g2	KPT	ButtonRegMap	0x01A6	0x01B5	0..255 step 1
+g2	PIN			0x01B6	0..240 step 0.1
+g2	LBT		0x01A7	0x01B7	0..2147483647 step 1
+g2	LDT	LastDataPostDateTime	0x01A8	0x01B8	-2147483647..2147483647 step 1
+g2	ZFE		0x01A9	0x01B9	0..24836 step 1
+g2	PLL			0x01BA	0..3 step 0.02
+g2	LMS	LastMachineServiceDateTime	0x01AA	0x01BB	0..2147483647 step 1
+g2	OUD			0x01BC	0..1440 step 1
+g2	LI9		0x01AB	0x01BD	0..50 step 0.2
+g2	LPD		0x01AC	0x01BE	0..1440 step 1
+g2	DSC		0x01AD	0x01BF	0..24836 step 1
+g2	LK7	Summary-Leak-75	0x01AE	0x01C0	0..2 step 0.02
+g2	LK9	Summary-Leak-95	0x01AF	0x01C1	0..2 step 0.02
+g2	LUI		0x01B0	0x01C2	1..64 step 1
+g2	LMX	Summary-Leak-100	0x01B1	0x01C3	0..2 step 0.02
+g2	LKM	Summary-Leak-50	0x01B2	0x01C4	0..2 step 0.02
+g2	ZLR		0x01B3	0x01C5	0..51 step 1
+g2	ZLA		0x01B4	0x01C6	0..31 step 0.1
+g2	ZIT		0x01B5	0x01C7	0..1200 step 1
+g2	ZS3		0x01B6	0x01C8	0..2147483647 step 1
+g2				0x01C9	0..2147483647 step 1
+g2				0x01CA	0..315360000 step 1
+g2				0x01CB	0..315360000 step 1
+g2				0x01CC	0..315360000 step 1
+g2	LHM		0x01BB	0x01CD	0..315360000 step 1
+g2	LMA		0x01BC	0x01CE	0..10 step 1
+g2	LSD		0x01CE		14.8.3.0 only; 0..1440 step 1
+g2	LMT	LowMinuteVentAlarmThreshold	0x01BD	0x01CF	INACT; 1..10 step 0.5
+g2	LAH		0x01BE	0x01D0	0..240 step 0.1
+g2	LAS		0x01BF	0x01D1	0..240 step 0.1
+g2	LVA		0x01C0	0x01D2	0..30 step 0.125
+g2	LCI		0x01C1	0x01D3	0..240 step 0.1
+g2	LD4		0x01C2	0x01D4	0..365 step 1
+g2	LDU		0x01C3	0x01D5	0..365 step 1
+g2	LPE		0x01C4	0x01D6	0..30 step 0.2
+g2	LIT		0x01C5	0x01D7	0..10 step 1
+g2	LPI		0x01C6	0x01D8	0..50 step 0.2
+g2	LIE		0x01C7	0x01D9	0..400 step 1
+g2	LLK		0x01C8	0x01DA	0..2 step 0.02
+g2	LMV		0x01C9	0x01DB	0..30 step 0.125
+g2	LOS		0x01CA	0x01DC	0..240 step 0.1
+g2	LAU			0x01DD	0..1440 step 1
+g2	LSU			0x01DE	0..525600 step 1
+g2	LRR		0x01CB	0x01DF	0..90 step 1
+g2	LCR		0x01CC	0x01E0	0..100 step 1
+g2	LTR		0x01CD	0x01E1	0..100 step 1
+g2	LTM		0x01CF	0x01E2	0..30 step 0.125
+g2	LTD		0x01D0	0x01E3	0..365 step 1
+g2	LTV		0x01D1	0x01E4	0..4 step 1
+g2	SMA		0x01D2	0x01E5	0..100 step 1
+g2	MFL		0x01D3	0x01E6	-4..4 step 0.01
+g2	MKP	MaskPressure	0x01D4	0x01E7	0..40 step 0.2
+g2	PMA	Summary-MeanMaskPressure-100	0x01D5	0x01E8	0..40 step 0.2
+g2	PM9	Summary-MeanMaskPressure-95	0x01D6	0x01E9	0..40 step 0.2
+g2	MUI		0x01D7	0x01EA	1..64 step 1
+g2	MSP	Summary-MeanMaskPressure-50	0x01D8	0x01EB	0..40 step 0.2
+g2	MK1	MaskPressure-100hz	0x01D9	0x01EC	0..40 step 0.2
+g2	MAL		0x01DA	0x01ED	-2147483647..2147483647 step 1
+g2	MCP		0x01DB	0x01EE	25..30 step 0.2
+g2	IVP		0x01DC	0x01EF	20..20 step 0.2
+g2	ZPU		0x01DD	0x01F0	0..100 step 1
+g2	MPA	AutoSet-MaxPressure	0x01DE	0x01F1	active_vids=3; 4..20 step 0.2; modes=AutoSet
+g2	MRD	MaxRampDownTime	0x01DF	0x01F2	INACT; -2147483647..2147483647 step 5
+g2	MRT	MaxRampTime	0x01E0	0x01F3	INACT; 5..45 step 5
+g2	XMP		0x01E1	0x01F4	4..30 step 1
+g2	MTK		0x01E2	0x01F5	-2147483647..2147483647 step 1
+g2	MCA		0x01E3	0x01F6	0..2147483647 step 1
+g2	MIT		0x01E4	0x01F7	0..2147483647 step 1
+g2	A1M		0x01E5	0x01F8	INACT; 0..30 step 0.125
+g2	MIS		0x01E6	0x01F9	active_vids=7,10; 0..10 step 1
+g2	MVT		0x01E7	0x01FA	0..30 step 0.125
+g2	MTT		0x01E8	0x01FB	0..30 step 0.125
+g2	AAV	AlveolarMinuteVentilation	0x01E9	0x01FC	INACT; 0..30 step 0.125; modes=iVAPS
+g2	A2S		0x01EA	0x01FD	INACT; 0..30 step 0.125
+g2	MED		0x01EB	0x01FE	-2147483647..2147483647 step 1
+g2	MGC		0x01EC	0x01FF	-2147483647..2147483647 step 1
+g2	MGF		0x01ED	0x0200	-2147483647..2147483647 step 1
+g2	MFI		0x01EE	0x0201	-2147483647..2147483647 step 1
+g2	MRS		0x01EF	0x0202	-2147483647..2147483647 step 1
+g2	MRU		0x01F0	0x0203	-2147483647..2147483647 step 1
+g2	MSR		0x01F1	0x0204	-2147483647..2147483647 step 1
+g2	MID	PlatformIdentifier	0x01F2	0x0205	1..99 step 1
+g2	MGN		0x01F3	0x0206	-2147483647..2147483647 step 1
+g2	HPF		0x01F4	0x0207	0..2147483647 step 1
+g2	MPI	AutoSet-MinPressure	0x01F5	0x0208	active_vids=3; 4..20 step 0.2; modes=AutoSet
+g2	VT9	Summary-MinuteVentilation-95	0x01F6	0x0209	0..30 step 0.125
+g2	VTA	Summary-MinuteVentilation-100	0x01F7	0x020A	0..30 step 0.125
+g2	VTM	Summary-MinuteVentilation-50	0x01F8	0x020B	0..30 step 0.125
+g2	SMB		0x01F9	0x020C	-2147483647..2147483647 step 1
+g2	MC0		0x01FA	0x020D	-2147483647..2147483647 step 1
+g2	MC1		0x01FB	0x020E	-2147483647..2147483647 step 1
+g2	CUR	MotorCurrent	0x01FC	0x020F	-4095..4095 step 1
+g2	MMR		0x01FD	0x0210	0..2147483647 step 1
+g2	MPB		0x01FE	0x0211	0..35000 step 1
+g2	MPL		0x01FF	0x0212	0..50000 step 1
+g2	SPD	MotorSpeed	0x0200	0x0213	0..50000 step 1
+g2	ZS5		0x0201	0x0214	0..2147483647 step 1
+g2	OSC	Summary-CentralApneaIndex	0x0202	0x0215	active_vids=3,7; 0..240 step 0.1
+g2	OAC		0x0203	0x0216	0..4095 step 1
+g2	RR1		0x0204	0x0217	0..90 step 5
+g2	L17		0x0205	0x0218	0..100 step 1
+g2	OUC		0x0206	0x0219	0..2147483647 step 1
+g2	OPP	SetPressureWithoutCAD	0x0207	0x021A	0..30 step 0.2
+g2	OAT		0x0208	0x021B	-1..2147483647 step 1
+g2	PA2	PAC-TargetExpiratoryPressure	0x0209	0x021C	INACT; 2..25 step 0.2; modes=PAC
+g2	P12	PAC-FallTime	0x020A	0x021D	INACT; 0.1..0.7 step 0.1; modes=PAC
+g2	PA9		0x020B	0x021E	-2147483647..2147483647 step 1; modes=PAC
+g2	PA8		0x020C	0x021F	0..200 step 1; modes=PAC
+g2	PA1	PAC-TargetInspiratoryPressure	0x020D	0x0220	INACT; 4..25 step 0.2; modes=PAC
+g2	P10		0x020E	0x0221	0..100 step 1; modes=PAC
+g2	PA6	PAC-SetRespiratoryRate	0x020F	0x0222	INACT; 0..50 step 1; modes=PAC
+g2	PA4	PAC-RiseTime	0x0210	0x0223	INACT; 0.15..0.9 step 0.05; modes=PAC
+g2	PA0	PAC-StartPressure	0x0211	0x0224	INACT; 2..25 step 0.2; modes=PAC
+g2	PA5	PAC-SetInspiratoryTime	0x0212	0x0225	INACT; 0.3..4 step 0.1; modes=PAC
+g2	PHR	TOTAL_USED_HOURS_NAME	0x0213	0x0226	0..87600 step 1
+g2	PUD		0x0214	0x0227	0..1440 step 1
+g2	PUS		0x0215	0x0228	0..1440 step 1
+g2	TCH	PhantomTouch	0x0216	0x0229	0..2147483647 step 1
+g2	HCL	HumidifierPlateCurrent	0x0217	0x022A	0..3500 step 1
+g2	PPC		0x0218	0x022B	0..3750 step 1
+g2	PPS		0x0219	0x022C	0..60000 step 1
+g2	PVD	DataVersionIdentifier	0x021A	0x022D	1..999 step 1
+g2	PDD		0x021B	0x022E	-2147483647..2147483647 step 1
+g2	PAH		0x021C	0x022F	0..240 step 0.1
+g2	PAS		0x021D	0x0230	0..240 step 0.1
+g2	PAV		0x021E	0x0231	0..30 step 0.125
+g2	PCI		0x0220	0x0232	0..240 step 0.1
+g2	PPE		0x0221	0x0233	0..30 step 0.2
+g2	PIS		0x0222	0x0234	0..10 step 1
+g2	PPI		0x0223	0x0235	0..50 step 0.2
+g2	PIE		0x0224	0x0236	0..200 step 1
+g2	PL7		0x0225	0x0237	0..3 step 0.02
+g2	PL9		0x0226	0x0238	0..3 step 0.02
+g2	PMT		0x0227	0x0239	0..30 step 0.125
+g2	PVT		0x0228	0x023A	0..30 step 0.125
+g2	POS		0x0229	0x023B	0..240 step 0.1
+g2	PRR		0x022A	0x023C	0..90 step 1
+g2	PVC		0x022B	0x023D	0..100 step 1
+g2	PVS		0x022C	0x023E	0..100 step 1
+g2	PST		0x022D	0x023F	0..2147483647 step 1
+g2	PSS		0x022E	0x0240	0..1440 step 1
+g2	PAT		0x021F	0x0241	0..4 step 1
+g2	APX		0x022F	0x0242	-2147483647..2147483647 step 1
+g2	LP3		0x0230	0x0243	0..100 step 1
+g2	LP2		0x0231	0x0244	0..100 step 1
+g2	LP1		0x0232	0x0245	0..100 step 1
+g2	LP0		0x0233	0x0246	0..100 step 1
+g2	LP5		0x0234	0x0247	0..100 step 1
+g2	LP6		0x0235	0x0248	0..100 step 1
+g2	PSP		0x0236	0x0249	0..25 step 1; modes=Spont,ST,Timed,VAuto,ASV,ASVAuto,iVAPS,PAC
+g2	LP4		0x0237	0x024A	0..100 step 1
+g2	PID		0x0238	0x024B	0..2147483647 step 1
+g2	ZRC	RemainingRampTime	0x0239	0x024C	0..45 step 1
+g2	ZR5	RemainingRampTime-50hz	0x023A	0x024D	0..45 step 1
+g2	RDD	RemainingRampDownTime	0x023B	0x024E	INACT; 0..45 step 1
+g2	SRT	RampDownTime	0x023C	0x024F	INACT; -2147483647..2147483647 step 5
+g2	RMT	RampTime	0x023D	0x0250	5..45 step 5; modes=CPAP,AutoSet,HerAuto,Spont,ST,Timed,VAuto,ASV,ASVAuto,iVAPS,PAC
+g2	RAL	RawAmbLight	0x023E	0x0251	0..85000 step 1
+g2	LKR		0x023F	0x0252	-1..4 step 0.02
+g2	NOS		0x0240	0x0253	0..4095 step 1
+g2	RQT			0x0254	0..2147483647 step 1
+g2	RET			0x0255	0..2147483647 step 1
+g2	RCR		0x0241	0x0256	0..100 step 1
+g2	RTR		0x0242	0x0257	0..100 step 1
+g2	RID	RegionIdentifier	0x0243	0x0258	0..99 step 1
+g2	MDF		0x0244	0x0259	0..2147483647 step 1
+g2	MDM		0x0245	0x025A	0..2147483647 step 1
+g2	MDT		0x0246	0x025B	0..2147483647 step 1
+g2	MDW		0x0247	0x025C	0..2147483647 step 1
+g2	FUC		0x0248	0x025D	0..2147483647 step 1
+g2	MUC		0x0249	0x025E	0..2147483647 step 1
+g2	TUC		0x024A	0x025F	0..2147483647 step 1
+g2	WUC		0x024B	0x0260	0..2147483647 step 1
+g2	RCF		0x024C	0x0261	0..2147483647 step 1
+g2	RCM		0x024D	0x0262	0..2147483647 step 1
+g2	RCT		0x024E	0x0263	0..2147483647 step 1
+g2	RCH		0x024F	0x0264	0..2147483647 step 1
+g2	RTF	ReminderFilterDate	0x0250	0x0265	0..2147483647 step 1
+g2	RTM	ReminderMaskDate	0x0251	0x0266	0..2147483647 step 1
+g2	RTT	ReminderTubingDate	0x0252	0x0267	0..2147483647 step 1
+g2	RTH	ReminderHumidifierDate	0x0253	0x0268	0..2147483647 step 1
+g2	RLC	RequestLCDColour	0x0254	0x0269	0..16777215 step 1
+g2	RUI		0x0255	0x026A	1..64 step 1
+g2	RFL	PatientFlow	0x0256	0x026B	-2..3 step 0.01
+g2	RF5	PatientFlow-100hz	0x0257	0x026C	-2..3 step 0.01
+g2	RFU		0x0258	0x026D	-2..3 step 0.01
+g2	RR9	Summary-RespiratoryRate-95	0x0259	0x026E	0..90 step 1
+g2	RRA	Summary-RespiratoryRate-100	0x025A	0x026F	0..90 step 1
+g2	RRM	Summary-RespiratoryRate-50	0x025B	0x0270	0..90 step 1
+g2	RDC		0x025C	0x0271	0..4095 step 1
+g2	RCC	Summary-ReraIndex	0x025D	0x0272	active_vids=3; 0..240 step 0.1
+g2	ZS6		0x025E	0x0273	0..2147483647 step 1
+g2	CUD	LastTherapyUseDateTime	0x025F	0x0274	0..2147483647 step 1
+g2	SCS		0x0260	0x0275	0..1440 step 1
+g2	MHU	MachineRunMeter	0x0261	0x0276	0..315360000 step 1; modes=CPAP,AutoSet,HerAuto,Spont,ST,Timed,VAuto,ASV,ASVAuto,iVAPS,PAC
+g2	MHR	MotorRunMeter	0x0262	0x0277	0..315360000 step 1
+g2	MHS	MotorRunSinceLastServiceMeter	0x0263	0x0278	0..315360000 step 1
+g2	ZSE		0x0264	0x0279	0..2147483647 step 1
+g2	ZDD		0x0265	0x027A	0..24836 step 1
+g2	ZDT		0x0266	0x027B	0..2147483647 step 1
+g2	CPD		0x0267	0x027C	0..1440 step 1
+g2	PHM	TherapyRunMeter	0x0268	0x027D	0..315360000 step 1
+g2	SW0		0x0269	0x027E	0..2147483647 step 1
+g2	SLT		0x026A	0x027F	0..2147483647 step 1
+g2	PR2	AdcPressureMonitoring	0x026B	0x0280	0..4095 step 1
+g2	PS1	PressureMonitorGain	0x026C	0x0281	0.00976562..1.000977 step 0.00024414
+g2	PZ1	PressureMonitorOffset	0x026D	0x0282	0..4096 step 1
+g2	SMD			0x0283	0..24836 step 1
+g2	SMT			0x0284	0..2147483647 step 1
+g2	SHC	SettingsHistoryChangeCount	0x026E	0x0285	0..2147483647 step 1
+g2	SHU		0x026F	0x0286	0..2147483647 step 1
+g2	SAD		0x0270	0x0287	0..24836 step 1
+g2	SAT		0x0271	0x0288	0..2147483647 step 1
+g2	CFL	MotorFlowDrive	0x0272	0x0289	0..3 step 0.01
+g2	SSD	SetMotorSpeed	0x0273	0x028A	2000..47500 step 1
+g2	SPP		0x0274	0x028B	0..30 step 0.2
+g2	SPH	SetPressure-100hz	0x0275	0x028C	0..30 step 0.2
+g2	SFP		0x0276	0x028D	0..2147483647 step 1
+g2	SFQ		0x0277	0x028E	0..2147483647 step 1
+g2	SPC		0x0278	0x028F	0..2147483647 step 1
+g2	SRQ		0x0279	0x0290	0..2147483647 step 1
+g2	SFK	RawLeak	0x027A	0x0291	-1..4 step 0.02
+g2	SF5	RawLeak-50hz	0x027B	0x0292	-1..4 step 0.02
+g2	SVB		0x027C	0x0293	-2147483647..2147483647 step 1
+g2	SNI	SnoreIndex	0x027D	0x0294	0..5 step 0.02
+g2	SN5	SnoreIndex-50hz	0x027E	0x0295	0..5 step 0.02
+g2	SRP		0x027F	0x0296	0..20 step 0.2
+g2	SR5	SnoreTreatmentPressure-50hz	0x0280	0x0297	0..20 step 0.2
+g2	ZS8		0x0281	0x0298	0..2147483647 step 1
+g2	MCS		0x0282	0x0299	0..2147483647 step 1
+g2	SSC	SoundcheckTestCount	0x0283	0x029A	1..255 step 1
+g2	L20		0x0284	0x029B	0..100 step 1
+g2	SAO	SpO2	0x0285	0x029C	0..100 step 1
+g2	SO9	Summary-SpO2-95	0x0286	0x029D	0..100 step 1
+g2	SOX	Summary-SpO2-100	0x0287	0x029E	0..100 step 1
+g2	SOM	Summary-SpO2-50	0x0288	0x029F	0..100 step 1
+g2	SAU		0x0289	0x02A0	0..1440 step 1
+g2	TBB		0x028A	0x02A1	0..65535 step 1
+g2	SBC		0x028B	0x02A2	0..65535 step 1
+g2	VCR	Summary-SpontCyclePercentage	0x028C	0x02A3	active_vids=7,10; 0..100 step 1
+g2	VSR	Summary-SpontTriggerPercentage	0x028D	0x02A4	active_vids=7,10; 0..100 step 1
+g2	SP2		0x028E	0x02A5	0..2147483647 step 1
+g2	SKF			0x02A6	-2147483647..2147483647 step 1
+g2	STU	AutoSet-StartPressure	0x028F	0x02A7	active_vids=3; 4..20 step 0.2
+g2	STP	Cpap-StartPressure	0x0290	0x02A8	4..20 step 0.2
+g2	SVD	StorageVersionId	0x0291	0x02A9	3..3 step 1
+g2	XA2	ST-TargetExpiratoryPressure	0x0292	0x02AA	active_vids=10; 2..25 step 0.2; modes=ST
+g2	XAP	ST-FallTime	0x0293	0x02AB	INACT; 0.1..0.7 step 0.1; modes=ST
+g2	XF1		0x0294	0x02AC	active_vids=10; 0..200 step 1; modes=ST
+g2	XF0		0x0295	0x02AD	active_vids=10; 0..200 step 1; modes=ST
+g2	XA1	ST-TargetInspiratoryPressure	0x0296	0x02AE	active_vids=10; 4..25 step 0.2; modes=ST
+g2	XA6	ST-SetRespiratoryRate	0x0297	0x02AF	active_vids=10; 0..50 step 1
+g2	XAA	ST-RiseTime	0x0298	0x02B0	active_vids=10; 0.15..0.9 step 0.05; modes=ST
+g2	XA3	ST-StartPressure	0x0299	0x02B1	active_vids=10; 2..25 step 0.2
+g2	XAD	ST-TargetRespiratoryRate	0x029A	0x02B2	INACT; 0..50 step 1
+g2	XA7	ST-SetMaxInspiratoryTime	0x029B	0x02B3	active_vids=10; 0.3..4 step 0.1; modes=ST
+g2	XA8	ST-SetMinInspiratoryTime	0x029C	0x02B4	active_vids=10; 0.1..4 step 0.1; modes=ST
+g2	PUN		0x029D	0x02B5	0..255 step 1
+g2	PPD		0x029E	0x02B6	0..1440 step 1
+g2	SNC		0x029F	0x02B7	0..2147483647 step 1
+g2	SSV		0x02A0	0x02B8	-2147483647..2147483647 step 1
+g2	ZRE		0x02A1	0x02B9	0..2147483647 step 1
+g2	SCL		0x02A2	0x02BA	0..3750 step 1
+g2	SCM		0x02A3	0x02BB	0..5000 step 1
+g2	SCG		0x02A4	0x02BC	1000..3000 step 1
+g2	ZPM		0x02A5	0x02BD	0..2147483647 step 1
+g2	SET			0x02BE	0..2147483647 step 1
+g2	STK		0x02A6	0x02BF	0..2147483647 step 1
+g2	ZZ2	Spont-TargetExpiratoryPressure	0x02A7	0x02C0	active_vids=7,10; 2..25 step 0.2; modes=Spont
+g2	Z17	Spont-FallTime	0x02A8	0x02C1	INACT; 0.1..0.7 step 0.1; modes=Spont
+g2	Z15		0x02A9	0x02C2	-2147483647..2147483647 step 1; modes=Spont
+g2	Z14		0x02AA	0x02C3	0..200 step 1
+g2	Z13		0x02AB	0x02C4	0..200 step 1
+g2	ZZ1	Spont-TargetInspiratoryPressure	0x02AC	0x02C5	active_vids=7,10; 4..25 step 0.2; modes=Spont
+g2	ZZ6		0x02AD	0x02C6	10..10 step 1
+g2	Z10	Spont-RiseTime	0x02AE	0x02C7	active_vids=7,10; 0.15..0.9 step 0.05; modes=Spont
+g2	ZZ3	Spont-StartPressure	0x02AF	0x02C8	active_vids=7,10; 2..25 step 0.2
+g2	ZZ7	Spont-SetMaxInspiratoryTime	0x02B0	0x02C9	active_vids=7,10; 0.3..4 step 0.1; modes=Spont
+g2	ZZ8	Spont-SetMinInspiratoryTime	0x02B1	0x02CA	active_vids=7,10; 0.1..4 step 0.1; modes=Spont
+g2	TGT		0x02B2	0x02CB	active_vids=12; 0..30 step 0.125; modes=ASV,ASVAuto
+g2	TVP	TargetMinuteVentilation	0x02B3	0x02CC	active_vids=12; 0..30 step 0.125
+g2	VA9	Summary-TargetMinuteVentilation-95	0x02B4	0x02CD	active_vids=12; 0..30 step 0.125
+g2	VAA	Summary-TargetMinuteVentilation-100	0x02B5	0x02CE	active_vids=12; 0..30 step 0.125
+g2	VAM	Summary-TargetMinuteVentilation-50	0x02B6	0x02CF	active_vids=12; 0..30 step 0.125
+g2	ZT5		0x02B7	0x02D0	0..65535 step 1
+g2	S11		0x02B8	0x02D1	0..100 step 1
+g2	L07		0x02B9	0x02D2	0..100 step 1
+g2	ZT2		0x02BA	0x02D3	0..65535 step 1
+g2	S10		0x02BB	0x02D4	0..100 step 1
+g2	L04		0x02BC	0x02D5	0..100 step 1
+g2	ZMN		0x02BD	0x02D6	0..65535 step 1
+g2	ZT7		0x02BE	0x02D7	0..65535 step 1
+g2	ZT6		0x02BF	0x02D8	0..65535 step 1
+g2	ZT3		0x02C0	0x02D9	0..65535 step 1
+g2	S20		0x02C1	0x02DA	0..100 step 1
+g2	L05		0x02C2	0x02DB	0..100 step 1
+g2	S44		0x02C3	0x02DC	0..100 step 1
+g2	ZT4		0x02C4	0x02DD	0..65535 step 1
+g2	S40		0x02C5	0x02DE	0..100 step 1
+g2	L06		0x02C6	0x02DF	0..100 step 1
+g2	ZT1		0x02C7	0x02E0	0..65535 step 1
+g2	SCC		0x02C8	0x02E1	0..100 step 1
+g2	L22		0x02C9	0x02E2	0..100 step 1
+g2	L16		0x02CA	0x02E3	0..100 step 1
+g2	SMC		0x02CB	0x02E4	0..100 step 1
+g2	ZTM		0x02CC	0x02E5	0..65535 step 1
+g2	L08		0x02CD	0x02E6	0..100 step 1
+g2	L15		0x02CE	0x02E7	0..100 step 1
+g2	L13		0x02CF	0x02E8	0..100 step 1
+g2	L21		0x02D0	0x02E9	0..100 step 1
+g2	L12		0x02D1	0x02EA	0..100 step 1
+g2	L11		0x02D2	0x02EB	0..100 step 1
+g2	L23		0x02D3	0x02EC	0..100 step 1
+g2	L24		0x02D4	0x02ED	0..100 step 1
+g2	L14		0x02D5	0x02EE	0..100 step 1
+g2	SPS		0x02D6	0x02EF	0..100 step 1
+g2	SPL		0x02D7	0x02F0	0..100 step 1
+g2	SEE		0x02D8	0x02F1	0..100 step 1
+g2	SM0		0x02D9	0x02F2	0..100 step 1
+g2	SM1		0x02DA	0x02F3	0..100 step 1
+g2	SM2		0x02DB	0x02F4	0..100 step 1
+g2	ZTS		0x02DC	0x02F5	0..65535 step 1
+g2	TDP	TestDrivePressure	0x02DD	0x02F6	4..10 step 0.2
+g2	TDM		0x02DE	0x02F7	0..1440 step 1
+g2	SCT		0x02DF	0x02F8	0..2147483647 step 1
+g2	TID	TidalVolume	0x02E0	0x02F9	0..4 step 1
+g2	TI5	TidalVolume-50hz	0x02E1	0x02FA	0..4 step 1
+g2	TDD		0x02E2	0x02FB	0..4 step 1
+g2	ZTD		0x02E3	0x02FC	0..4000 step 1; modes=Spont,ST,Timed,VAuto,ASV,ASVAuto,iVAPS,PAC
+g2	TD2		0x02E4	0x02FD	0..4 step 1
+g2	TBC		0x02E5	0x02FE	0..65535 step 1
+g2	SBD		0x02E6	0x02FF	0..65535 step 1
+g2	ZS7		0x02E7	0x0300	0..2147483647 step 1
+g2	TZO	TimeZoneOffset	0x02E8	0x0301	-720..840 step 60
+g2	L03		0x02E9	0x0302	0..100 step 1
+g2	L02		0x02EA	0x0303	0..100 step 1
+g2	TCT		0x02EB	0x0304	0..2147483647 step 1
+g2	TPS		0x02EC	0x0305	0..60000 step 1
+g2	L18		0x02ED	0x0306	0..100 step 1
+g2	XB2	Timed-TargetExpiratoryPressure	0x02EE	0x0307	active_vids=10; 2..25 step 0.2; modes=Timed
+g2	XBA	Timed-FallTime	0x02EF	0x0308	INACT; 0.1..0.7 step 0.1; modes=Timed
+g2	XB8		0x02F0	0x0309	active_vids=10; 0..200 step 1; modes=Timed
+g2	XB1	Timed-TargetInspiratoryPressure	0x02F1	0x030A	active_vids=10; 4..25 step 0.2; modes=Timed
+g2	XB4	Timed-SetRespiratoryRate	0x02F2	0x030B	active_vids=10; 5..50 step 1; modes=Timed
+g2	XB7	Timed-RiseTime	0x02F3	0x030C	active_vids=10; 0.15..0.9 step 0.05; modes=Timed
+g2	XB0	Timed-StartPressure	0x02F4	0x030D	active_vids=10; 2..25 step 0.2
+g2	XB5	Timed-SetInspiratoryTime	0x02F5	0x030E	active_vids=10; 0.3..4 step 0.1; modes=Timed
+g2	USC	Summary-UnknownApneaIndex	0x02F6	0x030F	active_vids=3,7; 0..240 step 0.1
+g2	UAC		0x02F7	0x0310	0..4095 step 1
+g2	OAP	UpgradeAbandonPeriod	0x02F8	0x0311	86400..31536000 step 1
+g2	UFS		0x02F9	0x0312	0..2147483647 step 1
+g2	ORP	UpgradeReportPeriod	0x02FA	0x0313	60..31536000 step 1
+g2	VTD	VALOTriggerSeconds	0x02FB	0x0314	20..3600 step 1
+g2	VID	VariantIdentifier	0x02FC	0x0315	0..99 step 1
+g2	XE1	VAuto-MaxInspiratoryPressure	0x02FD	0x0316	active_vids=7; 4..25 step 0.2; modes=VAuto
+g2	XE2	VAuto-MinExpiratoryPressure	0x02FE	0x0317	active_vids=7; 4..25 step 0.2; modes=VAuto
+g2	XE3	VAuto-SetPressureSupport	0x02FF	0x0318	active_vids=7; 0..10 step 0.2; modes=VAuto
+g2	XE0	VAuto-StartPressure	0x0300	0x0319	active_vids=7; 4..25 step 0.2
+g2	XE4	VAuto-SetMaxInspiratoryTime	0x0301	0x031A	active_vids=7; 0.3..4 step 0.1; modes=VAuto
+g2	XE5	VAuto-SetMinInspiratoryTime	0x0302	0x031B	active_vids=7; 0.1..4 step 0.1; modes=VAuto
+g2	TV9	Summary-TidalVolume-95	0x0303	0x031C	0..4 step 1
+g2	TVA	Summary-TidalVolume-100	0x0304	0x031D	0..4 step 1
+g2	TVM	Summary-TidalVolume-50	0x0305	0x031E	0..4 step 1
+g2	ZSS		0x0306	0x031F	0..2147483647 step 1
+g3	AST		0x0307	0x0320	bits=5 fixed=0x00000000 editable=0x0000001f
+g3	SDS		0x0308	0x0321	bits=7 fixed=0x00000000 editable=0x0000007f
+g3	SYC		0x0309	0x0322	bits=7 fixed=0x00000000 editable=0x0000007f
+g3	SY1		0x030A	0x0323	bits=7 fixed=0x00000000 editable=0x0000007f
+g3	ZOX		0x030B	0x0324	bits=11 fixed=0x00000000 editable=0x000007ff
+g3	CLS	CurrentLEDState	0x030C	0x0325	bits=4 fixed=0x00000000 editable=0x0000000f
+g3	FIF		0x030D	0x0326	bits=30 fixed=0x00000000 editable=0x3fffffff
+g3	ZF1		0x030E	0x0327	bits=2 fixed=0x00000000 editable=0x00000003
+g3	SYH		0x030F	0x0328	bits=6 fixed=0x00000000 editable=0x0000003f
+g3	SY2		0x0310	0x0329	bits=4 fixed=0x00000000 editable=0x0000000f
+g3	ZOY		0x0311	0x032A	bits=1 fixed=0x00000000 editable=0x00000001
+g3	LNC	LanguageConfiguration	0x0312	0x032B	bits=27 fixed=0x000000a3 editable=0x07ffffff
+g3	REM		0x0313	0x032C	bits=3 fixed=0x00000000 editable=0x00000007
+g3	ZPC		0x0314	0x032D	bits=14 fixed=0x00000000 editable=0x00003fff
+g3	OCS		0x0315	0x032E	bits=3 fixed=0x00000000 editable=0x00000007
+g3	AER	ActiveAlarms	0x0316	0x032F	INACT; bits=9 fixed=0x00000000 editable=0x00000000
+g3	RSA		0x0317	0x0330	bits=4 fixed=0x00000000 editable=0x0000000f
+g3	RSE		0x0318	0x0331	bits=4 fixed=0x00000000 editable=0x0000000f
+g3	RLS	RequestLEDState	0x0319	0x0332	bits=4 fixed=0x00000000 editable=0x0000000f
+g3	ZPK		0x031A	0x0333	bits=1 fixed=0x00000000 editable=0x00000001
+g3	FMS		0x031B	0x0334	bits=6 fixed=0x00000000 editable=0x0000003f
+g3	SMS		0x031C	0x0335	bits=6 fixed=0x00000000 editable=0x0000003f
+g3	UMS		0x031D	0x0336	bits=6 fixed=0x00000000 editable=0x0000003f
+g3	LCS	LCDConnector	0x031E	0x0337	bits=2 fixed=0x00000000 editable=0x00000003
+g3	TEC		0x031F	0x0338	bits=4 fixed=0x00000000 editable=0x0000000f
+g3	TEG		0x0320	0x0339	bits=8 fixed=0x00000000 editable=0x000000ff
+g5	ABF	AntiBacterialFilter	0x0321	0x033A	2 opts mask=0x00000003
+g5	ASL		0x0322	0x033B	2 opts mask=0x00000003
+g5	TLT		0x0323	0x033C	2 opts mask=0x00000003
+g5	AKO		0x0324	0x033D	7 opts mask=0x0000007f
+g5	ABC		0x0325	0x033E	2 opts mask=0x00000003
+g5	AFS		0x0326	0x033F	5 opts mask=0x0000001f
+g5	AGC		0x0327	0x0340	2 opts mask=0x00000003
+g5	AMS		0x0328	0x0341	2 opts mask=0x00000003
+g5	AMQ		0x0329	0x0342	2 opts mask=0x00000003
+g5	ACY		0x032A	0x0343	3 opts mask=0x00000007
+g5	ATT		0x032B	0x0344	3 opts mask=0x00000007
+g5	ALT		0x032C	0x0345	4 opts mask=0x0000000f
+g5	ATQ		0x032D	0x0346	4 opts mask=0x0000000f
+g5	AUP		0x032E	0x0347	2 opts mask=0x00000003
+g5	AUS		0x032F	0x0348	5 opts mask=0x0000001f
+g5	AVO		0x0330	0x0349	3 opts mask=0x00000007
+g5	AVP		0x0331	0x034A	4 opts mask=0x0000000f
+g5	AVQ	AlarmVolumeLevel	0x0332	0x034B	INACT; 3 opts mask=0x00000000
+g5	ANC	ApneaAlarmEnable	0x0333	0x034C	INACT; 2 opts mask=0x00000000
+g5	AET	RespiratoryEvent	0x0334	0x034D	8 opts mask=0x000000ff
+g5	AFF		0x0335	0x034E	2 opts mask=0x00000003
+g5	AFC	AutoSetComfort	0x0336	0x034F	active_vids=3; 2 opts mask=0x00000003; modes=AutoSet
+g5	AKM		0x0337	0x0350	4 opts mask=0x0000000f
+g5	BTR		0x0338	0x0351	2 opts mask=0x00000001
+g5	BTE	TriggerCycleEvent	0x0339	0x0352	6 opts mask=0x0000003f
+g5	BAS		0x033A	0x0353	2 opts mask=0x00000003
+g5	BCO		0x033B	0x0354	8 opts mask=0x000000ff
+g5	BCR		0x033C	0x0355	2 opts mask=0x00000003
+g5	BDS		0x033D	0x0356	2 opts mask=0x00000003
+g5	BNP	BluetoothPassthrough	0x033E	0x0357	2 opts mask=0x00000003
+g5	BRS		0x033F	0x0358	2 opts mask=0x00000003
+g5	BSC		0x0340	0x0359	2 opts mask=0x00000003
+g5	BTU		0x0341	0x035A	2 opts mask=0x00000003
+g5	ZLE		0x0342	0x035B	2 opts mask=0x00000003
+g5	CEN		0x0343	0x035C	active_vids=3,7; 2 opts mask=0x00000003
+g5	CAL		0x0344	0x035D	15 opts mask=0x00007fff
+g5	MEN	CALEnable	0x0345	0x035E	2 opts mask=0x00000003
+g5	CMM	CalManufacturingMode	0x0346	0x035F	2 opts mask=0x00000003
+g5	CST	CALStatus	0x0347	0x0360	7 opts mask=0x0000007f
+g5	ZCC		0x0348	0x0361	6 opts mask=0x0000003f
+g5	ZSD		0x0349	0x0362	2 opts mask=0x00000003
+g5	ZCU		0x034A	0x0363	2 opts mask=0x00000003
+g5	CDT		0x034B	0x0364	2 opts mask=0x00000003
+g5	CCA	CareCheckInAvailable	0x034C	0x0365	2 opts mask=0x00000003
+g5	CCT		0x034D	0x0366	5 opts mask=0x00000002
+g5	SCP		0x034E	0x0367	3 opts mask=0x00000007
+g5	CDM	DataMode	0x034F	0x0368	2 opts mask=0x00000003
+g5	CDR		0x0350	0x0369	2 opts mask=0x00000003
+g5	ZHA		0x0351	0x036A	2 opts mask=0x00000003
+g5	CCO	ClimateControl	0x0352	0x036B	2 opts mask=0x00000003
+g5	CRA		0x0353	0x036C	3 opts mask=0x00000007
+g5	CFC	ClinicalConfirmation	0x0354	0x036D	2 opts mask=0x00000003
+g5	CNM		0x0355	0x036E	9 opts mask=0x000001ff
+g5	CMT		0x0356	0x036F	3 opts mask=0x00000007
+g5	SCF	ConfirmStopEnable	0x0357	0x0370	INACT; 2 opts mask=0x00000000
+g5	C11	Cpap-TriggerSensitivity	0x0358	0x0371	INACT; 7 opts mask=0x00000000; modes=CPAP
+g5	C12		0x0359	0x0372	INACT; 7 opts mask=0x00000000
+g5	CSR		0x035A	0x0373	3 opts mask=0x00000007
+g5	PTD		0x035B	0x0374	5 opts mask=0x0000001f
+g5	CPS		0x035C	0x0375	2 opts mask=0x00000001
+g5	SSY	CycleDisplayFormat	0x035D	0x0376	2 opts mask=0x00000003
+g5	DLS		0x035E	0x0377	2 opts mask=0x00000003
+g5	DAS		0x035F	0x0378	2 opts mask=0x00000003
+g5	DAV		0x0360	0x0379	2 opts mask=0x00000003
+g5	DEI		0x0361	0x037A	INACT; 2 opts mask=0x00000000
+g5	DEG		0x0362	0x037B	INACT; 2 opts mask=0x00000000
+g5	ADP			0x037C	INACT; 2 opts mask=0x00000000
+g5	DCA		0x0363	0x037D	2 opts mask=0x00000003
+g5	DUC		0x0364	0x037E	2 opts mask=0x00000003
+g5	DCP		0x0365	0x037F	2 opts mask=0x00000003
+g5	DEE		0x0366	0x0380	2 opts mask=0x00000003
+g5	DOP		0x0367	0x0381	2 opts mask=0x00000003
+g5	DTP		0x0368	0x0382	2 opts mask=0x00000003
+g5	DGA		0x0369	0x0383	2 opts mask=0x00000003
+g5	DIP		0x036A	0x0384	2 opts mask=0x00000003
+g5	DML		0x036B	0x0385	2 opts mask=0x00000003
+g5	DMM		0x036C	0x0386	2 opts mask=0x00000003
+g5	DMP		0x036D	0x0387	2 opts mask=0x00000003
+g5	DMA		0x036E	0x0388	2 opts mask=0x00000003
+g5	DRF		0x036F	0x0389	2 opts mask=0x00000003
+g5	DDN		0x0370	0x038A	2 opts mask=0x00000003
+g5	DSV		0x0371	0x038B	2 opts mask=0x00000003
+g5	DDS		0x0372	0x038C	2 opts mask=0x00000003
+g5	SVA		0x0373	0x038D	2 opts mask=0x00000003
+g5	DDY		0x0374	0x038E	2 opts mask=0x00000003
+g5	DDE		0x0375	0x038F	2 opts mask=0x00000003
+g5	DTE		0x0376	0x0390	2 opts mask=0x00000003
+g5	DDP		0x0377	0x0391	2 opts mask=0x00000003
+g5	DUE		0x0378	0x0392	2 opts mask=0x00000003
+g5	ZWD		0x0379	0x0393	2 opts mask=0x00000003
+g5	ADC			0x0394	2 opts mask=0x00000001
+g5	DCS			0x0395	3 opts mask=0x00000007
+g5	DIS	DeviceIdStatus	0x037A	0x0396	2 opts mask=0x00000003
+g5	DAH	DisplayAHI		0x0397	2 opts mask=0x00000003
+g5	DHA			0x0398	2 opts mask=0x00000001
+g5	TCD		0x037B	0x0399	6 opts mask=0x0000003f
+g5	DSA	SoundDownloadAllowed	0x037C	0x039A	2 opts mask=0x00000003
+g5	EBW		0x037D	0x039B	2 opts mask=0x00000003
+g5	RSD		0x037E	0x039C	4 opts mask=0x0000000f
+g5	ECD	EndCapDetection	0x037F	0x039D	2 opts mask=0x00000003
+g5	EPA	EprEnablePatientAccess	0x0380	0x039E	active_vids=3,7; 2 opts mask=0x00000003; modes=CPAP,AutoSet,HerAuto
+g5	EPX	EprEnable	0x0381	0x039F	active_vids=3,7; 2 opts mask=0x00000003; modes=CPAP,AutoSet,HerAuto
+g5	EPT	EprType	0x0382	0x03A0	active_vids=3,7; 2 opts mask=0x00000003; modes=CPAP,AutoSet,HerAuto
+g5	ZWR		0x0383	0x03A1	2 opts mask=0x00000003
+g5	ERS		0x0384	0x03A2	2 opts mask=0x00000003
+g5	EXH	ExternalHumidifier	0x0385	0x03A3	INACT; 2 opts mask=0x00000000
+g5	FIS		0x0386	0x03A4	2 opts mask=0x00000003
+g5	FBP		0x0387	0x03A5	4 opts mask=0x0000000f
+g5	FIO		0x0388	0x03A6	2 opts mask=0x00000003
+g5	FSC		0x0389	0x03A7	2 opts mask=0x00000003
+g5	FIP		0x038A	0x03A8	2 opts mask=0x00000003
+g5	IRF	IsFileSystemReady	0x038B	0x03A9	3 opts mask=0x00000007; 14.8.3.0 cdx=n/a
+g5	QFC	FlightMode	0x038C	0x03AA	2 opts mask=0x00000003
+g5	ZLM		0x038D	0x03AB	active_vids=3; 2 opts mask=0x00000003
+g5	FON		0x038E	0x03AC	10 opts mask=0x0000000f
+g5	ZUM		0x038F	0x03AD	2 opts mask=0x00000003
+g5	CMC		0x0390	0x03AE	2 opts mask=0x00000003
+g5	SC2		0x03AE		14.8.3.0 only; 7 opts mask=0x0000007f
+g5	GHT		0x0391	0x03AF	3 opts mask=0x00000007
+g5	SC3		0x03AF		14.8.3.0 only; 7 opts mask=0x0000007f
+g5	GMH		0x0392	0x03B0	3 opts mask=0x00000007
+g5	GHM		0x0393	0x03B1	3 opts mask=0x00000007
+g5	GRM		0x0394	0x03B2	3 opts mask=0x00000007
+g5	GRY		0x0395	0x03B3	1 opts mask=0x00000001
+g5	GRD		0x0396	0x03B4	2 opts mask=0x00000003
+g5	GRZ		0x0397	0x03B5	1 opts mask=0x00000001
+g5	ZUI		0x0398	0x03B6	10 opts mask=0x000003ff
+g5	GOM			0x03B7	MODE_SELECTOR; 11 opts mask=0x00000007
+g5	GED		0x0399	0x03B8	2 opts mask=0x00000003
+g5	GDF		0x039A	0x03B9	13 opts mask=0x0000124b
+g5	GNM		0x039B	0x03BA	13 opts mask=0x0000124b
+g5	GDT		0x039C	0x03BB	13 opts mask=0x0000124b
+g5	GDH		0x039D	0x03BC	13 opts mask=0x0000124b
+g5	GTZ		0x039E	0x03BD	27 opts mask=0x07ffffff
+g5	HAA		0x039F	0x03BE	INACT; 2 opts mask=0x00000000
+g5	HCO		0x03A0	0x03BF	2 opts mask=0x00000003
+g5	HCS		0x03A1	0x03C0	2 opts mask=0x00000003
+g5	CPT		0x03A2	0x03C1	2 opts mask=0x00000003
+g5	HTB		0x03A3	0x03C2	3 opts mask=0x00000007
+g5	SNS		0x03C2		14.8.3.0 only; 2 opts mask=0x00000003
+g5	HTP	HeatedTubePower	0x03A4	0x03C3	2 opts mask=0x00000003
+g5	HTX	HeatedTubeSettingEnable	0x03A5	0x03C4	3 opts mask=0x00000007
+g5	HUT		0x03A6	0x03C5	2 opts mask=0x00000003
+g5	HTC		0x03A7	0x03C6	9 opts mask=0x000001ff
+g5	HLA	HighLeakAlarmEnable	0x03A8	0x03C7	INACT; 2 opts mask=0x00000000
+g5	HPM			0x03C8	2 opts mask=0x00000003
+g5	HPA			0x03C9	2 opts mask=0x00000003
+g5	HSS		0x03A9	0x03CA	2 opts mask=0x00000001
+g5	TBT	TubeType	0x03AA	0x03CB	3 opts mask=0x00000003
+g5	HOF		0x03AB	0x03CC	3 opts mask=0x00000007
+g5	ZHT	Summary-TubeConnected	0x03AC	0x03CD	5 opts mask=0x00000017
+g5	ZHR	TubeConnected	0x03AD	0x03CE	5 opts mask=0x0000001f
+g5	HTR		0x03B0	0x03CF	6 opts mask=0x0000003f
+g5	HUM		0x03B1	0x03D0	2 opts mask=0x00000003
+g5	HUC	Summary-HumidifierConnected	0x03B2	0x03D1	3 opts mask=0x00000003
+g5	HCR	HumidifierConnected	0x03B3	0x03D2	3 opts mask=0x00000003
+g5	HUE		0x03B4	0x03D3	8 opts mask=0x000000ff
+g5	HON		0x03B5	0x03D4	2 opts mask=0x00000003
+g5	HPW	HumidifierPower	0x03B6	0x03D5	2 opts mask=0x00000003
+g5	HMX	HumidifierSettingEnable	0x03B7	0x03D6	2 opts mask=0x00000003
+g5	MUT		0x03B8	0x03D7	2 opts mask=0x00000003
+g5	HUS		0x03B9	0x03D8	10 opts mask=0x000003ff
+g5	TC0		0x03BA	0x03D9	3 opts mask=0x00000007
+g5	IMF		0x03BB	0x03DA	2 opts mask=0x00000003
+g5	ZBR		0x03BC	0x03DB	2 opts mask=0x00000003
+g5	IAS		0x03BD	0x03DC	2 opts mask=0x00000003
+g5	ZPW		0x03BF	0x03DD	2 opts mask=0x00000003
+g5	ZRP	IsRamping	0x03C0	0x03DE	2 opts mask=0x00000003
+g5	RPD	IsRampingDown	0x03C1	0x03DF	INACT; 2 opts mask=0x00000000
+g5	ITS		0x03BE	0x03E0	2 opts mask=0x00000003
+g5	BVP		0x03C3	0x03E1	2 opts mask=0x00000003
+g5	IEU	iVAPS-AutoEPAPEnable	0x03C4	0x03E2	INACT; 2 opts mask=0x00000000; modes=iVAPS
+g5	IHU	HeightDisplayUnit	0x03C5	0x03E3	INACT; 2 opts mask=0x00000000; modes=iVAPS
+g5	MCL		0x03E3		14.8.3.0 only; 5 opts mask=0x0000001f
+g5	AMC		0x03E4		14.8.3.0 only; 4 opts mask=0x0000000f
+g5	ZIX		0x03C6	0x03E4	4 opts mask=0x0000000f
+g5	VCS	iVAPS-CycleSensitivity	0x03C7	0x03E5	INACT; 7 opts mask=0x00000000
+g5	VCV		0x03C8	0x03E6	INACT; 7 opts mask=0x00000000
+g5	VCP			0x03E7	INACT; 7 opts mask=0x00000000
+g5	IRZ	iVAPS-FallTimeEnable	0x03C9	0x03E8	INACT; 2 opts mask=0x00000000; modes=iVAPS
+g5	IRC	iVAPS-RiseTimeEnable	0x03CA	0x03E9	INACT; 2 opts mask=0x00000000; modes=iVAPS
+g5	VTS	iVAPS-TriggerSensitivity	0x03CB	0x03EA	INACT; 7 opts mask=0x00000000; modes=iVAPS
+g5	VAQ		0x03CC	0x03EB	INACT; 7 opts mask=0x00000000
+g5	FSO		0x03CD	0x03EC	2 opts mask=0x00000003
+g5	KPM		0x03CE	0x03ED	10 opts mask=0x000003ff
+g5	ZPA		0x03CF	0x03EE	2 opts mask=0x00000003
+g5	ZOA		0x03D0	0x03EF	2 opts mask=0x00000003
+g5	LAN	Language	0x03D1	0x03F0	27 opts mask=0x07ffffff; modes=CPAP,AutoSet,HerAuto,Spont,ST,Timed,VAuto,ASV,ASVAuto,iVAPS,PAC
+g5	LRE		0x03D2	0x03F1	4 opts mask=0x0000000f
+g5	LST		0x03D3	0x03F2	4 opts mask=0x0000000f
+g5	LTS	LCDTouchStatus	0x03D4	0x03F3	3 opts mask=0x00000007
+g5	LCA		0x03D5	0x03F4	2 opts mask=0x00000003
+g5	TLM	LearnMode	0x03D6	0x03F5	2 opts mask=0x00000003; modes=iVAPS
+g5	ZLC		0x03D7	0x03F6	7 opts mask=0x0000007f
+g5	ZLS		0x03D8	0x03F7	4 opts mask=0x0000000f
+g5	LSC		0x03D9	0x03F8	3 opts mask=0x00000007
+g5	LMC	LowMinuteVentAlarmEnable	0x03DA	0x03F9	INACT; 2 opts mask=0x00000000
+g5	MFT		0x03DB	0x03FA	2 opts mask=0x00000003
+g5	ZFM		0x03DC	0x03FB	3 opts mask=0x00000007
+g5	MKD	MaskSenseToggle	0x03DD	0x03FC	2 opts mask=0x00000003
+g5	MST		0x03DE	0x03FD	2 opts mask=0x00000003
+g5	MSK	MaskType	0x03DF	0x03FE	4 opts mask=0x00000007
+g5	ZMS		0x03E0	0x03FF	2 opts mask=0x00000003
+g5	MIC	MicrophoneEnabled	0x03E1	0x0400	2 opts mask=0x00000003
+g5	MOW		0x03E2	0x0401	2 opts mask=0x00000003
+g5	MOK		0x03E5	0x0402	4 opts mask=0x0000000f
+g5	QCS		0x03E6	0x0403	6 opts mask=0x0000003f
+g5	QNC		0x03E7	0x0404	2 opts mask=0x00000003
+g5	AAA		0x03E8	0x0405	12 opts mask=0x00000fff
+g5	MER		0x03E9	0x0406	2 opts mask=0x00000003
+g5	ZME		0x03EA	0x0407	2 opts mask=0x00000003
+g5	BMT	MotorType	0x03EB	0x0408	2 opts mask=0x00000003
+g5	AIR		0x03EC	0x0409	2 opts mask=0x00000003
+g5	MAI	CareCheckToggle	0x03ED	0x040A	2 opts mask=0x00000003
+g5	MAM		0x03EE	0x040B	2 opts mask=0x00000003
+g5	MAS	MyAirScreens	0x03EF	0x040C	2 opts mask=0x00000003
+g5	NMA	NonVentedMaskAlarmEnable	0x03F0	0x040D	INACT; 2 opts mask=0x00000000
+g5	MOP	ActiveTherapyProfile	0x03F1	0x040E	MODE_SELECTOR; 11 opts mask=0x00000007
+g5	OUM		0x03F2	0x040F	2 opts mask=0x00000003
+g5	OUS	OtaUpgradeStatus	0x03F3	0x0410	6 opts mask=0x0000003f
+g5	OFC		0x03F4	0x0411	3 opts mask=0x00000007
+g5	OXS		0x03F5	0x0412	5 opts mask=0x0000001f
+g5	OTD		0x03F6	0x0413	2 opts mask=0x00000003
+g5	OUI		0x03F7	0x0414	4 opts mask=0x0000000f
+g5	P11	PAC-FallTimeEnable	0x03F8	0x0415	INACT; 2 opts mask=0x00000000; modes=PAC
+g5	PA3	PAC-RiseTimeEnable	0x03F9	0x0416	INACT; 2 opts mask=0x00000000; modes=PAC
+g5	PA7	PAC-TriggerSensitivity	0x03FA	0x0417	INACT; 7 opts mask=0x00000000; modes=PAC
+g5	PAQ		0x03FB	0x0418	INACT; 7 opts mask=0x00000000
+g5	ACC	PatientView	0x03FC	0x0419	2 opts mask=0x00000003
+g5	PDR		0x03FD	0x041A	2 opts mask=0x00000003
+g5	PMS	PeripheralMsg	0x03FE	0x041B	2 opts mask=0x00000003
+g5	ZEA		0x03FF	0x041C	2 opts mask=0x00000003
+g5	PSM		0x0400	0x041D	10 opts mask=0x000003ff
+g5	KEY	PhantomKey	0x0401	0x041E	12 opts mask=0x00000e6f
+g5	PKP		0x0402	0x041F	2 opts mask=0x00000003
+g5	PTF		0x0403	0x0420	2 opts mask=0x00000003
+g5	ZPV		0x0404	0x0421	2 opts mask=0x00000003
+g5	P90		0x0405	0x0422	2 opts mask=0x00000001
+g5	ZRM	FGState	0x0406	0x0423	12 opts mask=0x000007ff
+g5	PSC	PowerSupplyCapacity	0x0407	0x0424	2 opts mask=0x00000003
+g5	PSD		0x0408	0x0425	2 opts mask=0x00000003
+g5	PSU	PowerSupplyType	0x0409	0x0426	3 opts mask=0x00000007
+g5	CYM		0x040A	0x0427	3 opts mask=0x00000007
+g5	QNT		0x040B	0x0428	2 opts mask=0x00000003
+g5	RMA	RampEnable	0x040C	0x0429	3 opts mask=0x00000007
+g5	RDE	RampDownEnable	0x040D	0x042A	INACT; 2 opts mask=0x00000000
+g5	DPE	RampDownEnablePatientAccess	0x040E	0x042B	INACT; 2 opts mask=0x00000000
+g5	RDS		0x040F	0x042C	3 opts mask=0x00000007
+g5	RPE	RampEnablePatientAccess	0x0410	0x042D	INACT; 2 opts mask=0x00000000
+g5	RPS		0x0411	0x042E	2 opts mask=0x00000001
+g5	IRS	IsReadyForShipping	0x0412	0x042F	3 opts mask=0x00000007
+g5	RQH			0x0430	2 opts mask=0x00000003
+g5	RFP		0x0413	0x0431	2 opts mask=0x00000003
+g5	RYS	RecoverableError	0x0414	0x0432	4 opts mask=0x0000000f
+g5	ARE		0x0415	0x0433	10 opts mask=0x000003ff
+g5	RUM		0x0416	0x0434	13 opts mask=0x00001fff
+g5	RIF	ReminderFilterEnable	0x0417	0x0435	2 opts mask=0x00000003
+g5	RIM	ReminderMaskEnable	0x0418	0x0436	2 opts mask=0x00000003
+g5	RIT	ReminderTubingEnable	0x0419	0x0437	2 opts mask=0x00000003
+g5	RIC	ReminderHumidifierEnable	0x041A	0x0438	2 opts mask=0x00000003
+g5	RSM		0x041B	0x0439	5 opts mask=0x0000001f
+g5	RSC		0x041C	0x043A	2 opts mask=0x00000003
+g5	RDF	ReminderFilterPeriod	0x041D	0x043B	13 opts mask=0x0000124a
+g5	RDM	ReminderMaskPeriod	0x041E	0x043C	13 opts mask=0x0000124a
+g5	RDT	ReminderTubingPeriod	0x041F	0x043D	13 opts mask=0x0000124a
+g5	RDH	ReminderHumidifierPeriod	0x0420	0x043E	13 opts mask=0x0000124a
+g5	RST	RequestSDCardTest	0x0421	0x043F	2 opts mask=0x00000003
+g5	RTS	RequestTestDriveState	0x0422	0x0440	2 opts mask=0x00000003
+g5	REV		0x0423	0x0441	3 opts mask=0x00000007
+g5	RES		0x0424	0x0442	5 opts mask=0x0000001b
+g5	RLL		0x0425	0x0443	2 opts mask=0x00000003
+g5	ROP		0x0426	0x0444	6 opts mask=0x0000003f
+g5	SRM		0x0427	0x0445	2 opts mask=0x00000003
+g5	STA		0x0428	0x0446	2 opts mask=0x00000003
+g5	SSS	SDCardSocketStatus	0x0429	0x0447	3 opts mask=0x00000007
+g5	STS	SDCardTestStatus	0x042A	0x0448	3 opts mask=0x00000007
+g5	SDC		0x042B	0x0449	2 opts mask=0x00000003
+g5	SBE	SecurityStatus		0x044A	2 opts mask=0x00000003
+g5	SBA			0x044B	2 opts mask=0x00000003
+g5	ZKA		0x042C	0x044C	2 opts mask=0x00000003
+g5	SPM		0x042D	0x044D	2 opts mask=0x00000003
+g5	SRC		0x042E	0x044E	2 opts mask=0x00000003
+g5	ZWT		0x042F	0x044F	2 opts mask=0x00000003
+g5	SCA		0x0430	0x0450	2 opts mask=0x00000003
+g5	SD0			0x0451	2 opts mask=0x00000003
+g5	ZTH		0x0431	0x0452	2 opts mask=0x00000003
+g5	ZLH		0x0432	0x0453	2 opts mask=0x00000003
+g5	CCZ		0x0433	0x0454	2 opts mask=0x00000003
+g5	SLS	LanguageSelection	0x0434	0x0455	2 opts mask=0x00000003
+g5	DMS		0x0435	0x0456	2 opts mask=0x00000003
+g5	SOS	OobxOnStartup	0x0436	0x0457	2 opts mask=0x00000003
+g5	ABU		0x0437	0x0458	2 opts mask=0x00000003
+g5	SVI		0x0438	0x0459	2 opts mask=0x00000003
+g5	SVP			0x045A	6 opts mask=0x0000003f
+g5	SMN		0x0439	0x045B	2 opts mask=0x00000003
+g5	SVN		0x043A	0x045C	2 opts mask=0x00000003
+g5	SST	SmartStart	0x043B	0x045D	2 opts mask=0x00000003
+g5	SME		0x043C	0x045E	2 opts mask=0x00000003
+g5	GSP		0x043D	0x045F	2 opts mask=0x00000003
+g5	SSP	SmartStop	0x043E	0x0460	2 opts mask=0x00000003
+g5	SCK	SoundcheckRunFrequency	0x043F	0x0461	4 opts mask=0x0000000f
+g5	SCH		0x0440	0x0462	2 opts mask=0x00000003
+g5	SCO	SoundcheckFeatureToggle	0x0441	0x0463	2 opts mask=0x00000003
+g5	STT	SoundcheckStatus	0x0442	0x0464	5 opts mask=0x0000001f
+g5	SSE	SplashScreenDisplaySelection	0x0443	0x0465	2 opts mask=0x00000003
+g5	SCY		0x0444	0x0466	5 opts mask=0x0000001f
+g5	SPN		0x0445	0x0467	3 opts mask=0x00000007
+g5	SOD		0x0446	0x0468	3 opts mask=0x00000007
+g5	XAB	ST-CycleSensitivity	0x0447	0x0469	active_vids=10; 7 opts mask=0x00000000
+g5	XAX		0x0448	0x046A	active_vids=10; 7 opts mask=0x00000000
+g5	XAS			0x046B	active_vids=10; 7 opts mask=0x00000000
+g5	XAM	ST-FallTimeEnable	0x0449	0x046C	INACT; 2 opts mask=0x00000000; modes=ST
+g5	XAC	ST-IntelligentBackupRateEnable	0x044A	0x046D	INACT; 2 opts mask=0x00000000; modes=ST
+g5	XA9	ST-RiseTimeEnable	0x044B	0x046E	active_vids=10; 2 opts mask=0x00000000; modes=ST
+g5	ZU1	ST-TriggerSensitivity	0x044C	0x046F	active_vids=10; 7 opts mask=0x00000000; modes=ST
+g5	ZU2		0x044D	0x0470	active_vids=10; 7 opts mask=0x00000000
+g5	SYT		0x044E	0x0471	3 opts mask=0x00000007
+g5	SDR		0x044F	0x0472	2 opts mask=0x00000003
+g5	STC		0x0450	0x0473	34 opts mask=0xffffffff
+g5	FSE	SystemError	0x0451	0x0474	23 opts mask=0x007fffff
+g5	SEM		0x0452	0x0475	5 opts mask=0x0000001f
+g5	XSS		0x0453	0x0476	2 opts mask=0x00000003
+g5	Z12	Spont-CycleSensitivity	0x0454	0x0477	active_vids=7,10; 7 opts mask=0x00000000
+g5	Z18		0x0455	0x0478	active_vids=7,10; 7 opts mask=0x00000000
+g5	Z19			0x0479	active_vids=7,10; 7 opts mask=0x00000000
+g5	ZZ4	Spont-EasyBreatheEnable	0x0456	0x047A	active_vids=7; 2 opts mask=0x00000000; modes=Spont
+g5	Z16	Spont-FallTimeEnable	0x0457	0x047B	INACT; 2 opts mask=0x00000000; modes=Spont
+g5	ZZ5	Spont-RespiratoryRateEnable	0x0458	0x047C	active_vids=7,10; 2 opts mask=0x00000000; modes=Spont
+g5	ZZ9	Spont-RiseTimeEnable	0x0459	0x047D	active_vids=7,10; 2 opts mask=0x00000000; modes=Spont
+g5	Z11	Spont-TriggerSensitivity	0x045A	0x047E	active_vids=7,10; 7 opts mask=0x00000000; modes=Spont
+g5	Z07		0x045B	0x047F	active_vids=7,10; 7 opts mask=0x00000000
+g5	TMU	TemperatureUnit	0x045C	0x0480	2 opts mask=0x00000003; modes=CPAP,AutoSet,HerAuto,Spont,ST,Timed,VAuto,ASV,ASVAuto,iVAPS,PAC
+g5	TDS	TestDriveState	0x045D	0x0481	2 opts mask=0x00000003
+g5	TRT		0x045E	0x0482	2 opts mask=0x00000003
+g5	TDT	TestDriveType	0x045F	0x0483	2 opts mask=0x00000003
+g5	TLF	TherapyLEDAlwaysOn	0x0460	0x0484	INACT; 2 opts mask=0x00000000
+g5	ZTE		0x0461	0x0485	2 opts mask=0x00000003
+g5	THS	StatusEvent	0x0462	0x0486	10 opts mask=0x000000ff
+g5	CSM			0x0487	3 opts mask=0x00000007
+g5	TUB		0x0463	0x0488	3 opts mask=0x00000007
+g5	TMM		0x0464	0x0489	3 opts mask=0x00000007
+g5	TZG		0x0465	0x048A	2 opts mask=0x00000003
+g5	TZE		0x0466	0x048B	2 opts mask=0x00000003
+g5	TUD	TotalUsedHoursDisplayToggle	0x0467	0x048C	2 opts mask=0x00000003
+g5	ZLT		0x0468	0x048D	2 opts mask=0x00000003
+g5	TAT		0x0469	0x048E	2 opts mask=0x00000003
+g5	TRG		0x046A	0x048F	9 opts mask=0x000001ff
+g5	TSS		0x046B	0x0490	3 opts mask=0x00000001
+g5	TCV		0x046C	0x0491	9 opts mask=0x000001ff
+g5	TOM		0x046D	0x0492	MODE_SELECTOR; 11 opts mask=0x000007ff
+g5	TXC	TxLink2Connected	0x046E	0x0493	3 opts mask=0x00000007
+g5	XB9	Timed-FallTimeEnable	0x046F	0x0494	INACT; 2 opts mask=0x00000000; modes=Timed
+g5	XB6	Timed-RiseTimeEnable	0x0470	0x0495	active_vids=10; 2 opts mask=0x00000000; modes=Timed
+g5	ZBO		0x0471	0x0496	2 opts mask=0x00000003
+g5	IRU	IsReadyForUpgrade	0x0472	0x0497	3 opts mask=0x00000007
+g5	UPM		0x0473	0x0498	2 opts mask=0x00000003
+g5	UPK		0x0474	0x0499	2 opts mask=0x00000003
+g5	UPS		0x0475	0x049A	2 opts mask=0x00000003
+g5	UPT		0x0476	0x049B	3 opts mask=0x00000007
+g5	UTY		0x0477	0x049C	2 opts mask=0x00000003
+g5	XE7	VAuto-CycleSensitivity	0x0478	0x049D	active_vids=7; 7 opts mask=0x00000000; modes=VAuto
+g5	XE6	VAuto-TriggerSensitivity	0x0479	0x049E	active_vids=7; 7 opts mask=0x00000000; modes=VAuto
+g5	WUP		0x047A	0x049F	2 opts mask=0x00000003

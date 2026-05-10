@@ -89,13 +89,8 @@ as11_config.py -d ble:as11 stream --data-ids Leak-50hz,RespiratoryRate-50hz --du
 as11_config.py -d ble:as11 subscribe --duration 60
 ```
 
-EDF stream aliases:
-
-| Alias | Data IDs |
-|-------|----------|
-| `BRP` | `PatientFlow-100hz`, `MaskPressure-100hz` |
-| `PLD` | `MaskPressure-TwoSecond`, `InspiratoryPressure-TwoSecond`, `ExpiratoryPressure-TwoSecond`, `Leak-50hz`, `RespiratoryRate-50hz`, `TidalVolume-50hz`, `MinuteVentilation-50hz`, `TargetMinuteVentilation`, `IeRatio`, `SnoreIndex-50hz`, `FlowLimitation-50hz`, `InspiratoryDuration` |
-| `SA2` | `HeartRate`, `SpO2` |
+EDF stream aliases (`BRP`, `PLD`, `SA2`) and their raw data IDs are listed in
+[AS11 RPC Stream Reference](../as11/rpc_streams.md).
 
 StartStream interval limits verified so far: minimum sample interval is `10 ms`,
 intervals are rounded down to a `10 ms` boundary, and `reportIntervalMs` must
@@ -108,8 +103,63 @@ Download spool data, optionally decode it on the host.
 ```
 as11_config.py -d ble:as11 spool Summary
 as11_config.py -d ble:as11 spool TherapyEvents-RespiratoryEvents --decode
+as11_config.py -d ble:as11 spool RespiratoryFlow6p25Hz --decode --samples
 as11_config.py -d ble:as11 spool Summary --from-dt 2026-01-01T00:00:00.000Z -o summary.bin
 as11_config.py -d ble:as11 spool --list-types
+as11_config.py -d ble:as11 spool --probe --from-dt 2026-04-29T00:00:00.000Z
+```
+
+Spool types, payload families, wire fields, and inner record shapes are
+listed in [AS11 RPC Spool Reference](../as11/rpc_spools.md).
+
+The tool builds the `spoolAddress` as:
+
+```
+{ "<spool type>": { "fromDateTime": "<ISO timestamp>" } }
+```
+
+`--probe` runs one non-following spool round per selected type and prints a
+compact status table. Each populated row's outer protobuf field is checked
+against the registry's `wire_field`. Use `--only populated` to hide empty
+rows. Spools with a `gate_var` (currently only `RecordedSound`) are
+pre-checked and reported as `GATED` without a round-trip when the gate is
+closed.
+
+The confirmed spool-address selector is `fromDateTime`. The returned
+`nextSpoolAddress` uses the same shape and is followed automatically unless
+`--no-follow` is passed.
+
+For archived signal spools such as `RespiratoryFlow6p25Hz`, `--decode`
+prints record metadata and decoded RC03 ranges. Add `--samples` to print the
+decoded samples as CSV with `record,index,time_ms,value_raw,value` columns.
+
+For event spools, `--decode` prints a TSV table with event type, start/end
+timestamps, duration, and any extra fields. Event type names are shown only
+where the mapping is known; otherwise the numeric type is left as-is.
+
+For `Summary`, `--decode` prints a compact record header plus scalar and
+percentile metric lines. The compact header includes the period range,
+`duration_min`, timezone offset, session count, and decoded session mode
+entry codes when present. Those session entry codes are not yet proven to be
+the same enum as `ActiveTherapyProfile`. Add `--details` to print the older
+field-by-field view with subfield annotations and still-unresolved internal
+fields.
+
+Use `--decode --raw-proto` to bypass the spool-specific pretty-printers and
+inspect the generic protobuf wire structure.
+
+### decode
+
+Decode a previously captured spool payload offline, without contacting the
+device. The spool type is inferred from the outer protobuf field number
+unless `--type` is given.
+
+```
+as11_config.py decode summary.bin
+as11_config.py decode --type Summary summary.bin
+as11_config.py decode --details summary.bin
+as11_config.py decode --samples respflow.bin
+as11_config.py decode --raw-proto unknown.bin
 ```
 
 ### known
@@ -128,14 +178,23 @@ as11_config.py known spools
 ```
 
 `known streams <EDF>` prints the data IDs behind an EDF stream alias.
+`known spools` prints spool types grouped by current payload-family hints.
 
 ### devices
 
-BLE device management: scan, pair, list, alias, and unalias.
+BLE device management: scan, pair, list, alias, unalias, and default OTA-key
+storage for paired devices.
 
 ```
 as11_config.py devices scan
 as11_config.py -d ble:AA:BB:CC:DD:EE:FF devices pair
 as11_config.py devices alias AA:BB:CC:DD:EE:FF bedroom
+as11_config.py devices ota-key bedroom --key HEXSTR
+as11_config.py devices ota-key bedroom --key-file ota-key.hex
+as11_config.py devices ota-key bedroom --clear
 as11_config.py devices list
 ```
+
+`devices ota-key` stores the key in the existing BLE credential record. The
+normal device list only shows whether an OTA key is configured; it does not
+print the key.

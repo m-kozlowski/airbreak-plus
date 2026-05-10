@@ -11,8 +11,18 @@ GLOBALS_REL=0x108
 
 DEBUG_PATCH=""
 
+read_bytes() {
+    # args: offset length -> raw bytes on stdout
+    perl -e '
+        open my $fh, "<:raw", $ARGV[0] or die "open: $!";
+        seek($fh, $ARGV[1], 0) or die "seek: $!";
+        read($fh, my $buf, $ARGV[2]) == $ARGV[2] or die "short read";
+        print $buf;
+    ' "$OUT" "$(printf "%d" "$1")" "$(printf "%d" "$2")"
+}
+
 detect_platform() {
-    BID=$(dd if="$OUT" iflag=skip_bytes,count_bytes bs=4096 skip=$(($BID_OFFSET)) count=16 status=none | tr -d '\0')
+    BID=$(read_bytes "$BID_OFFSET" 16 | tr -d '\0')
 
     case "$BID" in
         SX577-0200*)
@@ -31,7 +41,7 @@ detect_platform() {
     esac
 
     GLOBALS_ADDR=$(( CCX_OFF + GLOBALS_REL ))
-    CDX_VER=$(dd if="$OUT" iflag=skip_bytes,count_bytes bs=4096 skip=$(($CDX_OFF)) count=16 status=none | tr -d '\0')
+    CDX_VER=$(read_bytes "$CDX_OFF" 16 | tr -d '\0')
 
     echo "Bootloader ID:  $BID"
     echo "CDX Version:    $CDX_VER"
@@ -168,10 +178,8 @@ find_bytes() {
 
 # read a little-endian u32 from file offset in $OUT
 read_u32() {
-    local offset=$(printf "%d" "$1")
-    dd if="$OUT" iflag=skip_bytes,count_bytes bs=4096 skip="$offset" count=4 status=none | \
-        perl -e 'read(STDIN, my $b, 4) == 4 or exit 1;
-            printf "%d\n", unpack("V", $b)'
+    read_bytes "$1" 4 | perl -e 'read(STDIN, my $b, 4) == 4 or exit 1;
+        printf "%d\n", unpack("V", $b)'
 }
 
 write_u32() {
@@ -582,9 +590,8 @@ unlock_languages() {
     local addr=$(find_g6_var 0x0204)
     # make variable read only to prevent overwriting with eeprom data
     printf '\x06' | patch $addr
-    # set bits for languages 1-19 except reserved (5,7) and
-    # jp (13,19), cn (16,17) (enabling them breaks system font)
-    printf '\x5f\xdf\x04\x00' | patch $(( addr + 0x08 ))
+    # 0x007fffff, except font-reserved bits jp (13,19) and cn (16,17).
+    printf '\xff\xdf\x74\x00' | patch $(( addr + 0x08 ))
 }
 
 

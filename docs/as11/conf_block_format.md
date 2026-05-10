@@ -2,8 +2,9 @@
 
 Reference for the S11 CONF block layout, globals[] master table, var-id
 dispatch, descriptor record shapes, and per-table semantics. Cross-checked
-against the official 15.8.4.0 variant dumps (vid03 AirSense, vid07 AirCurve
-VAuto, vid10 AirCurve S/ST/T, vid12 AirCurve ASV) and Ghidra decompilation.
+against the official 14.8.3.0 vid03 dump, the official 15.8.4.0 variant
+dumps (vid03 AirSense, vid07 AirCurve VAuto, vid10 AirCurve S/ST/T, vid12
+AirCurve ASV), and Ghidra decompilation.
 
 ## Table of contents
 
@@ -76,10 +77,17 @@ VAuto, vid10 AirCurve S/ST/T, vid12 AirCurve ASV) and Ghidra decompilation.
   record, not the start of the CONF block.
 - File offsets such as `0x02d040` refer to a full firmware image with CONF at
   file offset `0x020000`. Runtime flash addresses use the `0x080xxxxx` form.
-- Var IDs are firmware `DataItem` IDs. The three-letter tag (`MOP`, `LAN`,
-  etc.) is the CONF short name. RPC may expose long CDX names such as
-  `ActiveTherapyProfile` and underscore aliases such as `_MOP`, but bare
-  three-letter tags are internal names.
+- Var IDs are firmware `DataItem` IDs, but they are **version-local**. They
+  are assigned by descriptor array order and drift when records are inserted
+  or removed. The three-letter tag (`MOP`, `LAN`, etc.) and CDX long name are
+  better semantic anchors for cross-version work. RPC may expose long CDX
+  names such as `ActiveTherapyProfile` and underscore aliases such as `_MOP`,
+  but bare three-letter tags are internal names.
+- `docs/as11/var_reference.tsv` lists the same variables against the known
+  14.8.3.0 and 15.8.4.0 var IDs. Treat the ID columns as lookup results for
+  those specific releases, not as portable constants. Its `notes` column is
+  based on the 15.8.4.0 variant superset unless a row is explicitly marked
+  `14.8.3.0 only`.
 - Unless stated otherwise, record counts and examples are from 15.8.4.0
   variant dumps.
 
@@ -210,17 +218,23 @@ global roots is one object.
 
 ## Var-ID dispatch
 
-`DataItemFactory_create` in 15.8.4.0 routes var IDs to descriptor arrays by
-range. Implicit indexing: `record_index = var_id - id_base`.
+`DataItemFactory_create` routes var IDs to descriptor arrays by range.
+Implicit indexing: `record_index = var_id - id_base`. Those ranges are
+computed from descriptor counts in the target image, so they drift across
+firmware releases.
 
-| var_id range | Table | Stride | Records |
-|--------------|-------|---:|---:|
-| `0x0000..0x0073` | g[1] | 10 | 116 |
-| `0x0074..0x031f` | g[2] | 32 | 684 |
-| `0x0320..0x0339` | g[3] | 20 | 26 |
-| `0x033a..0x049f` | g[5] | 16 | 358 |
+| Version | Table | var_id range | Stride | Records |
+|---------|-------|--------------|---:|---:|
+| 14.8.3.0 | g[1] | `0x0000..0x006e` | 10 | 111 |
+| 14.8.3.0 | g[2] | `0x006f..0x0306` | 32 | 664 |
+| 14.8.3.0 | g[3] | `0x0307..0x0320` | 20 | 26 |
+| 14.8.3.0 | g[5] | `0x0321..0x047a` | 16 | 346 |
+| 15.8.4.0 | g[1] | `0x0000..0x0073` | 10 | 116 |
+| 15.8.4.0 | g[2] | `0x0074..0x031f` | 32 | 684 |
+| 15.8.4.0 | g[3] | `0x0320..0x0339` | 20 | 26 |
+| 15.8.4.0 | g[5] | `0x033a..0x049f` | 16 | 358 |
 
-Example: `TherapyLEDAlwaysOn` var_id `0x0484` ->
+Example from 15.8.4.0: `TherapyLEDAlwaysOn` var_id `0x0484` ->
 `g[5][0x0484 - 0x033a]` = `g[5][330]` -> file offset `0x28628`.
 
 g[5]'s `id_base` shifts by version because it depends on the preceding table
@@ -236,7 +250,21 @@ g[5] id_base = g[1] count + g[2] count + g[3] count
 | 15.8.4.0 | 116 + 684 + 26 | `0x033a` |
 
 Using a different version's `id_base` shifts every enum var onto the wrong
-record. Patchers must recompute it from the target image's master table.
+record. Patchers must recompute it from the target image's master table and
+resolve variables by short/long name or descriptor shape before using a
+var_id.
+
+Observed examples:
+
+| Variable | 14.8.3.0 | 15.8.4.0 |
+|----------|---------:|---------:|
+| `HeartRate` / `HRT` | `0x0157` | `0x0168` |
+| `SpO2` / `SAO` | `0x0285` | `0x029c` |
+| `LanguageConfiguration` / `LNC` | `0x0312` | `0x032b` |
+| `BluetoothPassthrough` / `BNP` | `0x033e` | `0x0357` |
+| `ActiveTherapyProfile` / `MOP` | `0x03f1` | `0x040e` |
+| `PeripheralMsg` / `PMS` | `0x03fe` | `0x041b` |
+| `RampEnablePatientAccess` / `RPE` | `0x0410` | `0x042d` |
 
 ---
 
@@ -409,7 +437,7 @@ appears to be a fixed product-line marker derived from the platform identifier
 
 ## g[1] -- scalar DataItem descriptors
 
-**Record stride:** 10 bytes, **Entry count:** 116, **var_id range:** `0x0000..0x0073`
+**Record stride:** 10 bytes
 
 Backs `VolatileTextDataItem` -- short text/identifier variables (CID, SID,
 BID, PNA, SRN, PtAccess strings, etc.). The runtime value is a string buffer
@@ -427,7 +455,7 @@ in SRAM; this descriptor only describes its shape.
 
 ## g[2] -- numeric DataItem descriptors
 
-**Record stride:** 32 bytes, **Entry count:** 684, **var_id range:** `0x0074..0x031f`
+**Record stride:** 32 bytes
 
 Backs `NumericDataItem` -- the numeric/ranged variables (pressures, times,
 percentiles, counters). Values are i32 in raw units, displayed after dividing
@@ -558,7 +586,7 @@ displayed values = 10.0 / 4.0 / 20.0 / 0.2 cmH2O
 
 ## g[3] -- bitfield DataItem descriptors
 
-**Record stride:** 20 bytes, **Entry count:** 26, **var_id range:** `0x0320..0x0339`
+**Record stride:** 20 bytes
 
 Backs `BitFieldDataItem` -- multi-bit toggle variables (e.g.
 `LanguageConfiguration`, `NodeAccessFlags`). The runtime value is a u32
@@ -631,7 +659,7 @@ hard-coding tail offsets.
 
 ## g[5] -- enum DataItem descriptors
 
-**Record stride:** 16 bytes, **Entry count:** 358, **var_id range:** `0x033a..0x049f`
+**Record stride:** 16 bytes
 
 Backs `EnumDataItem` -- single-selection variables drawn from a fixed option
 list (mode toggles, comfort selectors, sensitivity levels, profile pickers).

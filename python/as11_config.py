@@ -18,6 +18,7 @@ Compat aliases:
 from __future__ import annotations
 
 import argparse
+import atexit
 import base64
 import hashlib
 import json
@@ -47,16 +48,19 @@ from as11_rpc import (  # noqa: E402
     host_datetime_iso, parse_flex_datetime, format_datetime_iso,
 )
 from as11_rpc_vars import (  # noqa: E402
-    VAR_GROUPS, expand_groups, resolve_group, SPOOL_TYPES,
+    VAR_GROUPS, expand_groups, resolve_group,
+    SPOOL_GROUPS, SPOOL_TYPES, SPOOL_FORMATS, SPOOL_REGISTRY,
     VAR_NAMES, VAR_SUBTREES, STREAM_EDF_ALIASES, STREAM_EDF_SAMPLE_MS,
     STREAM_GROUPS,
     REGISTRIES,
     filter_vars, var_groups_summary, print_var_pairs,
 )
 from as11_spool import (  # noqa: E402
-    spool_one_round,
+    SpoolError, spool_one_round,
     proto_pretty, summary_pretty,
     print_spool_legend, print_spool_summary,
+    spool_payload_first_field, detect_spool_type,
+    rc03_spool_pretty, event_spool_pretty,
 )
 
 
@@ -65,6 +69,126 @@ log = logging.getLogger("as11.config")
 
 def eprint(*a, **kw):
     print(*a, file=sys.stderr, **kw)
+
+
+SESSION_COMMANDS = (
+    "get", "set", "gettime", "settime", "rpc",
+    "quit", "exit", "q", "help",
+)
+
+
+def session_history_path() -> Path:
+    env = os.environ.get("AS11_SESSION_HISTORY")
+    if env:
+        return Path(env).expanduser()
+    state_home = os.environ.get("XDG_STATE_HOME")
+    if state_home:
+        return Path(state_home).expanduser() / "airsense11" / "as11_config_history"
+    return Path.home() / ".as11_config_history"
+
+
+def setup_session_readline() -> None:
+    """Enable persistent history and tab completion for the interactive REPL."""
+    if not sys.stdin.isatty():
+        return
+    try:
+        import readline  # type: ignore
+    except ImportError:
+        return
+
+    history = session_history_path()
+    try:
+        history.parent.mkdir(parents=True, exist_ok=True)
+        readline.read_history_file(str(history))
+    except FileNotFoundError:
+        pass
+    except OSError:
+        pass
+
+    def save_history() -> None:
+        try:
+            readline.write_history_file(str(history))
+        except OSError:
+            pass
+
+    atexit.register(save_history)
+
+    try:
+        readline.set_history_length(1000)
+    except AttributeError:
+        pass
+
+    def completion_names(items):
+        for item in items:
+            if isinstance(item, str):
+                yield item
+            elif isinstance(item, (tuple, list)) and item and isinstance(item[0], str):
+                yield item[0]
+
+    completion_words = sorted(
+        set(SESSION_COMMANDS)
+        | set(completion_names(VAR_NAMES))
+        | set(completion_names(VAR_SUBTREES))
+    )
+
+    def completer(text: str, state: int) -> str | None:
+        line = readline.get_line_buffer()
+        begidx = readline.get_begidx()
+        stripped = line.lstrip()
+        if begidx == len(line) - len(stripped):
+            matches = [word + " " for word in SESSION_COMMANDS
+                       if word.startswith(text)]
+        else:
+            matches = [word for word in completion_words
+                       if word.startswith(text)]
+        if state < len(matches):
+            return matches[state]
+        return None
+
+    try:
+        readline.set_completer(completer)
+        readline.set_completer_delims(" \t\n")
+        readline.parse_and_bind("tab: complete")
+    except (AttributeError, OSError):
+        pass
+
+
+def normalize_ota_key_hex(text: str, *, source: str) -> str:
+    clean = "".join(text.split())
+    try:
+        raw = bytes.fromhex(clean)
+    except ValueError as exc:
+        raise SystemExit(f"{source}: OTA key must be hex: {exc}") from exc
+    if len(raw) != 32:
+        raise SystemExit(
+            f"{source}: OTA key must be exactly 32 bytes, got {len(raw)}"
+        )
+    return raw.hex().upper()
+
+
+def load_ota_key_hex(*, key_hex: str | None, key_file: str | None) -> str:
+    if key_hex and key_file:
+        raise SystemExit("pass only one of OTA key hex or --key-file")
+    if key_hex:
+        return normalize_ota_key_hex(key_hex, source="ota-key")
+    if key_file:
+        data = Path(key_file).read_bytes()
+        if len(data) == 32:
+            return data.hex().upper()
+        return normalize_ota_key_hex(
+            data.decode("ascii"), source=f"--key-file {key_file}"
+        )
+    raise SystemExit("ota-key: pass a key, --key, --key-file, or --clear")
+
+
+def find_paired_device_key(creds: dict, target: str) -> str | None:
+    target_upper = target.upper()
+    for addr, data in creds.items():
+        if addr.upper() == target_upper:
+            return addr
+        if data.get("alias") == target:
+            return addr
+    return None
 
 
 def resolve_device_spec(args: argparse.Namespace) -> str:
@@ -219,6 +343,7 @@ def cmd_session(args: argparse.Namespace) -> int:
     """Interactive REPL. Keeps the transport open across commands."""
     with connect_transport(args) as t:
         first_call = [True]
+        setup_session_readline()
 
         def do_rpc(method, params):
             if first_call[0]:
@@ -226,14 +351,18 @@ def cmd_session(args: argparse.Namespace) -> int:
                 return call_rpc(t, args, method, params)
             return t.rpc(method, params, timeout=args.timeout)
 
-        if sys.stdin.isatty():
+        def print_session_help() -> None:
             print(f"AS11 session on {t.name}. Commands:")
             print("  get NAME [NAME...]              -> Get RPC")
             print("  set NAME VALUE [--type T] ...   -> Set RPC")
-            print("  gettime                          -> GetDateTime")
+            print("  gettime                         -> GetDateTime")
             print("  settime [ISO]                   -> SetDateTime")
             print("  rpc METHOD [JSON_PARAMS]        -> arbitrary RPC")
-            print("  quit / exit                      -> leave")
+            print("  help                            -> show this help")
+            print("  quit / exit                     -> leave")
+
+        if sys.stdin.isatty():
+            print_session_help()
         while True:
             if sys.stdin.isatty():
                 try:
@@ -253,7 +382,10 @@ def cmd_session(args: argparse.Namespace) -> int:
             try:
                 verb, _, rest = line.partition(" ")
                 verb = verb.lower()
-                if verb == "get":
+                if verb == "help":
+                    print_session_help()
+                    continue
+                elif verb == "get":
                     names = rest.split()
                     if not names:
                         eprint("get: at least one variable name required")
@@ -376,6 +508,190 @@ def normalize_stream_intervals(sample_ms: int, report_ms: int) -> tuple[int, int
     return norm_sample, norm_report
 
 
+def print_spool_types(pattern: str = "") -> None:
+    key = pattern.lower()
+    for title, group_items in SPOOL_GROUPS:
+        group_match = bool(key and key in title.lower())
+        hits = [item for item in group_items
+                if not key or group_match or key in item.lower()]
+        if not hits:
+            continue
+        print(f"{title}:")
+        width = max(len(item) for item in hits)
+        for item in hits:
+            fmt = SPOOL_FORMATS.get(item, "")
+            print(f"  {item:<{width}}  {fmt}")
+        print()
+
+
+def spool_address_for(spool_type: str, from_dt: str) -> dict:
+    return {spool_type: {"fromDateTime": from_dt}}
+
+
+_GATE_TRUTHY = {"yes", "on", "true", "enabled", "1"}
+
+
+def _is_gate_open(value) -> bool:
+    """Classify a gate-var Get response as open (truthy) or closed."""
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    return str(value).strip().lower() in _GATE_TRUTHY
+
+
+def _wire_match_cell(name: str, data: bytes) -> str:
+    """Compare observed top-level protobuf field against the registry."""
+    expected = SPOOL_REGISTRY.get(name, {}).get("wire_field")
+    observed = spool_payload_first_field(data)
+    if observed is None:
+        return ""
+    if expected is None:
+        return f"f{observed}"
+    if observed == expected:
+        return f"ok f{observed}"
+    return f"MISMATCH expected f{expected} got f{observed}"
+
+
+def decode_spool_payload(spool_type: str, data: bytes, *,
+                         samples: bool = False, details: bool = False,
+                         raw_proto: bool = False) -> None:
+    """Pretty-print a spool payload using the type-specific decoder."""
+    if not samples:
+        print_spool_legend(spool_type)
+    event_table = False
+    if raw_proto:
+        proto_pretty(data)
+    elif rc03_spool_pretty(spool_type, data, samples=samples):
+        pass
+    elif spool_type == "Summary":
+        summary_pretty(data, details=details)
+    elif event_spool_pretty(spool_type, data):
+        event_table = True
+    else:
+        proto_pretty(data)
+    if not samples and not event_table:
+        print_spool_summary(spool_type, data)
+
+
+def cmd_decode(args: argparse.Namespace) -> int:
+    """Offline: decode a previously captured spool payload from a file.
+
+    Without `--type`, the spool type is inferred from the outer
+    protobuf field number using SPOOL_REGISTRY. When the wire field is
+    shared by multiple spool types (currently only ActivityEvents
+    Frequent vs Sporadic on f10), the first registry match is used and
+    other candidates are reported on stderr.
+    """
+    try:
+        with open(args.file, "rb") as f:
+            data = f.read()
+    except OSError as exc:
+        raise SystemExit(f"decode: cannot read {args.file}: {exc}")
+    if not data:
+        raise SystemExit(f"decode: {args.file} is empty")
+
+    spool_type = args.type
+    if spool_type is None:
+        best, candidates = detect_spool_type(data)
+        if best is None:
+            field = spool_payload_first_field(data)
+            field_str = f"f{field}" if field is not None else "no protobuf field"
+            raise SystemExit(
+                f"decode: could not autodetect spool type ({field_str}); "
+                f"pass --type"
+            )
+        spool_type = best
+        if len(candidates) > 1:
+            eprint(f"# autodetected: {spool_type} "
+                   f"(field shared with {', '.join(candidates[1:])})")
+        else:
+            eprint(f"# autodetected: {spool_type}")
+    elif spool_type not in SPOOL_REGISTRY:
+        eprint(f"# warning: {spool_type!r} is not in SPOOL_REGISTRY; "
+               f"decoding with generic protobuf")
+
+    decode_spool_payload(
+        spool_type, data,
+        samples=args.samples, details=args.details,
+        raw_proto=args.raw_proto,
+    )
+    return 0
+
+
+def cmd_spool_probe(args: argparse.Namespace) -> int:
+    """Inventory the spools that currently have data.
+
+    For each known (or single requested) spool type, do one StartSpool +
+    PullSpoolFragments round. Pre-checks `gate_var` from SPOOL_REGISTRY
+    and skips closed gates without round-tripping. Reports verifies the
+    observed outer protobuf field against `SPOOL_REGISTRY[name].wire_field`.
+    """
+    names = ([args.spool_type] if getattr(args, "spool_type", None)
+             else SPOOL_TYPES)
+    from_dt = args.from_dt or "2000-01-01T00:00:00.000Z"
+    only = getattr(args, "only", "all")
+    gate_cache: dict[str, bool] = {}
+    rows: list[tuple[str, str, str, str, str, str]] = []
+
+    with connect_transport(args) as t:
+        for name in names:
+            info = SPOOL_REGISTRY.get(name, {})
+            gate = info.get("gate_var")
+            status, n_bytes, n_frags, next_from, note = "", "0", "0", "", ""
+
+            if gate is not None:
+                if gate not in gate_cache:
+                    try:
+                        resp = t.rpc("Get", [gate], timeout=args.timeout)
+                        gate_value = resp.get("result", {}).get(gate)
+                        gate_cache[gate] = _is_gate_open(gate_value)
+                    except Exception as exc:
+                        gate_cache[gate] = False
+                        eprint(f"# warning: Get {gate} failed: {exc}")
+                if not gate_cache[gate]:
+                    rows.append((name, "GATED", "-", "-", "",
+                                 f"gate {gate}=Off"))
+                    continue
+
+            try:
+                data, status, nxt, n_frags_int = spool_one_round(
+                    t, spool_address_for(name, from_dt), args.max_size,
+                    fragment_timeout=args.fragment_timeout,
+                    fragment_max=args.fragment_max,
+                    verbose=False,
+                )
+            except SpoolError as exc:
+                code = f"code {exc.code}" if exc.code is not None else "no code"
+                rows.append((name, "ERROR", "0", "0", "",
+                             f"{code}: {exc.message}"))
+                continue
+            except Exception as exc:
+                rows.append((name, "ERROR", "0", "0", "", str(exc)))
+                continue
+
+            n_bytes = str(len(data))
+            n_frags = str(n_frags_int)
+            if (status == "SPOOL_COMPLETE_MORE_DATA_PENDING"
+                    and isinstance(nxt, dict)):
+                next_from = nxt.get(name, {}).get("fromDateTime", "")
+            note = _wire_match_cell(name, data)
+            rows.append((name, status, n_bytes, n_frags, next_from, note))
+
+    print("spool_type\tstatus\tbytes\tfrags\tnext_from\twire_match")
+    for row in rows:
+        if only == "populated":
+            try:
+                if int(row[2]) <= 0:
+                    continue
+            except ValueError:
+                continue
+        print("\t".join(row))
+    return 0
+
+
 def cmd_stream(args: argparse.Namespace) -> int:
     """Start a real-time data stream; emit NDJSON, one notification per line.
        On exit, calls `StartStream` with dataIds=[] to disarm.
@@ -463,16 +779,17 @@ def cmd_spool(args: argparse.Namespace) -> int:
     base64-envelope to stdout.
     """
     if getattr(args, "list_types", False):
-        for name in SPOOL_TYPES:
-            print(name)
+        print_spool_types()
         return 0
+    if getattr(args, "probe", False):
+        return cmd_spool_probe(args)
     if not getattr(args, "spool_type", None):
         raise SystemExit(
-            "spool: spool_type required (or use --list-types)"
+            "spool: spool_type required (or use --list-types/--probe)"
         )
     spool_type = args.spool_type
     from_dt = args.from_dt or "2000-01-01T00:00:00.000Z"
-    spool_address = {spool_type: {"fromDateTime": from_dt}}
+    spool_address = spool_address_for(spool_type, from_dt)
 
     all_data = bytearray()
     total_fragments = 0
@@ -488,6 +805,7 @@ def cmd_spool(args: argparse.Namespace) -> int:
             data, status, nxt, n_frags = spool_one_round(
                 t, spool_address, args.max_size,
                 fragment_timeout=args.fragment_timeout,
+                fragment_max=args.fragment_max,
             )
             all_data.extend(data)
             total_fragments += n_frags
@@ -514,12 +832,11 @@ def cmd_spool(args: argparse.Namespace) -> int:
             eprint(f"  nextSpoolAddress: {json.dumps(last_next)}")
 
     if args.decode:
-        print_spool_legend(spool_type)
-        if spool_type == "Summary":
-            summary_pretty(data)
-        else:
-            proto_pretty(data)
-        print_spool_summary(spool_type, data)
+        decode_spool_payload(
+            spool_type, data,
+            samples=args.samples, details=args.details,
+            raw_proto=args.raw_proto,
+        )
         if last_next and final_status == "SPOOL_COMPLETE_MORE_DATA_PENDING":
             eprint(f"\n# status={final_status}")
             eprint(f"# nextSpoolAddress: {json.dumps(last_next)}")
@@ -623,6 +940,10 @@ def cmd_known(args: argparse.Namespace) -> int:
             print()
         return 0
 
+    if action == "spools":
+        print_spool_types(pat)
+        return 0
+
     if action not in REGISTRIES:
         raise SystemExit(f"known: unknown registry {action!r}; "
                          f"choose from {list(REGISTRIES)}")
@@ -661,12 +982,13 @@ def cmd_devices(args: argparse.Namespace) -> int:
         if not creds:
             print("No paired devices.")
             return 0
-        print(f"{'address':<20}  {'alias':<16}  {'clientId':<12}")
-        print(f"{'-'*20:<20}  {'-'*16:<16}  {'-'*12:<12}")
+        print(f"{'address':<20}  {'alias':<16}  {'clientId':<12}  {'otaKey':<6}")
+        print(f"{'-'*20:<20}  {'-'*16:<16}  {'-'*12:<12}  {'-'*6:<6}")
         for addr, data in sorted(creds.items()):
             alias = data.get("alias", "") or ""
             cid = (data.get("clientId", "") or "")[:12]
-            print(f"{addr:<20}  {alias:<16}  {cid:<12}")
+            ota = "yes" if data.get("otaKey") else ""
+            print(f"{addr:<20}  {alias:<16}  {cid:<12}  {ota:<6}")
         return 0
 
     if action == "pair":
@@ -691,15 +1013,7 @@ def cmd_devices(args: argparse.Namespace) -> int:
         new_alias = args.name
         creds = load_all_credentials()
         # Resolve target: MAC, UUID, or existing alias
-        key = None
-        target_upper = target.upper()
-        for addr in creds:
-            if addr.upper() == target_upper:
-                key = addr
-                break
-            if creds[addr].get("alias") == target:
-                key = addr
-                break
+        key = find_paired_device_key(creds, target)
         if key is None:
             raise SystemExit(
                 f"alias: {target!r} not found among paired devices"
@@ -725,6 +1039,40 @@ def cmd_devices(args: argparse.Namespace) -> int:
             raise SystemExit(f"unalias: no alias named {name!r}")
         save_all_credentials(creds)
         print(f"removed alias {name}")
+        return 0
+
+    if action == "ota-key":
+        target = args.target
+        creds = load_all_credentials()
+        key = find_paired_device_key(creds, target)
+        if key is None:
+            raise SystemExit(
+                f"ota-key: {target!r} not found among paired devices"
+            )
+
+        if args.clear:
+            if args.key or args.key_hex or args.key_file:
+                raise SystemExit("ota-key: pass --clear without a key")
+            removed = creds[key].pop("otaKey", None) is not None
+            save_all_credentials(creds)
+            print(("removed" if removed else "no") + f" OTA key for {target}")
+            return 0
+
+        if args.key and args.key_hex:
+            raise SystemExit("ota-key: pass only one of positional key or --key")
+
+        key_hex = args.key_hex or args.key
+
+        if not key_hex and not args.key_file:
+            state = "configured" if creds[key].get("otaKey") else "not configured"
+            print(f"OTA key for {target}: {state}")
+            return 0
+
+        creds[key]["otaKey"] = load_ota_key_hex(
+            key_hex=key_hex, key_file=args.key_file
+        )
+        save_all_credentials(creds)
+        print(f"stored OTA key for {target}")
         return 0
 
     raise SystemExit(f"unknown devices action: {action!r}")
@@ -935,6 +1283,12 @@ def build_parser() -> argparse.ArgumentParser:
                     help="spool type (see --list-types)")
     sp.add_argument("--list-types", action="store_true",
                     help="print known spool types and exit")
+    sp.add_argument("--probe", action="store_true",
+                    help="probe one spool type, or all known types if omitted; "
+                         "prints status without dumping payload")
+    sp.add_argument("--only", choices=("all", "populated"), default="all",
+                    help="probe filter: 'populated' shows only rows with "
+                         "bytes > 0; default 'all'")
     sp.add_argument("--from-dt", default=None,
                     help="from datetime (ISO 8601); default 2000-01-01")
     sp.add_argument("--max-size", type=int, default=4096,
@@ -945,11 +1299,42 @@ def build_parser() -> argparse.ArgumentParser:
                     help="stop after first round; do not follow continuations")
     sp.add_argument("--fragment-timeout", type=float, default=30.0,
                     help="seconds to wait for all fragments of one round")
+    sp.add_argument("--fragment-max", type=int, default=4096,
+                    help="maxFragmentSize passed to PullSpoolFragments")
     sp.add_argument("--decode", action="store_true",
                     help="decode protobuf payload to stdout")
+    sp.add_argument("--raw-proto", action="store_true",
+                    help="with --decode, force generic protobuf dump")
+    sp.add_argument("--details", action="store_true",
+                    help="with --decode, print detailed Summary fields")
+    sp.add_argument("--samples", action="store_true",
+                    help="with --decode, print RC03 archived signal samples as CSV")
     sp.add_argument("-o", "--output", default=None,
                     help="write raw binary to this file")
     sp.set_defaults(func=cmd_spool)
+
+    dec = sub.add_parser(
+        "decode",
+        help="decode a captured spool payload offline (no device needed)",
+        epilog="examples:\n"
+               "  decode summary.bin                    # autodetect type\n"
+               "  decode --type Summary summary.bin     # force a type\n"
+               "  decode --raw-proto unknown.bin        # generic protobuf dump\n"
+               "  decode --samples respflow.bin         # RC03 samples as CSV\n"
+               "  decode --details summary.bin          # full Summary fields",
+        formatter_class=raw_fmt,
+    )
+    dec.add_argument("file",
+                     help="path to a previously captured spool payload")
+    dec.add_argument("--type", default=None,
+                     help="spool type (overrides autodetect)")
+    dec.add_argument("--raw-proto", action="store_true",
+                     help="force generic protobuf dump")
+    dec.add_argument("--details", action="store_true",
+                     help="print detailed Summary fields")
+    dec.add_argument("--samples", action="store_true",
+                     help="print RC03 archived signal samples as CSV")
+    dec.set_defaults(func=cmd_decode)
 
     kn = sub.add_parser(
         "known",
@@ -995,6 +1380,20 @@ def build_parser() -> argparse.ArgumentParser:
     dev_alias = dev_sub.add_parser("alias", help="assign an alias")
     dev_alias.add_argument("target", help="MAC/UUID/existing alias")
     dev_alias.add_argument("name", help="new alias")
+
+    dev_key = dev_sub.add_parser(
+        "ota-key",
+        help="store/clear default OTA key for a paired BLE alias/device",
+    )
+    dev_key.add_argument("target", help="MAC/UUID/existing alias")
+    dev_key.add_argument("key", nargs="?",
+                         help="OTA key as 64 hex chars")
+    dev_key.add_argument("--key", dest="key_hex", metavar="HEX32",
+                         help="OTA key as 64 hex chars")
+    dev_key.add_argument("--key-file", metavar="PATH",
+                         help="OTA key as a 32-byte binary file or hex text")
+    dev_key.add_argument("--clear", action="store_true",
+                         help="remove stored OTA key")
 
     dev_unalias = dev_sub.add_parser("unalias", help="remove an alias")
     dev_unalias.add_argument("name", help="alias to remove")
@@ -1046,6 +1445,9 @@ if __name__ == "__main__":
             print(f"\n{exc}", file=sys.stderr)
             raise SystemExit(1)
         raise
+    except SpoolError as exc:
+        print(f"\nspool error: {exc.message}", file=sys.stderr)
+        raise SystemExit(1)
     except Exception as exc:
         log.exception("fatal: %s", exc)
         raise SystemExit(1)

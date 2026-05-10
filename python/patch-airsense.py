@@ -365,8 +365,8 @@ class ASFirmwarePatches(object):
         addr = self.asf.find_var(0x0204)
         # make variable read only to prevent overwriting with eeprom data
         self.asf.patch(b'\x06', addr, clobber=True)
-        # set bits for all languages except asian (breaks font) and reserved (5,7)
-        self.asf.patch(b'\x5f\xdf\x04\x00', addr + 0x08, clobber=True)
+        # 0x007fffff, except font-reserved bits jp (13,19) and cn (16,17).
+        self.asf.patch(b'\xff\xdf\x74\x00', addr + 0x08, clobber=True)
 
     def extra_debug(self):
         # set config variable 0xc value to 4 == enable more debugging data on display

@@ -12,6 +12,8 @@ import argparse
 import time
 import sys
 import json
+import zlib
+from pathlib import Path
 
 
 GROUPS = {
@@ -50,7 +52,7 @@ GROUP_ALIASES = {
 
 GROUP_DESC = {
     'AGL': 'AutoSet params',
-    'BGL': 'Board/identity',
+    'BGL': 'Board/identity/calibration',
     'CGL': 'CPAP params',
     'DGL': 'Bilevel timing',
     'EGL': 'EPR params',
@@ -121,6 +123,7 @@ VAR_DESC = {
     'MXI': 'VAuto Max IPAP',
     'MXS': 'ASV Max PS',
     'NMF': 'Non-Vent Mask',
+    'PBR': 'Calibration Serial Parameter',
     'PHI': 'Height',
     'PHT': 'Height',
     'PRD': 'Pressure Units',
@@ -178,6 +181,10 @@ VAR_DESC = {
     'AET': 'Apnea Event Type',
     'BLL': 'Jump to Bootloader',
     'BLS': 'Bootloader Status',
+    'CAL': 'Calibration Service Select',
+    'DRX': 'Calibration Serial RX',
+    'DTX': 'Calibration Serial TX',
+    'ETR': 'EEPROM Transfer Request',
     'CSR': 'CSR Event Type',
     'HCM': 'Humidifier Operating Mode',
     'HOS': 'Humidifier Operating State',
@@ -188,6 +195,8 @@ VAR_DESC = {
     'QGI': 'Module Group',
     'QNC': 'Network Connection',
     'ROP': 'Run Mode Request',
+    'ROT': 'Rotary Encoder Position',
+    'RSS': 'Calibration Serial Request/Reply',
     'ZRM': 'Run Mode',
     'ZRP': 'Is Ramping',
 
@@ -214,6 +223,7 @@ VAR_DESC = {
     'ATP': 'AutoSet Pressure',
     'BP5': 'Blower Pressure P5',
     'BP9': 'Blower Pressure P95',
+    'CPR': 'Calibration Pressure Setpoint',
     'HDR': 'Hose Drop',
     'MAP': 'Avg Mask Pressure',
     'MKE': 'EPR Pressure',
@@ -327,11 +337,10 @@ VAR_DESC = {
     'QTI': 'Module Type',
     'QVI': 'Module SW Version',
 
-    'SNB': 'Motor calibration something? PWM freq?',
-    'FLZ': 'Flow calibration something?',
-    'FLG': 'Flow calibration something?',
-    'PZH': 'Pressure calibration something?',
-    'PSH': 'Pressure calibration something?',
+    'FLZ': 'Flow Zero',
+    'FLG': 'Flow Gain',
+    'PZH': 'Pressure Zero',
+    'PSH': 'Pressure Gain',
 
     'AIE': 'Avg I:E Ratio [%]',
     'IER': 'I:E Ratio [%]',
@@ -381,6 +390,7 @@ VAR_SCALE = {
     'AEP': (50, 1, 'cmH2O'), 'AIP': (50, 1, 'cmH2O'), 'HDR': (50, 1, 'cmH2O'),
     'MSP': (50, 1, 'cmH2O'), 'PM9': (50, 1, 'cmH2O'), 'PMA': (50, 1, 'cmH2O'),
     'BP5': (50, 1, 'cmH2O'), 'BP9': (50, 1, 'cmH2O'),
+    'BPR': (50, 1, 'cmH2O'), 'CPR': (50, 1, 'cmH2O'),
     'PI9': (50, 1, 'cmH2O'), 'PIA': (50, 1, 'cmH2O'), 'PIM': (50, 1, 'cmH2O'),
     'PE9': (50, 1, 'cmH2O'), 'PEA': (50, 1, 'cmH2O'), 'PEM': (50, 1, 'cmH2O'),
     'EPR': (50, 0, 'cmH2O'),
@@ -392,7 +402,9 @@ VAR_SCALE = {
     'HTT': (10, 0, '°C'), 'HTM': (10, 0, '°C'),
     # Flow: raw / 500
     'RFL': (500, 2, 'L/s'), 'BFF': (500, 2, 'L/s'), 'DFL': (500, 2, 'L/s'),
-    'RF9': (500, 2, 'L/s'), 'RF5': (500, 2, 'L/s'),
+    'RF9': (500, 2, 'L/s'), 'RF5': (500, 2, 'L/s'), 'BFL': (500, 2, 'L/s'),
+    # Calibration gains
+    'PSH': (4096, 4, ''), 'FLG': (4095, 4, ''),
     # Leak: raw / 50
     'LK9': (50, 2, 'L/s'), 'LKF': (50, 2, 'L/s'), 'LKM': (50, 2, 'L/s'),
     'LKP': (50, 2, 'L/s'), 'LMX': (50, 2, 'L/s'), 'LYK': (50, 2, 'L/s'),
@@ -428,7 +440,8 @@ VAR_SCALE = {
     'VA9': (8, 1, 'L/min'), 'VAA': (8, 1, 'L/min'), 'VAM': (8, 1, 'L/min'),
 }
 
-# Enum option labels from ResScan metadata (M36 V39)
+# Enum option labels from ResScan metadata (M36 V39), plus firmware-traced
+# service selectors where noted.
 # Values are {int_value: 'label'}
 ENUM_OPTIONS = {
     'MOP': {0: 'CPAP', 1: 'AutoSet', 2: 'APAP', 3: 'S', 4: 'ST', 5: 'T',
@@ -465,6 +478,24 @@ ENUM_OPTIONS = {
             8: 'Power Save', 9: 'Learn Target', 10: 'Upgrade', 11: 'Upgrade Prep'},
     'ROP': {0: 'Standby', 1: 'Normal', 2: 'Power Recovery', 3: 'Power Save',
             4: 'Calibration', 5: 'Upgrade'},
+    # Firmware-traced CAL service selectors. Only identified values are listed.
+    'CAL': {0x0001: 'Pressure Controller',
+            0x0005: 'LCD/display test',
+            0x0006: 'Pressure loop + unidentified KPD/KPT controls',
+            0x0007: 'Pressure controller + ROT status',
+            0x000A: 'SDT status bit collector',
+            0x000B: 'EEPROM/SD maintenance',
+            0x000C: 'RSS transport test',
+            0x0010: 'SD card read/write self-test',
+            0x0012: 'Serial/comm test'},
+    # Firmware-traced CAL=000B command selector.
+    'ETR': {0x0000: 'Idle',
+            0x0001: 'Zero EEPROM logical pages',
+            0x0002: 'Format eep:0 FAT filesystem',
+            0x0003: 'Backup raw EEPROM to SD EEPROM.dat',
+            0x0004: 'Restore raw EEPROM from SD EEPROM.dat',
+            0x0005: 'Copy eep:0 tree to SD',
+            0x0006: 'Copy SD EEPROM table to eep:0'},
     'BLL': {0: 'Application', 1: 'Bootloader'},
     'BLS': {0: 'In Application', 1: 'In Bootloader', 2: 'In BL (Invalid App)'},
     'AET': {0: 'None', 1: 'Hypopnea', 2: 'Central', 3: 'Obstructive', 4: 'Apnea', 5: 'Arousal'},
@@ -481,6 +512,75 @@ ENUM_OPTIONS = {
     'TCV': {0: 'None', 1: 'Spont Trig', 2: 'TeMax Trig', 3: 'TeMin Trig',
             4: 'Timed Trig', 5: 'Spont Cycle', 6: 'TiMax Cycle', 7: 'TiMin Cycle',
             8: 'Timed Cycle'},
+}
+
+
+CALIBRATION_ROP = '0004'
+CALIBRATION_ZRM = '0006'
+EEPROM_CAL = '000B'
+
+EEPROM_ACTIONS = {
+    'format-eep-fat': {
+        'etr': '0002',
+        'label': 'format eep:0 FAT filesystem via ERE backend service',
+        'paths': ['eep:0:'],
+        'requires_yes': True,
+        'requires_really': True,
+        'confirm_message': 'formats/reinitializes the EEPROM-backed eep:0 FAT filesystem',
+        'warnings': [
+            'operation destroys unit specific data (serial, calbration...)',
+        ],
+    },
+    'sd-backup-raw': {
+        'etr': '0003',
+        'label': 'backup raw EEPROM to SD EEPROM.dat',
+        'paths': ['mmc:0:EEPROM\\EEPROM.dat'],
+        'requires_yes': False,
+        'requires_really': False,
+        'warnings': [],
+    },
+    'sd-restore-raw': {
+        'etr': '0004',
+        'label': 'restore raw EEPROM from SD EEPROM.dat',
+        'paths': ['mmc:0:EEPROM\\EEPROM.dat'],
+        'requires_yes': True,
+        'requires_really': False,
+        'confirm_message': 'writes raw EEPROM from mmc:0:EEPROM\\EEPROM.dat',
+        'warnings': [],
+    },
+    'sd-export-tree': {
+        'etr': '0005',
+        'label': 'copy eep:0 tree to SD',
+        'paths': ['eep:0:', 'mmc:0:EEPROM'],
+        'requires_yes': False,
+        'requires_really': False,
+        'warnings': [],
+    },
+    'sd-import-tree': {
+        'etr': '0006',
+        'label': 'copy fixed SD EEPROM tree paths to eep:0',
+        'paths': [
+            'mmc:0:EEPROM -> eep:0:',
+            'mmc:0:EEPROM\\DATALOG -> eep:0:DATALOG',
+            'mmc:0:EEPROM\\ERRORLOG -> eep:0:ERRORLOG',
+            'mmc:0:EEPROM\\SETTINGS -> eep:0:SETTINGS',
+        ],
+        'requires_yes': True,
+        'requires_really': False,
+        'confirm_message': 'writes fixed mmc:0:EEPROM paths back to eep:0',
+        'warnings': [],
+    },
+    'erase-logical-pages': {
+        'etr': '0001',
+        'label': 'zero EEPROM logical pages',
+        'paths': [],
+        'requires_yes': True,
+        'requires_really': True,
+        'confirm_message': 'zeroes EEPROM logical pages',
+        'warnings': [
+            'operation destroys unit specific data (serial, calbration...)',
+        ],
+    },
 }
 
 
@@ -528,7 +628,12 @@ def encode_value(name, user_str):
         for val, label in ENUM_OPTIONS[name].items():
             if label.lower() == lower:
                 return f'{val:04X}'
-        valid = ', '.join(ENUM_OPTIONS[name].values())
+        raw_hex = lower[2:] if lower.startswith('0x') else lower
+        if raw_hex and all(c in '0123456789abcdef' for c in raw_hex):
+            val = int(raw_hex, 16)
+            if val in ENUM_OPTIONS[name]:
+                return f'{val:04X}'
+        valid = ', '.join(f'{val:04X}={label}' for val, label in ENUM_OPTIONS[name].items())
         raise ValueError(f"unknown option '{user_str}' for {name} (valid: {valid})")
 
     if name in VAR_SCALE:
@@ -687,9 +792,94 @@ def negotiate_best_baud(ser):
     return ser.baudrate
 
 
+class EcpFileDevice:
+    """Settings.ecp file backend used as a writeable pseudo-device."""
+
+    ecp_file = True
+
+    def __init__(self, portspec):
+        self.path = self._resolve_path(portspec)
+        self.crc_path = self.path.with_name('Settings.crc')
+        self.dirty = False
+
+    @staticmethod
+    def _resolve_path(portspec):
+        raw = portspec[4:]
+        if not raw:
+            raise ValueError("ecp: path is empty")
+        path = Path(raw)
+        if path.exists() and path.is_file():
+            return path
+        return path / 'Settings.ecp'
+
+    def _read_bytes(self):
+        if not self.path.exists():
+            return b''
+        return self.path.read_bytes()
+
+    def _read_assignments(self):
+        values = {}
+        text = self._read_bytes().decode('ascii', errors='replace')
+        for line in text.splitlines():
+            parts = line.strip().split(None, 3)
+            if len(parts) != 4:
+                continue
+            if parts[0].upper() != 'P' or parts[1].upper() != 'S':
+                continue
+            if not parts[2].startswith('#'):
+                continue
+            values[parts[2][1:].upper()] = parts[3].strip()
+        return values
+
+    def get_var(self, name):
+        value = self._read_assignments().get(name.upper())
+        if value is None:
+            return None, None
+        return 'R', value
+
+    def set_var(self, name, value):
+        if '\r' in value or '\n' in value:
+            return 'E', 'newline in value'
+        line = f"P S #{name.upper()} {value}"
+        try:
+            encoded = line.encode('ascii')
+        except UnicodeEncodeError:
+            return 'E', 'non-ascii value'
+
+        data = bytearray(self._read_bytes())
+        if data and not (data.endswith(b'\n') or data.endswith(b'\r')):
+            data.extend(b'\r\n')
+        data.extend(encoded)
+        data.extend(b'\r\n')
+
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_bytes(bytes(data))
+        self.dirty = True
+        return 'R', value
+
+    def update_crc(self):
+        if not self.path.exists():
+            return
+        self.crc_path.write_bytes(
+            (zlib.crc32(self.path.read_bytes()) & 0xFFFFFFFF).to_bytes(4, 'little'))
+        self.dirty = False
+
+    def close(self):
+        if self.dirty:
+            self.update_crc()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
+
+
 def get_var(ser, name):
     """Read a single variable. Returns (frame_type, value_str).
     R-frame: ('R', value).  E-frame: ('E', error_code).  No response: (None, None)."""
+    if getattr(ser, 'ecp_file', False):
+        return ser.get_var(name)
     _, resp = send_cmd(ser, f"G S #{name}", timeout=1, quiet=True)
     for r in resp:
         payload = r['payload'].decode('ascii', errors='replace')
@@ -700,6 +890,8 @@ def get_var(ser, name):
 def set_var(ser, name, value):
     """Write a single variable. Returns (frame_type, value_str).
     R-frame: ('R', echo_value).  E-frame: ('E', error_code).  No response: (None, None)."""
+    if getattr(ser, 'ecp_file', False):
+        return ser.set_var(name, value)
     _, resp = send_cmd(ser, f"P S #{name} {value}", timeout=0.5, quiet=True)
     for r in resp:
         payload = r['payload'].decode('ascii', errors='replace')
@@ -709,12 +901,123 @@ def set_var(ser, name, value):
 
 def get_var_caps(ser, name):
     """Read variable capabilities. Returns (frame_type, value_str)."""
+    if getattr(ser, 'ecp_file', False):
+        return None, None
     _, resp = send_cmd(ser, f"G C #{name}", timeout=0.5, quiet=True)
     for r in resp:
         payload = r['payload'].decode('ascii', errors='replace')
         if '=' in payload:
             return (r['type'], payload.split('=', 1)[1].strip())
     return (None, None)
+
+
+def require_var_result(name, frame_type, value, action):
+    """Return an uppercase R-frame value or raise RuntimeError."""
+    if frame_type == 'R' and value is not None:
+        return value.strip().upper()
+    if frame_type == 'E':
+        raise RuntimeError(f"{name}: device returned error {value} while {action}")
+    raise RuntimeError(f"{name}: no response while {action}")
+
+
+def wait_var_value(ser, name, expected, timeout, interval=0.5):
+    """Poll a variable until it reaches expected. Returns (ok, last_value)."""
+    expected = expected.upper()
+    deadline = time.time() + timeout
+    last = None
+    tty = sys.stdout.isatty()
+    last_status_len = 0
+    while True:
+        ft, val = get_var(ser, name)
+        if ft == 'R' and val is not None:
+            last = val.strip().upper()
+            if last == expected:
+                msg = f"  {name}={expected} confirmed."
+                if tty:
+                    padding = ' ' * max(0, last_status_len - len(msg))
+                    sys.stdout.write(f"\r{msg}{padding}\n")
+                    sys.stdout.flush()
+                else:
+                    print(msg)
+                return True, last
+        elif ft == 'E':
+            last = f"ERROR {val}"
+        else:
+            last = "no response"
+
+        msg = f"  Waiting for {name}={expected}; current {last}..."
+        if tty:
+            padding = ' ' * max(0, last_status_len - len(msg))
+            sys.stdout.write(f"\r{msg}{padding}")
+            sys.stdout.flush()
+            last_status_len = len(msg)
+        else:
+            print(msg)
+
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            if tty:
+                sys.stdout.write("\n")
+                sys.stdout.flush()
+            return False, last
+        time.sleep(min(interval, remaining))
+
+
+def enter_calibration_mode(ser, timeout):
+    """Request calibration run mode and wait for ZRM=0006."""
+    zrm = require_var_result('ZRM', *get_var(ser, 'ZRM'), 'reading')
+    if zrm == CALIBRATION_ZRM:
+        print(f"[*] Already in calibration mode: ZRM={zrm}")
+        return
+
+    ann = format_value('ZRM', zrm)
+    ann_str = f" ({ann})" if ann else ""
+    print(f"[*] Current run mode: ZRM={zrm}{ann_str}")
+    print(f"[*] Requesting calibration mode: ROP={CALIBRATION_ROP}")
+    require_var_result('ROP', *set_var(ser, 'ROP', CALIBRATION_ROP),
+                       f'writing {CALIBRATION_ROP}')
+    ok, last = wait_var_value(ser, 'ZRM', CALIBRATION_ZRM, timeout)
+    if not ok:
+        raise RuntimeError(f"ZRM did not reach {CALIBRATION_ZRM}; last value was {last}")
+
+
+def restore_calibration_state(ser, original_cal, original_rop):
+    """Best-effort restore of selector variables saved before calibration utilities."""
+    print(f"[*] Restoring CAL={original_cal}, ROP={original_rop}")
+    errors = 0
+    try:
+        require_var_result('CAL', *set_var(ser, 'CAL', original_cal),
+                           f'writing {original_cal}')
+    except RuntimeError as exc:
+        print(f"  [!] Failed to restore CAL: {exc}")
+        errors += 1
+    try:
+        require_var_result('ROP', *set_var(ser, 'ROP', original_rop),
+                           f'writing {original_rop}')
+    except RuntimeError as exc:
+        print(f"  [!] Failed to restore ROP: {exc}")
+        errors += 1
+
+    ft, zrm = get_var(ser, 'ZRM')
+    if ft == 'R' and zrm is not None:
+        zrm = zrm.strip().upper()
+        ann = format_value('ZRM', zrm)
+        ann_str = f" ({ann})" if ann else ""
+        print(f"  ZRM={zrm}{ann_str}")
+    return errors == 0
+
+
+def check_eeprom_confirmations(action, yes=False, really=False):
+    """Validate EEPROM action confirmation flags before opening or writing."""
+    spec = EEPROM_ACTIONS.get(action)
+    if spec is None:
+        print(f"[!] Unknown EEPROM action: {action}")
+        return False
+    if (spec['requires_yes'] and not yes) or (spec['requires_really'] and not really):
+        flag_text = '--yes --really' if spec['requires_really'] and yes else '--yes'
+        print(f"[!] {action} {spec['confirm_message']}. Re-run with {flag_text} to confirm.")
+        return False
+    return True
 
 
 def resolve_groups(group_names):
@@ -747,6 +1050,12 @@ def exclude_vars(var_names, exclude_groups=None, exclude_vars_list=None):
     if exclude_vars_list:
         excluded.update(v.upper() for v in exclude_vars_list)
     return [v for v in var_names if v not in excluded]
+
+
+def parse_name_value_pairs(items, command):
+    if len(items) % 2:
+        raise ValueError(f"{command} expects VAR VALUE pairs")
+    return list(zip(items[0::2], items[1::2]))
 
 
 def cmd_info(ser, verbose=False):
@@ -783,49 +1092,58 @@ def cmd_get(ser, targets, verbose=False):
             print(f"  [{grp}] {name:4s} = # NO-RESPONSE {desc_str}")
     return 0
 
-def cmd_set(ser, var_name, value):
-    """Set a single variable (raw hex value)."""
-    name = var_name.upper()
-    grp = VAR_TO_GROUP.get(name, '-')
-    _, old_val = get_var(ser, name)
-    print(f"  [{grp}] {name} = {old_val} -> {value}")
-    ft, resp = set_var(ser, name, value)
-    if ft == 'R':
-        _, new_val = get_var(ser, name)
-        print(f"  [{grp}] {name} = {new_val} (confirmed)")
-        return 0
-    elif ft == 'E':
-        print(f"  [!] {name} = {resp} # ERROR")
-        return 1
-    else:
-        print(f"  [!] {name} = # NO-RESPONSE")
-        return 1
+def cmd_set(ser, pairs):
+    """Set one or more variables using raw protocol values."""
+    errors = 0
+    for var_name, value in pairs:
+        name = var_name.upper()
+        grp = VAR_TO_GROUP.get(name, '-')
+        _, old_val = get_var(ser, name)
+        print(f"  [{grp}] {name} = {old_val} -> {value}")
+        ft, resp = set_var(ser, name, value)
+        if ft == 'R':
+            _, new_val = get_var(ser, name)
+            print(f"  [{grp}] {name} = {new_val} (confirmed)")
+        elif ft == 'E':
+            print(f"  [!] {name} = {resp} # ERROR")
+            errors += 1
+        else:
+            print(f"  [!] {name} = # NO-RESPONSE")
+            errors += 1
+    return 0 if errors == 0 else 1
 
-def cmd_setv(ser, var_name, value):
-    """Set a variable using scaled/human-readable value (e.g. 10.0 for cmH2O, AutoSet for mode)."""
-    name = var_name.upper()
-    grp = VAR_TO_GROUP.get(name, '-')
-    raw = encode_value(name, value)
-    if raw is None:
-        print(f"  [!] {name}: no known scaling or enum — use 'set' with raw hex")
-        return 1
-    oft, old_val = get_var(ser, name)
-    old_ann = format_value(name, old_val) if oft == 'R' else None
-    old_str = f"{old_val} ({old_ann})" if old_ann else str(old_val)
-    print(f"  [{grp}] {name}: {value} -> {raw}")
-    ft, resp = set_var(ser, name, raw)
-    if ft == 'R':
-        _, new_val = get_var(ser, name)
-        new_ann = format_value(name, new_val)
-        new_str = f"{new_val} ({new_ann})" if new_ann else str(new_val)
-        print(f"  [{grp}] {name} = {old_str} -> {new_str}")
-        return 0
-    elif ft == 'E':
-        print(f"  [!] {name} = {resp} # ERROR")
-        return 1
-    else:
-        print(f"  [!] {name} = # NO-RESPONSE")
-        return 1
+
+def cmd_setv(ser, pairs):
+    """Set one or more variables using scaled/human-readable values."""
+    encoded = []
+    for var_name, value in pairs:
+        name = var_name.upper()
+        raw = encode_value(name, value)
+        if raw is None:
+            print(f"  [!] {name}: no known scaling or enum; use 'set' with raw value")
+            return 1
+        encoded.append((name, value, raw))
+
+    errors = 0
+    for name, value, raw in encoded:
+        grp = VAR_TO_GROUP.get(name, '-')
+        oft, old_val = get_var(ser, name)
+        old_ann = format_value(name, old_val) if oft == 'R' else None
+        old_str = f"{old_val} ({old_ann})" if old_ann else str(old_val)
+        print(f"  [{grp}] {name}: {value} -> {raw}")
+        ft, resp = set_var(ser, name, raw)
+        if ft == 'R':
+            _, new_val = get_var(ser, name)
+            new_ann = format_value(name, new_val)
+            new_str = f"{new_val} ({new_ann})" if new_ann else str(new_val)
+            print(f"  [{grp}] {name} = {old_str} -> {new_str}")
+        elif ft == 'E':
+            print(f"  [!] {name} = {resp} # ERROR")
+            errors += 1
+        else:
+            print(f"  [!] {name} = # NO-RESPONSE")
+            errors += 1
+    return 0 if errors == 0 else 1
 
 def cmd_dump(ser, groups=None, exclude_groups=None, exclude_vars_list=None):
     """Dump variables to dict. Returns {group: {var: value}}."""
@@ -985,8 +1303,72 @@ def cmd_caps(ser, targets=None, verbose=False):
     return 0
 
 
+def cmd_calibration_eeprom(ser, action, timeout):
+    """Run stock-firmware EEPROM/SD maintenance commands via CAL=000B and ETR."""
+    spec = EEPROM_ACTIONS.get(action)
+
+    print(f"[*] EEPROM action: {action} -> ETR={spec['etr']} ({spec['label']})")
+    print("[*] Using stock firmware CAL=000B service; SD paths are device-side.")
+    for warning in spec['warnings']:
+        print(f"[!] {warning}")
+    if spec['paths']:
+        print("[*] Fixed firmware paths:")
+        for path in spec['paths']:
+            print(f"  {path}")
+
+    original_cal = None
+    original_rop = None
+    safe_to_restore = True
+    success = False
+
+    try:
+        original_cal = require_var_result('CAL', *get_var(ser, 'CAL'), 'reading')
+        original_rop = require_var_result('ROP', *get_var(ser, 'ROP'), 'reading')
+        print(f"[*] Saved CAL={original_cal}, ROP={original_rop}")
+
+        enter_calibration_mode(ser, timeout)
+
+        print(f"[*] Selecting EEPROM/SD maintenance service: CAL={EEPROM_CAL}")
+        require_var_result('CAL', *set_var(ser, 'CAL', EEPROM_CAL),
+                           f'writing {EEPROM_CAL}')
+
+        etr = require_var_result('ETR', *get_var(ser, 'ETR'), 'reading')
+        if etr != '0000':
+            raise RuntimeError(f"ETR is {etr}, not idle; refusing to start another command")
+
+        print(f"[*] Starting EEPROM command: ETR={spec['etr']}")
+        require_var_result('ETR', *set_var(ser, 'ETR', spec['etr']),
+                           f"writing {spec['etr']}")
+        safe_to_restore = False
+
+        ok, last = wait_var_value(ser, 'ETR', '0000', timeout, interval=1.0)
+        if not ok:
+            print(f"[!] Timed out waiting for ETR=0000; last ETR state was {last}")
+        else:
+            safe_to_restore = True
+            print(f"[+] EEPROM action complete: {action}")
+            success = True
+
+    except RuntimeError as exc:
+        print(f"[!] EEPROM action failed: {exc}")
+
+    finally:
+        if original_cal is not None and original_rop is not None:
+            if safe_to_restore:
+                if not restore_calibration_state(ser, original_cal, original_rop):
+                    success = False
+            else:
+                print("[!] ETR did not return to 0000; leaving CAL/ROP unchanged.")
+                print("    Inspect ETR/ERE before starting another EEPROM action.")
+
+    return 0 if success else 1
+
+
 def connect(ser, baud_arg):
     """Connect and probe or set baud rate. Returns True on success."""
+    if getattr(ser, 'ecp_file', False):
+        # ECP backend: nothing to connect to.
+        return True
     if getattr(ser, 'text_mode', False):
         # Text mode: arbiter handles baud, just verify device responds
         print("[*] Verifying device (text mode)...")
@@ -1024,11 +1406,12 @@ def main():
 Commands:
   info                          Show device identity
   get <var|group|all>           Read variables
-  set <var> <value>             Write a variable
+  set <var> <value> [...]       Write one or more variables
   dump                          Dump all variables to JSON
   restore                       Restore variables from JSON
   list                          List known variables and descriptions (offline)
   caps                          Query variable limits from device
+  calibration eeprom            Run stock-firmware EEPROM/SD maintenance
 
 Groups: """ + ', '.join(sorted(GROUPS.keys())) + """
 
@@ -1037,8 +1420,10 @@ Examples:
   %(prog)s -p /dev/ttyACM0 get MGL
   %(prog)s -p /dev/ttyACM0 get SPT
   %(prog)s -p /dev/ttyACM0 set SPT 0001
+  %(prog)s -p /dev/ttyACM0 set SPT 0001 EPR 0002
   %(prog)s -p /dev/ttyACM0 setv IPC 10.0            # 10.0 cmH2O -> 01F4
   %(prog)s -p /dev/ttyACM0 setv MOP AutoSet          # enum label -> 0001
+  %(prog)s -p ecp:/media/RESMED/SETTINGS set PNA AirSense_10_airbreak
   %(prog)s -p /dev/ttyACM0 dump -o config.json
   %(prog)s -p /dev/ttyACM0 dump --groups MGL EGL -o therapy.json
   %(prog)s -p /dev/ttyACM0 restore -i config.json
@@ -1047,9 +1432,12 @@ Examples:
   %(prog)s list --groups MGL DGL
   %(prog)s -p /dev/ttyACM0 caps MGL
   %(prog)s -p /dev/ttyACM0 caps IPC MOP EPR
+  %(prog)s -p /dev/ttyACM0 calibration eeprom format-eep-fat --yes --really
+  %(prog)s -p /dev/ttyACM0 calibration eeprom sd-backup-raw
+  %(prog)s -p /dev/ttyACM0 calibration eeprom sd-restore-raw --yes
 """)
 
-    parser.add_argument('-p', '--port', help='Serial port or tcp:host[:port] (required for device commands)')
+    parser.add_argument('-p', '--port', help='Serial port, tcp:host[:port], or ecp:path (required for device commands)')
     parser.add_argument('--tcp-mode', choices=['raw', 'transparent', 'text'], default='text',
                         help='TCP mode: text (arbiter, default), transparent (raw Q-frames via AirBridge), raw (dumb proxy)')
     parser.add_argument('--baud', default='auto', help='Baud rate: auto, 57600, 115200, 460800')
@@ -1062,13 +1450,13 @@ Examples:
     p_get = sub.add_parser('get', help='Read variables')
     p_get.add_argument('targets', nargs='+', help='Variable names, group names, or "all"')
 
-    p_set = sub.add_parser('set', help='Write a variable')
-    p_set.add_argument('var', help='Variable name (3 chars)')
-    p_set.add_argument('value', help='Value to set (hex string)')
+    p_set = sub.add_parser('set', help='Write variable(s)')
+    p_set.add_argument('pairs', nargs='+', metavar='VAR VALUE',
+                       help='One or more VAR VALUE pairs')
 
-    p_setv = sub.add_parser('setv', help='Write a variable (scaled/human value)')
-    p_setv.add_argument('var', help='Variable name (3 chars)')
-    p_setv.add_argument('value', help='Scaled value (e.g. 10.0 for cmH2O) or enum label (e.g. AutoSet)')
+    p_setv = sub.add_parser('setv', help='Write variable(s) (scaled/human value)')
+    p_setv.add_argument('pairs', nargs='+', metavar='VAR VALUE',
+                        help='One or more VAR VALUE pairs')
 
     p_dump = sub.add_parser('dump', help='Dump variables to JSON')
     p_dump.add_argument('-o', '--output', required=True, help='Output JSON file')
@@ -1091,6 +1479,22 @@ Examples:
     p_caps = sub.add_parser('caps', help='Query variable values and limits from device')
     p_caps.add_argument('targets', nargs='*', help='Variable names, group names, or "all" (default: all)')
 
+    p_cal = sub.add_parser('calibration', help='Calibration/service utilities')
+    cal_sub = p_cal.add_subparsers(dest='calibration_command', help='Calibration command')
+    cal_sub.required = True
+
+    p_cal_eeprom = cal_sub.add_parser(
+        'eeprom',
+        help='Run stock-firmware EEPROM/SD maintenance via CAL=000B')
+    p_cal_eeprom.add_argument('action', choices=sorted(EEPROM_ACTIONS),
+                              help='EEPROM/SD maintenance action')
+    p_cal_eeprom.add_argument('--yes', action='store_true',
+                              help='Confirm EEPROM/device-storage writes')
+    p_cal_eeprom.add_argument('--really', action='store_true',
+                              help='Extra confirmation for destructive EEPROM actions')
+    p_cal_eeprom.add_argument('--timeout', type=float, default=300.0,
+                              help='Seconds to wait for ETR to return to 0000')
+
     args = parser.parse_args()
 
     if not args.command:
@@ -1100,12 +1504,32 @@ Examples:
     if args.command == 'list':
         return cmd_list(args.groups)
 
-    # All other commands need a serial port
+    if args.command == 'calibration' and args.calibration_command == 'eeprom':
+        if not check_eeprom_confirmations(args.action, args.yes, args.really):
+            return 1
+        if args.timeout <= 0:
+            print("[!] --timeout must be greater than zero")
+            return 1
+
+    if args.command in ('set', 'setv'):
+        try:
+            args.pairs = parse_name_value_pairs(args.pairs, args.command)
+        except ValueError as e:
+            print(f"[!] {e}")
+            return 1
+
+    # All other commands need a live device or Settings.ecp backend.
     if not args.port:
         print("[!] --port is required for this command")
         return 1
 
-    if args.port.startswith('tcp:'):
+    if args.port.startswith('ecp:'):
+        try:
+            ser = EcpFileDevice(args.port)
+        except ValueError as e:
+            print(f"[!] {e}")
+            return 1
+    elif args.port.startswith('tcp:'):
         from tcp_serial import open_tcp
         ser = open_tcp(args.port, args.tcp_mode, timeout=1.0)
     else:
@@ -1122,11 +1546,11 @@ Examples:
             return cmd_get(ser, args.targets, verbose=args.verbose)
 
         elif args.command == 'set':
-            return cmd_set(ser, args.var, args.value)
+            return cmd_set(ser, args.pairs)
 
         elif args.command == 'setv':
             try:
-                return cmd_setv(ser, args.var, args.value)
+                return cmd_setv(ser, args.pairs)
             except ValueError as e:
                 print(f"  [!] {e}")
                 return 1
@@ -1146,12 +1570,23 @@ Examples:
             return cmd_restore(ser, data, args.exclude_groups, args.exclude_vars, args.dry_run)
 
         elif args.command == 'raw':
+            if getattr(ser, 'ecp_file', False):
+                print("[!] raw is not supported for ecp: backend")
+                return 1
             cmd_str = ' '.join(args.cmd)
             send_cmd(ser, cmd_str, timeout=1.0)
             return 0
 
         elif args.command == 'caps':
             return cmd_caps(ser, args.targets, verbose=args.verbose)
+
+        elif args.command == 'calibration':
+            if getattr(ser, 'ecp_file', False):
+                print("[!] calibration commands require a live device")
+                return 1
+            if args.calibration_command == 'eeprom':
+                return cmd_calibration_eeprom(
+                    ser, args.action, timeout=args.timeout)
 
     finally:
         ser.close()

@@ -33,7 +33,11 @@ $(BUILD)/as11_vid_spoof.elf: $(BUILD)/as11_vid_spoof.o | $(BUILD)
 $(BUILD)/as11_vid_spoof.bin: $(BUILD)/as11_vid_spoof.elf
 	$(OBJCOPY) -Obinary $< $@
 
-.PHONY: as11-binaries as11-vid-spoof as11-patched
+.PHONY: as11 as11-binaries as11-vid-spoof as11-patched
+
+as11:
+	$(MAKE) as11-binaries
+	$(MAKE) $(AS11_PATCHED)
 
 as11-binaries: $(AS11_BINS)
 
@@ -41,7 +45,9 @@ as11-vid-spoof: $(AS11_VID_SPOOF_BIN)
 	@echo "AS11 VID spoof patch built:"
 	@echo "  $(AS11_VID_SPOOF_BIN)"
 
-as11-patched: $(AS11_PATCHED)
+as11-patched:
+	-$(MAKE) as11-binaries
+	$(MAKE) $(AS11_PATCHED)
 
 $(AS11_PATCHED): $(AS11_FIRMWARE) patch-airsense-s11 | $(BUILD)
 	./patch-airsense-s11 $< $@
