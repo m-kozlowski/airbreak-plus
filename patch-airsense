@@ -64,6 +64,11 @@ patch() {
     dd bs=1 seek=$offset conv=notrunc of="$OUT" status=none
 }
 
+fill_ff() {
+    local size=$(printf "%d" "$2")
+    perl -e 'print "\xff" x $ARGV[0]' "$size" | patch "$1"
+}
+
 check_patch ()
 {
     offset=$(printf "%d" "$1");
@@ -648,6 +653,85 @@ gui_config () {
     ' "$OUT"
 }
 
+custom_patch_settings_poc() {
+    echo "Preparing custom patch settings PoC"
+
+    local reminders_tick reminder_menu_item reminder_menu_item_end reminder_menu reminder_menu_end
+    case "$CDX_VER" in
+        SX567-0401)
+            reminders_tick=0xec446
+            reminder_menu_item=0x62754
+            reminder_menu_item_end=0x62790
+            reminder_menu=0x63778
+            reminder_menu_end=0x639d4
+            ;;
+        SX567-0402)
+            reminders_tick=0xec6be
+            reminder_menu_item=0x62754
+            reminder_menu_item_end=0x62790
+            reminder_menu=0x63778
+            reminder_menu_end=0x639d4
+            ;;
+        *)
+            echo "  custom_patch_settings_poc: skipped (unsupported CDX version $CDX_VER)"
+            return
+            ;;
+    esac
+
+    # RPO = recurrence enable: Mask
+    local RPO
+    RPO=$(find_var RPO) || die failed
+
+    # rewrite RPO var descriptor
+    printf '\x07\x00' | patch $(( RPO + 0x00 )) || die failed # flags: ACT|VIS|EDT
+    printf '\x00'     | patch $(( RPO + 0x02 )) || die failed # no callback
+    printf '\xff\x7f' | patch $(( RPO + 0x04 )) || die failed # no dependent numeric settings
+    printf '\xf8\x00' | patch $(( RPO + 0x06 )) || die failed # name string: ASV
+    printf '\x00\x02' | patch $(( RPO + 0x08 )) || die failed # default=Off, options=2
+    printf '\x00\x00' | patch $(( RPO + 0x0A )) || die failed
+    printf '\x03\x00\x00\x00' | patch $(( RPO + 0x0C )) || die failed # allowed option bits: Off, On
+    printf '\x3e\x01' | patch $(( RPO + 0x10 )) || die failed         # option strings: Off, On
+    printf '\x00\x00' | patch $(( RPO + 0x12 )) || die failed
+
+    # bx lr ; disable reminder periodic processing.
+    if printf '\x38\xb5\x04\x46' | check_patch "$reminders_tick"; then
+        printf '\x70\x47' | patch "$reminders_tick" || die failed
+    elif ! printf '\x70\x47' | check_patch "$reminders_tick"; then
+        die "custom_patch_settings_poc: unexpected reminder tick bytes"
+    fi
+
+    local item_reclaim=$(( reminder_menu_item + 2 ))
+    local item_reclaim_size=$(( reminder_menu_item_end - item_reclaim ))
+
+    # b after scrollbar_add_item ; skip visible Reminders row between SmartStart and Configuration.
+    if printf '\x08\x20\x01\xf0' | check_patch "$reminder_menu_item"; then
+        printf '\x1c\xe0' | patch "$reminder_menu_item" || die failed
+        fill_ff "$item_reclaim" "$item_reclaim_size" || die failed
+    elif ! printf '\x1c\xe0' | check_patch "$reminder_menu_item"; then
+        die "custom_patch_settings_poc: unexpected reminder menu item bytes"
+    fi
+
+    local reclaim=$(( reminder_menu + 6 ))
+    local reclaim_size=$(( reminder_menu_end - reclaim ))
+
+    # movs r4,#0; str r4,[r5,#0x74]; b end ; clear Reminders page slot, then skip children.
+    if printf '\x2c\x20\x00\xf0' | check_patch "$reminder_menu"; then
+        printf '\x00\x24\x6c\x67\x2a\xe1' | patch "$reminder_menu" || die failed
+        fill_ff "$reclaim" "$reclaim_size" || die failed
+    elif ! printf '\x00\x24\x6c\x67\x2a\xe1' | check_patch "$reminder_menu"; then
+        die "custom_patch_settings_poc: unexpected reminder menu bytes"
+    fi
+
+    printf "  disabled stock Reminders menu item at 0x%08X\n" \
+        $(( FLASH_BASE + reminder_menu_item ))
+    printf "  reclaimed 0x%08X..0x%08X (%d bytes) padded with FF\n" \
+        $(( FLASH_BASE + item_reclaim )) $(( FLASH_BASE + reminder_menu_item_end - 1 )) "$item_reclaim_size"
+    printf "  disabled stock Reminders page slot at 0x%08X\n" \
+        $(( FLASH_BASE + reminder_menu ))
+    printf "  reclaimed 0x%08X..0x%08X (%d bytes) padded with FF\n" \
+        $(( FLASH_BASE + reclaim )) $(( FLASH_BASE + reminder_menu_end - 1 )) "$reclaim_size"
+}
+
 
 unlock_languages() {
     echo "Unlocking all languages..."
@@ -936,6 +1020,7 @@ extra_modes
 # all_menu
 gui_config
 unlock_option_masks
+custom_patch_settings_poc
 motor_nagscreen
 unlock_languages
 patch_past_date

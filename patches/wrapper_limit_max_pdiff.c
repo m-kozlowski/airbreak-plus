@@ -19,6 +19,10 @@ STATIC void init_features(features_t *feat) {
 
 // +1 pointer address: 0x000f93d0. Original function address: 0x080bc992
 extern void pressure_limit_max_difference();
+extern int variable_get_g8(int var_id);
+extern const char custom_asv_enable_var_id;
+
+#define CUSTOM_ASV_ENABLE_VAR ((int)(unsigned)&custom_asv_enable_var_id)
 
 // Reshapes PS in 0.0-1.0 format to differently shaped slopes with `mult` times the AUC, first increasing slope before magnitude
 // Only using ^4 shape, because going to ^8 and above is very jarring and results in bad premature cycling
@@ -52,7 +56,7 @@ void MAIN start() {
   apply_jitter(true);
 
   float dps = 0.0f;
-  bool toggle = (ti_min <= 150);
+  bool toggle = (variable_get_g8(CUSTOM_ASV_ENABLE_VAR) != 0);
 
   triggercycle_t *trc = get_triggercycle();
   trc->custom_trigger = trc->custom_cycle = false; // Default state is off.
@@ -78,7 +82,7 @@ void MAIN start() {
 
     if (tr->st_inhaling) {
       new_ps = remap(ps1, 0.0f, 1.0f, feat->eps, vauto_ps-INSTANT_PS) + INSTANT_PS;
-      if (toggle) { // Disable if Ti min is set to above 0.1s
+      if (toggle) {
         float new_ps1 = reshape_vauto_ps(ps1, asv->asv_factor);
         new_ps = remap(new_ps1, 0.0f, 1.0f, feat->eps, vauto_ps - INSTANT_PS) + INSTANT_PS*asv->asv_factor;
       }

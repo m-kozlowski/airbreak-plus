@@ -57,3 +57,8 @@ NSTUB(0x080D8C03, flexcolor_cs_assert)
 NSTUB(0x080D8C0D, flexcolor_write_data)
 NSTUB(0x080875BB, iwdg_reload)
 NSTUB(0x08080CDB, lcd_get_device)
+
+// Custom patch settings
+// RPO = recurrence enable: Mask -> my_asv toggle
+NSTUB_VAR(0x00000239, custom_asv_enable_var_id)
+
