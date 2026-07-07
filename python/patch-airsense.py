@@ -94,6 +94,10 @@ class ASFirmware(object):
         self.crcfunc = crc_func = crcmod.predefined.mkCrcFun('crc-ccitt-false')
         self.var_by_name = None
         self.var_tables = None
+        self.fw_lang_count = None
+        self.fw_lang_ids = None
+        self.str_id_empty = None
+        self.str_id_off_on_base = None
         
         self.validate(validate_crc=validate_crc)
 
@@ -114,6 +118,9 @@ class ASFirmware(object):
 
     def write_u32(self, off, val):
         self.fw[off:off+4] = list(struct.pack('<I', val))
+
+    def fill_range(self, off, size, byte):
+        self.fw[off:off+size] = [byte & 0xFF] * size
 
     def globals_offset(self, idx):
         """Return file offset for data that globals[idx] points to"""
@@ -282,6 +289,61 @@ class ASFirmware(object):
         if idx >= tbl['count']:
             raise ValueError("%s is not in globals[%d]" % (var, table_num))
         return idx
+
+    def infer_g2_language_count(self):
+        """Return the number of locale slots compiled into globals[2]."""
+        g2 = self.globals_offset(2)
+        ptrs = []
+        for i in range(128):
+            ptr = self.read_u32(g2 + i * 8 + 4)
+            if not ptr or self._flash_ptr_offset(ptr) is None:
+                break
+            ptrs.append(ptr)
+        if len(ptrs) < 2:
+            raise ValueError("globals[2] has too few locale arrays")
+
+        deltas = {}
+        for i in range(len(ptrs) - 1):
+            delta = ptrs[i + 1] - ptrs[i]
+            if delta > 0 and delta % 2 == 0 and delta <= 128:
+                deltas[delta] = deltas.get(delta, 0) + 1
+        if not deltas:
+            raise ValueError("cannot infer language slot count from globals[2]")
+
+        stride = max(deltas, key=deltas.get)
+        slots = stride // 2
+        sample = ptrs[:128]
+        while slots > 1:
+            all_zero = True
+            for ptr in sample:
+                off = ptr - self.FLASH_BASE + (slots - 1) * 2
+                if self.read_u16(off) != 0:
+                    all_zero = False
+                    break
+            if not all_zero:
+                break
+            slots -= 1
+        return slots
+
+    def load_firmware_string_metadata(self):
+        """Cache string metadata before custom settings mutate descriptors."""
+        if self.str_id_empty is not None:
+            return
+
+        rop = self.find_var('ROP')
+        rpo = self.find_var('RPO')
+        lan = self.find_var('LAN')
+
+        self.str_id_empty = self.read_u16(rop + self.G8_NAME_STR)
+        self.str_id_off_on_base = self.read_u16(rpo + self.G8_BASE_STR)
+        self.fw_lang_count = self.infer_g2_language_count()
+
+        perm = self.read_u32(lan + self.G8_BITMASK)
+        self.fw_lang_ids = [bit for bit in range(32) if perm & (1 << bit)]
+        if len(self.fw_lang_ids) != self.fw_lang_count:
+            raise ValueError(
+                "LAN language mask count %d != globals[2] slots %d" %
+                (len(self.fw_lang_ids), self.fw_lang_count))
         
     def validate(self, validate_crc=True):
         """Validate the input file looks OK and populate information"""
@@ -508,6 +570,182 @@ class ASFirmwarePatches(object):
         
     def __init__(self, asf):
         self.asf = asf
+        self.custom_patch_settings_init()
+
+    def custom_patch_settings_init(self):
+        """Reset generated custom-settings state."""
+        self.custom_g8_pool = []
+        self.custom_g4_pool = []
+        self.custom_g8_reclaimed = {}
+        self.custom_g4_reclaimed = {}
+        self.custom_g8_claims = {}
+        self.custom_g4_claims = {}
+        self.custom_reclaimed_string_candidates = []
+        self.custom_reclaimed_string_seen = set()
+        self.custom_settings_registry_addr = None
+        self.custom_settings_registry_size = None
+
+    def _custom_note_reclaimed_string_id(self, str_id):
+        self.asf.load_firmware_string_metadata()
+        if str_id == self.asf.str_id_empty:
+            return
+        if str_id not in self.custom_reclaimed_string_seen:
+            self.custom_reclaimed_string_seen.add(str_id)
+            self.custom_reclaimed_string_candidates.append(str_id)
+
+    def custom_reclaim_g8_var(self, name):
+        """Scrub a g[8] enum descriptor and add it to the reclaimed pool."""
+        vid = self.asf.resolve_var_id(name)
+        if vid in self.custom_g8_reclaimed:
+            raise ValueError("custom_reclaim_g8_var: duplicate reclaim of %s (var_id 0x%04X)" % (name, vid))
+
+        self.asf.load_firmware_string_metadata()
+        rec = self.asf.find_var(vid)
+        name_str = self.asf.read_u16(rec + self.asf.G8_NAME_STR)
+        base_str = self.asf.read_u16(rec + self.asf.G8_BASE_STR)
+        self.asf.write_u16(rec + self.asf.G8_NAME_STR, self.asf.str_id_empty)
+        self.asf.write_u16(rec + self.asf.G8_BASE_STR, self.asf.str_id_empty)
+        self._custom_note_reclaimed_string_id(name_str)
+        self._custom_note_reclaimed_string_id(base_str)
+
+        claim_name = name.upper() if isinstance(name, str) and not name.lower().startswith('0x') else "0x%04X" % vid
+        self.custom_g8_reclaimed[vid] = claim_name
+        self.custom_g8_pool.append(claim_name)
+
+    def custom_reclaim_g4_var(self, name):
+        """Scrub a g[4] numeric descriptor and add it to the reclaimed pool."""
+        vid = self.asf.resolve_var_id(name)
+        if vid in self.custom_g4_reclaimed:
+            raise ValueError("custom_reclaim_g4_var: duplicate reclaim of %s (var_id 0x%04X)" % (name, vid))
+
+        self.asf.load_firmware_string_metadata()
+        rec = self.asf.find_var(vid)
+        name_str = self.asf.read_u16(rec + self.asf.G4_NAME_STR)
+        units_str = self.asf.read_u16(rec + self.asf.G4_UNITS_STR)
+        self.asf.write_u16(rec + self.asf.G4_NAME_STR, self.asf.str_id_empty)
+        self.asf.write_u16(rec + self.asf.G4_UNITS_STR, self.asf.str_id_empty)
+        self._custom_note_reclaimed_string_id(name_str)
+        self._custom_note_reclaimed_string_id(units_str)
+
+        claim_name = name.upper() if isinstance(name, str) and not name.lower().startswith('0x') else "0x%04X" % vid
+        self.custom_g4_reclaimed[vid] = claim_name
+        self.custom_g4_pool.append(claim_name)
+
+    def custom_claim_g8_var(self, request, owner=None):
+        """Claim one exact reclaimed g[8] variable and return its UART name."""
+        vid = self.asf.resolve_var_id(request)
+        owner = owner or request
+        if vid not in self.custom_g8_reclaimed:
+            raise ValueError("custom_claim_g8_var: %s (var_id 0x%04X) is not reclaimed" % (request, vid))
+        if vid in self.custom_g8_claims:
+            raise ValueError(
+                "custom_claim_g8_var: %s (var_id 0x%04X) already claimed by %s" %
+                (request, vid, self.custom_g8_claims[vid]))
+        self.custom_g8_claims[vid] = owner
+        return self.custom_g8_reclaimed[vid]
+
+    def custom_claim_g4_var(self, request, owner=None):
+        """Claim one exact reclaimed g[4] variable and return its UART name."""
+        vid = self.asf.resolve_var_id(request)
+        owner = owner or request
+        if vid not in self.custom_g4_reclaimed:
+            raise ValueError("custom_claim_g4_var: %s (var_id 0x%04X) is not reclaimed" % (request, vid))
+        if vid in self.custom_g4_claims:
+            raise ValueError(
+                "custom_claim_g4_var: %s (var_id 0x%04X) already claimed by %s" %
+                (request, vid, self.custom_g4_claims[vid]))
+        self.custom_g4_claims[vid] = owner
+        return self.custom_g4_reclaimed[vid]
+
+    def redefine_g8_var(self, var, flags, callback, dep_head, name_str, default,
+                        num_options, param_0a, perm_mask, base_str, param_12):
+        """Rewrite a g[8] descriptor with caller-provided raw fields."""
+        rec = self.asf.find_var(var)
+        self.asf.write_u16(rec + self.asf.G8_FLAGS, flags)
+        self.asf.write_u8(rec + self.asf.G8_CALLBACK, callback)
+        self.asf.write_u16(rec + self.asf.G8_DEP_HEAD, dep_head)
+        self.asf.write_u16(rec + self.asf.G8_NAME_STR, name_str)
+        self.asf.write_u8(rec + self.asf.G8_DEFAULT, default)
+        self.asf.write_u8(rec + self.asf.G8_NUM_OPTIONS, num_options)
+        self.asf.write_u16(rec + self.asf.G8_PARAM_0A, param_0a)
+        self.asf.write_u32(rec + self.asf.G8_BITMASK, perm_mask)
+        self.asf.write_u16(rec + self.asf.G8_BASE_STR, base_str)
+        self.asf.write_u16(rec + self.asf.G8_PARAM_12, param_12)
+
+    def _patch_or_verify(self, addr, expected, replacement, label):
+        current_expected = bytes(self.asf.fw[addr:addr + len(expected)])
+        if current_expected == expected:
+            self.asf.patch(replacement, addr, clobber=True)
+            return True
+
+        current_replacement = bytes(self.asf.fw[addr:addr + len(replacement)])
+        if current_replacement == replacement:
+            return False
+
+        raise ValueError("custom_patch_settings: unexpected %s bytes at 0x%X" % (label, addr))
+
+    def custom_patch_settings_reclaim_reminders(self):
+        """Disable stock Reminders behavior and reclaim its storage-backed vars."""
+        sites_by_version = {
+            'SX567-0401': {
+                'reminders_tick': 0xec446,
+                'reminder_menu_item': 0x62754,
+                'reminder_menu_item_end': 0x62790,
+                'reminder_menu': 0x63778,
+                'reminder_menu_end': 0x639d4,
+            },
+            'SX567-0402': {
+                'reminders_tick': 0xec6be,
+                'reminder_menu_item': 0x62754,
+                'reminder_menu_item_end': 0x62790,
+                'reminder_menu': 0x63778,
+                'reminder_menu_end': 0x639d4,
+            },
+        }
+        sites = sites_by_version.get(self.asf.cdx_ver)
+        if sites is None:
+            print("  custom_patch_settings: skipped (unsupported CDX version %s)" % self.asf.cdx_ver)
+            return False
+
+        reminders_tick = sites['reminders_tick']
+        reminder_menu_item = sites['reminder_menu_item']
+        reminder_menu_item_end = sites['reminder_menu_item_end']
+        reminder_menu = sites['reminder_menu']
+        reminder_menu_end = sites['reminder_menu_end']
+
+        self._patch_or_verify(reminders_tick, b'\x38\xb5\x04\x46', b'\x70\x47', 'reminder tick')
+
+        item_reclaim = reminder_menu_item + 2
+        item_reclaim_size = reminder_menu_item_end - item_reclaim
+        if self._patch_or_verify(reminder_menu_item, b'\x08\x20\x01\xf0', b'\x1c\xe0', 'reminder menu item'):
+            self.asf.fill_range(item_reclaim, item_reclaim_size, 0xff)
+
+        reclaim = reminder_menu + 6
+        reclaim_size = reminder_menu_end - reclaim
+        if self._patch_or_verify(reminder_menu, b'\x2c\x20\x00\xf0', b'\x00\x24\x6c\x67\x2a\xe1', 'reminder menu'):
+            self.asf.fill_range(reclaim, reclaim_size, 0xff)
+
+        self.custom_settings_registry_addr = reclaim
+        self.custom_settings_registry_size = reclaim_size
+
+        for var in ('RPO', 'RPH', 'RPF', 'RPW', 'RXM', 'RXH', 'RXF', 'RXW'):
+            self.custom_reclaim_g8_var(var)
+        for var in ('RDF', 'RDM', 'RDH', 'RDW', 'RCF', 'RCM', 'RCH', 'RCW'):
+            self.custom_reclaim_g4_var(var)
+
+        print("  disabled stock Reminders menu item at 0x%08X" %
+              (self.asf.FLASH_BASE + reminder_menu_item))
+        print("  reclaimed 0x%08X..0x%08X (%d bytes) padded with FF" %
+              (self.asf.FLASH_BASE + item_reclaim,
+               self.asf.FLASH_BASE + reminder_menu_item_end - 1,
+               item_reclaim_size))
+        print("  disabled stock Reminders page slot at 0x%08X" %
+              (self.asf.FLASH_BASE + reminder_menu))
+        print("  reclaimed 0x%08X..0x%08X (%d bytes) padded with FF" %
+              (self.asf.FLASH_BASE + reclaim,
+               self.asf.FLASH_BASE + reminder_menu_end - 1,
+               reclaim_size))
+        return True
 
     def bypass_startcheck(self):
         #Start-up check for CRC etc, bypass it to avoid (might not be needed)
