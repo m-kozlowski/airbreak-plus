@@ -61,4 +61,3 @@ NSTUB(0x08080CDB, lcd_get_device)
 // Custom patch settings
 // RPO = recurrence enable: Mask -> my_asv toggle
 NSTUB_VAR(0x00000239, custom_asv_enable_var_id)
-
