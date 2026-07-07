@@ -1445,37 +1445,6 @@ unlock_option_masks() {
 }
 
 
-# Try enabling extra menu items
-extra_menu() {
-    deprecated "gui_config now sets ACT flags on all menu variables." \
-               "If you believe some items are still missing, please file a bug report." \
-               "Export FORCE_DEPRECATED=1 to apply anyway." && return
-    case "$CDX_VER" in
-        SX567-0401|SX567-0306|SX567-0305)
-            printf '\x01\x20' | patch 0x66470
-            ;;
-        *) echo "  extra_menu: skipped (unsupported CDX version $CDX_VER)" ;;
-    esac
-}
-
-
-# If you want all menu items to always be visible, let this section run
-all_menu() {
-    deprecated "gui_config now sets ACT flags on all menu variables." \
-               "If you believe some items are still missing, please file a bug report." \
-               "Export FORCE_DEPRECATED=1 to apply anyway." && return
-    case "$CDX_VER" in
-        SX567-0401|SX567-0306|SX567-0305)
-            # force status bit 5 always on -- always editable
-            printf '\x01\x20' | patch 0x6e502
-            # force status bit 4 always on -- this makes all the inputs show up, regardless of mode
-            printf '\x01\x20' | patch 0x6e4c4
-            ;;
-        *) echo "  all_menu: skipped (unsupported CDX version $CDX_VER)" ;;
-    esac
-}
-
-
 gui_config () {
     echo "Enabling GUI menu items"
     # enable all of the editable options in the settings menu
@@ -1739,14 +1708,6 @@ custom_palette() {
         printf '\x08\x00\x08\x00' | patch $(( base + off ))
     done
 }
-
-
-asv_disable_backup_rate () {
-    deprecated "Use PATCH_CODE=1 PATCH_ASV_TASK_WRAPPER=1 instead." \
-               "Export FORCE_DEPRECATED=1 to apply anyway." && return
-    patch_code_asv_task_wraper
-}
-
 
 
 patch_vid_spoof() {
@@ -2030,16 +1991,11 @@ load_firmware_string_metadata
 patch_tamper
 patch_psu_id
 
-if [[ $PATCH_BACKUP_RATE == 1 ]] ; then
-    asv_disable_backup_rate
-fi
 patch_code
 
 unlock_ui_limits
 extra_debug
 extra_modes
-# extra_menu
-# all_menu
 gui_config
 unlock_option_masks
 custom_patch_settings

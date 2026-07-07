@@ -1160,49 +1160,6 @@ class ASFirmwarePatches(object):
                            self.asf.find_var(name) + self.asf.G8_BITMASK,
                            clobber=True)
 
-    def extra_menu(self):
-        #try enabling extra menu items
-        cdx_patches = {
-            'SX567-0402': [(0x66470, b'\x01\x20')],
-            'SX567-0401': [(0x66470, b'\x01\x20')],
-            'SX567-0306': [(0x66470, b'\x01\x20')],
-            'SX567-0305': [(0x66470, b'\x01\x20')],
-        }
-        patches = cdx_patches.get(self.asf.cdx_ver)
-        if patches:
-            for addr, data in patches:
-                self.asf.patch(data, addr, clobber=True)
-        else:
-            print("  extra_menu: skipped (unknown CDX version %s)" % self.asf.cdx_ver)
-
-    
-    def all_menu(self):
-        # If you want all menu items to always be visible, let this section run
-        cdx_patches = {
-            'SX567-0402': [
-                (0x6e502, b'\x01\x20'),  # force status bit 5 always on - always editable
-                (0x6e4c4, b'\x01\x20'),  # force status bit 4 always on - visible regardless of mode
-            ],
-            'SX567-0401': [
-                (0x6e502, b'\x01\x20'),
-                (0x6e4c4, b'\x01\x20'),
-            ],
-            'SX567-0306': [
-                (0x6e502, b'\x01\x20'),
-                (0x6e4c4, b'\x01\x20'),
-            ],
-            'SX567-0305': [
-                (0x6e502, b'\x01\x20'),
-                (0x6e4c4, b'\x01\x20'),
-            ],
-        }
-        patches = cdx_patches.get(self.asf.cdx_ver)
-        if patches:
-            for addr, data in patches:
-                self.asf.patch(data, addr, clobber=True)
-        else:
-            print("  all_menu: skipped (unknown CDX version %s)" % self.asf.cdx_ver)
-
     def asv_unlock_ps_range(self):
         # Disable the ASV and ASVAuto PS range check to allow Max PS < (Min PS + 5)
         # and remove the fixed ASV EPAP ceiling of MCP - 6.0 cmH2O.
@@ -1629,14 +1586,6 @@ if __name__ == "__main__":
         {'arg':"patch-extra-debug",     'desc':"Add extra debug to display.",                           'default':True,  'function':'extra_debug'},
         {'arg':"patch-extra-modes",     'desc':"Add all modes.",                                        'default':True,  'function':'extra_modes'},
         {'arg':"patch-unlock-options",  'desc':"Unlock additional enum option masks.",                  'default':True,  'function':'unlock_option_masks'},
-        {'arg':"patch-extra-menu",      'desc':"Try enabling extra menu items.",                        'default':False,  'function':'extra_menu',
-                                        'deprecated': "gui_config now sets ACT flags on all menu variables. "
-                                                      "If you believe some items are still missing, please file a bug report. "
-                                                      "Use --force-deprecated to apply anyway."},
-        {'arg':"patch-all-menu",        'desc':"All menu items will always be visible.",                'default':False, 'function':'all_menu',
-                                        'deprecated': "gui_config now sets ACT flags on all menu variables. "
-                                                      "If you believe some items are still missing, please file a bug report. "
-                                                      "Use --force-deprecated to apply anyway."},
         {'arg':"patch-gui-config",      'desc':"Enable all of the editable options in the settings menu.",
                                                                                                         'default':True,  'function':'gui_config'},
         {'arg':"patch-asv-ps-range",    'desc':"Unlock ASV/ASVAuto pressure constraints.",              'default':True,  'function':'asv_unlock_ps_range'},
