@@ -82,7 +82,7 @@ class ASFirmware(object):
         return ptr - self.FLASH_BASE
 
     def find_var_id(self, var_id):
-        """Return file offset of descriptor record for var_id"""
+        """Return descriptor file offset for numeric var_id."""
         if   var_id < 0x1E:                          gidx = 3
         elif var_id >= 0x1E  and var_id < 0x1E + 0x1DF: gidx = 4
         elif var_id >= 0x1FD and var_id < 0x1FD + 0x10:  gidx = 6
@@ -130,6 +130,18 @@ class ASFirmware(object):
             raise ValueError("unknown UART variable name: %s" % name)
         return var_id
 
+    def resolve_var_id(self, var):
+        """Return numeric var_id from a UART name or numeric id."""
+        if isinstance(var, str):
+            var = var.strip()
+            lower = var.lower()
+            if lower.startswith('0x'):
+                return int(var, 16)
+            if var.isdigit():
+                return int(var, 10)
+            return self.find_var_id_by_name(var)
+        return int(var)
+
     def var_ids_by_name(self):
         """Return UART variable name -> numeric var_id mapping."""
         self._load_uart_names()
@@ -140,9 +152,8 @@ class ASFirmware(object):
         return self.find_var_id(self.find_var_id_by_name(name))
 
     def find_var(self, var):
-        if isinstance(var, str):
-            return self.find_var_name(var)
-        return self.find_var_id(var)
+        """Return descriptor file offset for a UART name or numeric id."""
+        return self.find_var_id(self.resolve_var_id(var))
         
     def validate(self, validate_crc=True):
         """Validate the input file looks OK and populate information"""

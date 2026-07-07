@@ -194,7 +194,7 @@ find_g4_var() { find_var_record 4  0x1C 0x1E  "$1"; }
 find_g6_var() { find_var_record 6  0x18 0x1FD "$1"; }
 find_g8_var() { find_var_record 8  0x14 0x20D "$1"; }
 
-# dispatch var_id to correct table lookup
+# Descriptor lookup: returns file offset of a variable record for numeric var_id.
 find_var_id() {
     local vid=$(printf "%d" "$1")
     if   (( vid < 0x1E  ));                        then find_g3_var "$1"
@@ -259,20 +259,32 @@ load_uart_names() {
     _uart_names_loaded=1
 }
 
-find_var_name() {
+# UART name lookup: returns numeric var_id
+find_var_id_by_name() {
     load_uart_names
     local name=${1^^}
     local vid=${_var_by_name[$name]}
     [[ -n "$vid" ]] || die "unknown UART variable name: $1"
-    find_var_id "$vid"
+    echo "$vid"
 }
 
-find_var() {
+# Accept UART names, decimal ids, or hex ids and return normalized numeric var_id.
+resolve_var_id() {
     if [[ "$1" == 0x* || "$1" =~ ^[0-9]+$ ]]; then
-        find_var_id "$1"
+        printf "0x%04X\n" "$(printf "%d" "$1")"
     else
-        find_var_name "$1"
+        find_var_id_by_name "$1"
     fi
+}
+
+# Descriptor lookup by UART name.
+find_var_name() {
+    find_var_id "$(find_var_id_by_name "$1")"
+}
+
+# Smart descriptor lookup by UART name or numeric id.
+find_var() {
+    find_var_id "$(resolve_var_id "$1")"
 }
 
 
