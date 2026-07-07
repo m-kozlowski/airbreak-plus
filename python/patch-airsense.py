@@ -43,10 +43,11 @@ class ASFirmware(object):
     }
 
     TABLES = {
-        3:  dict(stride=10,   id_base=0x00),
-        4:  dict(stride=0x1C, id_base=0x1E),
-        6:  dict(stride=0x18, id_base=0x1FD),
-        8:  dict(stride=0x14, id_base=0x20D),
+        3:  dict(stride=10),
+        4:  dict(stride=0x1C),
+        6:  dict(stride=0x18),
+        8:  dict(stride=0x14),
+        9:  dict(stride=0x18),
     }
 
     def __init__(self, file, validate_crc=True):
@@ -54,6 +55,7 @@ class ASFirmware(object):
         self.fw = list(self.fw)
         self.crcfunc = crc_func = crcmod.predefined.mkCrcFun('crc-ccitt-false')
         self.var_by_name = None
+        self.var_tables = None
         
         self.validate(validate_crc=validate_crc)
 
@@ -83,19 +85,90 @@ class ASFirmware(object):
 
     def find_var_id(self, var_id):
         """Return descriptor file offset for numeric var_id."""
-        if   var_id < 0x1E:                          gidx = 3
-        elif var_id >= 0x1E  and var_id < 0x1E + 0x1DF: gidx = 4
-        elif var_id >= 0x1FD and var_id < 0x1FD + 0x10:  gidx = 6
-        elif var_id >= 0x20D and var_id < 0x20D + 0xA5:  gidx = 8
-        else: raise ValueError("find_var_id: var_id 0x%04X not in known tables" % var_id)
-        tbl = self.TABLES[gidx]
-        return self.globals_offset(gidx) + (var_id - tbl['id_base']) * tbl['stride']
+        self._load_var_tables()
+        for tbl in self.var_tables.values():
+            id_base = tbl['id_base']
+            count = tbl['count']
+            if id_base <= var_id < id_base + count:
+                return tbl['base'] + (var_id - id_base) * tbl['stride']
+        raise ValueError("find_var_id: var_id 0x%04X not in derived descriptor tables" % var_id)
 
     def _flash_ptr_offset(self, ptr):
         off = ptr - self.FLASH_BASE
         if off < 0 or off >= len(self.fw):
             return None
         return off
+
+    def _next_global_offset_after(self, base):
+        candidates = []
+        for idx in range(30):
+            ptr = self.read_u32(self.globals_addr + idx * 4)
+            off = self._flash_ptr_offset(ptr)
+            if off is not None and off > base:
+                candidates.append(off)
+        return min(candidates) if candidates else None
+
+    def _table_count(self, table_num, base, stride):
+        end = self._next_global_offset_after(base)
+        if end is None:
+            raise ValueError("cannot infer globals[%d] count" % table_num)
+        size = end - base
+        if size <= 0:
+            raise ValueError("globals[%d] size 0x%X is invalid" % (table_num, size))
+        rem = size % stride
+        if rem:
+            count = size // stride
+            pad = self.fw[base + count * stride:base + count * stride + rem]
+            # Older SX584 aligns the following table after g[3] with a short zero pad.
+            if table_num == 3 and 0 < rem < 4 and count > 0 and all(b == 0 for b in pad):
+                return count
+            raise ValueError(
+                "globals[%d] size 0x%X is not aligned to stride 0x%X" %
+                (table_num, size, stride))
+        return size // stride
+
+    @staticmethod
+    def _has_id_range(ids, start, count):
+        return all(start + i in ids for i in range(count))
+
+    def _infer_id_base(self, table_num, count, expected_base):
+        ids = set(self.var_ids_by_name().values())
+        if expected_base is not None:
+            if self._has_id_range(ids, expected_base, count):
+                return expected_base
+            raise ValueError(
+                "globals[%d] var_id range 0x%04X..0x%04X missing from globals[23]" %
+                (table_num, expected_base, expected_base + count - 1))
+
+        for candidate in sorted(ids):
+            if candidate - 1 in ids:
+                continue
+            if self._has_id_range(ids, candidate, count):
+                return candidate
+        raise ValueError("cannot infer globals[%d] var_id base from globals[23]" % table_num)
+
+    def _load_var_tables(self):
+        if self.var_tables is not None:
+            return
+
+        self.var_tables = {}
+        expected_base = None
+        for table_num in (3, 4, 6, 8, 9):
+            ptr = self.read_u32(self.globals_addr + table_num * 4)
+            base = self._flash_ptr_offset(ptr)
+            if base is None:
+                continue
+
+            stride = self.TABLES[table_num]['stride']
+            count = self._table_count(table_num, base, stride)
+            id_base = self._infer_id_base(table_num, count, expected_base)
+            self.var_tables[table_num] = {
+                'base': base,
+                'count': count,
+                'stride': stride,
+                'id_base': id_base,
+            }
+            expected_base = id_base + count
 
     def _load_uart_names(self):
         if self.var_by_name is not None:

@@ -162,6 +162,12 @@ read_u32() {
         printf "%d\n", unpack("V", $b)'
 }
 
+is_flash_ptr() {
+    local ptr=$(printf "%d" "$1")
+    local size=$(stat -c %s "$OUT")
+    (( ptr >= FLASH_BASE && ptr < FLASH_BASE + size ))
+}
+
 declare -A _globals_cache
 
 # return the absolute pointer stored in globals[$1]
@@ -181,31 +187,9 @@ globals_offset() {
     echo "${_globals_cache[$1]}"
 }
 
-# return file offset of descriptor record for var_id
-# args: globals_idx stride id_base var_id
-find_var_record() {
-    local base_off
-    base_off=$(globals_offset "$1") || return 1
-    echo $(( base_off + ($(printf "%d" "$4") - $3) * $2 ))
-}
-
-find_g3_var() { find_var_record 3  10   0x00  "$1"; }
-find_g4_var() { find_var_record 4  0x1C 0x1E  "$1"; }
-find_g6_var() { find_var_record 6  0x18 0x1FD "$1"; }
-find_g8_var() { find_var_record 8  0x14 0x20D "$1"; }
-
-# Descriptor lookup: returns file offset of a variable record for numeric var_id.
-find_var_id() {
-    local vid=$(printf "%d" "$1")
-    if   (( vid < 0x1E  ));                        then find_g3_var "$1"
-    elif (( vid >= 0x1E  && vid < 0x1E + 0x1DF )); then find_g4_var "$1"
-    elif (( vid >= 0x1FD && vid < 0x1FD + 0x10 )); then find_g6_var "$1"
-    elif (( vid >= 0x20D && vid < 0x20D + 0xA5 )); then find_g8_var "$1"
-    else die "find_var_id: var_id $1 not in g3/g4/g6/g8"
-    fi
-}
-
 declare -A _var_by_name
+declare -A _var_id_present
+declare -a _var_id_list
 _uart_names_loaded=0
 
 load_uart_names() {
@@ -219,6 +203,11 @@ load_uart_names() {
     while IFS=$'\t' read -r name vid; do
         [[ -n "$name" && -n "$vid" ]] || continue
         _var_by_name[$name]=$vid
+        local vid_dec=$((vid))
+        if [[ -z "${_var_id_present[$vid_dec]+x}" ]]; then
+            _var_id_present[$vid_dec]=1
+            _var_id_list+=("$vid_dec")
+        fi
     done < <(
         perl -e '
             use strict;
@@ -259,6 +248,144 @@ load_uart_names() {
     _uart_names_loaded=1
 }
 
+declare -A _var_table_stride=([3]=10 [4]=0x1C [6]=0x18 [8]=0x14 [9]=0x18)
+declare -A _var_table_base
+declare -A _var_table_count
+declare -A _var_table_id_base
+_var_tables_loaded=0
+
+next_global_offset_after() {
+    local base_off=$(printf "%d" "$1")
+    local base_ptr=$(( FLASH_BASE + base_off ))
+    local best=
+
+    for idx in {0..29}; do
+        local ptr
+        ptr=$(globals_ptr "$idx") || continue
+        if is_flash_ptr "$ptr" && (( ptr > base_ptr )); then
+            if [[ -z "$best" || ptr -lt best ]]; then
+                best=$ptr
+            fi
+        fi
+    done
+
+    [[ -n "$best" ]] || return 1
+    echo $(( best - FLASH_BASE ))
+}
+
+zero_padding() {
+    read_bytes "$1" "$2" | perl -e 'local $/; my $b = <STDIN>; exit($b =~ /[^\x00]/ ? 1 : 0)'
+}
+
+var_table_count() {
+    local tnum=$1
+    local base=$(printf "%d" "$2")
+    local stride=$(printf "%d" "$3")
+    local end size rem count
+
+    end=$(next_global_offset_after "$base") || die "cannot infer globals[$tnum] end"
+    size=$(( end - base ))
+    (( size > 0 )) || die "globals[$tnum] size $size is invalid"
+
+    rem=$(( size % stride ))
+    if (( rem != 0 )); then
+        count=$(( size / stride ))
+        # Older builds can align the next table after g[3] with a short zero pad.
+        if (( tnum == 3 && rem < 4 && count > 0 )) && zero_padding $(( base + count * stride )) "$rem"; then
+            echo "$count"
+            return
+        fi
+        die "globals[$tnum] size 0x$(printf "%X" "$size") is not aligned to stride 0x$(printf "%X" "$stride")"
+    fi
+
+    echo $(( size / stride ))
+}
+
+has_id_range() {
+    local start=$(printf "%d" "$1")
+    local count=$(printf "%d" "$2")
+    local i
+
+    for (( i = 0; i < count; i++ )); do
+        [[ -n "${_var_id_present[$(( start + i ))]+x}" ]] || return 1
+    done
+    return 0
+}
+
+infer_var_table_id_base() {
+    local tnum=$1
+    local count=$(printf "%d" "$2")
+    local expected=${3-}
+
+    if [[ -n "$expected" ]]; then
+        expected=$(printf "%d" "$expected")
+        if has_id_range "$expected" "$count"; then
+            echo "$expected"
+            return
+        fi
+        die "globals[$tnum] var_id range 0x$(printf "%04X" "$expected")..0x$(printf "%04X" $(( expected + count - 1 ))) missing from globals[23]"
+    fi
+
+    while IFS= read -r candidate; do
+        [[ -n "$candidate" ]] || continue
+        if [[ -n "${_var_id_present[$(( candidate - 1 ))]+x}" ]]; then
+            continue
+        fi
+        if has_id_range "$candidate" "$count"; then
+            echo "$candidate"
+            return
+        fi
+    done < <(printf "%s\n" "${_var_id_list[@]}" | sort -n)
+
+    die "cannot infer globals[$tnum] var_id base from globals[23]"
+}
+
+load_var_tables() {
+    [[ "$_var_tables_loaded" == 1 ]] && return 0
+    load_uart_names
+
+    local expected=
+    for tnum in 3 4 6 8 9; do
+        local ptr base stride count id_base
+        ptr=$(globals_ptr "$tnum") || die "globals[$tnum] not found"
+        is_flash_ptr "$ptr" || continue
+
+        base=$(( ptr - FLASH_BASE ))
+        stride=${_var_table_stride[$tnum]}
+        count=$(var_table_count "$tnum" "$base" "$stride")
+        id_base=$(infer_var_table_id_base "$tnum" "$count" "$expected")
+
+        _var_table_base[$tnum]=$base
+        _var_table_count[$tnum]=$count
+        _var_table_id_base[$tnum]=$id_base
+        expected=$(( id_base + count ))
+    done
+
+    _var_tables_loaded=1
+}
+
+# Descriptor lookup: returns file offset of a variable record for numeric var_id.
+find_var_id() {
+    local vid=$(printf "%d" "$1")
+    load_var_tables
+
+    for tnum in 3 4 6 8 9; do
+        [[ -n "${_var_table_base[$tnum]+x}" ]] || continue
+
+        local base=${_var_table_base[$tnum]}
+        local count=${_var_table_count[$tnum]}
+        local id_base=${_var_table_id_base[$tnum]}
+        local stride=${_var_table_stride[$tnum]}
+
+        if (( vid >= id_base && vid < id_base + count )); then
+            echo $(( base + (vid - id_base) * stride ))
+            return
+        fi
+    done
+
+    die "find_var_id: var_id $1 not in derived descriptor tables"
+}
+
 # UART name lookup: returns numeric var_id
 find_var_id_by_name() {
     load_uart_names
@@ -290,6 +417,8 @@ find_var() {
 
 cp "$IN" "$OUT" || die "$OUT: copy failed"
 detect_platform
+# Many patch sites call find_var through command substitution; preload in the parent shell.
+load_var_tables
 
 deprecated() {
     if [[ $FORCE_DEPRECATED != 1 ]]; then
