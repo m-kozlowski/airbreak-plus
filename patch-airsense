@@ -211,6 +211,12 @@ read_u32() {
 }
 
 
+read_u8() {
+    read_bytes "$1" 1 | perl -e 'read(STDIN, my $b, 1) == 1 or exit 1;
+        printf "%d\n", unpack("C", $b)'
+}
+
+
 read_u16() {
     read_bytes "$1" 2 | perl -e 'read(STDIN, my $b, 2) == 2 or exit 1;
         printf "%d\n", unpack("v", $b)'
@@ -285,6 +291,16 @@ le_thumb_ptr() {
         $(((thumb >> 8) & 0xFF)) \
         $(((thumb >> 16) & 0xFF)) \
         $(((thumb >> 24) & 0xFF))
+}
+
+
+# Return a linked flash symbol address from an ELF.
+# args: elf path, symbol name
+elf_symbol_addr() {
+    local elf=$1 sym=$2 addr
+    addr=$(arm-none-eabi-nm "$elf" 2>/dev/null | awk -v sym="$sym" '$3 == sym { printf "0x%s", $1; found=1 } END { if (!found) exit 1 }')
+    [[ -n "$addr" ]] || die "elf_symbol_addr: symbol $sym not found in $elf"
+    printf "%s" "$addr"
 }
 
 
@@ -1040,19 +1056,20 @@ redefine_g8_var() {
 
 
 # Register one variable to be appended to a clinical menu section.
-# args: section name, variable name/id
+# args: section name, variable name/id, mode visibility mask
 custom_menu_add() {
-    local section_name=${1,,} var=$2
+    local section_name=${1,,} var=$2 mode_mask=${3:-0xffffffff}
     local section=${CUSTOM_MENU_SECTIONS[$section_name]}
     [[ -n "$section" ]] || die "custom_menu_add: unknown section $1"
 
     local vid
     vid=$(( $(resolve_var_id "$var") ))
+    mode_mask=$(( mode_mask ))
     if [[ -n "${CUSTOM_MENU_REGISTERED[$vid]+x}" ]]; then
         die "custom_menu_add: duplicate variable $var (var_id 0x$(printf "%04X" "$vid"))"
     fi
     CUSTOM_MENU_REGISTERED[$vid]=1
-    CUSTOM_MENU_ENTRIES+=("$section $vid")
+    CUSTOM_MENU_ENTRIES+=("$section $vid $mode_mask")
 }
 
 
@@ -1062,13 +1079,13 @@ custom_emit_registry() {
     (( need <= CUSTOM_SETTINGS_REGISTRY_SIZE )) || \
         die "custom_patch_settings: registry ${need}B exceeds reclaimed ${CUSTOM_SETTINGS_REGISTRY_SIZE}B"
 
-    local off=$CUSTOM_SETTINGS_REGISTRY_ADDR entry section vid
+    local off=$CUSTOM_SETTINGS_REGISTRY_ADDR entry section vid mode_mask
     for entry in "${CUSTOM_MENU_ENTRIES[@]}"; do
-        read -r section vid <<< "$entry"
+        read -r section vid mode_mask <<< "$entry"
         write_u8  "$off" "$section" || die failed
         write_u8  $(( off + 1 )) 0 || die failed
         write_u16 $(( off + 2 )) "$vid" || die failed
-        write_u32 $(( off + 4 )) 0 || die failed
+        write_u32 $(( off + 4 )) "$mode_mask" || die failed
         off=$(( off + 8 ))
     done
     fill_ff "$off" 8 || die failed
@@ -1088,8 +1105,12 @@ custom_patch_menu_hook_site() {
 
 # Inject the generic clinical-menu hook payload and patch its ABI slots.
 custom_patch_menu_hooks() {
-    local ver bin size registry_flash hook_base
+    local ver bin elf size registry_flash
     local therapy_site comfort_site accessories_site options_site configuration_site
+    local callback_table
+    local hook_therapy hook_comfort hook_accessories hook_options hook_configuration
+    local hook_mop_callback registry_addr mode_var_addr original_cb_addr
+    local mode_vid mop_rec mop_callback_id mop_callback_slot original_mop_callback hook_mop_callback_thumb
     ver="${CDX_VER#SX567-}"
 
     case "$CDX_VER" in
@@ -1099,6 +1120,7 @@ custom_patch_menu_hooks() {
             accessories_site=0x626fe
             options_site=0x62750
             configuration_site=0x628d2
+            callback_table=0x75f48
             ;;
         *)
             echo "  ${FUNCNAME[0]}: skipped (unsupported CDX version $CDX_VER)"
@@ -1107,9 +1129,11 @@ custom_patch_menu_hooks() {
     esac
 
     bin="build/custom_menu_hooks_${ver}.bin"
+    elf="build/custom_menu_hooks_${ver}.elf"
     if [[ ! -r "$bin" ]]; then
         die "custom_patch_settings: $bin not found; run make custom_menu_hooks_${ver}.bin"
     fi
+    [[ -r "$elf" ]] || die "custom_patch_settings: $elf not found"
 
     size=$(stat -c %s "$bin")
     if (( size > CUSTOM_MENU_HOOKS_BUDGET )); then
@@ -1123,17 +1147,37 @@ custom_patch_menu_hooks() {
 
     patch_direct "$bin" "$CUSTOM_MENU_HOOKS_OFF"
     registry_flash=$(( FLASH_BASE + CUSTOM_SETTINGS_REGISTRY_ADDR ))
-    hook_base=$CUSTOM_MENU_HOOKS_FLASH
 
-    write_u32 $(( CUSTOM_MENU_HOOKS_OFF + 0x14 )) "$registry_flash" || die failed
+    hook_therapy=$(elf_symbol_addr "$elf" custom_menu_hook_therapy)
+    hook_comfort=$(elf_symbol_addr "$elf" custom_menu_hook_comfort)
+    hook_accessories=$(elf_symbol_addr "$elf" custom_menu_hook_accessories)
+    hook_options=$(elf_symbol_addr "$elf" custom_menu_hook_options)
+    hook_configuration=$(elf_symbol_addr "$elf" custom_menu_hook_configuration)
+    hook_mop_callback=$(elf_symbol_addr "$elf" custom_menu_mop_callback_hook)
+    registry_addr=$(elf_symbol_addr "$elf" custom_menu_registry_addr)
+    mode_var_addr=$(elf_symbol_addr "$elf" custom_menu_mode_var_id)
+    original_cb_addr=$(elf_symbol_addr "$elf" custom_menu_original_mop_callback)
+    mop_rec=$(find_var MOP)
+    mop_callback_id=$(read_u8 $(( mop_rec + G8_CALLBACK )))
+    mop_callback_slot=$(( callback_table + mop_callback_id * 4 ))
+    original_mop_callback=$(read_u32 "$mop_callback_slot")
+    mode_vid=$(resolve_var_id MOP)
+    hook_mop_callback_thumb=$(( hook_mop_callback | 1 ))
 
-    custom_patch_menu_hook_site "$therapy_site" "\\x02\\xf0\\x3a\\xfd" "$(( hook_base + 0x00 ))" therapy
-    custom_patch_menu_hook_site "$comfort_site" "\\x02\\xf0\\x0b\\xfc" "$(( hook_base + 0x04 ))" comfort
-    custom_patch_menu_hook_site "$accessories_site" "\\x02\\xf0\\xc5\\xfb" "$(( hook_base + 0x08 ))" accessories
-    custom_patch_menu_hook_site "$options_site" "\\x02\\xf0\\x9c\\xfb" "$(( hook_base + 0x0C ))" options
-    custom_patch_menu_hook_site "$configuration_site" "\\x02\\xf0\\xdb\\xfa" "$(( hook_base + 0x10 ))" configuration
+    write_u32 $(( registry_addr - FLASH_BASE )) "$registry_flash" || die failed
+    write_u16 $(( mode_var_addr - FLASH_BASE )) "$(( mode_vid ))" || die failed
+    write_u32 $(( original_cb_addr - FLASH_BASE )) "$original_mop_callback" || die failed
 
-    printf "  custom menu hooks: %s (%dB) at 0x%08X\n" "$bin" "$size" "$hook_base"
+    custom_patch_menu_hook_site "$therapy_site" "\\x02\\xf0\\x3a\\xfd" "$hook_therapy" therapy
+    custom_patch_menu_hook_site "$comfort_site" "\\x02\\xf0\\x0b\\xfc" "$hook_comfort" comfort
+    custom_patch_menu_hook_site "$accessories_site" "\\x02\\xf0\\xc5\\xfb" "$hook_accessories" accessories
+    custom_patch_menu_hook_site "$options_site" "\\x02\\xf0\\x9c\\xfb" "$hook_options" options
+    custom_patch_menu_hook_site "$configuration_site" "\\x02\\xf0\\xdb\\xfa" "$hook_configuration" configuration
+    write_u32 "$mop_callback_slot" "$hook_mop_callback_thumb" || die failed
+
+    printf "  custom menu hooks: %s (%dB) at 0x%08X\n" "$bin" "$size" "$CUSTOM_MENU_HOOKS_FLASH"
+    printf "  MOP callback[%d]: 0x%08X -> 0x%08X\n" \
+        "$mop_callback_id" "$original_mop_callback" "$hook_mop_callback_thumb"
 }
 
 
@@ -1594,7 +1638,7 @@ custom_patch_settings_myasv() {
 
     # Register the variable for the generic menu hook; registry emission and hook
     # injection are handled later by custom_patch_settings().
-    custom_menu_add therapy "$myasv_var"
+    custom_menu_add therapy "$myasv_var" "$(( 1 << 6 ))"
 
     # The wrapper binary is built before patching and exposes a writable ABI slot.
     # Patch that slot with the claimed var_id so wrapper code stays independent

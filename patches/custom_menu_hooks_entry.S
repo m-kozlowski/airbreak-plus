@@ -54,11 +54,24 @@ custom_menu_hook_configuration:
 custom_menu_registry_addr:
 	.word 0xffffffff
 
-/* Reserved ABI space. Keep it explicit so future payload revisions can grow a
- * small header without changing the section entry offsets.
+/* Patched with the firmware var_id of MOP. Runtime visibility uses the current
+ * mode value as a bit index into each registry entry's mode_mask.
  */
+.global custom_menu_mode_var_id
+.type custom_menu_mode_var_id, %object
+custom_menu_mode_var_id:
+	.short 0xffff
+
 .global custom_menu_reserved
 .type custom_menu_reserved, %object
 custom_menu_reserved:
 	.short 0xffff
-	.short 0xffff
+
+/* Original callback_table[MOP.callback_id] Thumb pointer, saved by patcher
+ * before the table entry is replaced by custom_menu_mop_callback_hook.
+ */
+.balign 4
+.global custom_menu_original_mop_callback
+.type custom_menu_original_mop_callback, %object
+custom_menu_original_mop_callback:
+	.word 0xffffffff
