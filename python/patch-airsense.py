@@ -1520,6 +1520,34 @@ class ASFirmwarePatches(object):
         self._patch_pointer(data, VID_SPOOF_OFFSET, vtable_entry)
         print("  %dB payload at 0x%X, vtable 0x%X" % (len(data), VID_SPOOF_OFFSET, vtable_entry))
 
+    def custom_palette(self):
+        """Patch custom color palette."""
+        try:
+            base = self.asf.find_bytes(bytes.fromhex('286031BD61020000FFFFFF0096969600'))
+        except ValueError:
+            print("  custom_palette: palette signature not found")
+            return
+        base += 8
+
+        self.asf.patch(b'\xCC\x33\x00\x00', base + 0x24, clobber=True)
+
+        for off in (0x00, 0x1C, 0x28, 0x40, 0x44, 0x48, 0x54, 0x70, 0x7C, 0x94, 0x98, 0x9C):
+            self.asf.patch(b'\xFF\xBB\x44\x00', base + off, clobber=True)
+
+        for off in (0x04, 0x0C, 0x58, 0x60, 0x74):
+            self.asf.patch(b'\x96\x48\x48\x00', base + off, clobber=True)
+
+        for off in (0x08, 0x5C):
+            self.asf.patch(b'\x64\x32\x32\x00', base + off, clobber=True)
+
+        for off in (0x10, 0x14, 0x30, 0x4C, 0x64, 0x68, 0x84, 0xA0):
+            self.asf.patch(b'\x40\x20\x20\x00', base + off, clobber=True)
+
+        for off in (0x18, 0x34, 0x50, 0x6C, 0x88, 0xA4):
+            self.asf.patch(b'\x08\x00\x08\x00', base + off, clobber=True)
+
+        print("  custom_palette: palette at 0x%X" % base)
+
 
     def patch_past_date(self):
         """Allow setting past date in menu and UART"""
@@ -1601,6 +1629,8 @@ if __name__ == "__main__":
         {'arg':"patch-custom-settings", 'desc':"Expose settings for injected custom patch features.",
                                                                                                         'default':True,  'function':'custom_patch_settings'},
         {'arg':"patch-fw-vidspoof",     'desc':"Hook MOP write to dynamically set VID per therapy mode.", 'default':True, 'function':'patch_vid_spoof'},
+        {'arg':"patch-custom-palette",  'desc':"Patch custom color palette.",
+                                                                                                        'default':True,  'function':'custom_palette'},
         {'arg':"patch-fw-lcd",          'desc':"Universal ILI9325/ILI9328 LCD driver.",                 'default':False, 'function':'patch_lcd_ili9325'},
         {'arg':"patch-fw-backlight",    'desc':"Improved backlight adaptation to ambient light.",       'default':True,  'function':'patch_backlight_adapt'},
         {'arg':"patch-past-date",       'desc':"Allow setting past date in menu and UART.",             'default':True,  'function':'patch_past_date'},
