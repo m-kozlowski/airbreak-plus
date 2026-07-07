@@ -17,6 +17,7 @@ import io
 import crcmod
 import crcmod.predefined
 import os
+import subprocess
 import struct
 import re
 import sys
@@ -49,6 +50,43 @@ class ASFirmware(object):
         8:  dict(stride=0x14),
         9:  dict(stride=0x18),
     }
+
+    # Descriptor field offsets. Keep these in one place so patch code does not
+    # grow parallel local definitions for the same firmware structures.
+    G4_FLAGS = 0x00
+    G4_CALLBACK = 0x02
+    G4_NEXT_DEP = 0x04
+    G4_NAME_STR = 0x06
+    G4_DEFAULT = 0x08
+    G4_MAX = 0x0C
+    G4_MIN = 0x10
+    G4_DECIMALS = 0x14
+    G4_SCALE = 0x16
+    G4_STEP = 0x18
+    G4_UNITS_STR = 0x1A
+
+    G6_FLAGS = 0x00
+    G6_CONFIG_GROUP = 0x02
+    G6_LINKED_VAR = 0x04
+    G6_PARENT_VAR = 0x06
+    G6_DEFAULT = 0x08
+    G6_PERM_MASK = 0x0C
+    G6_ITEM_COUNT = 0x10
+    G6_STEP_DIV = 0x11
+    G6_CHILD_INDEX = 0x12
+    G6_LABEL_STR = 0x14
+    G6_PAD_16 = 0x16
+
+    G8_FLAGS = 0x00
+    G8_CALLBACK = 0x02
+    G8_DEP_HEAD = 0x04
+    G8_NAME_STR = 0x06
+    G8_DEFAULT = 0x08
+    G8_NUM_OPTIONS = 0x09
+    G8_PARAM_0A = 0x0A
+    G8_BITMASK = 0x0C
+    G8_BASE_STR = 0x10
+    G8_PARAM_12 = 0x12
 
     def __init__(self, file, validate_crc=True):
         self.fw = file.read()
@@ -227,6 +265,23 @@ class ASFirmware(object):
     def find_var(self, var):
         """Return descriptor file offset for a UART name or numeric id."""
         return self.find_var_id(self.resolve_var_id(var))
+
+    def find_var_table_index(self, table_num, var):
+        """Return descriptor index for var within one globals[] table."""
+        self._load_var_tables()
+        tbl = self.var_tables.get(table_num)
+        if tbl is None:
+            raise ValueError("globals[%d] descriptor table not found" % table_num)
+
+        rec = self.find_var(var)
+        rel = rec - tbl['base']
+        if rel < 0 or rel % tbl['stride']:
+            raise ValueError("%s is not in globals[%d]" % (var, table_num))
+
+        idx = rel // tbl['stride']
+        if idx >= tbl['count']:
+            raise ValueError("%s is not in globals[%d]" % (var, table_num))
+        return idx
         
     def validate(self, validate_crc=True):
         """Validate the input file looks OK and populate information"""
@@ -482,7 +537,6 @@ class ASFirmwarePatches(object):
     def unlock_ui_limits(self):
         # patch min/max pressure limits to allow full range
         # Entry4 record layout: +0x0C = max (u32), +0x10 = min (u32)
-        G4_MAX = 0x0C
 
         vars = [
             'IPC', # Set Pressure (CPAP)
@@ -506,7 +560,7 @@ class ASFirmwarePatches(object):
         ]
 
         for var in vars:
-            addr = self.asf.find_var(var) + G4_MAX
+            addr = self.asf.find_var(var) + self.asf.G4_MAX
             # max=0x000005DC (1500) min=0x00000032 (50) scale=1/50
             self.asf.patch(b'\xdc\x05\x00\x00\x32\x00\x00\x00', addr, clobber=True)
         print("  %d pressure variables set to 1.0-30.0 cmH2O" % len(vars))
@@ -527,25 +581,22 @@ class ASFirmwarePatches(object):
     def extra_debug(self):
         # set config variable 0xc value to 4 == enable more debugging data on display
         # if you set it to \x0f it will enable four separate display pages of info in sleep report mode
-        G6_DEFAULT = 0x08
-        self.asf.patch(b'\x04', self.asf.find_var('TSS') + G6_DEFAULT, clobber=True)
+        self.asf.patch(b'\x04', self.asf.find_var('TSS') + self.asf.G6_DEFAULT, clobber=True)
 
     def extra_modes(self):
         # add more mode entries, set config 0x0 mask to all bits high
         # default is 0x3, which only enables mode 1 (CPAP) and 2 (AutoSet)
         # ---> This is the real magic <---
-        G8_BITMASK = 0x0C
-        self.asf.patch(b'\xff\xff', self.asf.find_var('MOP') + G8_BITMASK, clobber=True)
+        self.asf.patch(b'\xff\xff', self.asf.find_var('MOP') + self.asf.G8_BITMASK, clobber=True)
 
     def unlock_option_masks(self):
-        G8_BITMASK = 0x0C
         masks = {
             'TBT': 0x00000007,  # Tube: SlimLine, Standard, 3m
             'RMA': 0x00000007,  # Ramp: Off, On, Auto
         }
         for name, mask in masks.items():
             self.asf.patch(struct.pack('<I', mask),
-                           self.asf.find_var(name) + G8_BITMASK,
+                           self.asf.find_var(name) + self.asf.G8_BITMASK,
                            clobber=True)
 
     def extra_menu(self):
@@ -636,11 +687,9 @@ class ASFirmwarePatches(object):
             print("  asv_unlock_ps_range: CDX code patches skipped (unknown CDX version %s)" % self.asf.cdx_ver)
 
         # Pressure support vars use scale=1/50: 1250 = 25.0 cmH2O.
-        G4_MAX = 0x0C
-        G4_MIN = 0x10
         for var in ('MNS', 'MXS', 'ANS', 'AXS'):
-            self.asf.patch(b'\x00\x00\x00\x00', self.asf.find_var(var) + G4_MIN, clobber=True)
-            self.asf.patch(b'\xe2\x04\x00\x00', self.asf.find_var(var) + G4_MAX, clobber=True)
+            self.asf.patch(b'\x00\x00\x00\x00', self.asf.find_var(var) + self.asf.G4_MIN, clobber=True)
+            self.asf.patch(b'\xe2\x04\x00\x00', self.asf.find_var(var) + self.asf.G4_MAX, clobber=True)
 
     def gui_config (self):
         # enable editable options in clinical settings menu
@@ -674,15 +723,15 @@ class ASFirmwarePatches(object):
 
     def patch_defaults(self):
         # language (eng)
-        self.asf.patch(b'\x00', self.asf.find_var('LAN') + 0x08, clobber=True)
+        self.asf.patch(b'\x00', self.asf.find_var('LAN') + self.asf.G8_DEFAULT, clobber=True)
         # press. units: 0=cmH2O 1=hPa
-        self.asf.patch(b'\x00', self.asf.find_var('PRD') + 0x08, clobber=True)
+        self.asf.patch(b'\x00', self.asf.find_var('PRD') + self.asf.G8_DEFAULT, clobber=True)
         # mask: 0=Pillows 1=Full 2=Nasal 3=Pediatric
-        self.asf.patch(b'\x00', self.asf.find_var('MSK') + 0x08, clobber=True)
+        self.asf.patch(b'\x00', self.asf.find_var('MSK') + self.asf.G8_DEFAULT, clobber=True)
         # tube: SlimLine, Standard, 3m
-        self.asf.patch(b'\x00', self.asf.find_var('TBT') + 0x08, clobber=True)
+        self.asf.patch(b'\x00', self.asf.find_var('TBT') + self.asf.G8_DEFAULT, clobber=True)
         # Essentials: Plus, On
-        self.asf.patch(b'\x00', self.asf.find_var('ACC') + 0x08, clobber=True)
+        self.asf.patch(b'\x00', self.asf.find_var('ACC') + self.asf.G8_DEFAULT, clobber=True)
 
     def patch_logos(self):
 
@@ -755,6 +804,22 @@ class ASFirmwarePatches(object):
             return None, ver
         with open(bin_path, 'rb') as f:
             return f.read(), ver
+
+    def _elf_symbol_addr(self, elf_path, symbol):
+        """Return linked flash address of symbol from an ELF file."""
+        try:
+            out = subprocess.check_output(
+                ['arm-none-eabi-nm', elf_path],
+                stderr=subprocess.DEVNULL,
+                universal_newlines=True)
+        except (OSError, subprocess.CalledProcessError) as exc:
+            raise ValueError("failed to read symbols from %s: %s" % (elf_path, exc))
+
+        for line in out.splitlines():
+            fields = line.split()
+            if len(fields) >= 3 and fields[2] == symbol:
+                return int(fields[0], 16)
+        raise ValueError("symbol %s not found in %s" % (symbol, elf_path))
 
     def _patch_pointer(self, data, offset, fptr_offset, flash_base=0x08000000):
         """Inject binary at offset and write Thumb pointer to fptr_offset."""
@@ -897,10 +962,9 @@ class ASFirmwarePatches(object):
         self.asf.patch(bl_bytes, hook_off, clobber=True)
 
         # tune defaults
-        G4_DEFAULT = 0x08
-        self.asf.patch(b'\x20', self.asf.find_var('LBL') + G4_DEFAULT, clobber=True)  # LBL = 32
-        self.asf.patch(b'\x50', self.asf.find_var('LBH') + G4_DEFAULT, clobber=True)  # LBH = 80
-        self.asf.patch(struct.pack('<I', 590), self.asf.find_var('ATH') + G4_DEFAULT, clobber=True)  # ATH = 590
+        self.asf.patch(b'\x20', self.asf.find_var('LBL') + self.asf.G4_DEFAULT, clobber=True)  # LBL = 32
+        self.asf.patch(b'\x50', self.asf.find_var('LBH') + self.asf.G4_DEFAULT, clobber=True)  # LBH = 80
+        self.asf.patch(struct.pack('<I', 590), self.asf.find_var('ATH') + self.asf.G4_DEFAULT, clobber=True)  # ATH = 590
 
         print("  backlight_adapt: %dB at 0x%X" % (len(data), BACKLIGHT_OFFSET))
 
