@@ -122,6 +122,23 @@ class ASFirmware(object):
     def fill_range(self, off, size, byte):
         self.fw[off:off+size] = [byte & 0xFF] * size
 
+    def c_string_len(self, off):
+        if off < 0 or off >= len(self.fw):
+            return None
+        try:
+            end = self.fw.index(0, off)
+        except ValueError:
+            return None
+        return end - off + 1
+
+    def find_ccx_ff_range_backwards(self, size):
+        limit = self.ccx_off + self.ccx_size - 2
+        for end in range(limit, self.ccx_off + size - 1, -1):
+            start = end - size
+            if self.fw[start:end] == [0xFF] * size:
+                return start
+        raise ValueError("no CCX string space for %d bytes" % size)
+
     def globals_offset(self, idx):
         """Return file offset for data that globals[idx] points to"""
         off = self.globals_addr + idx * 4
@@ -344,6 +361,69 @@ class ASFirmware(object):
             raise ValueError(
                 "LAN language mask count %d != globals[2] slots %d" %
                 (len(self.fw_lang_ids), self.fw_lang_count))
+
+    def _raw_string_table_offset(self):
+        g2 = self.globals_offset(2)
+        locale0 = self.read_u32(g2 + 4)
+        raw_indirect = locale0 - self.FLASH_BASE - 8
+        if raw_indirect < 0 or raw_indirect + 4 > len(self.fw):
+            raise ValueError("invalid raw string table pointer")
+
+        raw = self.read_u32(raw_indirect) - self.FLASH_BASE
+        if raw < 0 or raw >= len(self.fw):
+            raise ValueError("invalid raw string table")
+        return raw
+
+    def redefine_fw_string(self, str_id, strings):
+        """Rewrite one firmware string for all locales compiled into the image."""
+        self.load_firmware_string_metadata()
+        if 0 not in strings:
+            raise ValueError("redefine_fw_string: missing English string at language id 0")
+
+        raw = self._raw_string_table_offset()
+        g2 = self.globals_offset(2)
+        rec = g2 + str_id * 8
+        locale_arr = self.read_u32(rec + 4) - self.FLASH_BASE
+        if locale_arr < 0 or locale_arr >= len(self.fw):
+            raise ValueError("invalid locale array for str_id 0x%04X" % str_id)
+
+        english_ptr = None
+        max_len = 0
+        for slot, lang_id in enumerate(self.fw_lang_ids):
+            text = strings.get(lang_id)
+            if text is None and english_ptr is not None:
+                raw_idx = self.read_u16(locale_arr + slot * 2)
+                raw_ptr_off = raw + raw_idx * 4
+                if raw_ptr_off < 0 or raw_ptr_off + 4 > len(self.fw):
+                    raise ValueError("raw string entry out of range")
+                self.write_u32(raw_ptr_off, english_ptr)
+                continue
+
+            if text is None:
+                text = strings[0]
+            data = text.encode('ascii') + b'\x00'
+            max_len = max(max_len, len(data) - 1)
+
+            raw_idx = self.read_u16(locale_arr + slot * 2)
+            raw_ptr_off = raw + raw_idx * 4
+            if raw_ptr_off < 0 or raw_ptr_off + 4 > len(self.fw):
+                raise ValueError("raw string entry out of range")
+
+            old = self.read_u32(raw_ptr_off) - self.FLASH_BASE
+            old_cap = self.c_string_len(old)
+            if old_cap is not None and len(data) <= old_cap:
+                self.fw[old:old+old_cap] = list(data + b'\x00' * (old_cap - len(data)))
+                new_off = old
+            else:
+                new_off = self.find_ccx_ff_range_backwards(len(data))
+                self.fw[new_off:new_off+len(data)] = list(data)
+
+            ptr = self.FLASH_BASE + new_off
+            self.write_u32(raw_ptr_off, ptr)
+            if lang_id == 0:
+                english_ptr = ptr
+
+        self.write_u16(rec, max_len)
         
     def validate(self, validate_crc=True):
         """Validate the input file looks OK and populate information"""
@@ -580,6 +660,7 @@ class ASFirmwarePatches(object):
         self.custom_g4_reclaimed = {}
         self.custom_g8_claims = {}
         self.custom_g4_claims = {}
+        self.custom_string_pool = []
         self.custom_reclaimed_string_candidates = []
         self.custom_reclaimed_string_seen = set()
         self.custom_settings_registry_addr = None
@@ -592,6 +673,66 @@ class ASFirmwarePatches(object):
         if str_id not in self.custom_reclaimed_string_seen:
             self.custom_reclaimed_string_seen.add(str_id)
             self.custom_reclaimed_string_candidates.append(str_id)
+
+    def _referenced_reclaimed_string_ids(self):
+        candidates = set(self.custom_reclaimed_string_candidates)
+        referenced = set()
+
+        def mark(str_id):
+            if str_id in candidates:
+                referenced.add(str_id)
+
+        self.asf._load_var_tables()
+        for table_num, tbl in self.asf.var_tables.items():
+            if table_num == 3:
+                offsets = (0x06,)
+            elif table_num == 4:
+                offsets = (self.asf.G4_NAME_STR, self.asf.G4_UNITS_STR)
+            elif table_num == 6:
+                offsets = (self.asf.G6_LABEL_STR,)
+            elif table_num in (8, 9):
+                offsets = (self.asf.G8_NAME_STR, self.asf.G8_BASE_STR)
+            else:
+                continue
+
+            for idx in range(tbl['count']):
+                rec = tbl['base'] + idx * tbl['stride']
+                for off in offsets:
+                    mark(self.asf.read_u16(rec + off))
+
+        g5 = self.asf.globals_offset(5)
+        g5_end = self.asf._next_global_offset_after(g5)
+        if g5 >= 0 and g5_end is not None and g5_end > g5:
+            for off in range(g5, g5_end - 1, 2):
+                mark(self.asf.read_u16(off))
+
+        return referenced
+
+    def custom_build_string_pool(self):
+        """Build reusable string pool from reclaimed, now-unreferenced strings."""
+        if not self.custom_reclaimed_string_candidates:
+            raise ValueError("custom_patch_settings: no reclaimed string IDs available")
+
+        referenced = self._referenced_reclaimed_string_ids()
+        self.custom_string_pool = [
+            str_id for str_id in self.custom_reclaimed_string_candidates
+            if str_id not in referenced
+        ]
+        if not self.custom_string_pool:
+            raise ValueError("custom_patch_settings: no reclaimed string IDs available")
+
+    def custom_alloc_string(self, owner):
+        """Allocate one reclaimed string ID to a feature."""
+        if not self.custom_string_pool:
+            raise ValueError("custom_alloc_string: pool exhausted for %s" % owner)
+        return self.custom_string_pool.pop(0)
+
+    def redefine_fw_string(self, str_id, strings, owner='string'):
+        """Rewrite a firmware string, allocating from the reclaimed pool for -1."""
+        if str_id == -1:
+            str_id = self.custom_alloc_string(owner)
+        self.asf.redefine_fw_string(str_id, strings)
+        return str_id
 
     def custom_reclaim_g8_var(self, name):
         """Scrub a g[8] enum descriptor and add it to the reclaimed pool."""
