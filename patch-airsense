@@ -835,7 +835,8 @@ custom_alloc_string() {
 
 # Rewrite a firmware string, allocating a reclaimed string ID when str_id is -1.
 # The input array is indexed by ResMed language id. For each language compiled
-# into the current image, write that language string or fall back to English.
+# into the current image, write that language string or point missing locales at
+# the English fallback.
 # The locale array keeps pointing at raw string table entries; this helper only
 # changes those raw pointers and updates the descriptor max length.
 # Allocation prefers the existing raw string storage if the new text fits there.
@@ -926,16 +927,23 @@ redefine_fw_string() {
         my $locale_arr = $u32->($rec + 4) - $flash_base;
         die "invalid locale array for str_id $str_id\n" if $locale_arr < 0 || $locale_arr >= $len;
 
+        my $english_ptr;
         my $max_len = 0;
         for my $slot (0..$lang_count - 1) {
             my $lang_id = $lang_ids[$slot] + 0;
+            my $raw_idx = $u16->($locale_arr + $slot * 2);
+            my $raw_ptr_off = $raw + $raw_idx * 4;
+            die "raw string entry out of range\n" if $raw_ptr_off < 0 || $raw_ptr_off + 4 > $len;
+
+            if (!exists $text{$lang_id} && defined $english_ptr) {
+                $put32->($raw_ptr_off, $english_ptr);
+                next;
+            }
+
             my $s = exists $text{$lang_id} ? $text{$lang_id} : $text{0};
             my $bytes = $s . "\0";
             $max_len = length($bytes) - 1 if length($bytes) - 1 > $max_len;
 
-            my $raw_idx = $u16->($locale_arr + $slot * 2);
-            my $raw_ptr_off = $raw + $raw_idx * 4;
-            die "raw string entry out of range\n" if $raw_ptr_off < 0 || $raw_ptr_off + 4 > $len;
             my $old = $u32->($raw_ptr_off) - $flash_base;
             my $old_cap = $cstrlen->($old);
 
@@ -946,7 +954,9 @@ redefine_fw_string() {
             } else {
                 $new_off = $alloc->($bytes);
             }
-            $put32->($raw_ptr_off, $flash_base + $new_off);
+            my $new_ptr = $flash_base + $new_off;
+            $put32->($raw_ptr_off, $new_ptr);
+            $english_ptr = $new_ptr if $lang_id == 0;
         }
 
         $put16->($rec, $max_len);
