@@ -11,8 +11,15 @@ GLOBALS_REL=0x108
 
 DEBUG_PATCH=""
 
+
+# -----------------------------------------------------------------------------
+# Core patching framework
+# -----------------------------------------------------------------------------
+
+
+# Print raw bytes from the output image.
+# args: offset length
 read_bytes() {
-    # args: offset length -> raw bytes on stdout
     perl -e '
         open my $fh, "<:raw", $ARGV[0] or die "open: $!";
         seek($fh, $ARGV[1], 0) or die "seek: $!";
@@ -20,6 +27,7 @@ read_bytes() {
         print $buf;
     ' "$OUT" "$(printf "%d" "$1")" "$(printf "%d" "$2")"
 }
+
 
 detect_platform() {
     BID=$(read_bytes "$BID_OFFSET" 16 | tr -d '\0')
@@ -47,14 +55,6 @@ detect_platform() {
     echo "CDX Version:    $CDX_VER"
 }
 
-if [ -z "$IN" -o -z "$OUT" ]; then
-    die "Usage: $0: stm32.bin stm32-unlocked.bin"
-fi
-
-
-if [ ! -r "$IN" ]; then
-    die "$IN: can not open input file"
-fi
 
 patch() {
     offset=`printf "%d" $1`
@@ -64,13 +64,8 @@ patch() {
     dd bs=1 seek=$offset conv=notrunc of="$OUT" status=none
 }
 
-fill_ff() {
-    local size=$(printf "%d" "$2")
-    perl -e 'print "\xff" x $ARGV[0]' "$size" | patch "$1"
-}
 
-check_patch ()
-{
+check_patch () {
     offset=$(printf "%d" "$1");
     tmp=$(mktemp) || return 2;
     cat > "$tmp";
@@ -85,8 +80,59 @@ check_patch ()
 }
 
 
+# Overwrite range with repeated byte.
+# args: offset size byte
+fill_range() {
+    local offset=$(printf "%d" "$1")
+    local size=$(printf "%d" "$2")
+    local byte=$(printf "%d" "$3")
+    perl -e '
+        my ($file, $off, $size, $byte) = @ARGV;
+        open my $fh, "+<:raw", $file or die "open: $!";
+        seek($fh, $off, 0) or die "seek: $!";
+        print $fh chr($byte) x $size;
+    ' "$OUT" "$offset" "$size" "$byte"
+}
+
+
+# Test whether every byte in range equals byte.
+# args: offset size byte
+range_is_byte() {
+    local offset=$(printf "%d" "$1")
+    local size=$(printf "%d" "$2")
+    local byte=$(printf "%d" "$3")
+    perl -e '
+        my ($file, $off, $size, $byte) = @ARGV;
+        open my $fh, "<:raw", $file or die "open: $!";
+        seek($fh, $off, 0) or die "seek: $!";
+        my $want = chr($byte);
+        while ($size > 0) {
+            my $chunk = $size > 65536 ? 65536 : $size;
+            my $got = read($fh, my $buf, $chunk);
+            exit 1 if !defined($got) || $got != $chunk || $buf ne ($want x $got);
+            $size -= $got;
+        }
+    ' "$OUT" "$offset" "$size" "$byte"
+}
+
+
+# Overwrite range with 0xFF.
+# args: offset size
+fill_ff() {
+    fill_range "$1" "$2" 0xff
+}
+
+
+# Test whether range is all zero bytes.
+# args: offset size
+zero_padding() {
+    range_is_byte "$1" "$2" 0
+}
+
+
+# Calculate CRC-16 over an output image range.
+# args: offset length
 crc16_region() {
-    # args: offset length
     local offset=$(printf "%d" "$1")
     local length=$(printf "%d" "$2")
 
@@ -122,6 +168,7 @@ crc16_region() {
     ' "$OUT" "$offset" "$length"
 }
 
+
 find_bytes() {
     # return values:
     # 0: single address found (print on stdout)
@@ -156,11 +203,40 @@ find_bytes() {
     ' "$OUT" "$hex"
 }
 
+
 # read a little-endian u32 from file offset in $OUT
 read_u32() {
     read_bytes "$1" 4 | perl -e 'read(STDIN, my $b, 4) == 4 or exit 1;
         printf "%d\n", unpack("V", $b)'
 }
+
+
+read_u16() {
+    read_bytes "$1" 2 | perl -e 'read(STDIN, my $b, 2) == 2 or exit 1;
+        printf "%d\n", unpack("v", $b)'
+}
+
+
+# Write little-endian u8.
+# args: offset value
+write_u8() {
+    perl -e 'my $v = $ARGV[0] =~ /^0/ ? oct($ARGV[0]) : int($ARGV[0]); print pack("C", $v)' "$2" | patch "$1"
+}
+
+
+# Write little-endian u16.
+# args: offset value
+write_u16() {
+    perl -e 'my $v = $ARGV[0] =~ /^0/ ? oct($ARGV[0]) : int($ARGV[0]); print pack("v", $v)' "$2" | patch "$1"
+}
+
+
+# Write little-endian u32.
+# args: offset value
+write_u32() {
+    perl -e 'my $v = $ARGV[0] =~ /^0/ ? oct($ARGV[0]) : int($ARGV[0]); print pack("V", $v)' "$2" | patch "$1"
+}
+
 
 is_flash_ptr() {
     local ptr=$(printf "%d" "$1")
@@ -168,7 +244,87 @@ is_flash_ptr() {
     (( ptr >= FLASH_BASE && ptr < FLASH_BASE + size ))
 }
 
-declare -A _globals_cache
+
+# Include a built binary at a file offset.
+# args: binary file, destination file offset
+patch_direct() {
+    BIN_FILE=$1
+    ADDR=$2
+    if [ -r $BIN_FILE ] ; then
+        printf "Including $BIN_FILE..."
+        cat $BIN_FILE | patch $ADDR || die " patching failed"
+        echo " success!"
+    else
+        die " file not found, did you run make?"
+    fi
+}
+
+
+# Include a built binary and patch a pointer to its Thumb entry.
+# args: binary file, payload offset, pointer offset, little-endian Thumb pointer bytes
+patch_pointer() {
+    BIN_FILE=$1
+    ADDR=$2
+    PTR_ADDR=$3
+    PTR_TARGET=$4
+    if [ -r $BIN_FILE ]; then
+        printf "Including $BIN_FILE..."
+        cat $BIN_FILE | patch $ADDR || die " patching failed"
+        printf "$PTR_TARGET" | patch $PTR_ADDR || die " pointer fixup failed"
+        echo " success!"
+    fi
+}
+
+
+# Convert address to a little-endian Thumb pointer string for patch_pointer
+le_thumb_ptr() {
+    local addr=$(printf "%d" "$1")
+    local thumb=$(( addr | 1 ))
+    printf '\\x%02x\\x%02x\\x%02x\\x%02x' \
+        $((thumb & 0xFF)) \
+        $(((thumb >> 8) & 0xFF)) \
+        $(((thumb >> 16) & 0xFF)) \
+        $(((thumb >> 24) & 0xFF))
+}
+
+
+# Encode a Thumb BL instruction.
+# args: source file offset, destination flash address
+encode_thumb_bl() {
+    python3 -c "
+import struct, sys
+src = $1 + 0x08000004
+dst = $2
+offset = dst - src
+S = 1 if offset < 0 else 0
+if offset < 0: offset += (1 << 25)
+I1 = (offset >> 23) & 1; I2 = (offset >> 22) & 1
+imm10 = (offset >> 12) & 0x3FF; imm11 = (offset >> 1) & 0x7FF
+J1 = (~(I1 ^ S)) & 1; J2 = (~(I2 ^ S)) & 1
+hw1 = 0xF000 | (S << 10) | imm10
+hw2 = 0xD000 | (J1 << 13) | (J2 << 11) | imm11
+sys.stdout.buffer.write(struct.pack('<HH', hw1, hw2))
+"
+}
+
+
+# Check that a target patch range is still erased.
+# args: offset size
+check_ff() {
+    range_is_byte "$1" "$2" 0xff
+}
+
+
+deprecated() {
+    if [[ $FORCE_DEPRECATED != 1 ]]; then
+        echo "SKIP: ${FUNCNAME[1]}:"
+        for line in "$@"; do echo "  $line"; done
+        return 0
+    fi
+    echo "WARN: ${FUNCNAME[1]}: applying deprecated patch"
+    return 1
+}
+
 
 # return the absolute pointer stored in globals[$1]
 globals_ptr() {
@@ -176,6 +332,7 @@ globals_ptr() {
     local off=$(( GLOBALS_ADDR + idx * 4 ))
     read_u32 $off
 }
+
 
 # return the file offset for the data that pointer points to
 globals_offset() {
@@ -187,11 +344,8 @@ globals_offset() {
     echo "${_globals_cache[$1]}"
 }
 
-declare -A _var_by_name
-declare -A _var_id_present
-declare -a _var_id_list
-_uart_names_loaded=0
 
+# Load globals[23] UART tags into name->var_id and var_id-presence maps.
 load_uart_names() {
     [[ "$_uart_names_loaded" == 1 ]] && return 0
 
@@ -248,12 +402,9 @@ load_uart_names() {
     _uart_names_loaded=1
 }
 
-declare -A _var_table_stride=([3]=10 [4]=0x1C [6]=0x18 [8]=0x14 [9]=0x18)
-declare -A _var_table_base
-declare -A _var_table_count
-declare -A _var_table_id_base
-_var_tables_loaded=0
 
+# Return file offset of the nearest globals[] pointer after a file offset.
+# args: file offset
 next_global_offset_after() {
     local base_off=$(printf "%d" "$1")
     local base_ptr=$(( FLASH_BASE + base_off ))
@@ -273,10 +424,9 @@ next_global_offset_after() {
     echo $(( best - FLASH_BASE ))
 }
 
-zero_padding() {
-    read_bytes "$1" "$2" | perl -e 'local $/; my $b = <STDIN>; exit($b =~ /[^\x00]/ ? 1 : 0)'
-}
 
+# Count records in a globals[] descriptor table using the next globals[] pointer.
+# args: globals index, table file offset, record stride
 var_table_count() {
     local tnum=$1
     local base=$(printf "%d" "$2")
@@ -301,6 +451,9 @@ var_table_count() {
     echo $(( size / stride ))
 }
 
+
+# Test whether globals[23] contains the whole var_id range.
+# args: first var_id, count
 has_id_range() {
     local start=$(printf "%d" "$1")
     local count=$(printf "%d" "$2")
@@ -312,6 +465,9 @@ has_id_range() {
     return 0
 }
 
+
+# Infer descriptor table var_id base from globals[23].
+# args: globals index, record count, optional expected var_id base
 infer_var_table_id_base() {
     local tnum=$1
     local count=$(printf "%d" "$2")
@@ -340,6 +496,8 @@ infer_var_table_id_base() {
     die "cannot infer globals[$tnum] var_id base from globals[23]"
 }
 
+
+# Derive descriptor offsets/counts/id bases from globals[] and globals[23].
 load_var_tables() {
     [[ "$_var_tables_loaded" == 1 ]] && return 0
     load_uart_names
@@ -364,6 +522,7 @@ load_var_tables() {
     _var_tables_loaded=1
 }
 
+
 # Descriptor lookup: returns file offset of a variable record for numeric var_id.
 find_var_id() {
     local vid=$(printf "%d" "$1")
@@ -386,6 +545,7 @@ find_var_id() {
     die "find_var_id: var_id $1 not in derived descriptor tables"
 }
 
+
 # UART name lookup: returns numeric var_id
 find_var_id_by_name() {
     load_uart_names
@@ -394,6 +554,7 @@ find_var_id_by_name() {
     [[ -n "$vid" ]] || die "unknown UART variable name: $1"
     echo "$vid"
 }
+
 
 # Accept UART names, decimal ids, or hex ids and return normalized numeric var_id.
 resolve_var_id() {
@@ -404,10 +565,12 @@ resolve_var_id() {
     fi
 }
 
+
 # Descriptor lookup by UART name.
 find_var_name() {
     find_var_id "$(find_var_id_by_name "$1")"
 }
+
 
 # Smart descriptor lookup by UART name or numeric id.
 find_var() {
@@ -415,20 +578,570 @@ find_var() {
 }
 
 
-cp "$IN" "$OUT" || die "$OUT: copy failed"
-detect_platform
-# Many patch sites call find_var through command substitution; preload in the parent shell.
-load_var_tables
-
-deprecated() {
-    if [[ $FORCE_DEPRECATED != 1 ]]; then
-        echo "SKIP: ${FUNCNAME[1]}:"
-        for line in "$@"; do echo "  $line"; done
-        return 0
+# Return descriptor-table index, e.g. the value g[8].dep_head stores for g[4].
+# args: globals table number, variable name/id
+find_var_table_index() {
+    local tnum=$1 var=$2 rec base stride count idx
+    load_var_tables
+    rec=$(find_var "$var") || die failed
+    base=${_var_table_base[$tnum]}
+    stride=${_var_table_stride[$tnum]}
+    count=${_var_table_count[$tnum]}
+    idx=$(( (rec - base) / stride ))
+    if (( rec < base || idx < 0 || idx >= count || base + idx * stride != rec )); then
+        die "find_var_table_index: $var is not in globals[$tnum]"
     fi
-    echo "WARN: ${FUNCNAME[1]}: applying deprecated patch"
-    return 1
+    echo "$idx"
 }
+
+
+# count locale slots the compiled string table actually has
+infer_g2_language_count() {
+    perl -e '
+        use strict;
+        use warnings;
+        my ($file, $g2, $flash_base) = @ARGV;
+        $g2 += 0;
+        $flash_base = oct($flash_base);
+        open my $fh, "<:raw", $file or die "open: $!";
+        local $/;
+        my $data = <$fh>;
+        my $len = length($data);
+        my $u32 = sub {
+            my ($off) = @_;
+            return undef if $off < 0 || $off + 4 > $len;
+            return unpack("V", substr($data, $off, 4));
+        };
+        my @ptrs;
+        for my $i (0..127) {
+            my $ptr = $u32->($g2 + $i * 8 + 4);
+            last if !$ptr || $ptr < $flash_base || $ptr >= $flash_base + $len;
+            push @ptrs, $ptr;
+        }
+        die "globals[2] has too few locale arrays\n" if @ptrs < 2;
+        my %deltas;
+        for my $i (0..$#ptrs - 1) {
+            my $d = $ptrs[$i + 1] - $ptrs[$i];
+            $deltas{$d}++ if $d > 0 && $d % 2 == 0 && $d <= 128;
+        }
+        die "cannot infer language slot count from globals[2]\n" if !%deltas;
+        my ($stride) = sort { $deltas{$b} <=> $deltas{$a} } keys %deltas;
+        my $slots = int($stride / 2);
+        my @sample = @ptrs[0 .. (@ptrs < 128 ? $#ptrs : 127)];
+        while ($slots > 1) {
+            my $all_zero = 1;
+            for my $ptr (@sample) {
+                my $off = $ptr - $flash_base + ($slots - 1) * 2;
+                my $v = unpack("v", substr($data, $off, 2));
+                if ($v != 0) {
+                    $all_zero = 0;
+                    last;
+                }
+            }
+            last if !$all_zero;
+            $slots--;
+        }
+        print "$slots\n";
+    ' "$OUT" "$(globals_offset 2)" "$FLASH_BASE"
+}
+
+
+# Cache firmware-wide string metadata before any patch mutates descriptors.
+load_firmware_string_metadata() {
+    local rop rpo lan perm bit
+    rop=$(find_var ROP) || die failed
+    rpo=$(find_var RPO) || die failed
+    lan=$(find_var LAN) || die failed
+
+    STR_ID_EMPTY=$(read_u16 $(( rop + G8_NAME_STR )))
+    STR_ID_OFF_ON_BASE=$(read_u16 $(( rpo + G8_BASE_STR )))
+    FW_LANG_COUNT=$(infer_g2_language_count)
+
+    perm=$(read_u32 $(( lan + G8_BITMASK )))
+    FW_LANG_IDS=()
+    for (( bit = 0; bit < 32; bit++ )); do
+        if (( perm & (1 << bit) )); then
+            FW_LANG_IDS+=("$bit")
+        fi
+    done
+    (( ${#FW_LANG_IDS[@]} == FW_LANG_COUNT )) || \
+        die "LAN language mask count ${#FW_LANG_IDS[@]} != globals[2] slots $FW_LANG_COUNT"
+}
+
+
+patch_crc() {
+    local regions=(
+        "$BLX_OFF $BLX_SIZE"
+        "$CCX_OFF $CCX_SIZE"
+        "$CDX_OFF $CDX_SIZE"
+    )
+
+    local off size payload_len crc
+
+    echo "Updating checksums"
+
+    for r in "${regions[@]}"; do
+        read -r off size <<< "$r"
+        off=$(printf "%d" "$off")
+        size=$(printf "%d" "$size")
+        payload_len=$(( size - 2 ))
+
+        crc=$(crc16_region "$off" "$payload_len") || {
+            echo "${FUNCNAME[0]}: CRC calculation failed"
+            return 1
+        }
+
+        printf "  block @0x%05X (%d bytes) -> CRC %s\n" "$off" "$size" "$crc"
+
+        printf '%b' "\x${crc:0:2}" "\x${crc:2:2}" | patch $(( off + payload_len ))
+    done
+}
+
+
+
+# -----------------------------------------------------------------------------
+# Generic custom-settings framework
+# -----------------------------------------------------------------------------
+
+
+# Reset generated custom-settings state before the feature pass.
+custom_patch_settings_init() {
+    CUSTOM_G8_POOL=()
+    CUSTOM_G4_POOL=()
+    CUSTOM_G8_RECLAIMED=()
+    CUSTOM_G4_RECLAIMED=()
+    CUSTOM_G8_CLAIMS=()
+    CUSTOM_G4_CLAIMS=()
+    CUSTOM_STRING_POOL=()
+    CUSTOM_RECLAIMED_STRING_CANDIDATES=()
+    CUSTOM_RECLAIMED_STRING_SEEN=()
+    CUSTOM_MENU_ENTRIES=()
+    CUSTOM_MENU_REGISTERED=()
+}
+
+
+# Remember a string ID that became reclaimable after descriptor scrubbing.
+custom_note_reclaimed_string_id() {
+    local sid
+    sid=$(printf "%d" "$1")
+    (( sid == STR_ID_EMPTY )) && return
+    if [[ -z "${CUSTOM_RECLAIMED_STRING_SEEN[$sid]+x}" ]]; then
+        CUSTOM_RECLAIMED_STRING_SEEN[$sid]=1
+        CUSTOM_RECLAIMED_STRING_CANDIDATES+=("$sid")
+    fi
+}
+
+
+# Build the reusable string pool from IDs captured while reclaiming variables.
+# Reclaiming a descriptor only makes its old string IDs candidates: the same IDs
+# may still be referenced by other descriptors or small string-index tables. Scan
+# those known references after descriptor scrubbing and keep only unreferenced IDs.
+custom_build_string_pool() {
+    CUSTOM_STRING_POOL=()
+    local candidates specs tnum g5 g5_end
+    (( ${#CUSTOM_RECLAIMED_STRING_CANDIDATES[@]} > 0 )) || \
+        die "custom_patch_settings: no reclaimed string IDs available"
+
+    candidates=$(IFS=,; echo "${CUSTOM_RECLAIMED_STRING_CANDIDATES[*]}")
+    specs=()
+    for tnum in 3 4 6 8 9; do
+        [[ -n "${_var_table_base[$tnum]+x}" ]] || continue
+        specs+=("$tnum:${_var_table_base[$tnum]}:${_var_table_count[$tnum]}:${_var_table_stride[$tnum]}")
+    done
+    g5=$(globals_offset 5) || g5=-1
+    g5_end=$(next_global_offset_after "$g5" 2>/dev/null || echo -1)
+
+    mapfile -t CUSTOM_STRING_POOL < <(perl -e '
+        use strict;
+        use warnings;
+        my ($file, $candidates_csv, $g4_name, $g4_units, $g8_name,
+            $g8_base, $g5, $g5_end, @specs) = @ARGV;
+        my $num = sub { $_[0] =~ /^0x/i ? hex($_[0]) : $_[0] + 0 };
+        ($g4_name, $g4_units, $g8_name, $g8_base, $g5, $g5_end) =
+            map { $num->($_) } ($g4_name, $g4_units, $g8_name, $g8_base, $g5, $g5_end);
+        open my $fh, "<:raw", $file or die "open: $!";
+        local $/;
+        my $data = <$fh>;
+        my $len = length($data);
+
+        my @candidates = grep { length } split /,/, $candidates_csv;
+        my %candidate = map { ($_ + 0) => 1 } @candidates;
+        my %referenced;
+        my $u16 = sub {
+            my ($off) = @_;
+            return undef if $off < 0 || $off + 2 > $len;
+            return unpack("v", substr($data, $off, 2));
+        };
+        my $mark = sub {
+            my ($sid) = @_;
+            $referenced{$sid} = 1 if defined($sid) && exists $candidate{$sid};
+        };
+
+        for my $spec (@specs) {
+            my ($tnum, $base, $count, $stride) = map { $num->($_) } split /:/, $spec;
+            my @offs =
+                $tnum == 3 ? (0x06) :
+                $tnum == 4 ? ($g4_name, $g4_units) :
+                $tnum == 6 ? (0x14) :
+                ($g8_name, $g8_base);
+            for my $i (0 .. $count - 1) {
+                my $rec = $base + $i * $stride;
+                $mark->($u16->($rec + $_)) for @offs;
+            }
+        }
+
+        if ($g5 >= 0 && $g5_end > $g5) {
+            for (my $off = $g5; $off + 1 < $g5_end; $off += 2) {
+                $mark->($u16->($off));
+            }
+        }
+
+        for my $sid (@candidates) {
+            print "$sid\n" if !$referenced{$sid + 0};
+        }
+    ' "$OUT" "$candidates" "$G4_NAME_STR" "$G4_UNITS_STR" "$G8_NAME_STR" \
+       "$G8_BASE_STR" "$g5" "$g5_end" "${specs[@]}")
+
+    (( ${#CUSTOM_STRING_POOL[@]} > 0 )) || die "custom_patch_settings: no reclaimed string IDs available"
+}
+
+
+# Allocate one reclaimed string ID to a feature.
+# args: output variable name, allocation owner label
+custom_alloc_string() {
+    local __out=$1 owner=$2
+    (( ${#CUSTOM_STRING_POOL[@]} > 0 )) || die "custom_alloc_string: pool exhausted for $owner"
+    local sid=${CUSTOM_STRING_POOL[0]}
+    CUSTOM_STRING_POOL=("${CUSTOM_STRING_POOL[@]:1}")
+    printf -v "$__out" "%s" "$sid"
+}
+
+
+# Rewrite a firmware string, allocating a reclaimed string ID when str_id is -1.
+# The input array is indexed by ResMed language id. For each language compiled
+# into the current image, write that language string or fall back to English.
+# The locale array keeps pointing at raw string table entries; this helper only
+# changes those raw pointers and updates the descriptor max length.
+# Allocation prefers the existing raw string storage if the new text fits there.
+# Otherwise it scans backward through CCX for a contiguous erased 0xFF range,
+# writes the new NUL-terminated string there, and repoints the raw table entry.
+# args: output variable name, string id|-1, associative localized-string array name
+redefine_fw_string() {
+    local __out=$1 str_id=$2 array_name=$3
+    local -n strings=$array_name
+    [[ -n "${strings[0]+x}" ]] || die "redefine_fw_string: $array_name missing English string at language id 0"
+
+    if [[ "$str_id" == "-1" ]]; then
+        custom_alloc_string str_id "$array_name"
+    fi
+
+    local tmp lang
+    tmp=$(mktemp) || die "redefine_fw_string: mktemp failed"
+    for lang in "${!strings[@]}"; do
+        printf "%s\t%s\n" "$lang" "${strings[$lang]}" >> "$tmp"
+    done
+
+    perl -e '
+        use strict;
+        use warnings;
+        my ($file, $flash_base, $ccx_off, $ccx_size, $g2, $lang_count,
+            $lang_csv, $str_id, $map_file) = @ARGV;
+        $flash_base = oct($flash_base);
+        my $num = sub { $_[0] =~ /^0/ ? oct($_[0]) : int($_[0]) };
+        $ccx_off = $num->($ccx_off);
+        $ccx_size = $num->($ccx_size);
+        $g2 = $num->($g2);
+        $lang_count = $num->($lang_count);
+        $str_id = $num->($str_id);
+
+        open my $fh, "+<:raw", $file or die "open: $!";
+        my $data;
+        {
+            local $/;
+            $data = <$fh>;
+        }
+        my $len = length($data);
+
+        my %text;
+        open my $mf, "<:raw", $map_file or die "open map: $!";
+        while (my $line = <$mf>) {
+            chomp $line;
+            my ($lang, $value) = split /\t/, $line, 2;
+            $text{$lang + 0} = defined($value) ? $value : "";
+        }
+        die "missing English fallback\n" if !exists $text{0};
+        my @lang_ids = split /,/, $lang_csv;
+        die "language count mismatch\n" if @lang_ids != $lang_count;
+
+        my $u16 = sub { unpack("v", substr($data, $_[0], 2)) };
+        my $u32 = sub { unpack("V", substr($data, $_[0], 4)) };
+        my $put16 = sub { substr($data, $_[0], 2) = pack("v", $_[1]) };
+        my $put32 = sub { substr($data, $_[0], 4) = pack("V", $_[1]) };
+
+        my $la0 = $u32->($g2 + 4);
+        my $raw_indirect = $la0 - $flash_base - 8;
+        die "invalid raw string table pointer\n" if $raw_indirect < 0 || $raw_indirect + 4 > $len;
+        my $raw = $u32->($raw_indirect) - $flash_base;
+        die "invalid raw string table\n" if $raw < 0 || $raw >= $len;
+
+        my $alloc = sub {
+            my ($bytes) = @_;
+            my $need = length($bytes);
+            my $limit = $ccx_off + $ccx_size - 2; # leave CCX CRC
+            for (my $end = $limit; $end >= $ccx_off + $need; $end--) {
+                my $start = $end - $need;
+                if (substr($data, $start, $need) eq ("\xff" x $need)) {
+                    substr($data, $start, $need) = $bytes;
+                    return $start;
+                }
+            }
+            die "no CCX string space for ${need} bytes\n";
+        };
+
+        my $cstrlen = sub {
+            my ($off) = @_;
+            return undef if $off < 0 || $off >= $len;
+            my $end = index($data, "\0", $off);
+            return undef if $end < 0;
+            return $end - $off + 1;
+        };
+
+        my $rec = $g2 + $str_id * 8;
+        my $locale_arr = $u32->($rec + 4) - $flash_base;
+        die "invalid locale array for str_id $str_id\n" if $locale_arr < 0 || $locale_arr >= $len;
+
+        my $max_len = 0;
+        for my $slot (0..$lang_count - 1) {
+            my $lang_id = $lang_ids[$slot] + 0;
+            my $s = exists $text{$lang_id} ? $text{$lang_id} : $text{0};
+            my $bytes = $s . "\0";
+            $max_len = length($bytes) - 1 if length($bytes) - 1 > $max_len;
+
+            my $raw_idx = $u16->($locale_arr + $slot * 2);
+            my $raw_ptr_off = $raw + $raw_idx * 4;
+            die "raw string entry out of range\n" if $raw_ptr_off < 0 || $raw_ptr_off + 4 > $len;
+            my $old = $u32->($raw_ptr_off) - $flash_base;
+            my $old_cap = $cstrlen->($old);
+
+            my $new_off;
+            if (defined($old_cap) && length($bytes) <= $old_cap) {
+                substr($data, $old, $old_cap) = $bytes . ("\0" x ($old_cap - length($bytes)));
+                $new_off = $old;
+            } else {
+                $new_off = $alloc->($bytes);
+            }
+            $put32->($raw_ptr_off, $flash_base + $new_off);
+        }
+
+        $put16->($rec, $max_len);
+        seek($fh, 0, 0) or die "seek: $!";
+        print $fh $data;
+        truncate($fh, length($data)) or die "truncate: $!";
+    ' "$OUT" "$FLASH_BASE" "$CCX_OFF" "$CCX_SIZE" "$(globals_offset 2)" \
+       "$FW_LANG_COUNT" "$(IFS=,; echo "${FW_LANG_IDS[*]}")" "$str_id" "$tmp" || {
+        rm -f "$tmp"
+        die "redefine_fw_string: failed for str_id 0x$(printf "%04X" "$str_id")"
+    }
+    rm -f "$tmp"
+    printf -v "$__out" "%s" "$str_id"
+}
+
+
+# Reclaiming a stock variable scrubs its descriptor and adds it to a per-type
+# pool of available variables. Feature patches can then claim entries from the
+# matching pool and redefine their descriptors for custom use.
+
+# Reclaim a g[8] enum/menu variable and capture its old string IDs.
+custom_reclaim_g8_var() {
+    local name=$1 rec vid name_str base_str
+    vid=$(( $(resolve_var_id "$name") ))
+    [[ -z "${CUSTOM_G8_RECLAIMED[$vid]+x}" ]] || \
+        die "custom_reclaim_g8_var: duplicate reclaim of $name (var_id 0x$(printf "%04X" "$vid"))"
+    rec=$(find_var "$name") || die failed
+    name_str=$(read_u16 $(( rec + G8_NAME_STR )))
+    base_str=$(read_u16 $(( rec + G8_BASE_STR )))
+    write_u16 $(( rec + G8_NAME_STR )) "$STR_ID_EMPTY" || die failed
+    write_u16 $(( rec + G8_BASE_STR )) "$STR_ID_EMPTY" || die failed
+    custom_note_reclaimed_string_id "$name_str"
+    custom_note_reclaimed_string_id "$base_str"
+    CUSTOM_G8_RECLAIMED[$vid]="$name"
+    CUSTOM_G8_POOL+=("$name")
+}
+
+
+# Reclaim a g[4] numeric variable and capture its old string IDs.
+custom_reclaim_g4_var() {
+    local name=$1 rec vid name_str units_str
+    vid=$(( $(resolve_var_id "$name") ))
+    [[ -z "${CUSTOM_G4_RECLAIMED[$vid]+x}" ]] || \
+        die "custom_reclaim_g4_var: duplicate reclaim of $name (var_id 0x$(printf "%04X" "$vid"))"
+    rec=$(find_var "$name") || die failed
+    name_str=$(read_u16 $(( rec + G4_NAME_STR )))
+    units_str=$(read_u16 $(( rec + G4_UNITS_STR )))
+    write_u16 $(( rec + G4_NAME_STR )) "$STR_ID_EMPTY" || die failed
+    write_u16 $(( rec + G4_UNITS_STR )) "$STR_ID_EMPTY" || die failed
+    custom_note_reclaimed_string_id "$name_str"
+    custom_note_reclaimed_string_id "$units_str"
+    CUSTOM_G4_RECLAIMED[$vid]="$name"
+    CUSTOM_G4_POOL+=("$name")
+}
+
+
+# Claim a specific reclaimed g[8] variable, keeping feature APIs stable.
+# args: output variable name, requested variable name/id, optional owner label
+custom_claim_g8_var() {
+    local __out=$1 request=$2 owner=${3:-$2}
+    local vid name
+    vid=$(( $(resolve_var_id "$request") ))
+    [[ -n "${CUSTOM_G8_RECLAIMED[$vid]+x}" ]] || \
+        die "custom_claim_g8_var: $request (var_id 0x$(printf "%04X" "$vid")) is not reclaimed"
+    [[ -z "${CUSTOM_G8_CLAIMS[$vid]+x}" ]] || \
+        die "custom_claim_g8_var: $request (var_id 0x$(printf "%04X" "$vid")) already claimed by ${CUSTOM_G8_CLAIMS[$vid]}"
+    name=${CUSTOM_G8_RECLAIMED[$vid]}
+    CUSTOM_G8_CLAIMS[$vid]="$owner"
+    printf -v "$__out" "%s" "$name"
+}
+
+
+# Claim a specific reclaimed g[4] variable, keeping feature APIs stable.
+# args: output variable name, requested variable name/id, optional owner label
+custom_claim_g4_var() {
+    local __out=$1 request=$2 owner=${3:-$2}
+    local vid name
+    vid=$(( $(resolve_var_id "$request") ))
+    [[ -n "${CUSTOM_G4_RECLAIMED[$vid]+x}" ]] || \
+        die "custom_claim_g4_var: $request (var_id 0x$(printf "%04X" "$vid")) is not reclaimed"
+    [[ -z "${CUSTOM_G4_CLAIMS[$vid]+x}" ]] || \
+        die "custom_claim_g4_var: $request (var_id 0x$(printf "%04X" "$vid")) already claimed by ${CUSTOM_G4_CLAIMS[$vid]}"
+    name=${CUSTOM_G4_RECLAIMED[$vid]}
+    CUSTOM_G4_CLAIMS[$vid]="$owner"
+    printf -v "$__out" "%s" "$name"
+}
+
+
+# Rewrite a g[8] descriptor with caller-provided raw descriptor fields.
+# args: var flags callback dep_head name_str default num_options param_0a perm_mask base_str param_12
+redefine_g8_var() {
+    local var=$1 flags=$2 callback=$3 dep=$4 name_str=$5 default=$6 num_options=$7 param_0a=$8 perm_mask=$9
+    local base_str=${10} param_12=${11}
+    local rec
+    rec=$(find_var "$var") || die failed
+    write_u16 $(( rec + G8_FLAGS )) "$flags" || die failed
+    write_u8  $(( rec + G8_CALLBACK )) "$callback" || die failed
+    write_u16 $(( rec + G8_DEP_HEAD )) "$dep" || die failed
+    write_u16 $(( rec + G8_NAME_STR )) "$name_str" || die failed
+    write_u8  $(( rec + G8_DEFAULT )) "$default" || die failed
+    write_u8  $(( rec + G8_NUM_OPTIONS )) "$num_options" || die failed
+    write_u16 $(( rec + G8_PARAM_0A )) "$param_0a" || die failed
+    write_u32 $(( rec + G8_BITMASK )) "$perm_mask" || die failed
+    write_u16 $(( rec + G8_BASE_STR )) "$base_str" || die failed
+    write_u16 $(( rec + G8_PARAM_12 )) "$param_12" || die failed
+}
+
+
+# Register one variable to be appended to a clinical menu section.
+# args: section name, variable name/id
+custom_menu_add() {
+    local section_name=${1,,} var=$2
+    local section=${CUSTOM_MENU_SECTIONS[$section_name]}
+    [[ -n "$section" ]] || die "custom_menu_add: unknown section $1"
+
+    local vid
+    vid=$(( $(resolve_var_id "$var") ))
+    if [[ -n "${CUSTOM_MENU_REGISTERED[$vid]+x}" ]]; then
+        die "custom_menu_add: duplicate variable $var (var_id 0x$(printf "%04X" "$vid"))"
+    fi
+    CUSTOM_MENU_REGISTERED[$vid]=1
+    CUSTOM_MENU_ENTRIES+=("$section $vid")
+}
+
+
+# Serialize the generated registry into the reclaimed Reminders page space.
+custom_emit_registry() {
+    local need=$(( (${#CUSTOM_MENU_ENTRIES[@]} + 1) * 8 ))
+    (( need <= CUSTOM_SETTINGS_REGISTRY_SIZE )) || \
+        die "custom_patch_settings: registry ${need}B exceeds reclaimed ${CUSTOM_SETTINGS_REGISTRY_SIZE}B"
+
+    local off=$CUSTOM_SETTINGS_REGISTRY_ADDR entry section vid
+    for entry in "${CUSTOM_MENU_ENTRIES[@]}"; do
+        read -r section vid <<< "$entry"
+        write_u8  "$off" "$section" || die failed
+        write_u8  $(( off + 1 )) 0 || die failed
+        write_u16 $(( off + 2 )) "$vid" || die failed
+        write_u32 $(( off + 4 )) 0 || die failed
+        off=$(( off + 8 ))
+    done
+    fill_ff "$off" 8 || die failed
+}
+
+
+# Replace one stock section-tail append call with a hook call.
+# args: patch site offset, expected bytes, hook target flash address, site label
+custom_patch_menu_hook_site() {
+    local site=$1 expected=$2 target=$3 name=$4
+    if ! printf '%b' "$expected" | check_patch "$site"; then
+        die "custom_patch_settings: unexpected $name hook bytes at 0x$(printf "%X" "$site")"
+    fi
+    encode_thumb_bl "$site" "$target" | patch "$site" || die failed
+}
+
+
+# Inject the generic clinical-menu hook payload and patch its ABI slots.
+custom_patch_menu_hooks() {
+    local ver bin size registry_flash hook_base
+    local therapy_site comfort_site accessories_site options_site configuration_site
+    ver="${CDX_VER#SX567-}"
+
+    case "$CDX_VER" in
+        SX567-0401|SX567-0402)
+            therapy_site=0x62414
+            comfort_site=0x62672
+            accessories_site=0x626fe
+            options_site=0x62750
+            configuration_site=0x628d2
+            ;;
+        *)
+            echo "  ${FUNCNAME[0]}: skipped (unsupported CDX version $CDX_VER)"
+            return
+            ;;
+    esac
+
+    bin="build/custom_menu_hooks_${ver}.bin"
+    if [[ ! -r "$bin" ]]; then
+        die "custom_patch_settings: $bin not found; run make custom_menu_hooks_${ver}.bin"
+    fi
+
+    size=$(stat -c %s "$bin")
+    if (( size > CUSTOM_MENU_HOOKS_BUDGET )); then
+        die "custom_patch_settings: $bin is ${size}B, exceeds ${CUSTOM_MENU_HOOKS_BUDGET}B budget"
+    fi
+    if ! check_ff "$CUSTOM_MENU_HOOKS_OFF" "$CUSTOM_MENU_HOOKS_BUDGET"; then
+        local payload_hex
+        payload_hex=$(printf "%X" "$CUSTOM_MENU_HOOKS_OFF")
+        die "custom_patch_settings: payload area 0x$payload_hex is not empty"
+    fi
+
+    patch_direct "$bin" "$CUSTOM_MENU_HOOKS_OFF"
+    registry_flash=$(( FLASH_BASE + CUSTOM_SETTINGS_REGISTRY_ADDR ))
+    hook_base=$CUSTOM_MENU_HOOKS_FLASH
+
+    write_u32 $(( CUSTOM_MENU_HOOKS_OFF + 0x14 )) "$registry_flash" || die failed
+
+    custom_patch_menu_hook_site "$therapy_site" "\\x02\\xf0\\x3a\\xfd" "$(( hook_base + 0x00 ))" therapy
+    custom_patch_menu_hook_site "$comfort_site" "\\x02\\xf0\\x0b\\xfc" "$(( hook_base + 0x04 ))" comfort
+    custom_patch_menu_hook_site "$accessories_site" "\\x02\\xf0\\xc5\\xfb" "$(( hook_base + 0x08 ))" accessories
+    custom_patch_menu_hook_site "$options_site" "\\x02\\xf0\\x9c\\xfb" "$(( hook_base + 0x0C ))" options
+    custom_patch_menu_hook_site "$configuration_site" "\\x02\\xf0\\xdb\\xfa" "$(( hook_base + 0x10 ))" configuration
+
+    printf "  custom menu hooks: %s (%dB) at 0x%08X\n" "$bin" "$size" "$hook_base"
+}
+
+
+
+# -----------------------------------------------------------------------------
+# Dedicated patch implementations
+# -----------------------------------------------------------------------------
+
 
 patch_tamper() {
     echo -n "Patching firmware integrity checks... "
@@ -452,6 +1165,7 @@ patch_tamper() {
     echo
 }
 
+
 patch_psu_id() {
     echo -n "Patching Power Supply ID check... "
     case "$BID" in
@@ -466,70 +1180,13 @@ patch_psu_id() {
 }
 
 
-patch_direct() {
-    BIN_FILE=$1
-    ADDR=$2
-    if [ -r $BIN_FILE ] ; then
-        printf "Including $BIN_FILE..."
-        cat $BIN_FILE | patch $ADDR || die " patching failed"
-        echo " success!"
-    else
-        die " file not found, did you run make?"
-    fi
-}
-
-# BIN_FILE - file
-# ADDR - address in the patched binary to point to
-# PTR_ADDR - address of the +1 pointer in the binary
-# PTR_TARGET is +1 relative to ADDR, and byte order is reversed(little-endian)
-patch_pointer() {
-    BIN_FILE=$1
-    ADDR=$2
-    PTR_ADDR=$3
-    PTR_TARGET=$4
-    if [ -r $BIN_FILE ]; then
-        printf "Including $BIN_FILE..."
-        cat $BIN_FILE | patch $ADDR || die " patching failed"
-        printf "$PTR_TARGET" | patch $PTR_ADDR || die " pointer fixup failed"
-        echo " success!"
-    fi
-}
-
-# Convert address to a little-endian Thumb pointer string for patch_pointer
-le_thumb_ptr() {
-    local addr=$(printf "%d" "$1")
-    local thumb=$(( addr | 1 ))
-    printf '\\x%02x\\x%02x\\x%02x\\x%02x' \
-        $((thumb & 0xFF)) \
-        $(((thumb >> 8) & 0xFF)) \
-        $(((thumb >> 16) & 0xFF)) \
-        $(((thumb >> 24) & 0xFF))
-}
-
-# encode_thumb_bl SRC_FILE_OFF DST_FLASH_ADDR
-encode_thumb_bl() {
-    python3 -c "
-import struct, sys
-src = $1 + 0x08000004
-dst = $2
-offset = dst - src
-S = 1 if offset < 0 else 0
-if offset < 0: offset += (1 << 25)
-I1 = (offset >> 23) & 1; I2 = (offset >> 22) & 1
-imm10 = (offset >> 12) & 0x3FF; imm11 = (offset >> 1) & 0x7FF
-J1 = (~(I1 ^ S)) & 1; J2 = (~(I2 ^ S)) & 1
-hw1 = 0xF000 | (S << 10) | imm10
-hw2 = 0xD000 | (J1 << 13) | (J2 << 11) | imm11
-sys.stdout.buffer.write(struct.pack('<HH', hw1, hw2))
-"
-}
-
 patch_code_common() {
     local ver=${CDX_VER#SX567-}
     local BIN=build/common_code_${ver}.bin
     echo "Patching common_code.c ($ver)"
     patch_direct "$BIN" 0xfd800
 }
+
 
 patch_code_graph() {
     local ver=${CDX_VER#SX567-}
@@ -544,6 +1201,7 @@ patch_code_graph() {
     patch_pointer "$BIN" 0xfd000 "$FPTR" "$(le_thumb_ptr 0x80fd000)"
 }
 
+
 patch_code_squarewave() {
     local ver=${CDX_VER#SX567-}
     local BIN=build/squarewave_${ver}.bin
@@ -556,6 +1214,7 @@ patch_code_squarewave() {
     echo "Patching Squarewave ($ver)"
     patch_pointer "$BIN" 0xfd400 "$FPTR" "$(le_thumb_ptr 0x80fd400)"
 }
+
 
 patch_code_asv_task_wraper() {
     local ver=${CDX_VER#SX567-}
@@ -570,6 +1229,7 @@ patch_code_asv_task_wraper() {
     patch_pointer "$BIN" 0xfd700 "$FPTR" "$(le_thumb_ptr 0x80fd700)"
 }
 
+
 patch_wrapper_limit_max_pdiff() {
     local ver=${CDX_VER#SX567-}
     local BIN=build/wrapper_limit_max_pdiff_${ver}.bin
@@ -582,6 +1242,7 @@ patch_wrapper_limit_max_pdiff() {
     echo "Patching wrapper for pressure_limit_max_diff ($ver)"
     patch_pointer "$BIN" 0xff000 "$FPTR" "$(le_thumb_ptr 0x80ff000)"
 }
+
 
 patch_code() {
     if [[ $PATCH_CODE == 1 ]] ; then
@@ -604,13 +1265,13 @@ patch_code() {
     fi
 }
 
+
 unlock_ui_limits() {
     # patch UI pressure limits to range between 1 and 30
     # Entry4 record layout: +0x0C = max (u32), +0x10 = min (u32)
 
     echo "Patching UI limits"
 
-    local G4_MAX=0x0C
     local vars=(
         IPC # Set Pressure (CPAP)
         MPA # Max Pressure (AutoSet, APAP, AfH)
@@ -637,6 +1298,7 @@ unlock_ui_limits() {
         printf '\xdc\x05\x00\x00\x32\x00\x00\x00' | patch $(( $(find_var "$var") + G4_MAX )) || die failed
     done
 }
+
 
 asv_unlock_ps_range () {
     # Disable the ASV and ASVAuto PS range check to allow Max PS < (Min PS + 5)
@@ -668,8 +1330,6 @@ asv_unlock_ps_range () {
             ;;
     esac
 
-    local G4_MAX=0x0C
-    local G4_MIN=0x10
     for var in MNS MXS ANS AXS; do
         # min = 0
         printf '\x00\x00\x00\x00' | patch $(( $(find_var "$var") + G4_MIN ))
@@ -677,6 +1337,7 @@ asv_unlock_ps_range () {
         printf '\xe2\x04\x00\x00' | patch $(( $(find_var "$var") + G4_MAX ))
     done
 }
+
 
 extra_debug() {
     echo "Enabling extra info on therapy screen"
@@ -687,9 +1348,9 @@ extra_debug() {
     # 0010 - bar thingy
     # 0001 - fancy but useless round display
 
-    local G6_DEFAULT=0x08
     printf '\x0e' | patch $(( $(find_var TSS) + G6_DEFAULT )) || die failed
 }
+
 
 extra_modes() {
     echo "Enabling all therapy modes"
@@ -709,14 +1370,13 @@ extra_modes() {
     # 81 01 = 0x10000001 = CPAP, ASV, ASVAuto
     # 2048 = AutoSet for her?
 
-    local G8_BITMASK=0x0C
     printf '\xff\xff' | patch $(( $(find_var MOP) + G8_BITMASK )) || die failed
 }
+
 
 unlock_option_masks() {
     echo "Unlocking option masks"
 
-    local G8_BITMASK=0x0C
     local masks=(
         "TBT 0x00000007" # Tube: SlimLine, Standard, 3m
         "RMA 0x00000007" # Ramp: Off, On, Auto
@@ -730,6 +1390,7 @@ unlock_option_masks() {
     done
 }
 
+
 # Try enabling extra menu items
 extra_menu() {
     deprecated "gui_config now sets ACT flags on all menu variables." \
@@ -742,6 +1403,7 @@ extra_menu() {
         *) echo "  extra_menu: skipped (unsupported CDX version $CDX_VER)" ;;
     esac
 }
+
 
 # If you want all menu items to always be visible, let this section run
 all_menu() {
@@ -758,6 +1420,7 @@ all_menu() {
         *) echo "  all_menu: skipped (unsupported CDX version $CDX_VER)" ;;
     esac
 }
+
 
 gui_config () {
     echo "Enabling GUI menu items"
@@ -794,9 +1457,41 @@ gui_config () {
     ' "$OUT"
 }
 
-CUSTOM_SETTINGS_REGISTRY_ADDR=
-CUSTOM_SETTINGS_REGISTRY_SIZE=
 
+
+unlock_languages() {
+    echo "Unlocking all languages..."
+    local addr=$(find_var LNC)
+    # make variable read only to prevent overwriting with eeprom data
+    printf '\x06' | patch $addr
+    # 0x007fffff, except font-reserved bits jp (13,19) and cn (16,17).
+    printf '\xff\xdf\x74\x00' | patch $(( addr + 0x08 ))
+}
+
+
+patch_defaults() {
+    echo -n "Patching firmware defaults... "
+    # language (eng)
+    printf '\x00' | patch $(( $(find_var LAN) + G8_DEFAULT )) || die failed
+    # press. units: 0=cmH2O 1=hPa
+    printf '\x00' | patch $(( $(find_var PRD) + G8_DEFAULT )) || die failed
+    # mask: 0=Pillows 1=Full 2=Nasal 3=Pediatric
+    printf '\x00' | patch $(( $(find_var MSK) + G8_DEFAULT )) || die failed
+    # tube: SlimLine, Standard, 3m
+    printf '\x00' | patch $(( $(find_var TBT) + G8_DEFAULT )) || die failed
+    # Essentials: Plus, On
+    printf '\x00' | patch $(( $(find_var ACC) + G8_DEFAULT )) || die failed
+
+    echo
+}
+
+
+# Disable stock Reminder behavior and add its storage-backed variables to pools.
+# Reclaimed Reminder vars:
+#   g[8] RPF/RPO/RPH/RPW: recurrence enable for Filter/Mask/Tube/Water Tub
+#   g[8] RXF/RXM/RXH/RXW: reminder-date enable for Filter/Mask/Tube/Water Tub
+#   g[4] RCF/RCM/RCH/RCW: recurrence period value in months
+#   g[4] RDF/RDM/RDH/RDW: reminder due-date value
 custom_patch_settings_reclaim_reminders() {
     local reminders_tick reminder_menu_item reminder_menu_item_end reminder_menu reminder_menu_end
     case "$CDX_VER" in
@@ -820,7 +1515,8 @@ custom_patch_settings_reclaim_reminders() {
             ;;
     esac
 
-    # bx lr ; disable reminder periodic processing.
+    # disable reminder periodic processing.
+    # bx lr ;
     if printf '\x38\xb5\x04\x46' | check_patch "$reminders_tick"; then
         printf '\x70\x47' | patch "$reminders_tick" || die failed
     elif ! printf '\x70\x47' | check_patch "$reminders_tick"; then
@@ -830,7 +1526,8 @@ custom_patch_settings_reclaim_reminders() {
     local item_reclaim=$(( reminder_menu_item + 2 ))
     local item_reclaim_size=$(( reminder_menu_item_end - item_reclaim ))
 
-    # b after scrollbar_add_item ; skip visible Reminders row between SmartStart and Configuration.
+    # skip visible Reminders menu item between SmartStart and Configuration.
+    # b after scrollbar_add_item ;
     if printf '\x08\x20\x01\xf0' | check_patch "$reminder_menu_item"; then
         printf '\x1c\xe0' | patch "$reminder_menu_item" || die failed
         fill_ff "$item_reclaim" "$item_reclaim_size" || die failed
@@ -841,7 +1538,8 @@ custom_patch_settings_reclaim_reminders() {
     local reclaim=$(( reminder_menu + 6 ))
     local reclaim_size=$(( reminder_menu_end - reclaim ))
 
-    # movs r4,#0; str r4,[r5,#0x74]; b end ; clear Reminders page slot, then skip children.
+    # clear Reminders page slot, then skip children.
+    # movs r4,#0; str r4,[r5,#0x74]; b end ;
     if printf '\x2c\x20\x00\xf0' | check_patch "$reminder_menu"; then
         printf '\x00\x24\x6c\x67\x2a\xe1' | patch "$reminder_menu" || die failed
         fill_ff "$reclaim" "$reclaim_size" || die failed
@@ -851,6 +1549,14 @@ custom_patch_settings_reclaim_reminders() {
 
     CUSTOM_SETTINGS_REGISTRY_ADDR=$reclaim
     CUSTOM_SETTINGS_REGISTRY_SIZE=$reclaim_size
+
+    local var
+    for var in RPO RPH RPF RPW RXM RXH RXF RXW; do
+        custom_reclaim_g8_var "$var"
+    done
+    for var in RDF RDM RDH RDW RCF RCM RCH RCW; do
+        custom_reclaim_g4_var "$var"
+    done
 
     printf "  disabled stock Reminders menu item at 0x%08X\n" \
         $(( FLASH_BASE + reminder_menu_item ))
@@ -862,37 +1568,83 @@ custom_patch_settings_reclaim_reminders() {
         $(( FLASH_BASE + reclaim )) $(( FLASH_BASE + reminder_menu_end - 1 )) "$reclaim_size"
 }
 
+
+# reuse reclaimed Reminder var as a custom ASV runtime setting,
+# expose it in the clinical Therapy menu, and pass its var_id to
+# the VAuto wrapper so the injected therapy code can read the setting at runtime.
 custom_patch_settings_myasv() {
-    # RPO = recurrence enable: Mask
-    local RPO
-    RPO=$(find_var RPO) || die failed
+    declare -A MYASV_LABEL=([0]="Custom ASV")
+    local myasv_var myasv_label myasv_vid myasv_dep ver elf addr
 
-    # Rewrite RPO into the custom ASV enable switch.
-    printf '\x07\x00' | patch $(( RPO + 0x00 )) || die failed # flags: ACT|VIS|EDT
-    printf '\x00'     | patch $(( RPO + 0x02 )) || die failed # no callback
-    printf '\xff\x7f' | patch $(( RPO + 0x04 )) || die failed # no dependent numeric settings
-    printf '\xf8\x00' | patch $(( RPO + 0x06 )) || die failed # name string: ASV
-    printf '\x00\x02' | patch $(( RPO + 0x08 )) || die failed # default=Off, options=2
-    printf '\x00\x00' | patch $(( RPO + 0x0A )) || die failed
-    printf '\x03\x00\x00\x00' | patch $(( RPO + 0x0C )) || die failed # allowed option bits: Off, On
-    printf '\x3e\x01' | patch $(( RPO + 0x10 )) || die failed         # option strings: Off, On
-    printf '\x00\x00' | patch $(( RPO + 0x12 )) || die failed
+    # Claim a stable storage-backed g[8] variable for this feature and allocate a
+    # reclaimed localized string ID for its menu label.
+    custom_claim_g8_var myasv_var RPO my_asv_enable
+    redefine_fw_string myasv_label -1 MYASV_LABEL
+
+    # Rewrite the claimed descriptor as a normal Off/On enum. Keep the original
+    # Reminder update chain root (RGT), because the variable still lives in the
+    # same persisted Reminder group and should dirty/save that group normally.
+    myasv_dep=$(find_var_table_index 4 RGT)
+    redefine_g8_var "$myasv_var" 0x0007  0         "$myasv_dep" "$myasv_label" 0        2          0     0x00000003 "$STR_ID_OFF_ON_BASE" 0
+    #                            #flags  #callback #dep_chain   #name_str_id   #default #opt_count #pad? #opt_mask  $options_str_id_base  #pading?
+
+    # The menu/descriptor side can use the UART name, but injected runtime code
+    # only gets a compact numeric var_id through its ABI slot.
+    myasv_vid=$(resolve_var_id "$myasv_var")
+
+    # Register the variable for the generic menu hook; registry emission and hook
+    # injection are handled later by custom_patch_settings().
+    custom_menu_add therapy "$myasv_var"
+
+    # The wrapper binary is built before patching and exposes a writable ABI slot.
+    # Patch that slot with the claimed var_id so wrapper code stays independent
+    # from the custom menu framework and from firmware-specific numeric IDs.
+    ver=${CDX_VER#SX567-}
+    elf=build/wrapper_limit_max_pdiff_${ver}.elf
+    [[ -r "$elf" ]] || die "custom_patch_settings_myasv: $elf not found"
+    addr=$(arm-none-eabi-nm "$elf" 2>/dev/null | awk '$3 == "wrapper_limit_max_pdiff_toggle_var_id" { printf "0x%s", $1 }')
+    [[ -n "$addr" ]] || die "custom_patch_settings_myasv: wrapper toggle var symbol not found"
+    write_u16 $(( addr - FLASH_BASE )) "$(( myasv_vid ))" || die failed
+
+    printf "  my_asv enable: %s var_id=0x%04X label_str=0x%04X\n" \
+        "$myasv_var" "$(( myasv_vid ))" "$myasv_label"
+    printf "  VAuto wrapper toggle var_id=0x%04X at 0x%08X\n" "$(( myasv_vid ))" "$addr"
 }
 
+
+# Select active custom-settings feature functions. The framework itself should
+# run only when at least one feature needs reclaimed variables/menu hooks.
+custom_patch_settings_collect_features() {
+    CUSTOM_SETTINGS_FEATURES=()
+
+    if [[ $PATCH_CODE == 1 && $PATCH_VAUTO_WRAPPER == 1 ]]; then
+        CUSTOM_SETTINGS_FEATURES+=(custom_patch_settings_myasv)
+    fi
+}
+
+
+# Orchestrate reclaim, feature registration, registry emit, and hook injection.
 custom_patch_settings() {
+    custom_patch_settings_collect_features
+    if (( ${#CUSTOM_SETTINGS_FEATURES[@]} == 0 )); then
+        echo "Skipping custom patch settings (no active features)"
+        return
+    fi
+
     echo "Preparing custom patch settings"
+    custom_patch_settings_init
     custom_patch_settings_reclaim_reminders || return
-    custom_patch_settings_myasv
+    custom_build_string_pool
+
+    local feature
+    for feature in "${CUSTOM_SETTINGS_FEATURES[@]}"; do
+        "$feature"
+    done
+
+    custom_emit_registry
+    custom_patch_menu_hooks
 }
 
-unlock_languages() {
-    echo "Unlocking all languages..."
-    local addr=$(find_var LNC)
-    # make variable read only to prevent overwriting with eeprom data
-    printf '\x06' | patch $addr
-    # 0x007fffff, except font-reserved bits jp (13,19) and cn (16,17).
-    printf '\xff\xdf\x74\x00' | patch $(( addr + 0x08 ))
-}
 
 
 
@@ -934,11 +1686,13 @@ custom_palette() {
     done
 }
 
+
 asv_disable_backup_rate () {
     deprecated "Use PATCH_CODE=1 PATCH_ASV_TASK_WRAPPER=1 instead." \
                "Export FORCE_DEPRECATED=1 to apply anyway." && return
     patch_code_asv_task_wraper
 }
+
 
 
 patch_vid_spoof() {
@@ -971,6 +1725,7 @@ patch_vid_spoof() {
     printf "  payload: %s at 0x%X\n" "$BIN" $VID_SPOOF_OFFSET
     printf "  vtable:  0x%X -> 0x%08X\n" $VTABLE_ENTRY $(( HOOK_FLASH | 1 ))
 }
+
 
 
 patch_lcd_ili9325() {
@@ -1018,6 +1773,7 @@ patch_lcd_ili9325() {
 }
 
 
+
 patch_past_date() {
     # Allow setting past date in menu and UART
 
@@ -1028,6 +1784,7 @@ patch_past_date() {
     off=$(find_bytes "0098a8428041c043c00f05b030bd") || die "${FUNCNAME[0]}: date direction check not found"
     printf '\x80' | patch $(( off + 2 ))
 }
+
 
 patch_backlight_adapt() {
     # improved backlight response to ambient light
@@ -1084,10 +1841,12 @@ patch_backlight_adapt() {
     echo "  ${#BIN} at 0x$(printf '%X' $BACKLIGHT_OFFSET), hook at 0x$(printf '%X' $(( hook_off + 0x08000000 )))"
 }
 
+
 patch_edf_merge() {
     echo "Patching EDF signal superset"
     python3 ./python/edf_ccx_merge.py "$OUT" -o "$OUT" --force --ignore-input-crc || die "EDF merge failed"
 }
+
 
 
 motor_nagscreen () {
@@ -1111,51 +1870,108 @@ motor_nagscreen () {
     return 1
 }
 
-patch_defaults() {
-    echo -n "Patching firmware defaults... "
-    local G8_DEFAULT=0x08
-    # language (eng)
-    printf '\x00' | patch $(( $(find_var LAN) + G8_DEFAULT )) || die failed
-    # press. units: 0=cmH2O 1=hPa
-    printf '\x00' | patch $(( $(find_var PRD) + G8_DEFAULT )) || die failed
-    # mask: 0=Pillows 1=Full 2=Nasal 3=Pediatric
-    printf '\x00' | patch $(( $(find_var MSK) + G8_DEFAULT )) || die failed
-    # tube: SlimLine, Standard, 3m
-    printf '\x00' | patch $(( $(find_var TBT) + G8_DEFAULT )) || die failed
-    # Essentials: Plus, On
-    printf '\x00' | patch $(( $(find_var ACC) + G8_DEFAULT )) || die failed
 
-    echo
-}
 
-patch_crc() {
-    local regions=(
-        "$BLX_OFF $BLX_SIZE"
-        "$CCX_OFF $CCX_SIZE"
-        "$CDX_OFF $CDX_SIZE"
-    )
+# -----------------------------------------------------------------------------
+# Initialization
+# -----------------------------------------------------------------------------
 
-    local off size payload_len crc
+if [ -z "$IN" -o -z "$OUT" ]; then
+    die "Usage: $0: stm32.bin stm32-unlocked.bin"
+fi
 
-    echo "Updating checksums"
+if [ ! -r "$IN" ]; then
+    die "$IN: can not open input file"
+fi
 
-    for r in "${regions[@]}"; do
-        read -r off size <<< "$r"
-        off=$(printf "%d" "$off")
-        size=$(printf "%d" "$size")
-        payload_len=$(( size - 2 ))
+cp "$IN" "$OUT" || die "$OUT: copy failed"
+detect_platform
 
-        crc=$(crc16_region "$off" "$payload_len") || {
-            echo "${FUNCNAME[0]}: CRC calculation failed"
-            return 1
-        }
+declare -A _globals_cache
+declare -A _var_by_name
+declare -A _var_id_present
+declare -a _var_id_list
+_uart_names_loaded=0
 
-        printf "  block @0x%05X (%d bytes) -> CRC %s\n" "$off" "$size" "$crc"
+declare -A _var_table_stride=([3]=10 [4]=0x1C [6]=0x18 [8]=0x14 [9]=0x18)
+declare -A _var_table_base
+declare -A _var_table_count
+declare -A _var_table_id_base
+_var_tables_loaded=0
 
-        printf '%b' "\x${crc:0:2}" "\x${crc:2:2}" | patch $(( off + payload_len ))
-    done
-}
+G4_FLAGS=0x00
+G4_CALLBACK=0x02
+G4_NEXT_DEP=0x04
+G4_NAME_STR=0x06
+G4_DEFAULT=0x08
+G4_MAX=0x0C
+G4_MIN=0x10
+G4_DECIMALS=0x14
+G4_SCALE=0x16
+G4_STEP=0x18
+G4_UNITS_STR=0x1A
 
+G6_FLAGS=0x00
+G6_CONFIG_GROUP=0x02
+G6_LINKED_VAR=0x04
+G6_PARENT_VAR=0x06
+G6_DEFAULT=0x08
+G6_PERM_MASK=0x0C
+G6_ITEM_COUNT=0x10
+G6_STEP_DIV=0x11
+G6_CHILD_INDEX=0x12
+G6_LABEL_STR=0x14
+G6_PAD_16=0x16
+
+G8_FLAGS=0x00
+G8_CALLBACK=0x02
+G8_DEP_HEAD=0x04
+G8_NAME_STR=0x06
+G8_DEFAULT=0x08
+G8_NUM_OPTIONS=0x09
+G8_PARAM_0A=0x0A
+G8_BITMASK=0x0C
+G8_BASE_STR=0x10
+G8_PARAM_12=0x12
+
+FW_LANG_COUNT=
+FW_LANG_IDS=()
+STR_ID_EMPTY=
+STR_ID_OFF_ON_BASE=
+
+CUSTOM_SETTINGS_REGISTRY_ADDR=
+CUSTOM_SETTINGS_REGISTRY_SIZE=
+CUSTOM_MENU_HOOKS_OFF=0xFFC00
+CUSTOM_MENU_HOOKS_BUDGET=0x3FE
+CUSTOM_MENU_HOOKS_FLASH=$(( FLASH_BASE + CUSTOM_MENU_HOOKS_OFF ))
+declare -a CUSTOM_G8_POOL
+declare -a CUSTOM_G4_POOL
+declare -A CUSTOM_G8_RECLAIMED
+declare -A CUSTOM_G4_RECLAIMED
+declare -A CUSTOM_G8_CLAIMS
+declare -A CUSTOM_G4_CLAIMS
+declare -a CUSTOM_STRING_POOL
+declare -a CUSTOM_RECLAIMED_STRING_CANDIDATES
+declare -A CUSTOM_RECLAIMED_STRING_SEEN
+declare -a CUSTOM_MENU_ENTRIES
+declare -A CUSTOM_MENU_REGISTERED
+declare -a CUSTOM_SETTINGS_FEATURES
+declare -A CUSTOM_MENU_SECTIONS=(
+    [therapy]=0
+    [comfort]=1
+    [accessories]=2
+    [options]=3
+    [configuration]=4
+)
+
+# Many patch sites call find_var through command substitution; preload in the parent shell.
+load_var_tables
+load_firmware_string_metadata
+
+
+# -----------------------------------------------------------------------------
+# Patch execution sequence
+# -----------------------------------------------------------------------------
 
 patch_tamper
 patch_psu_id

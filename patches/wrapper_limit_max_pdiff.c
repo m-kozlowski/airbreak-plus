@@ -20,9 +20,9 @@ STATIC void init_features(features_t *feat) {
 // +1 pointer address: 0x000f93d0. Original function address: 0x080bc992
 extern void pressure_limit_max_difference();
 extern int variable_get_g8(int var_id);
-extern const char custom_asv_enable_var_id;
+extern const unsigned short wrapper_limit_max_pdiff_toggle_var_id;
 
-#define CUSTOM_ASV_ENABLE_VAR ((int)(unsigned)&custom_asv_enable_var_id)
+#define CUSTOM_ASV_ENABLE_VAR ((int)wrapper_limit_max_pdiff_toggle_var_id)
 
 // Reshapes PS in 0.0-1.0 format to differently shaped slopes with `mult` times the AUC, first increasing slope before magnitude
 // Only using ^4 shape, because going to ^8 and above is very jarring and results in bad premature cycling
