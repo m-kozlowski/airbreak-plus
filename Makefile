@@ -14,6 +14,7 @@ S10_CODE_BINS = $(foreach v,$(S10_CODE_VERSIONS),\
 	$(BUILD)/squarewave_$(v).bin \
 	$(BUILD)/asv_task_wrapper_$(v).bin \
 	$(BUILD)/wrapper_limit_max_pdiff_$(v).bin \
+	$(BUILD)/custom_menu_hooks_$(v).bin \
 	$(BUILD)/backlight_adapt_$(v).bin)
 
 BUILD_VARIANTS = \
@@ -68,7 +69,7 @@ binaries: $(S10_CODE_BINS) $(VID_SPOOF_BINS)
 #   0x80fec00  backlight_adapt          (1024 B)
 #   0x80ff000  wrapper_limit_max_pdiff  (2048 B)
 #   0x80ff800  s10_lcd_ili9325          (1024 B)
-#   0x80ffc00  unallocated tail         (1024 B)
+#   0x80ffc00  custom_menu_hooks        (1022 B, leaves CDX CRC)
 
 graph-offset := 0x80fd000
 squarewave-offset := 0x80fd400
@@ -76,6 +77,7 @@ asv_task_wrapper-offset := 0x80fd700
 common_code-offset := 0x80fd800
 backlight_adapt-offset := 0x80fec00
 wrapper_limit_max_pdiff-offset := 0x80ff000
+custom_menu_hooks-offset := 0x80ffc00
 vid_spoof-offset := 0x80fcfa0
 
 define S10_CODE_VERSION_template
@@ -87,29 +89,34 @@ $(BUILD)/common_code_$(1).elf: $(BUILD)/common_code.o $(BUILD)/s10_$(1)_stubs.o 
 		--Ttext $(common_code-offset) --entry start --sort-section=name \
 		-o $$@ $$^
 
-$(BUILD)/graph_$(1).elf: $(BUILD)/graph.o $(BUILD)/s10_$(1)_stubs.o | $(BUILD)
+$(BUILD)/graph_$(1).elf: $(BUILD)/graph.o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/common_code_$(1).elf | $(BUILD)
 	$$(LD) --nostdlib --no-dynamic-linker \
 		--Ttext $(graph-offset) \
 		--just-symbols=$$(BUILD)/common_code_$(1).elf \
-		--entry start --sort-section=name -o $$@ $$^
+		--entry start --sort-section=name -o $$@ $(BUILD)/graph.o $(BUILD)/s10_$(1)_stubs.o
 
-$(BUILD)/squarewave_$(1).elf: $(BUILD)/squarewave.o $(BUILD)/s10_$(1)_stubs.o | $(BUILD)
+$(BUILD)/squarewave_$(1).elf: $(BUILD)/squarewave.o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/common_code_$(1).elf | $(BUILD)
 	$$(LD) --nostdlib --no-dynamic-linker \
 		--Ttext $(squarewave-offset) \
 		--just-symbols=$$(BUILD)/common_code_$(1).elf \
-		--entry start --sort-section=name -o $$@ $$^
+		--entry start --sort-section=name -o $$@ $(BUILD)/squarewave.o $(BUILD)/s10_$(1)_stubs.o
 
-$(BUILD)/asv_task_wrapper_$(1).elf: $(BUILD)/asv_task_wrapper.o $(BUILD)/s10_$(1)_stubs.o | $(BUILD)
+$(BUILD)/asv_task_wrapper_$(1).elf: $(BUILD)/asv_task_wrapper.o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/common_code_$(1).elf | $(BUILD)
 	$$(LD) --nostdlib --no-dynamic-linker \
 		--Ttext $(asv_task_wrapper-offset) \
 		--just-symbols=$$(BUILD)/common_code_$(1).elf \
-		--entry start --sort-section=name -o $$@ $$^
+		--entry start --sort-section=name -o $$@ $(BUILD)/asv_task_wrapper.o $(BUILD)/s10_$(1)_stubs.o
 
-$(BUILD)/wrapper_limit_max_pdiff_$(1).elf: $(BUILD)/wrapper_limit_max_pdiff.o $(BUILD)/s10_$(1)_stubs.o | $(BUILD)
+$(BUILD)/wrapper_limit_max_pdiff_$(1).elf: $(BUILD)/wrapper_limit_max_pdiff.o $(BUILD)/wrapper_limit_max_pdiff_abi.o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/common_code_$(1).elf | $(BUILD)
 	$$(LD) --nostdlib --no-dynamic-linker \
 		--Ttext $(wrapper_limit_max_pdiff-offset) \
 		--just-symbols=$$(BUILD)/common_code_$(1).elf \
-		--entry start --sort-section=name -o $$@ $$^
+		--entry start --sort-section=name -o $$@ $(BUILD)/wrapper_limit_max_pdiff.o $(BUILD)/wrapper_limit_max_pdiff_abi.o $(BUILD)/s10_$(1)_stubs.o
+
+$(BUILD)/custom_menu_hooks_$(1).elf: $(BUILD)/custom_menu_hooks_entry.o $(BUILD)/custom_menu_hooks.o $(BUILD)/s10_$(1)_stubs.o | $(BUILD)
+	$$(LD) --nostdlib --no-dynamic-linker \
+		--Ttext $(custom_menu_hooks-offset) \
+		--entry custom_menu_hook_therapy -o $$@ $$^
 
 $(BUILD)/backlight_adapt_$(1).elf: $(BUILD)/backlight_adapt.o $(BUILD)/s10_$(1)_stubs.o | $(BUILD)
 	$$(LD) --nostdlib --no-dynamic-linker \

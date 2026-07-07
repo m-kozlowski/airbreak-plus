@@ -27,6 +27,8 @@ NSTUB_VAR(0x680000A0, gui_context)
 
 NSTUB(0x08063D5D, malloc)
 NSTUB(0x08082097, tim_read_tim5)
+NSTUB(0x08064E8D, scrollbar_add_item)
+NSTUB(0x08065D55, menu_create_text_or_float)
 
 NSTUB(0x080BC993, pressure_limit_max_difference)
 NSTUB_VAR(0x2000E948, fvars)
