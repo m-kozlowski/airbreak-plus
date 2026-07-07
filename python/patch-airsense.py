@@ -647,9 +647,20 @@ class ASFirmware(object):
 
 class ASFirmwarePatches(object):
     """This class contains the actual patching scripts for specific items"""
+
+    CUSTOM_MENU_HOOKS_OFF = 0xFFC00
+    CUSTOM_MENU_HOOKS_BUDGET = 0x3FE
+    CUSTOM_MENU_SECTIONS = {
+        'therapy': 0,
+        'comfort': 1,
+        'accessories': 2,
+        'options': 3,
+        'configuration': 4,
+    }
         
     def __init__(self, asf):
         self.asf = asf
+        self.wrapper_limit_max_pdiff_applied = False
         self.custom_patch_settings_init()
 
     def custom_patch_settings_init(self):
@@ -663,6 +674,8 @@ class ASFirmwarePatches(object):
         self.custom_string_pool = []
         self.custom_reclaimed_string_candidates = []
         self.custom_reclaimed_string_seen = set()
+        self.custom_menu_entries = []
+        self.custom_menu_registered = set()
         self.custom_settings_registry_addr = None
         self.custom_settings_registry_size = None
 
@@ -812,6 +825,175 @@ class ASFirmwarePatches(object):
         self.asf.write_u32(rec + self.asf.G8_BITMASK, perm_mask)
         self.asf.write_u16(rec + self.asf.G8_BASE_STR, base_str)
         self.asf.write_u16(rec + self.asf.G8_PARAM_12, param_12)
+
+    def custom_menu_add(self, section_name, var, mode_mask=0xffffffff):
+        """Register one variable to be appended to a clinical menu section."""
+        section = self.CUSTOM_MENU_SECTIONS.get(section_name.lower())
+        if section is None:
+            raise ValueError("custom_menu_add: unknown section %s" % section_name)
+
+        vid = self.asf.resolve_var_id(var)
+        if vid in self.custom_menu_registered:
+            raise ValueError("custom_menu_add: duplicate variable %s (var_id 0x%04X)" % (var, vid))
+        self.custom_menu_registered.add(vid)
+        self.custom_menu_entries.append((section, vid, int(mode_mask)))
+
+    def custom_emit_registry(self):
+        """Serialize the generated registry into the reclaimed Reminders page space."""
+        need = (len(self.custom_menu_entries) + 1) * 8
+        if need > self.custom_settings_registry_size:
+            raise ValueError(
+                "custom_patch_settings: registry %dB exceeds reclaimed %dB" %
+                (need, self.custom_settings_registry_size))
+
+        off = self.custom_settings_registry_addr
+        for section, vid, mode_mask in self.custom_menu_entries:
+            self.asf.write_u8(off, section)
+            self.asf.write_u8(off + 1, 0)
+            self.asf.write_u16(off + 2, vid)
+            self.asf.write_u32(off + 4, mode_mask)
+            off += 8
+        self.asf.fill_range(off, 8, 0xff)
+
+    def _versioned_artifact_path(self, name, ext, ver):
+        return os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            '..', 'build', '%s_%s.%s' % (name, ver, ext))
+
+    def _patch_menu_hook_site(self, site, expected, target, name):
+        """Replace one stock section-tail append call with a hook call."""
+        if bytes(self.asf.fw[site:site+len(expected)]) != expected:
+            raise ValueError("custom_patch_settings: unexpected %s hook bytes at 0x%X" % (name, site))
+        self.asf.patch(self._encode_thumb_bl(site, target), site, clobber=True)
+
+    def custom_patch_menu_hooks(self):
+        """Inject the generic clinical-menu hook payload and patch its ABI slots."""
+        sites_by_version = {
+            'SX567-0401': {
+                'therapy': 0x62414,
+                'comfort': 0x62672,
+                'accessories': 0x626fe,
+                'options': 0x62750,
+                'configuration': 0x628d2,
+                'callback_table': 0x75f48,
+            },
+            'SX567-0402': {
+                'therapy': 0x62414,
+                'comfort': 0x62672,
+                'accessories': 0x626fe,
+                'options': 0x62750,
+                'configuration': 0x628d2,
+                'callback_table': 0x75f48,
+            },
+        }
+        sites = sites_by_version.get(self.asf.cdx_ver)
+        if sites is None:
+            print("  custom_patch_menu_hooks: skipped (unsupported CDX version %s)" % self.asf.cdx_ver)
+            return
+
+        ver = self.asf.cdx_ver.replace('SX567-', '')
+        bin_path = self._versioned_artifact_path('custom_menu_hooks', 'bin', ver)
+        elf_path = self._versioned_artifact_path('custom_menu_hooks', 'elf', ver)
+        if not os.path.exists(bin_path):
+            raise ValueError("custom_patch_settings: build/custom_menu_hooks_%s.bin not found (run make)" % ver)
+        if not os.path.exists(elf_path):
+            raise ValueError("custom_patch_settings: build/custom_menu_hooks_%s.elf not found" % ver)
+
+        with open(bin_path, 'rb') as f:
+            data = f.read()
+        if len(data) > self.CUSTOM_MENU_HOOKS_BUDGET:
+            raise ValueError(
+                "custom_patch_settings: %s is %dB, exceeds %dB budget" %
+                (bin_path, len(data), self.CUSTOM_MENU_HOOKS_BUDGET))
+
+        budget = self.asf.fw[
+            self.CUSTOM_MENU_HOOKS_OFF:self.CUSTOM_MENU_HOOKS_OFF + self.CUSTOM_MENU_HOOKS_BUDGET]
+        if budget != [0xff] * self.CUSTOM_MENU_HOOKS_BUDGET:
+            raise ValueError("custom_patch_settings: payload area 0x%X is not empty" %
+                             self.CUSTOM_MENU_HOOKS_OFF)
+
+        self.asf.patch(data, self.CUSTOM_MENU_HOOKS_OFF, checkempty=True)
+        registry_flash = self.asf.FLASH_BASE + self.custom_settings_registry_addr
+
+        hook_therapy = self._elf_symbol_addr(elf_path, 'custom_menu_hook_therapy')
+        hook_comfort = self._elf_symbol_addr(elf_path, 'custom_menu_hook_comfort')
+        hook_accessories = self._elf_symbol_addr(elf_path, 'custom_menu_hook_accessories')
+        hook_options = self._elf_symbol_addr(elf_path, 'custom_menu_hook_options')
+        hook_configuration = self._elf_symbol_addr(elf_path, 'custom_menu_hook_configuration')
+        hook_mop_callback = self._elf_symbol_addr(elf_path, 'custom_menu_mop_callback_hook')
+        registry_addr = self._elf_symbol_addr(elf_path, 'custom_menu_registry_addr')
+        mode_var_addr = self._elf_symbol_addr(elf_path, 'custom_menu_mode_var_id')
+        original_cb_addr = self._elf_symbol_addr(elf_path, 'custom_menu_original_mop_callback')
+
+        mop_rec = self.asf.find_var('MOP')
+        mop_callback_id = self.asf.read_u8(mop_rec + self.asf.G8_CALLBACK)
+        mop_callback_slot = sites['callback_table'] + mop_callback_id * 4
+        original_mop_callback = self.asf.read_u32(mop_callback_slot)
+        mode_vid = self.asf.resolve_var_id('MOP')
+        hook_mop_callback_thumb = hook_mop_callback | 1
+
+        self.asf.write_u32(registry_addr - self.asf.FLASH_BASE, registry_flash)
+        self.asf.write_u16(mode_var_addr - self.asf.FLASH_BASE, mode_vid)
+        self.asf.write_u32(original_cb_addr - self.asf.FLASH_BASE, original_mop_callback)
+
+        self._patch_menu_hook_site(sites['therapy'], b'\x02\xf0\x3a\xfd', hook_therapy, 'therapy')
+        self._patch_menu_hook_site(sites['comfort'], b'\x02\xf0\x0b\xfc', hook_comfort, 'comfort')
+        self._patch_menu_hook_site(sites['accessories'], b'\x02\xf0\xc5\xfb', hook_accessories, 'accessories')
+        self._patch_menu_hook_site(sites['options'], b'\x02\xf0\x9c\xfb', hook_options, 'options')
+        self._patch_menu_hook_site(
+            sites['configuration'], b'\x02\xf0\xdb\xfa', hook_configuration, 'configuration')
+        self.asf.write_u32(mop_callback_slot, hook_mop_callback_thumb)
+
+        print("  custom menu hooks: build/custom_menu_hooks_%s.bin (%dB) at 0x%08X" %
+              (ver, len(data), self.asf.FLASH_BASE + self.CUSTOM_MENU_HOOKS_OFF))
+        print("  MOP callback[%d]: 0x%08X -> 0x%08X" %
+              (mop_callback_id, original_mop_callback, hook_mop_callback_thumb))
+
+    def custom_patch_settings_myasv(self):
+        """Expose the reclaimed my_asv enable toggle and pass its var_id to the wrapper."""
+        myasv_var = self.custom_claim_g8_var('RPO', 'my_asv_enable')
+        myasv_label = self.redefine_fw_string(-1, {0: 'Custom ASV'}, 'my_asv_label')
+        myasv_dep = self.asf.find_var_table_index(4, 'RGT')
+
+        self.redefine_g8_var(myasv_var, 0x0007, 0, myasv_dep, myasv_label, 0,
+                             2, 0, 0x00000003, self.asf.str_id_off_on_base, 0)
+        myasv_vid = self.asf.resolve_var_id(myasv_var)
+        self.custom_menu_add('therapy', myasv_var, 1 << 6)
+
+        ver = self.asf.cdx_ver.replace('SX567-', '')
+        elf_path = self._versioned_artifact_path('wrapper_limit_max_pdiff', 'elf', ver)
+        if not os.path.exists(elf_path):
+            raise ValueError("custom_patch_settings_myasv: build/wrapper_limit_max_pdiff_%s.elf not found" % ver)
+        addr = self._elf_symbol_addr(elf_path, 'wrapper_limit_max_pdiff_toggle_var_id')
+        self.asf.write_u16(addr - self.asf.FLASH_BASE, myasv_vid)
+
+        print("  my_asv enable: %s var_id=0x%04X label_str=0x%04X" %
+              (myasv_var, myasv_vid, myasv_label))
+        print("  VAuto wrapper toggle var_id=0x%04X at 0x%08X" % (myasv_vid, addr))
+
+    def custom_patch_settings_collect_features(self):
+        """Return active custom-settings feature functions."""
+        if self.wrapper_limit_max_pdiff_applied:
+            return [self.custom_patch_settings_myasv]
+        return []
+
+    def custom_patch_settings(self):
+        """Orchestrate reclaim, feature registration, registry emit, and hook injection."""
+        features = self.custom_patch_settings_collect_features()
+        if not features:
+            print("  custom_patch_settings: skipped (no active features)")
+            return
+
+        print("  Preparing custom patch settings")
+        self.custom_patch_settings_init()
+        if not self.custom_patch_settings_reclaim_reminders():
+            return
+        self.custom_build_string_pool()
+
+        for feature in features:
+            feature()
+
+        self.custom_emit_registry()
+        self.custom_patch_menu_hooks()
 
     def _patch_or_verify(self, addr, expected, replacement, label):
         current_expected = bytes(self.asf.fw[addr:addr + len(expected)])
@@ -1264,6 +1446,7 @@ class ASFirmwarePatches(object):
             print("  patch_wrapper_limit_max_pdiff: skipped (unsupported CDX version %s)" % self.asf.cdx_ver)
             return
         self._patch_pointer(data, 0xff000, fptr)
+        self.wrapper_limit_max_pdiff_applied = True
         print("  limit_max_pdiff: %dB at 0xFF000" % len(data))
 
     def patch_lcd_ili9325(self):
@@ -1466,6 +1649,8 @@ if __name__ == "__main__":
         {'arg':"patch-fw-squarewave",   'desc':"Add squarewave pressure mode.",                         'default':False, 'function':'patch_squarewave'},
         {'arg':"patch-fw-asv-wrapper",  'desc':"Suppress ASV backup breathing rate.",                   'default':False, 'function':'patch_asv_task_wrapper'},
         {'arg':"patch-fw-vauto-wrapper",'desc':"Add VAuto/ASV pressure shaping wrapper.",               'default':False, 'function':'patch_wrapper_limit_max_pdiff'},
+        {'arg':"patch-custom-settings", 'desc':"Expose settings for injected custom patch features.",
+                                                                                                        'default':True,  'function':'custom_patch_settings'},
         {'arg':"patch-fw-vidspoof",     'desc':"Hook MOP write to dynamically set VID per therapy mode.", 'default':True, 'function':'patch_vid_spoof'},
         {'arg':"patch-fw-lcd",          'desc':"Universal ILI9325/ILI9328 LCD driver.",                 'default':False, 'function':'patch_lcd_ili9325'},
         {'arg':"patch-fw-backlight",    'desc':"Improved backlight adaptation to ambient light.",       'default':True,  'function':'patch_backlight_adapt'},
