@@ -52,6 +52,7 @@ void init_asv_data(asv_data_t *data) {
   pid_init(&data->pid, asv_pid_p, asv_pid_i, asv_pid_d, asv_pid_min, asv_pid_max);
   data->asv_factor = 1.0f;
   data->final_ips = 0.0f;
+  data->asv_sens = 1.0f;
 
   data->asv_dampen = 0.0f;
   data->asv_skip = -ASV_BREATH_SKIP;
@@ -140,7 +141,8 @@ void update_asv_data(asv_data_t* asv, tracking_t* tr) {
 
   // Diminish the asv factor during the first `(N+1)*50ms`, to avoid huge sudden PS in case of false breaths
   const float mult = remap01c(1.0f * current->t, 0.0f, 1.0f * ASV_STEP_LENGTH * (ASV_STEP_SKIP+1));
-  asv->asv_factor = clamp(1.0f + pid_get_signal(&asv->pid) * mult, 1.0f, 1.0f + asv_pid_max);
+  float pid_signal = pid_get_signal(&asv->pid) * asv->asv_sens;
+  asv->asv_factor = clamp(1.0f + pid_signal * mult, 1.0f, 1.0f + asv_pid_max);
  
   if (asv->asv_skip < 0) {
     inplace(min, &asv->asv_factor, 1.0f + ASV_BREATH_SKIP_MAX_FACTOR);

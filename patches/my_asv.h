@@ -58,6 +58,7 @@ typedef struct {
   pid_t pid;
   float asv_factor;
   float final_ips; // Final max IPS value, used to maintain correct downslope
+  float asv_sens; // Multiplier applied to the ASV PID output
 
   float asv_dampen; // How much to drop the target by, other than after a hyperpnea, it's usually 0
   int8 asv_skip; // If < 0, limit maximum ASV factor for `ASV_BREATH_SKIP` breaths needing <0.1f ASV
