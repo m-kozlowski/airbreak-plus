@@ -4,7 +4,7 @@
 #include "my_asv.h" // Include the asv_data_t definition
 
 const float INSTANT_PS = 0.45f;
-const float EPS = 1.2f;
+const float DEFAULT_ASV_MAX_CM = 3.0f;
 
 typedef struct {
   float eps; // EPS (cmH2O) - used to prevent instant jumps in pressure in case of autotriggering
@@ -25,6 +25,10 @@ extern const unsigned short wrapper_limit_max_pdiff_triggercycle_var_id;
 
 STATIC bool custom_g8_toggle(unsigned short var_id, bool fallback) {
   return (var_id == 0xFFFFu) ? fallback : (variable_get_g8((int)var_id) != 0);
+}
+
+STATIC float custom_asv_max_cm(void) {
+  return DEFAULT_ASV_MAX_CM;
 }
 
 // Reshapes PS in 0.0-1.0 format to differently shaped slopes with `mult` times the AUC, first increasing slope before magnitude
@@ -85,10 +89,12 @@ void MAIN start() {
     const float ps1 = (ps/vauto_ps); // 0.0 to 1.0
 
     if (tr->st_inhaling) {
-      new_ps = remap(ps1, 0.0f, 1.0f, feat->eps, vauto_ps-INSTANT_PS) + INSTANT_PS;
+      float base_ps = remap(ps1, 0.0f, 1.0f, feat->eps, vauto_ps-INSTANT_PS) + INSTANT_PS;
+      new_ps = base_ps;
       if (toggle) {
         float new_ps1 = reshape_vauto_ps(ps1, asv->asv_factor);
-        new_ps = remap(new_ps1, 0.0f, 1.0f, feat->eps, vauto_ps - INSTANT_PS) + INSTANT_PS*asv->asv_factor;
+        float boosted_ps = remap(new_ps1, 0.0f, 1.0f, feat->eps, vauto_ps - INSTANT_PS) + INSTANT_PS*asv->asv_factor;
+        new_ps = min(boosted_ps, base_ps + custom_asv_max_cm());
       }
 
       feat->ips_fa = 0.0f;
