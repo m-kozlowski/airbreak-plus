@@ -1637,6 +1637,7 @@ patch_defaults() {
 #   g[4] RDF/RDM/RDH/RDW: reminder due-date value
 custom_patch_settings_reclaim_reminders() {
     local reminders_tick reminder_menu_item reminder_menu_item_end reminder_menu reminder_menu_end
+    local reclaimed_string_ids
     case "$CDX_VER" in
         SX567-0401)
             reminders_tick=0xec446
@@ -1644,6 +1645,7 @@ custom_patch_settings_reclaim_reminders() {
             reminder_menu_item_end=0x62790
             reminder_menu=0x63778
             reminder_menu_end=0x639d4
+            reclaimed_string_ids="0x0048" # Reminders
             ;;
         SX567-0402)
             reminders_tick=0xec6be
@@ -1651,6 +1653,7 @@ custom_patch_settings_reclaim_reminders() {
             reminder_menu_item_end=0x62790
             reminder_menu=0x63778
             reminder_menu_end=0x639d4
+            reclaimed_string_ids="0x0048" # Reminders
             ;;
         *)
             echo "  custom_patch_settings: skipped (unsupported CDX version $CDX_VER)"
@@ -1677,6 +1680,10 @@ custom_patch_settings_reclaim_reminders() {
     elif ! printf '\x1c\xe0' | check_patch "$reminder_menu_item"; then
         die "custom_patch_settings: unexpected reminder menu item bytes"
     fi
+    local str_id
+    for str_id in $reclaimed_string_ids; do
+        custom_note_reclaimed_string_id "$str_id"
+    done
 
     local reclaim=$(( reminder_menu + 6 ))
     local reclaim_size=$(( reminder_menu_end - reclaim ))

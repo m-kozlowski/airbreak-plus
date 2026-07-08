@@ -1162,6 +1162,7 @@ class ASFirmwarePatches(object):
                 'reminder_menu_item_end': 0x62790,
                 'reminder_menu': 0x63778,
                 'reminder_menu_end': 0x639d4,
+                'reclaimed_string_ids': (0x0048,), # Reminders
             },
             'SX567-0402': {
                 'reminders_tick': 0xec6be,
@@ -1169,6 +1170,7 @@ class ASFirmwarePatches(object):
                 'reminder_menu_item_end': 0x62790,
                 'reminder_menu': 0x63778,
                 'reminder_menu_end': 0x639d4,
+                'reclaimed_string_ids': (0x0048,), # Reminders
             },
         }
         sites = sites_by_version.get(self.asf.cdx_ver)
@@ -1188,6 +1190,8 @@ class ASFirmwarePatches(object):
         item_reclaim_size = reminder_menu_item_end - item_reclaim
         if self._patch_or_verify(reminder_menu_item, b'\x08\x20\x01\xf0', b'\x1c\xe0', 'reminder menu item'):
             self.asf.fill_range(item_reclaim, item_reclaim_size, 0xff)
+        for str_id in sites['reclaimed_string_ids']:
+            self._custom_note_reclaimed_string_id(str_id)
 
         reclaim = reminder_menu + 6
         reclaim_size = reminder_menu_end - reclaim
