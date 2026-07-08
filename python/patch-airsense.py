@@ -1142,7 +1142,7 @@ class ASFirmwarePatches(object):
     def extra_debug(self):
         # set config variable 0xc value to 4 == enable more debugging data on display
         # if you set it to \x0f it will enable four separate display pages of info in sleep report mode
-        self.asf.patch(b'\x04', self.asf.find_var('TSS') + self.asf.G6_DEFAULT, clobber=True)
+        self.asf.patch(b'\x0e', self.asf.find_var('TSS') + self.asf.G6_DEFAULT, clobber=True)
 
     def extra_modes(self):
         # add more mode entries, set config 0x0 mask to all bits high
