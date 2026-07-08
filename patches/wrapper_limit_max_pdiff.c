@@ -22,8 +22,6 @@ extern void pressure_limit_max_difference();
 extern int variable_get_g8(int var_id);
 extern const unsigned short wrapper_limit_max_pdiff_toggle_var_id;
 
-#define CUSTOM_ASV_ENABLE_VAR ((int)wrapper_limit_max_pdiff_toggle_var_id)
-
 // Reshapes PS in 0.0-1.0 format to differently shaped slopes with `mult` times the AUC, first increasing slope before magnitude
 // Only using ^4 shape, because going to ^8 and above is very jarring and results in bad premature cycling
 STATIC float reshape_vauto_ps(float ps1, float mult) {
@@ -56,7 +54,9 @@ void MAIN start() {
   apply_jitter(true);
 
   float dps = 0.0f;
-  bool toggle = (variable_get_g8(CUSTOM_ASV_ENABLE_VAR) != 0);
+  unsigned short custom_asv_var = wrapper_limit_max_pdiff_toggle_var_id;
+  bool toggle = (custom_asv_var == 0xFFFFu) ||
+                (variable_get_g8((int)custom_asv_var) != 0);
 
   triggercycle_t *trc = get_triggercycle();
   trc->custom_trigger = trc->custom_cycle = false; // Default state is off.
