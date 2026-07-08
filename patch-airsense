@@ -1113,11 +1113,28 @@ custom_patch_menu_hook_site() {
 }
 
 
+# The clinical settings page uses one pre-sized scrollbar for all sections.
+# Grow its item-pointer array before section hooks append generated entries.
+# args: movs-r2-immediate offset, stock capacity
+custom_patch_clinical_menu_capacity() {
+    local imm_off=$1 stock_capacity=$2
+    local custom_count=${#CUSTOM_MENU_ENTRIES[@]}
+    local new_capacity=$(( stock_capacity + custom_count ))
+
+    if (( $(read_u8 "$imm_off") != stock_capacity || $(read_u8 $(( imm_off + 1 ))) != 0x22 )); then
+        die "custom_patch_settings: unexpected clinical menu capacity bytes at 0x$(printf "%X" "$imm_off")"
+    fi
+    (( new_capacity <= 0xff )) || die "custom_patch_settings: clinical menu capacity exceeds Thumb imm8"
+    write_u8 "$imm_off" "$new_capacity" || die failed
+    printf "  clinical menu capacity: %d -> %d\n" "$stock_capacity" "$new_capacity"
+}
+
+
 # Inject the generic clinical-menu hook payload and patch its ABI slots.
 custom_patch_menu_hooks() {
     local ver bin elf size registry_flash
     local therapy_site comfort_site accessories_site options_site configuration_site
-    local callback_table
+    local callback_table clinical_capacity_site clinical_capacity
     local hook_therapy hook_comfort hook_accessories hook_options hook_configuration
     local hook_mop_callback registry_addr mode_var_addr original_cb_addr
     local mode_vid mop_rec mop_callback_id mop_callback_slot original_mop_callback hook_mop_callback_thumb
@@ -1131,6 +1148,8 @@ custom_patch_menu_hooks() {
             options_site=0x62750
             configuration_site=0x628d2
             callback_table=0x75f48
+            clinical_capacity_site=0x61fba
+            clinical_capacity=70
             ;;
         *)
             echo "  ${FUNCNAME[0]}: skipped (unsupported CDX version $CDX_VER)"
@@ -1178,6 +1197,7 @@ custom_patch_menu_hooks() {
     write_u16 $(( mode_var_addr - FLASH_BASE )) "$(( mode_vid ))" || die failed
     write_u32 $(( original_cb_addr - FLASH_BASE )) "$original_mop_callback" || die failed
 
+    custom_patch_clinical_menu_capacity "$clinical_capacity_site" "$clinical_capacity"
     custom_patch_menu_hook_site "$therapy_site" "\\x02\\xf0\\x3a\\xfd" "$hook_therapy" therapy
     custom_patch_menu_hook_site "$comfort_site" "\\x02\\xf0\\x0b\\xfc" "$hook_comfort" comfort
     custom_patch_menu_hook_site "$accessories_site" "\\x02\\xf0\\xc5\\xfb" "$hook_accessories" accessories

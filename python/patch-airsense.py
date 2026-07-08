@@ -865,6 +865,18 @@ class ASFirmwarePatches(object):
             raise ValueError("custom_patch_settings: unexpected %s hook bytes at 0x%X" % (name, site))
         self.asf.patch(self._encode_thumb_bl(site, target), site, clobber=True)
 
+    def _patch_clinical_menu_capacity(self, imm_off, stock_capacity):
+        """Grow the clinical settings scrollbar capacity for generated entries."""
+        custom_count = len(self.custom_menu_entries)
+        new_capacity = stock_capacity + custom_count
+        if (self.asf.read_u8(imm_off) != stock_capacity or
+                self.asf.read_u8(imm_off + 1) != 0x22):
+            raise ValueError("custom_patch_settings: unexpected clinical menu capacity bytes at 0x%X" % imm_off)
+        if new_capacity > 0xff:
+            raise ValueError("custom_patch_settings: clinical menu capacity exceeds Thumb imm8")
+        self.asf.write_u8(imm_off, new_capacity)
+        print("  clinical menu capacity: %d -> %d" % (stock_capacity, new_capacity))
+
     def custom_patch_menu_hooks(self):
         """Inject the generic clinical-menu hook payload and patch its ABI slots."""
         sites_by_version = {
@@ -875,6 +887,8 @@ class ASFirmwarePatches(object):
                 'options': 0x62750,
                 'configuration': 0x628d2,
                 'callback_table': 0x75f48,
+                'clinical_capacity_site': 0x61fba,
+                'clinical_capacity': 70,
             },
             'SX567-0402': {
                 'therapy': 0x62414,
@@ -883,6 +897,8 @@ class ASFirmwarePatches(object):
                 'options': 0x62750,
                 'configuration': 0x628d2,
                 'callback_table': 0x75f48,
+                'clinical_capacity_site': 0x61fba,
+                'clinical_capacity': 70,
             },
         }
         sites = sites_by_version.get(self.asf.cdx_ver)
@@ -935,6 +951,7 @@ class ASFirmwarePatches(object):
         self.asf.write_u16(mode_var_addr - self.asf.FLASH_BASE, mode_vid)
         self.asf.write_u32(original_cb_addr - self.asf.FLASH_BASE, original_mop_callback)
 
+        self._patch_clinical_menu_capacity(sites['clinical_capacity_site'], sites['clinical_capacity'])
         self._patch_menu_hook_site(sites['therapy'], b'\x02\xf0\x3a\xfd', hook_therapy, 'therapy')
         self._patch_menu_hook_site(sites['comfort'], b'\x02\xf0\x0b\xfc', hook_comfort, 'comfort')
         self._patch_menu_hook_site(sites['accessories'], b'\x02\xf0\xc5\xfb', hook_accessories, 'accessories')
