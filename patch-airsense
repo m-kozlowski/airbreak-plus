@@ -1592,35 +1592,42 @@ custom_patch_settings_reclaim_reminders() {
 }
 
 
-# reuse reclaimed Reminder var as a custom ASV runtime setting,
-# expose it in the clinical Therapy menu, and pass its var_id to
-# the VAuto wrapper so the injected therapy code can read the setting at runtime.
+# Reuse reclaimed Reminder vars as custom ASV runtime settings, expose them in
+# the clinical Therapy menu, and pass their var_ids to the VAuto wrapper.
 custom_patch_settings_myasv() {
     declare -A MYASV_LABEL=([0]="Custom ASV")
-    local myasv_var myasv_label myasv_vid myasv_dep ver elf addr
+    declare -A MYASV_TC_LABEL=([0]="Custom T/C")
+    local myasv_var myasv_label myasv_vid myasv_dep
+    local tc_var tc_label tc_vid
+    local ver elf addr tc_addr
 
     # Claim a stable storage-backed g[8] variable for this feature and allocate a
     # reclaimed localized string ID for its menu label.
     custom_claim_g8_var myasv_var RPO my_asv_enable
     redefine_fw_string myasv_label -1 MYASV_LABEL
+    custom_claim_g8_var tc_var RPH my_asv_triggercycle
+    redefine_fw_string tc_label -1 MYASV_TC_LABEL
 
     # Rewrite the claimed descriptor as a normal Off/On enum. Keep the original
-    # Reminder update chain root (RGT), because the variable still lives in the
+    # Reminder update chain root (RGT), because these variables still live in the
     # same persisted Reminder group and should dirty/save that group normally.
     myasv_dep=$(find_var_table_index 4 RGT)
     redefine_g8_var "$myasv_var" 0x0007  0         "$myasv_dep" "$myasv_label" 0        2          0     0x00000003 "$STR_ID_OFF_ON_BASE" 0
     #                            #flags  #callback #dep_chain   #name_str_id   #default #opt_count #pad? #opt_mask  $options_str_id_base  #pading?
+    redefine_g8_var "$tc_var"    0x0007  0         "$myasv_dep" "$tc_label"    0        2          0     0x00000003 "$STR_ID_OFF_ON_BASE" 0
 
     # The menu/descriptor side can use the UART name, but injected runtime code
     # only gets a compact numeric var_id through its ABI slot.
     myasv_vid=$(resolve_var_id "$myasv_var")
+    tc_vid=$(resolve_var_id "$tc_var")
 
     # Register the variable for the generic menu hook; registry emission and hook
     # injection are handled later by custom_patch_settings().
     custom_menu_add therapy "$myasv_var" "$(( 1 << 6 ))"
+    custom_menu_add therapy "$tc_var" "$(( 1 << 6 ))"
 
-    # The wrapper binary is built before patching and exposes a writable ABI slot.
-    # Patch that slot with the claimed var_id so wrapper code stays independent
+    # The wrapper binary is built before patching and exposes writable ABI slots.
+    # Patch those slots with claimed var_ids so wrapper code stays independent
     # from the custom menu framework and from firmware-specific numeric IDs.
     ver=${CDX_VER#SX567-}
     elf=build/wrapper_limit_max_pdiff_${ver}.elf
@@ -1628,10 +1635,16 @@ custom_patch_settings_myasv() {
     addr=$(arm-none-eabi-nm "$elf" 2>/dev/null | awk '$3 == "wrapper_limit_max_pdiff_toggle_var_id" { printf "0x%s", $1 }')
     [[ -n "$addr" ]] || die "custom_patch_settings_myasv: wrapper toggle var symbol not found"
     write_u16 $(( addr - FLASH_BASE )) "$(( myasv_vid ))" || die failed
+    tc_addr=$(arm-none-eabi-nm "$elf" 2>/dev/null | awk '$3 == "wrapper_limit_max_pdiff_triggercycle_var_id" { printf "0x%s", $1 }')
+    [[ -n "$tc_addr" ]] || die "custom_patch_settings_myasv: wrapper trigger/cycle var symbol not found"
+    write_u16 $(( tc_addr - FLASH_BASE )) "$(( tc_vid ))" || die failed
 
     printf "  my_asv enable: %s var_id=0x%04X label_str=0x%04X\n" \
         "$myasv_var" "$(( myasv_vid ))" "$myasv_label"
+    printf "  my_asv trigger/cycle: %s var_id=0x%04X label_str=0x%04X\n" \
+        "$tc_var" "$(( tc_vid ))" "$tc_label"
     printf "  VAuto wrapper toggle var_id=0x%04X at 0x%08X\n" "$(( myasv_vid ))" "$addr"
+    printf "  trigger/cycle toggle var_id=0x%04X at 0x%08X\n" "$(( tc_vid ))" "$tc_addr"
 }
 
 

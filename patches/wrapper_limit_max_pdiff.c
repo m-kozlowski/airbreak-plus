@@ -21,6 +21,11 @@ STATIC void init_features(features_t *feat) {
 extern void pressure_limit_max_difference();
 extern int variable_get_g8(int var_id);
 extern const unsigned short wrapper_limit_max_pdiff_toggle_var_id;
+extern const unsigned short wrapper_limit_max_pdiff_triggercycle_var_id;
+
+STATIC bool custom_g8_toggle(unsigned short var_id, bool fallback) {
+  return (var_id == 0xFFFFu) ? fallback : (variable_get_g8((int)var_id) != 0);
+}
 
 // Reshapes PS in 0.0-1.0 format to differently shaped slopes with `mult` times the AUC, first increasing slope before magnitude
 // Only using ^4 shape, because going to ^8 and above is very jarring and results in bad premature cycling
@@ -54,17 +59,16 @@ void MAIN start() {
   apply_jitter(true);
 
   float dps = 0.0f;
-  unsigned short custom_asv_var = wrapper_limit_max_pdiff_toggle_var_id;
-  bool toggle = (custom_asv_var == 0xFFFFu) ||
-                (variable_get_g8((int)custom_asv_var) != 0);
+  bool toggle = custom_g8_toggle(wrapper_limit_max_pdiff_toggle_var_id, true);
+  bool triggercycle_toggle = custom_g8_toggle(wrapper_limit_max_pdiff_triggercycle_var_id, true);
 
   triggercycle_t *trc = get_triggercycle();
   trc->custom_trigger = trc->custom_cycle = false; // Default state is off.
-  if (*therapy_mode == MODE_S) {
+  if (triggercycle_toggle && (*therapy_mode == MODE_S)) {
     trc->custom_trigger = true;
     trc->custom_cycle = true;
   }
-  else if (*therapy_mode == MODE_VAUTO) {
+  else if (triggercycle_toggle && (*therapy_mode == MODE_VAUTO)) {
     trc->custom_trigger = true;
     trc->custom_cycle = true;
   }

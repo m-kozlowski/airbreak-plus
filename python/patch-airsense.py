@@ -949,15 +949,21 @@ class ASFirmwarePatches(object):
               (mop_callback_id, original_mop_callback, hook_mop_callback_thumb))
 
     def custom_patch_settings_myasv(self):
-        """Expose the reclaimed my_asv enable toggle and pass its var_id to the wrapper."""
+        """Expose reclaimed my_asv toggles and pass their var_ids to the wrapper."""
         myasv_var = self.custom_claim_g8_var('RPO', 'my_asv_enable')
         myasv_label = self.redefine_fw_string(-1, {0: 'Custom ASV'}, 'my_asv_label')
+        tc_var = self.custom_claim_g8_var('RPH', 'my_asv_triggercycle')
+        tc_label = self.redefine_fw_string(-1, {0: 'Custom T/C'}, 'my_asv_triggercycle_label')
         myasv_dep = self.asf.find_var_table_index(4, 'RGT')
 
         self.redefine_g8_var(myasv_var, 0x0007, 0, myasv_dep, myasv_label, 0,
                              2, 0, 0x00000003, self.asf.str_id_off_on_base, 0)
+        self.redefine_g8_var(tc_var, 0x0007, 0, myasv_dep, tc_label, 0,
+                             2, 0, 0x00000003, self.asf.str_id_off_on_base, 0)
         myasv_vid = self.asf.resolve_var_id(myasv_var)
+        tc_vid = self.asf.resolve_var_id(tc_var)
         self.custom_menu_add('therapy', myasv_var, 1 << 6)
+        self.custom_menu_add('therapy', tc_var, 1 << 6)
 
         ver = self.asf.cdx_ver.replace('SX567-', '')
         elf_path = self._versioned_artifact_path('wrapper_limit_max_pdiff', 'elf', ver)
@@ -965,10 +971,15 @@ class ASFirmwarePatches(object):
             raise ValueError("custom_patch_settings_myasv: build/wrapper_limit_max_pdiff_%s.elf not found" % ver)
         addr = self._elf_symbol_addr(elf_path, 'wrapper_limit_max_pdiff_toggle_var_id')
         self.asf.write_u16(addr - self.asf.FLASH_BASE, myasv_vid)
+        tc_addr = self._elf_symbol_addr(elf_path, 'wrapper_limit_max_pdiff_triggercycle_var_id')
+        self.asf.write_u16(tc_addr - self.asf.FLASH_BASE, tc_vid)
 
         print("  my_asv enable: %s var_id=0x%04X label_str=0x%04X" %
               (myasv_var, myasv_vid, myasv_label))
+        print("  my_asv trigger/cycle: %s var_id=0x%04X label_str=0x%04X" %
+              (tc_var, tc_vid, tc_label))
         print("  VAuto wrapper toggle var_id=0x%04X at 0x%08X" % (myasv_vid, addr))
+        print("  trigger/cycle toggle var_id=0x%04X at 0x%08X" % (tc_vid, tc_addr))
 
     def custom_patch_settings_collect_features(self):
         """Return active custom-settings feature functions."""
