@@ -3,9 +3,33 @@
 
 const float EPS_FIXED_TIME = 1.2f;
 
+extern int variable_get_g8(int var_id);
+extern const unsigned short squarewave_enable_var_id;
+extern const unsigned int squarewave_original_handler;
+
+typedef void (*squarewave_handler_t)(int param_1);
+
+STATIC bool squarewave_enabled(void) {
+  if (squarewave_enable_var_id == 0xFFFFu) {
+    return true;
+  }
+  return variable_get_g8((int)squarewave_enable_var_id) != 0;
+}
+
+STATIC void squarewave_call_original(int param_1) {
+  if (squarewave_original_handler != 0xFFFFFFFFu) {
+    ((squarewave_handler_t)squarewave_original_handler)(param_1);
+  }
+}
+
 // This is where the real magic starts
 // The entry point. All other functions **must** be marked INLINE or STATIC
 void MAIN start(int param_1) {
+  if (!squarewave_enabled()) {
+    squarewave_call_original(param_1);
+    return;
+  }
+
   // It's updated in `wrapper_limit_max_pdiff` which always runs
   tracking_t *tr = get_tracking();
 

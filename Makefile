@@ -95,11 +95,11 @@ $(BUILD)/graph_$(1).elf: $(BUILD)/graph.o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/com
 		--just-symbols=$$(BUILD)/common_code_$(1).elf \
 		--entry start --sort-section=name -o $$@ $(BUILD)/graph.o $(BUILD)/s10_$(1)_stubs.o
 
-$(BUILD)/squarewave_$(1).elf: $(BUILD)/squarewave.o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/common_code_$(1).elf | $(BUILD)
+$(BUILD)/squarewave_$(1).elf: $(BUILD)/squarewave.o $(BUILD)/squarewave_abi.o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/common_code_$(1).elf | $(BUILD)
 	$$(LD) --nostdlib --no-dynamic-linker \
 		--Ttext $(squarewave-offset) \
 		--just-symbols=$$(BUILD)/common_code_$(1).elf \
-		--entry start --sort-section=name -o $$@ $(BUILD)/squarewave.o $(BUILD)/s10_$(1)_stubs.o
+		--entry start --sort-section=name -o $$@ $(BUILD)/squarewave.o $(BUILD)/squarewave_abi.o $(BUILD)/s10_$(1)_stubs.o
 
 $(BUILD)/asv_task_wrapper_$(1).elf: $(BUILD)/asv_task_wrapper.o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/common_code_$(1).elf | $(BUILD)
 	$$(LD) --nostdlib --no-dynamic-linker \

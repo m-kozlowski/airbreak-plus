@@ -1106,6 +1106,48 @@ redefine_g4_var() {
 }
 
 
+MOP_IDX_CPAP=0
+MOP_IDX_AUTOSET=1
+MOP_IDX_APAP=2
+MOP_IDX_S=3
+MOP_IDX_ST=4
+MOP_IDX_T=5
+MOP_IDX_VAUTO=6
+MOP_IDX_ASV=7
+MOP_IDX_ASVAUTO=8
+MOP_IDX_IVAPS=9
+MOP_IDX_PAC=10
+MOP_IDX_AFH=11
+
+
+# Build a g[24]/MOP visibility mask from MOP names or numeric indexes.
+MOP_BITMASK() {
+    local mask=0 arg idx
+    for arg in "$@"; do
+        case "${arg^^}" in
+            CPAP) idx=$MOP_IDX_CPAP ;;
+            AUTOSET) idx=$MOP_IDX_AUTOSET ;;
+            APAP) idx=$MOP_IDX_APAP ;;
+            S) idx=$MOP_IDX_S ;;
+            ST) idx=$MOP_IDX_ST ;;
+            T) idx=$MOP_IDX_T ;;
+            VAUTO) idx=$MOP_IDX_VAUTO ;;
+            ASV) idx=$MOP_IDX_ASV ;;
+            ASVAUTO) idx=$MOP_IDX_ASVAUTO ;;
+            IVAPS) idx=$MOP_IDX_IVAPS ;;
+            PAC) idx=$MOP_IDX_PAC ;;
+            AFH) idx=$MOP_IDX_AFH ;;
+            *)
+                [[ "$arg" =~ ^(0[xX][0-9a-fA-F]+|[0-9]+)$ ]] || die "MOP_BITMASK: unknown MOP '$arg'"
+                idx=$(( arg ))
+                ;;
+        esac
+        mask=$(( mask | (1 << idx) ))
+    done
+    printf "%d\n" "$mask"
+}
+
+
 # Register one variable to be appended to a clinical menu section.
 # args: section name, variable name/id, mode visibility mask
 custom_menu_add() {
@@ -1325,15 +1367,26 @@ patch_code_graph() {
 
 patch_code_squarewave() {
     local ver=${CDX_VER#SX567-}
+    local CODE_OFF=0xfd400
     local BIN=build/squarewave_${ver}.bin
-    local FPTR
+    local ELF=build/squarewave_${ver}.elf
+    local FPTR original_slot original payload_thumb
     case "$ver" in
         0401) FPTR=0xf9778 ;;
         0402) FPTR=0xf99f0 ;;
         *) echo "  patch_code_squarewave: unsupported $ver"; return 1 ;;
     esac
     echo "Patching Squarewave ($ver)"
-    patch_pointer "$BIN" 0xfd400 "$FPTR" "$(le_thumb_ptr 0x80fd400)"
+    [[ -r "$ELF" ]] || die "patch_code_squarewave: $ELF not found"
+    original_slot=$(elf_symbol_addr "$ELF" squarewave_original_handler)
+    payload_thumb=$(( FLASH_BASE + CODE_OFF + 1 ))
+    original=$(read_u32 "$FPTR")
+    if (( original == payload_thumb )); then
+        original=$(read_u32 $(( original_slot - FLASH_BASE )))
+    fi
+    patch_pointer "$BIN" "$CODE_OFF" "$FPTR" "$(le_thumb_ptr $(( FLASH_BASE + CODE_OFF )))"
+    write_u32 $(( original_slot - FLASH_BASE )) "$original" || die failed
+    printf "  original handler: 0x%08X -> ABI 0x%08X\n" "$original" "$original_slot"
 }
 
 
@@ -1705,10 +1758,10 @@ custom_patch_settings_myasv() {
 
     # Register the variable for the generic menu hook; registry emission and hook
     # injection are handled later by custom_patch_settings().
-    custom_menu_add therapy "$myasv_var" "$(( 1 << 6 ))"
-    custom_menu_add therapy "$max_var"   "$(( 1 << 6 ))"
-    custom_menu_add therapy "$sens_var"  "$(( 1 << 6 ))"
-    custom_menu_add therapy "$tc_var"    "$(( 1 << 6 ))"
+    custom_menu_add therapy "$myasv_var" "$(MOP_BITMASK VAuto)"
+    custom_menu_add therapy "$max_var"   "$(MOP_BITMASK VAuto)"
+    custom_menu_add therapy "$sens_var"  "$(MOP_BITMASK VAuto)"
+    custom_menu_add therapy "$tc_var"    "$(MOP_BITMASK S ST T VAuto PAC)"
 
     # The wrapper binary is built before patching and exposes writable ABI slots.
     # Patch those slots with claimed var_ids so wrapper code stays independent
@@ -1740,6 +1793,36 @@ custom_patch_settings_myasv() {
 }
 
 
+# Reuse a reclaimed Reminder switch to enable/disable the injected squarewave
+# pressure waveform while preserving the stock handler for the Off path.
+custom_patch_settings_squarewave() {
+    declare -A SQUAREWAVE_LABEL=([0]="Square Wave")
+    local square_var square_label square_vid square_dep
+    local ver elf enable_addr
+
+    custom_claim_g8_var square_var RPF squarewave_enable
+    redefine_fw_string square_label -1 SQUAREWAVE_LABEL
+
+    square_dep=$(find_var_table_index 4 RGT)
+    #                             #flags #callback #dep_chain    #name_str_id    #default #opt_count #param_0a #opt_mask  #options_str_base     #param_12
+    redefine_g8_var "$square_var" 0x0007 0         "$square_dep" "$square_label" 1        2          0         0x00000003 "$STR_ID_OFF_ON_BASE" 0
+
+    square_vid=$(resolve_var_id "$square_var")
+    custom_menu_add therapy "$square_var" "$(MOP_BITMASK S ST T PAC)"
+
+    ver=${CDX_VER#SX567-}
+    elf=build/squarewave_${ver}.elf
+    [[ -r "$elf" ]] || die "custom_patch_settings_squarewave: $elf not found"
+    enable_addr=$(elf_symbol_addr "$elf" squarewave_enable_var_id)
+    write_u16 $(( enable_addr - FLASH_BASE )) "$(( square_vid ))" || die failed
+
+    printf "  squarewave enable: %s var_id=0x%04X label_str=0x%04X\n" \
+        "$square_var" "$(( square_vid ))" "$square_label"
+    printf "  squarewave toggle var_id=0x%04X at 0x%08X\n" \
+        "$(( square_vid ))" "$enable_addr"
+}
+
+
 # Select active custom-settings feature functions. The framework itself should
 # run only when at least one feature needs reclaimed variables/menu hooks.
 custom_patch_settings_collect_features() {
@@ -1747,6 +1830,9 @@ custom_patch_settings_collect_features() {
 
     if [[ $PATCH_CODE == 1 && $PATCH_VAUTO_WRAPPER == 1 ]]; then
         CUSTOM_SETTINGS_FEATURES+=(custom_patch_settings_myasv)
+    fi
+    if [[ $PATCH_CODE == 1 && $PATCH_S == 1 ]]; then
+        CUSTOM_SETTINGS_FEATURES+=(custom_patch_settings_squarewave)
     fi
 }
 

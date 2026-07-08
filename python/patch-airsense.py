@@ -669,9 +669,24 @@ class ASFirmwarePatches(object):
         'options': 3,
         'configuration': 4,
     }
+    MOP_INDEX = {
+        'CPAP': 0,
+        'AUTOSET': 1,
+        'APAP': 2,
+        'S': 3,
+        'ST': 4,
+        'T': 5,
+        'VAUTO': 6,
+        'ASV': 7,
+        'ASVAUTO': 8,
+        'IVAPS': 9,
+        'PAC': 10,
+        'AFH': 11,
+    }
         
     def __init__(self, asf):
         self.asf = asf
+        self.squarewave_applied = False
         self.wrapper_limit_max_pdiff_applied = False
         self.custom_patch_settings_init()
 
@@ -875,6 +890,21 @@ class ASFirmwarePatches(object):
         self.custom_menu_registered.add(vid)
         self.custom_menu_entries.append((section, flags, vid, int(mode_mask)))
 
+    def mop_bitmask(self, *modes):
+        """Build a g[24]/MOP visibility mask from MOP names or numeric indexes."""
+        mask = 0
+        for mode in modes:
+            if isinstance(mode, str):
+                key = mode.upper()
+                if key in self.MOP_INDEX:
+                    idx = self.MOP_INDEX[key]
+                else:
+                    idx = int(mode, 0)
+            else:
+                idx = int(mode)
+            mask |= 1 << idx
+        return mask
+
     def custom_emit_registry(self):
         """Serialize the generated registry into the reclaimed Reminders page space."""
         need = (len(self.custom_menu_entries) + 1) * 8
@@ -1028,10 +1058,10 @@ class ASFirmwarePatches(object):
         tc_vid = self.asf.resolve_var_id(tc_var)
         max_vid = self.asf.resolve_var_id(max_var)
         sens_vid = self.asf.resolve_var_id(sens_var)
-        self.custom_menu_add('therapy', myasv_var, 1 << 6)
-        self.custom_menu_add('therapy', max_var, 1 << 6)
-        self.custom_menu_add('therapy', sens_var, 1 << 6)
-        self.custom_menu_add('therapy', tc_var, 1 << 6)
+        self.custom_menu_add('therapy', myasv_var, self.mop_bitmask('VAuto'))
+        self.custom_menu_add('therapy', max_var, self.mop_bitmask('VAuto'))
+        self.custom_menu_add('therapy', sens_var, self.mop_bitmask('VAuto'))
+        self.custom_menu_add('therapy', tc_var, self.mop_bitmask('S', 'ST', 'T', 'VAuto', 'PAC'))
 
         ver = self.asf.cdx_ver.replace('SX567-', '')
         elf_path = self._versioned_artifact_path('wrapper_limit_max_pdiff', 'elf', ver)
@@ -1059,11 +1089,38 @@ class ASFirmwarePatches(object):
         print("  ASV Sens var_id=0x%04X at 0x%08X" % (sens_vid, sens_addr))
         print("  trigger/cycle toggle var_id=0x%04X at 0x%08X" % (tc_vid, tc_addr))
 
+    def custom_patch_settings_squarewave(self):
+        """Expose the squarewave runtime switch and pass its var_id to the payload."""
+        square_var = self.custom_claim_g8_var('RPF', 'squarewave_enable')
+        square_label = self.redefine_fw_string(-1, {0: 'Square Wave'}, 'squarewave_label')
+        square_dep = self.asf.find_var_table_index(4, 'RGT')
+
+        self.redefine_g8_var(square_var, 0x0007, 0, square_dep, square_label, 1,
+                             2, 0, 0x00000003, self.asf.str_id_off_on_base, 0)
+
+        square_vid = self.asf.resolve_var_id(square_var)
+        self.custom_menu_add('therapy', square_var, self.mop_bitmask('S', 'ST', 'T', 'PAC'))
+
+        ver = self.asf.cdx_ver.replace('SX567-', '')
+        elf_path = self._versioned_artifact_path('squarewave', 'elf', ver)
+        if not os.path.exists(elf_path):
+            raise ValueError("custom_patch_settings_squarewave: build/squarewave_%s.elf not found" % ver)
+        enable_addr = self._elf_symbol_addr(elf_path, 'squarewave_enable_var_id')
+        self.asf.write_u16(enable_addr - self.asf.FLASH_BASE, square_vid)
+
+        print("  squarewave enable: %s var_id=0x%04X label_str=0x%04X" %
+              (square_var, square_vid, square_label))
+        print("  squarewave toggle var_id=0x%04X at 0x%08X" %
+              (square_vid, enable_addr))
+
     def custom_patch_settings_collect_features(self):
         """Return active custom-settings feature functions."""
+        features = []
         if self.wrapper_limit_max_pdiff_applied:
-            return [self.custom_patch_settings_myasv]
-        return []
+            features.append(self.custom_patch_settings_myasv)
+        if self.squarewave_applied:
+            features.append(self.custom_patch_settings_squarewave)
+        return features
 
     def custom_patch_settings(self):
         """Orchestrate reclaim, feature registration, registry emit, and hook injection."""
@@ -1457,6 +1514,7 @@ class ASFirmwarePatches(object):
 
     def patch_squarewave(self):
         """Add squarewave pressure mode"""
+        code_off = 0xfd400
         data, ver = self._load_versioned_bin('squarewave')
         if data is None:
             return
@@ -1465,8 +1523,19 @@ class ASFirmwarePatches(object):
         if fptr is None:
             print("  patch_squarewave: skipped (unsupported CDX version %s)" % self.asf.cdx_ver)
             return
-        self._patch_pointer(data, 0xfd400, fptr)
-        print("  squarewave: %dB at 0xFD400" % len(data))
+        elf_path = self._versioned_artifact_path('squarewave', 'elf', ver)
+        if not os.path.exists(elf_path):
+            raise ValueError("patch_squarewave: build/squarewave_%s.elf not found" % ver)
+        original_slot = self._elf_symbol_addr(elf_path, 'squarewave_original_handler')
+        payload_thumb = self.asf.FLASH_BASE + code_off + 1
+        original = self.asf.read_u32(fptr)
+        if original == payload_thumb:
+            original = self.asf.read_u32(original_slot - self.asf.FLASH_BASE)
+        self._patch_pointer(data, code_off, fptr)
+        self.asf.write_u32(original_slot - self.asf.FLASH_BASE, original)
+        self.squarewave_applied = True
+        print("  squarewave: %dB at 0x%05X" % (len(data), code_off))
+        print("  original handler: 0x%08X -> ABI 0x%08X" % (original, original_slot))
 
     def patch_asv_task_wrapper(self):
         """Suppress ASV backup breathing rate"""
