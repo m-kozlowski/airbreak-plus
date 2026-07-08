@@ -1141,6 +1141,42 @@ class ASFirmwarePatches(object):
         self.custom_emit_registry()
         self.custom_patch_menu_hooks()
 
+    @staticmethod
+    def _print_resource_summary_line(label, items):
+        text = "  %s: %d" % (label, len(items))
+        if items:
+            text += " (" + ", ".join(items) + ")"
+        print(text)
+
+    def print_custom_resource_summary(self):
+        """Print reclaimed-resource state after all patch passes had a chance to consume it."""
+        touched = (
+            len(self.custom_g8_reclaimed) +
+            len(self.custom_g4_reclaimed) +
+            len(self.custom_reclaimed_string_candidates)
+        )
+        if not touched:
+            return
+
+        unused_g8 = []
+        for name in self.custom_g8_pool:
+            vid = self.asf.resolve_var_id(name)
+            if vid not in self.custom_g8_claims:
+                unused_g8.append(name)
+
+        unused_g4 = []
+        for name in self.custom_g4_pool:
+            vid = self.asf.resolve_var_id(name)
+            if vid not in self.custom_g4_claims:
+                unused_g4.append(name)
+
+        free_str_ids = ["0x%04X" % str_id for str_id in self.custom_string_pool]
+
+        print("Custom resource summary:")
+        self._print_resource_summary_line("unused reclaimed g[8] vars", unused_g8)
+        self._print_resource_summary_line("unused reclaimed g[4] vars", unused_g4)
+        self._print_resource_summary_line("free reclaimed str_id", free_str_ids)
+
     def _patch_or_verify(self, addr, expected, replacement, label):
         current_expected = bytes(self.asf.fw[addr:addr + len(expected)])
         if current_expected == expected:
@@ -1835,3 +1871,4 @@ if __name__ == "__main__":
 
         asf.fix_crcs()
         asf.write_output(args.OUTFILE, args.overwrite)
+        patches.print_custom_resource_summary()

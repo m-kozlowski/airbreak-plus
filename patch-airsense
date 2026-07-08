@@ -1867,6 +1867,50 @@ custom_patch_settings() {
 }
 
 
+# Print reclaimed-resource state after all patch passes had a chance to consume it.
+# args: label count [items...]
+print_custom_resource_summary_line() {
+    local label=$1 count=$2
+    shift 2
+    printf "  %s: %d" "$label" "$count"
+    if (( count > 0 )); then
+        printf " (%s" "$1"
+        shift
+        local item
+        for item in "$@"; do
+            printf ", %s" "$item"
+        done
+        printf ")"
+    fi
+    printf "\n"
+}
+
+
+print_custom_resource_summary() {
+    local touched=$(( ${#CUSTOM_G8_RECLAIMED[@]} + ${#CUSTOM_G4_RECLAIMED[@]} + ${#CUSTOM_RECLAIMED_STRING_CANDIDATES[@]} ))
+    (( touched > 0 )) || return
+
+    local unused_g8=() unused_g4=() free_str_ids=()
+    local var vid str_id
+    for var in "${CUSTOM_G8_POOL[@]}"; do
+        vid=$(( $(resolve_var_id "$var") ))
+        [[ -z "${CUSTOM_G8_CLAIMS[$vid]+x}" ]] && unused_g8+=("$var")
+    done
+    for var in "${CUSTOM_G4_POOL[@]}"; do
+        vid=$(( $(resolve_var_id "$var") ))
+        [[ -z "${CUSTOM_G4_CLAIMS[$vid]+x}" ]] && unused_g4+=("$var")
+    done
+    for str_id in "${CUSTOM_STRING_POOL[@]}"; do
+        free_str_ids+=("0x$(printf "%04X" "$(( str_id ))")")
+    done
+
+    echo "Custom resource summary:"
+    print_custom_resource_summary_line "unused reclaimed g[8] vars" "${#unused_g8[@]}" "${unused_g8[@]}"
+    print_custom_resource_summary_line "unused reclaimed g[4] vars" "${#unused_g4[@]}" "${unused_g4[@]}"
+    print_custom_resource_summary_line "free reclaimed str_id" "${#free_str_ids[@]}" "${free_str_ids[@]}"
+}
+
+
 
 
 custom_palette() {
@@ -2217,5 +2261,7 @@ fi
 patch_backlight_adapt
 
 patch_crc # ALWAYS keep it as last patch applied
+
+print_custom_resource_summary
 
 sha256sum $OUT
