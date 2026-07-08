@@ -307,6 +307,17 @@ class ASFirmware(object):
             raise ValueError("%s is not in globals[%d]" % (var, table_num))
         return idx
 
+    def find_var_table_number(self, var):
+        """Return globals[] descriptor table number for a UART name or var_id."""
+        vid = self.resolve_var_id(var)
+        self._load_var_tables()
+        for table_num, tbl in self.var_tables.items():
+            id_base = tbl['id_base']
+            count = tbl['count']
+            if id_base <= vid < id_base + count:
+                return table_num
+        raise ValueError("find_var_table_number: var_id 0x%04X not in derived descriptor tables" % vid)
+
     def infer_g2_language_count(self):
         """Return the number of locale slots compiled into globals[2]."""
         g2 = self.globals_offset(2)
@@ -650,6 +661,7 @@ class ASFirmwarePatches(object):
 
     CUSTOM_MENU_HOOKS_OFF = 0xFFC00
     CUSTOM_MENU_HOOKS_BUDGET = 0x3FE
+    CUSTOM_MENU_FLAG_G4_NUMERIC = 1
     CUSTOM_MENU_SECTIONS = {
         'therapy': 0,
         'comfort': 1,
@@ -826,6 +838,22 @@ class ASFirmwarePatches(object):
         self.asf.write_u16(rec + self.asf.G8_BASE_STR, base_str)
         self.asf.write_u16(rec + self.asf.G8_PARAM_12, param_12)
 
+    def redefine_g4_var(self, var, flags, callback, next_chain, name_str, default,
+                        max_value, min_value, decimals, scale, step, units_str):
+        """Rewrite a g[4] numeric descriptor with caller-provided raw fields."""
+        rec = self.asf.find_var(var)
+        self.asf.write_u16(rec + self.asf.G4_FLAGS, flags)
+        self.asf.write_u8(rec + self.asf.G4_CALLBACK, callback)
+        self.asf.write_u16(rec + self.asf.G4_NEXT_DEP, next_chain)
+        self.asf.write_u16(rec + self.asf.G4_NAME_STR, name_str)
+        self.asf.write_u32(rec + self.asf.G4_DEFAULT, default)
+        self.asf.write_u32(rec + self.asf.G4_MAX, max_value)
+        self.asf.write_u32(rec + self.asf.G4_MIN, min_value)
+        self.asf.write_u8(rec + self.asf.G4_DECIMALS, decimals)
+        self.asf.write_u16(rec + self.asf.G4_SCALE, scale)
+        self.asf.write_u16(rec + self.asf.G4_STEP, step)
+        self.asf.write_u16(rec + self.asf.G4_UNITS_STR, units_str)
+
     def custom_menu_add(self, section_name, var, mode_mask=0xffffffff):
         """Register one variable to be appended to a clinical menu section."""
         section = self.CUSTOM_MENU_SECTIONS.get(section_name.lower())
@@ -833,10 +861,19 @@ class ASFirmwarePatches(object):
             raise ValueError("custom_menu_add: unknown section %s" % section_name)
 
         vid = self.asf.resolve_var_id(var)
+        table_num = self.asf.find_var_table_number(var)
+        if table_num == 4:
+            flags = self.CUSTOM_MENU_FLAG_G4_NUMERIC
+        elif table_num == 8:
+            flags = 0
+        else:
+            raise ValueError(
+                "custom_menu_add: %s is globals[%d], only g[4]/g[8] menu settings are supported" %
+                (var, table_num))
         if vid in self.custom_menu_registered:
             raise ValueError("custom_menu_add: duplicate variable %s (var_id 0x%04X)" % (var, vid))
         self.custom_menu_registered.add(vid)
-        self.custom_menu_entries.append((section, vid, int(mode_mask)))
+        self.custom_menu_entries.append((section, flags, vid, int(mode_mask)))
 
     def custom_emit_registry(self):
         """Serialize the generated registry into the reclaimed Reminders page space."""
@@ -847,9 +884,9 @@ class ASFirmwarePatches(object):
                 (need, self.custom_settings_registry_size))
 
         off = self.custom_settings_registry_addr
-        for section, vid, mode_mask in self.custom_menu_entries:
+        for section, flags, vid, mode_mask in self.custom_menu_entries:
             self.asf.write_u8(off, section)
-            self.asf.write_u8(off + 1, 0)
+            self.asf.write_u8(off + 1, flags)
             self.asf.write_u16(off + 2, vid)
             self.asf.write_u32(off + 4, mode_mask)
             off += 8
@@ -966,20 +1003,34 @@ class ASFirmwarePatches(object):
               (mop_callback_id, original_mop_callback, hook_mop_callback_thumb))
 
     def custom_patch_settings_myasv(self):
-        """Expose reclaimed my_asv toggles and pass their var_ids to the wrapper."""
+        """Expose reclaimed my_asv settings and pass their var_ids to the wrapper."""
         myasv_var = self.custom_claim_g8_var('RPO', 'my_asv_enable')
-        myasv_label = self.redefine_fw_string(-1, {0: 'Custom ASV'}, 'my_asv_label')
         tc_var = self.custom_claim_g8_var('RPH', 'my_asv_triggercycle')
+        max_var = self.custom_claim_g4_var('RCM', 'my_asv_max')
+        sens_var = self.custom_claim_g8_var('RXM', 'my_asv_sens')
+        myasv_label = self.redefine_fw_string(-1, {0: 'Custom ASV'}, 'my_asv_label')
         tc_label = self.redefine_fw_string(-1, {0: 'Custom T/C'}, 'my_asv_triggercycle_label')
+        max_label = self.redefine_fw_string(-1, {0: 'ASV Max'}, 'my_asv_max_label')
+        sens_label = self.redefine_fw_string(-1, {0: 'ASV Sens'}, 'my_asv_sens_label')
         myasv_dep = self.asf.find_var_table_index(4, 'RGT')
+        cmh2o_units = self.asf.read_u16(self.asf.find_var('IPC') + self.asf.G4_UNITS_STR)
+        sens_base = self.asf.read_u16(self.asf.find_var('VCS') + self.asf.G8_BASE_STR)
 
         self.redefine_g8_var(myasv_var, 0x0007, 0, myasv_dep, myasv_label, 0,
                              2, 0, 0x00000003, self.asf.str_id_off_on_base, 0)
         self.redefine_g8_var(tc_var, 0x0007, 0, myasv_dep, tc_label, 0,
                              2, 0, 0x00000003, self.asf.str_id_off_on_base, 0)
+        self.redefine_g8_var(sens_var, 0x0007, 0, myasv_dep, sens_label, 2,
+                             5, 0, 0x0000001F, sens_base, 0)
+        self.redefine_g4_var(max_var, 0x0007, 0, myasv_dep, max_label, 150,
+                             500, 0, 1, 50, 10, cmh2o_units)
         myasv_vid = self.asf.resolve_var_id(myasv_var)
         tc_vid = self.asf.resolve_var_id(tc_var)
+        max_vid = self.asf.resolve_var_id(max_var)
+        sens_vid = self.asf.resolve_var_id(sens_var)
         self.custom_menu_add('therapy', myasv_var, 1 << 6)
+        self.custom_menu_add('therapy', max_var, 1 << 6)
+        self.custom_menu_add('therapy', sens_var, 1 << 6)
         self.custom_menu_add('therapy', tc_var, 1 << 6)
 
         ver = self.asf.cdx_ver.replace('SX567-', '')
@@ -990,12 +1041,22 @@ class ASFirmwarePatches(object):
         self.asf.write_u16(addr - self.asf.FLASH_BASE, myasv_vid)
         tc_addr = self._elf_symbol_addr(elf_path, 'wrapper_limit_max_pdiff_triggercycle_var_id')
         self.asf.write_u16(tc_addr - self.asf.FLASH_BASE, tc_vid)
+        max_addr = self._elf_symbol_addr(elf_path, 'wrapper_limit_max_pdiff_asv_max_var_id')
+        self.asf.write_u16(max_addr - self.asf.FLASH_BASE, max_vid)
+        sens_addr = self._elf_symbol_addr(elf_path, 'wrapper_limit_max_pdiff_asv_sens_var_id')
+        self.asf.write_u16(sens_addr - self.asf.FLASH_BASE, sens_vid)
 
         print("  my_asv enable: %s var_id=0x%04X label_str=0x%04X" %
               (myasv_var, myasv_vid, myasv_label))
+        print("  my_asv max: %s var_id=0x%04X label_str=0x%04X" %
+              (max_var, max_vid, max_label))
+        print("  my_asv sens: %s var_id=0x%04X label_str=0x%04X" %
+              (sens_var, sens_vid, sens_label))
         print("  my_asv trigger/cycle: %s var_id=0x%04X label_str=0x%04X" %
               (tc_var, tc_vid, tc_label))
         print("  VAuto wrapper toggle var_id=0x%04X at 0x%08X" % (myasv_vid, addr))
+        print("  ASV Max var_id=0x%04X at 0x%08X" % (max_vid, max_addr))
+        print("  ASV Sens var_id=0x%04X at 0x%08X" % (sens_vid, sens_addr))
         print("  trigger/cycle toggle var_id=0x%04X at 0x%08X" % (tc_vid, tc_addr))
 
     def custom_patch_settings_collect_features(self):

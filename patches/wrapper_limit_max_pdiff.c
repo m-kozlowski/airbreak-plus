@@ -4,7 +4,6 @@
 #include "my_asv.h" // Include the asv_data_t definition
 
 const float INSTANT_PS = 0.45f;
-const float DEFAULT_ASV_MAX_CM = 3.0f;
 
 typedef struct {
   float eps; // EPS (cmH2O) - used to prevent instant jumps in pressure in case of autotriggering
@@ -22,13 +21,34 @@ extern void pressure_limit_max_difference();
 extern int variable_get_g8(int var_id);
 extern const unsigned short wrapper_limit_max_pdiff_toggle_var_id;
 extern const unsigned short wrapper_limit_max_pdiff_triggercycle_var_id;
+extern const unsigned short wrapper_limit_max_pdiff_asv_max_var_id;
+extern const unsigned short wrapper_limit_max_pdiff_asv_sens_var_id;
 
 STATIC bool custom_g8_toggle(unsigned short var_id, bool fallback) {
   return (var_id == 0xFFFFu) ? fallback : (variable_get_g8((int)var_id) != 0);
 }
 
+STATIC int custom_var_raw(unsigned short var_id, int fallback) {
+  return (var_id == 0xFFFFu) ? fallback : variable_get_g8((int)var_id);
+}
+
 STATIC float custom_asv_max_cm(void) {
-  return DEFAULT_ASV_MAX_CM;
+  if (wrapper_limit_max_pdiff_asv_max_var_id == 0xFFFFu) {
+    return 2.0f * vauto_ps;
+  }
+  int raw = variable_get_g8((int)wrapper_limit_max_pdiff_asv_max_var_id);
+  return raw / 50.0f;
+}
+
+STATIC float custom_asv_sens_multiplier(void) {
+  switch (custom_var_raw(wrapper_limit_max_pdiff_asv_sens_var_id, 2)) {
+    case 0: return 0.50f;
+    case 1: return 0.75f;
+    case 3: return 1.25f;
+    case 4: return 1.50f;
+    case 2:
+    default: return 1.00f;
+  }
 }
 
 // Reshapes PS in 0.0-1.0 format to differently shaped slopes with `mult` times the AUC, first increasing slope before magnitude
@@ -56,6 +76,7 @@ void MAIN start() {
   tracking_t *tr = get_tracking();
   update_tracking(tr);
   asv_data_t *asv = get_asv_data();
+  asv->asv_sens = custom_asv_sens_multiplier();
   update_asv_data(asv, tr);
 
   features_t *feat = GET_PTR(PTR_FEATURES, features_t, init_features);

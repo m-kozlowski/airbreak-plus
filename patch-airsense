@@ -562,6 +562,26 @@ find_var_id() {
 }
 
 
+# Return globals[] descriptor table number for a variable name/id.
+find_var_table_number() {
+    local vid=$(printf "%d" "$(resolve_var_id "$1")")
+    load_var_tables
+
+    for tnum in 3 4 6 8 9; do
+        [[ -n "${_var_table_base[$tnum]+x}" ]] || continue
+
+        local count=${_var_table_count[$tnum]}
+        local id_base=${_var_table_id_base[$tnum]}
+        if (( vid >= id_base && vid < id_base + count )); then
+            echo "$tnum"
+            return
+        fi
+    done
+
+    die "find_var_table_number: var_id $1 not in derived descriptor tables"
+}
+
+
 # UART name lookup: returns numeric var_id
 find_var_id_by_name() {
     load_uart_names
@@ -1065,6 +1085,27 @@ redefine_g8_var() {
 }
 
 
+# Rewrite a g[4] numeric descriptor with caller-provided raw descriptor fields.
+# args: var flags callback next_chain name_str default max min decimals scale step units_str
+redefine_g4_var() {
+    local var=$1 flags=$2 callback=$3 next_chain=$4 name_str=$5 default=$6 max=$7 min=$8
+    local decimals=$9 scale=${10} step=${11} units_str=${12}
+    local rec
+    rec=$(find_var "$var") || die failed
+    write_u16 $(( rec + G4_FLAGS )) "$flags" || die failed
+    write_u8  $(( rec + G4_CALLBACK )) "$callback" || die failed
+    write_u16 $(( rec + G4_NEXT_DEP )) "$next_chain" || die failed
+    write_u16 $(( rec + G4_NAME_STR )) "$name_str" || die failed
+    write_u32 $(( rec + G4_DEFAULT )) "$default" || die failed
+    write_u32 $(( rec + G4_MAX )) "$max" || die failed
+    write_u32 $(( rec + G4_MIN )) "$min" || die failed
+    write_u8  $(( rec + G4_DECIMALS )) "$decimals" || die failed
+    write_u16 $(( rec + G4_SCALE )) "$scale" || die failed
+    write_u16 $(( rec + G4_STEP )) "$step" || die failed
+    write_u16 $(( rec + G4_UNITS_STR )) "$units_str" || die failed
+}
+
+
 # Register one variable to be appended to a clinical menu section.
 # args: section name, variable name/id, mode visibility mask
 custom_menu_add() {
@@ -1072,14 +1113,20 @@ custom_menu_add() {
     local section=${CUSTOM_MENU_SECTIONS[$section_name]}
     [[ -n "$section" ]] || die "custom_menu_add: unknown section $1"
 
-    local vid
+    local vid table flags=0
     vid=$(( $(resolve_var_id "$var") ))
+    table=$(find_var_table_number "$var")
+    case "$table" in
+        4) flags=$CUSTOM_MENU_FLAG_G4_NUMERIC ;;
+        8) flags=0 ;;
+        *) die "custom_menu_add: $var is globals[$table], only g[4]/g[8] menu settings are supported" ;;
+    esac
     mode_mask=$(( mode_mask ))
     if [[ -n "${CUSTOM_MENU_REGISTERED[$vid]+x}" ]]; then
         die "custom_menu_add: duplicate variable $var (var_id 0x$(printf "%04X" "$vid"))"
     fi
     CUSTOM_MENU_REGISTERED[$vid]=1
-    CUSTOM_MENU_ENTRIES+=("$section $vid $mode_mask")
+    CUSTOM_MENU_ENTRIES+=("$section $flags $vid $mode_mask")
 }
 
 
@@ -1089,11 +1136,11 @@ custom_emit_registry() {
     (( need <= CUSTOM_SETTINGS_REGISTRY_SIZE )) || \
         die "custom_patch_settings: registry ${need}B exceeds reclaimed ${CUSTOM_SETTINGS_REGISTRY_SIZE}B"
 
-    local off=$CUSTOM_SETTINGS_REGISTRY_ADDR entry section vid mode_mask
+    local off=$CUSTOM_SETTINGS_REGISTRY_ADDR entry section flags vid mode_mask
     for entry in "${CUSTOM_MENU_ENTRIES[@]}"; do
-        read -r section vid mode_mask <<< "$entry"
+        read -r section flags vid mode_mask <<< "$entry"
         write_u8  "$off" "$section" || die failed
-        write_u8  $(( off + 1 )) 0 || die failed
+        write_u8  $(( off + 1 )) "$flags" || die failed
         write_u16 $(( off + 2 )) "$vid" || die failed
         write_u32 $(( off + 4 )) "$mode_mask" || die failed
         off=$(( off + 8 ))
@@ -1617,34 +1664,51 @@ custom_patch_settings_reclaim_reminders() {
 custom_patch_settings_myasv() {
     declare -A MYASV_LABEL=([0]="Custom ASV")
     declare -A MYASV_TC_LABEL=([0]="Custom T/C")
+    declare -A MYASV_MAX_LABEL=([0]="ASV Max")
+    declare -A MYASV_SENS_LABEL=([0]="ASV Sens")
     local myasv_var myasv_label myasv_vid myasv_dep
     local tc_var tc_label tc_vid
-    local ver elf addr tc_addr
+    local max_var max_label max_vid cmh2o_units
+    local sens_var sens_label sens_vid sens_base
+    local ver elf addr tc_addr max_addr sens_addr
 
-    # Claim a stable storage-backed g[8] variable for this feature and allocate a
-    # reclaimed localized string ID for its menu label.
+    # Claim stable storage-backed variables for this feature and allocate
+    # reclaimed localized string IDs for their menu labels.
     custom_claim_g8_var myasv_var RPO my_asv_enable
+    custom_claim_g8_var tc_var    RPH my_asv_triggercycle
+    custom_claim_g4_var max_var   RCM my_asv_max
+    custom_claim_g8_var sens_var  RXM my_asv_sens
     redefine_fw_string myasv_label -1 MYASV_LABEL
-    custom_claim_g8_var tc_var RPH my_asv_triggercycle
-    redefine_fw_string tc_label -1 MYASV_TC_LABEL
+    redefine_fw_string tc_label    -1 MYASV_TC_LABEL
+    redefine_fw_string max_label   -1 MYASV_MAX_LABEL
+    redefine_fw_string sens_label  -1 MYASV_SENS_LABEL
 
-    # Rewrite the claimed descriptor as a normal Off/On enum. Keep the original
+    # Rewrite claimed descriptors for their new meanings. Keep the original
     # Reminder update chain root (RGT), because these variables still live in the
     # same persisted Reminder group and should dirty/save that group normally.
     myasv_dep=$(find_var_table_index 4 RGT)
-    redefine_g8_var "$myasv_var" 0x0007  0         "$myasv_dep" "$myasv_label" 0        2          0     0x00000003 "$STR_ID_OFF_ON_BASE" 0
-    #                            #flags  #callback #dep_chain   #name_str_id   #default #opt_count #pad? #opt_mask  $options_str_id_base  #pading?
-    redefine_g8_var "$tc_var"    0x0007  0         "$myasv_dep" "$tc_label"    0        2          0     0x00000003 "$STR_ID_OFF_ON_BASE" 0
+    cmh2o_units=$(read_u16 $(( $(find_var IPC) + G4_UNITS_STR ))) # IPC = cpap pressure
+    sens_base=$(read_u16 $(( $(find_var VCS) + G8_BASE_STR )))
+    #                            #flags  #callback #dep_chain   #name_str_id   #default #opt_count #param_0a #opt_mask  #options_str_base     #param_12
+    redefine_g8_var "$myasv_var" 0x0007  0         "$myasv_dep" "$myasv_label" 0        2          0         0x00000003 "$STR_ID_OFF_ON_BASE" 0
+    redefine_g8_var "$tc_var"    0x0007  0         "$myasv_dep" "$tc_label"    0        2          0         0x00000003 "$STR_ID_OFF_ON_BASE" 0
+    redefine_g8_var "$sens_var"  0x0007  0         "$myasv_dep" "$sens_label"  2        5          0         0x0000001F "$sens_base"          0
+    #                            #flags  #callback #dep_chain   #name_str_id   #default #max       #min  #decimals  #scale   #step #units
+    redefine_g4_var "$max_var"   0x0007  0         "$myasv_dep" "$max_label"   150      500        0     1          50       10    "$cmh2o_units"
 
     # The menu/descriptor side can use the UART name, but injected runtime code
     # only gets a compact numeric var_id through its ABI slot.
     myasv_vid=$(resolve_var_id "$myasv_var")
     tc_vid=$(resolve_var_id "$tc_var")
+    max_vid=$(resolve_var_id "$max_var")
+    sens_vid=$(resolve_var_id "$sens_var")
 
     # Register the variable for the generic menu hook; registry emission and hook
     # injection are handled later by custom_patch_settings().
     custom_menu_add therapy "$myasv_var" "$(( 1 << 6 ))"
-    custom_menu_add therapy "$tc_var" "$(( 1 << 6 ))"
+    custom_menu_add therapy "$max_var"   "$(( 1 << 6 ))"
+    custom_menu_add therapy "$sens_var"  "$(( 1 << 6 ))"
+    custom_menu_add therapy "$tc_var"    "$(( 1 << 6 ))"
 
     # The wrapper binary is built before patching and exposes writable ABI slots.
     # Patch those slots with claimed var_ids so wrapper code stays independent
@@ -1652,18 +1716,26 @@ custom_patch_settings_myasv() {
     ver=${CDX_VER#SX567-}
     elf=build/wrapper_limit_max_pdiff_${ver}.elf
     [[ -r "$elf" ]] || die "custom_patch_settings_myasv: $elf not found"
-    addr=$(arm-none-eabi-nm "$elf" 2>/dev/null | awk '$3 == "wrapper_limit_max_pdiff_toggle_var_id" { printf "0x%s", $1 }')
-    [[ -n "$addr" ]] || die "custom_patch_settings_myasv: wrapper toggle var symbol not found"
+    addr=$(elf_symbol_addr "$elf" wrapper_limit_max_pdiff_toggle_var_id)
     write_u16 $(( addr - FLASH_BASE )) "$(( myasv_vid ))" || die failed
-    tc_addr=$(arm-none-eabi-nm "$elf" 2>/dev/null | awk '$3 == "wrapper_limit_max_pdiff_triggercycle_var_id" { printf "0x%s", $1 }')
-    [[ -n "$tc_addr" ]] || die "custom_patch_settings_myasv: wrapper trigger/cycle var symbol not found"
+    tc_addr=$(elf_symbol_addr "$elf" wrapper_limit_max_pdiff_triggercycle_var_id)
     write_u16 $(( tc_addr - FLASH_BASE )) "$(( tc_vid ))" || die failed
+    max_addr=$(elf_symbol_addr "$elf" wrapper_limit_max_pdiff_asv_max_var_id)
+    write_u16 $(( max_addr - FLASH_BASE )) "$(( max_vid ))" || die failed
+    sens_addr=$(elf_symbol_addr "$elf" wrapper_limit_max_pdiff_asv_sens_var_id)
+    write_u16 $(( sens_addr - FLASH_BASE )) "$(( sens_vid ))" || die failed
 
     printf "  my_asv enable: %s var_id=0x%04X label_str=0x%04X\n" \
         "$myasv_var" "$(( myasv_vid ))" "$myasv_label"
+    printf "  my_asv max: %s var_id=0x%04X label_str=0x%04X\n" \
+        "$max_var" "$(( max_vid ))" "$max_label"
+    printf "  my_asv sens: %s var_id=0x%04X label_str=0x%04X\n" \
+        "$sens_var" "$(( sens_vid ))" "$sens_label"
     printf "  my_asv trigger/cycle: %s var_id=0x%04X label_str=0x%04X\n" \
         "$tc_var" "$(( tc_vid ))" "$tc_label"
     printf "  VAuto wrapper toggle var_id=0x%04X at 0x%08X\n" "$(( myasv_vid ))" "$addr"
+    printf "  VAuto wrapper ASV max var_id=0x%04X at 0x%08X\n" "$(( max_vid ))" "$max_addr"
+    printf "  VAuto wrapper ASV sens var_id=0x%04X at 0x%08X\n" "$(( sens_vid ))" "$sens_addr"
     printf "  trigger/cycle toggle var_id=0x%04X at 0x%08X\n" "$(( tc_vid ))" "$tc_addr"
 }
 
@@ -2004,6 +2076,7 @@ declare -A CUSTOM_RECLAIMED_STRING_SEEN
 declare -a CUSTOM_MENU_ENTRIES
 declare -A CUSTOM_MENU_REGISTERED
 declare -a CUSTOM_SETTINGS_FEATURES
+CUSTOM_MENU_FLAG_G4_NUMERIC=1
 declare -A CUSTOM_MENU_SECTIONS=(
     [therapy]=0
     [comfort]=1

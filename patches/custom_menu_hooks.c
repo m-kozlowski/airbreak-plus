@@ -3,8 +3,8 @@ typedef unsigned short u16;
 typedef unsigned int u32;
 
 /* Registry entries are emitted by patch-airsense into reclaimed CCX space.
- * section selects the clinical menu section tail being hooked; flags is reserved
- * mode_mask controls runtime per-MOP visibility.
+ * section selects the clinical menu section tail being hooked; flags carries
+ * entry construction hints; mode_mask controls runtime per-MOP visibility.
  * A 0xff/0xffff entry terminates the registry.
  */
 typedef struct {
@@ -14,8 +14,12 @@ typedef struct {
 	u32 mode_mask;
 } custom_menu_entry_t;
 
+#define CUSTOM_MENU_FLAG_G4_NUMERIC 0x01
+
+extern void *malloc(unsigned size);
 extern void scrollbar_add_item(void *list, void *item);
 extern void *menu_create_text_or_float(int var_id, int arg);
+extern void *menu_create_numeric_var(void *storage, int var_id, int arg);
 extern void variable_lookup_handler(void *ctx, int var_id, int arg);
 extern void variable_set_visible_from_handler(void *ctx, int visible);
 extern void variable_handler_release(void *ctx);
@@ -32,6 +36,18 @@ static const custom_menu_entry_t *custom_menu_registry(void)
 	if (!entry || (u32)entry == 0xffffffffu)
 		return 0;
 	return entry;
+}
+
+static void *custom_menu_create_item(const custom_menu_entry_t *entry)
+{
+	if (entry->flags & CUSTOM_MENU_FLAG_G4_NUMERIC) {
+		void *storage = malloc(0x1c);
+		if (!storage)
+			return 0;
+		return menu_create_numeric_var(storage, entry->var_id, 0);
+	}
+
+	return menu_create_text_or_float(entry->var_id, 0);
 }
 
 /* All section-specific assembly stubs tail-call here after replacing one stock
@@ -58,14 +74,12 @@ void custom_menu_hook_common(void *list, void *item, unsigned section)
 	for (unsigned guard = 0; guard < 64; guard++, entry++) {
 		if (entry->section == 0xff || entry->var_id == 0xffff)
 			return;
-		if (entry->flags != 0 || entry->section != section)
+		if (entry->section != section)
 			continue;
 
-		/* This stock factory builds the correct menu widget for g[8] enum vars
-		 * and g[4] numeric vars, matching how mixed stock sections are built.
-		 */
-		void *custom = menu_create_text_or_float(entry->var_id, 0);
-		scrollbar_add_item(list, custom);
+		void *custom = custom_menu_create_item(entry);
+		if (custom)
+			scrollbar_add_item(list, custom);
 	}
 }
 
@@ -89,8 +103,6 @@ void custom_menu_apply_mode_visibility(void)
 	for (unsigned guard = 0; guard < 64; guard++, entry++) {
 		if (entry->section == 0xff || entry->var_id == 0xffff)
 			return;
-		if (entry->flags != 0)
-			continue;
 
 		int visible = 0;
 		if ((unsigned)mode < 32)
