@@ -1198,7 +1198,7 @@ class ASFirmwarePatches(object):
                 'reminder_menu_item_end': 0x62790,
                 'reminder_menu': 0x63778,
                 'reminder_menu_end': 0x639d4,
-                'reclaimed_string_ids': (0x0048,), # Reminders
+                'reclaimed_string_ids': (0x0048, 0x00B7, 0x00B8, 0x00B9, 0x00BA), # Reminders + four reminder message bodies
             },
             'SX567-0402': {
                 'reminders_tick': 0xec6be,
@@ -1206,7 +1206,7 @@ class ASFirmwarePatches(object):
                 'reminder_menu_item_end': 0x62790,
                 'reminder_menu': 0x63778,
                 'reminder_menu_end': 0x639d4,
-                'reclaimed_string_ids': (0x0048,), # Reminders
+                'reclaimed_string_ids': (0x0048, 0x00B7, 0x00B8, 0x00B9, 0x00BA), # Reminders + four reminder message bodies
             },
         }
         sites = sites_by_version.get(self.asf.cdx_ver)
