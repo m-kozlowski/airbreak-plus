@@ -14,17 +14,19 @@
  * avoid the stock helper that would also reset the idle timer every tick.
  *
  * Uses firmware variables for all brightness levels:
- *   0x00FC ASF - ambient sensor filtered
- *   0x00FD ATH - ambient threshold
- *   0x00FE LBL - button backlight low
- *   0x00FF LLL - LCD backlight low
- *   0x0100 LBH - button backlight high
- *   0x0101 LLH - LCD backlight high
+ *   ASF - ambient sensor filtered
+ *   ATH - ambient threshold
+ *   LBL - button backlight low
+ *   LLL - LCD backlight low
+ *   LBH - button backlight high
+ *   LLH - LCD backlight high
  *
  * Buttons keep the existing binary low/high behavior around ATH.
  * LCD stays at LLL up to ATH, then ramps smoothly toward LLH and clamps
  * at LCD_FULL_ASF.
  */
+
+#include "s10_vars.h"
 
 // STEP value doesnt change much, as code relies on filtered sensor value
 // that gets updated at roughly the same cadence as this hook, so each delta is near 0 anyway
@@ -280,13 +282,13 @@ static unsigned char __attribute__((noinline, section(".text.x.apply_step"))) bt
 
 void start(struct bl_ctx *ctx)
 {
-    int asf = variable_get_g8(0xFC);
-    //int asf = variable_get_g8(0xFB); // ASR
-    int ath = variable_get_g8(0xFD);
-    unsigned char lcd_low = (unsigned char)variable_get_g8(0xFF);   // LLL
-    unsigned char lcd_high = (unsigned char)variable_get_g8(0x101); // LLH
-    unsigned char btn_low = (unsigned char)variable_get_g8(0xFE);   // LBL
-    unsigned char btn_high = (unsigned char)variable_get_g8(0x100); // LBH
+    int asf = variable_get_g8(VAR_ID_ASF);
+    //int asf = variable_get_g8(VAR_ID_ASR);
+    int ath = variable_get_g8(VAR_ID_ATH);
+    unsigned char lcd_low = (unsigned char)variable_get_g8(VAR_ID_LLL);
+    unsigned char lcd_high = (unsigned char)variable_get_g8(VAR_ID_LLH);
+    unsigned char btn_low = (unsigned char)variable_get_g8(VAR_ID_LBL);
+    unsigned char btn_high = (unsigned char)variable_get_g8(VAR_ID_LBH);
 
     // hysteresis deadband = max(ATH >> 5, MIN_HYST)
     int hyst = ath >> 5;

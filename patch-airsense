@@ -1225,8 +1225,8 @@ custom_patch_menu_hooks() {
     local therapy_site comfort_site accessories_site options_site configuration_site
     local callback_table clinical_capacity_site clinical_capacity
     local hook_therapy hook_comfort hook_accessories hook_options hook_configuration
-    local hook_mop_callback registry_addr mode_var_addr original_cb_addr
-    local mode_vid mop_rec mop_callback_id mop_callback_slot original_mop_callback hook_mop_callback_thumb
+    local hook_mop_callback registry_addr original_cb_addr
+    local mop_rec mop_callback_id mop_callback_slot original_mop_callback hook_mop_callback_thumb
     ver="${CDX_VER#SX567-}"
 
     case "$CDX_VER" in
@@ -1273,17 +1273,14 @@ custom_patch_menu_hooks() {
     hook_configuration=$(elf_symbol_addr "$elf" custom_menu_hook_configuration)
     hook_mop_callback=$(elf_symbol_addr "$elf" custom_menu_mop_callback_hook)
     registry_addr=$(elf_symbol_addr "$elf" custom_menu_registry_addr)
-    mode_var_addr=$(elf_symbol_addr "$elf" custom_menu_mode_var_id)
     original_cb_addr=$(elf_symbol_addr "$elf" custom_menu_original_mop_callback)
     mop_rec=$(find_var MOP)
     mop_callback_id=$(read_u8 $(( mop_rec + G8_CALLBACK )))
     mop_callback_slot=$(( callback_table + mop_callback_id * 4 ))
     original_mop_callback=$(read_u32 "$mop_callback_slot")
-    mode_vid=$(resolve_var_id MOP)
     hook_mop_callback_thumb=$(( hook_mop_callback | 1 ))
 
     write_u32 $(( registry_addr - FLASH_BASE )) "$registry_flash" || die failed
-    write_u16 $(( mode_var_addr - FLASH_BASE )) "$(( mode_vid ))" || die failed
     write_u32 $(( original_cb_addr - FLASH_BASE )) "$original_mop_callback" || die failed
 
     custom_patch_clinical_menu_capacity "$clinical_capacity_site" "$clinical_capacity"

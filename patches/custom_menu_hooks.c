@@ -2,6 +2,8 @@ typedef unsigned char u8;
 typedef unsigned short u16;
 typedef unsigned int u32;
 
+#include "s10_vars.h"
+
 /* Registry entries are emitted by patch-airsense into reclaimed CCX space.
  * section selects the clinical menu section tail being hooked; flags carries
  * entry construction hints; mode_mask controls runtime per-MOP visibility.
@@ -26,7 +28,6 @@ extern void variable_handler_release(void *ctx);
 extern int variable_get_g8(int var_id);
 
 extern const u32 custom_menu_registry_addr;
-extern const u16 custom_menu_mode_var_id;
 extern const u32 custom_menu_original_mop_callback;
 
 static const custom_menu_entry_t *custom_menu_registry(void)
@@ -95,10 +96,10 @@ static void custom_menu_set_visible(u16 var_id, int visible)
 void custom_menu_apply_mode_visibility(void)
 {
 	const custom_menu_entry_t *entry = custom_menu_registry();
-	if (!entry || custom_menu_mode_var_id == 0xffffu)
+	if (!entry)
 		return;
 
-	int mode = variable_get_g8(custom_menu_mode_var_id);
+	int mode = variable_get_g8(VAR_ID_MOP);
 
 	for (unsigned guard = 0; guard < 64; guard++, entry++) {
 		if (entry->section == 0xff || entry->var_id == 0xffff)

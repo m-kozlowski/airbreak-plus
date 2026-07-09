@@ -1004,18 +1004,15 @@ class ASFirmwarePatches(object):
         hook_configuration = self._elf_symbol_addr(elf_path, 'custom_menu_hook_configuration')
         hook_mop_callback = self._elf_symbol_addr(elf_path, 'custom_menu_mop_callback_hook')
         registry_addr = self._elf_symbol_addr(elf_path, 'custom_menu_registry_addr')
-        mode_var_addr = self._elf_symbol_addr(elf_path, 'custom_menu_mode_var_id')
         original_cb_addr = self._elf_symbol_addr(elf_path, 'custom_menu_original_mop_callback')
 
         mop_rec = self.asf.find_var('MOP')
         mop_callback_id = self.asf.read_u8(mop_rec + self.asf.G8_CALLBACK)
         mop_callback_slot = sites['callback_table'] + mop_callback_id * 4
         original_mop_callback = self.asf.read_u32(mop_callback_slot)
-        mode_vid = self.asf.resolve_var_id('MOP')
         hook_mop_callback_thumb = hook_mop_callback | 1
 
         self.asf.write_u32(registry_addr - self.asf.FLASH_BASE, registry_flash)
-        self.asf.write_u16(mode_var_addr - self.asf.FLASH_BASE, mode_vid)
         self.asf.write_u32(original_cb_addr - self.asf.FLASH_BASE, original_mop_callback)
 
         self._patch_clinical_menu_capacity(sites['clinical_capacity_site'], sites['clinical_capacity'])
