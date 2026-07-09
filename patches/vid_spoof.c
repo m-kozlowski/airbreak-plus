@@ -25,7 +25,7 @@ static const unsigned char vid_lut[12] = {
     0x19    // AutoSet For Her
 };
 
-void vid_spoof_apply_current_mop(void)
+void start(void)
 {
     unsigned int mop = (unsigned int)variable_get_by_id(VAR_ID_MOP);
     if (mop <= 11) {

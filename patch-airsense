@@ -2053,7 +2053,7 @@ patch_vid_spoof() {
     [[ -r "$elf" ]] || die "${FUNCNAME[0]}: $elf not found"
     echo "Patching VID spoof handler"
     payload_inject vid_spoof "$bin"
-    handler=$(elf_symbol_addr "$elf" vid_spoof_apply_current_mop)
+    handler=$(elf_symbol_addr "$elf" start)
     mop_callback_register_handler "$handler" vid_spoof
     printf "  vid_spoof: %s (%dB) at 0x%08X\n" \
         "$bin" "$PAYLOAD_SIZE" "$PAYLOAD_FLASH"

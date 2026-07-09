@@ -1798,7 +1798,7 @@ class ASFirmwarePatches(object):
         flash, _ = self._inject_payload('vid_spoof', data)
         print("  vid_spoof: build/vid_spoof_%s.bin (%dB) at 0x%08X" %
               (ver, len(data), flash))
-        handler = self._elf_symbol_addr(elf_path, 'vid_spoof_apply_current_mop')
+        handler = self._elf_symbol_addr(elf_path, 'start')
         self.mop_callback_register_handler(handler, 'vid_spoof')
 
     def custom_palette(self):
