@@ -81,44 +81,50 @@ custom_menu_hooks-offset := 0x80ffc00
 vid_spoof-offset := 0x80fcfa0
 
 define S10_CODE_VERSION_template
+$(BUILD)/%_$(1).o: $(SRC)/%.c $(SRC)/s10_vars.h $(SRC)/s10_vars_$(1).h | $(BUILD)
+	$$(CC) $$(CFLAGS) -DCDX_VER_$(1) -c -o $$@ $$<
+
+$(BUILD)/%_$(1).o: $(SRC)/%.S $(SRC)/s10_vars.h $(SRC)/s10_vars_$(1).h | $(BUILD)
+	$$(AS) $$(ASFLAGS) -DCDX_VER_$(1) -c -o $$@ $$<
+
 $(BUILD)/s10_$(1)_stubs.o: $(SRC)/s10_$(1)_stubs.S | $(BUILD)
 	$$(AS) $$(ASFLAGS) -c -o $$@ $$<
 
-$(BUILD)/common_code_$(1).elf: $(BUILD)/common_code.o $(BUILD)/s10_$(1)_stubs.o | $(BUILD)
+$(BUILD)/common_code_$(1).elf: $(BUILD)/common_code_$(1).o $(BUILD)/s10_$(1)_stubs.o | $(BUILD)
 	$$(LD) --nostdlib --no-dynamic-linker \
 		--Ttext $(common_code-offset) --entry start --sort-section=name \
 		-o $$@ $$^
 
-$(BUILD)/graph_$(1).elf: $(BUILD)/graph.o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/common_code_$(1).elf | $(BUILD)
+$(BUILD)/graph_$(1).elf: $(BUILD)/graph_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/common_code_$(1).elf | $(BUILD)
 	$$(LD) --nostdlib --no-dynamic-linker \
 		--Ttext $(graph-offset) \
 		--just-symbols=$$(BUILD)/common_code_$(1).elf \
-		--entry start --sort-section=name -o $$@ $(BUILD)/graph.o $(BUILD)/s10_$(1)_stubs.o
+		--entry start --sort-section=name -o $$@ $(BUILD)/graph_$(1).o $(BUILD)/s10_$(1)_stubs.o
 
-$(BUILD)/squarewave_$(1).elf: $(BUILD)/squarewave.o $(BUILD)/squarewave_abi.o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/common_code_$(1).elf | $(BUILD)
+$(BUILD)/squarewave_$(1).elf: $(BUILD)/squarewave_$(1).o $(BUILD)/squarewave_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/common_code_$(1).elf | $(BUILD)
 	$$(LD) --nostdlib --no-dynamic-linker \
 		--Ttext $(squarewave-offset) \
 		--just-symbols=$$(BUILD)/common_code_$(1).elf \
-		--entry start --sort-section=name -o $$@ $(BUILD)/squarewave.o $(BUILD)/squarewave_abi.o $(BUILD)/s10_$(1)_stubs.o
+		--entry start --sort-section=name -o $$@ $(BUILD)/squarewave_$(1).o $(BUILD)/squarewave_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o
 
-$(BUILD)/asv_task_wrapper_$(1).elf: $(BUILD)/asv_task_wrapper.o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/common_code_$(1).elf | $(BUILD)
+$(BUILD)/asv_task_wrapper_$(1).elf: $(BUILD)/asv_task_wrapper_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/common_code_$(1).elf | $(BUILD)
 	$$(LD) --nostdlib --no-dynamic-linker \
 		--Ttext $(asv_task_wrapper-offset) \
 		--just-symbols=$$(BUILD)/common_code_$(1).elf \
-		--entry start --sort-section=name -o $$@ $(BUILD)/asv_task_wrapper.o $(BUILD)/s10_$(1)_stubs.o
+		--entry start --sort-section=name -o $$@ $(BUILD)/asv_task_wrapper_$(1).o $(BUILD)/s10_$(1)_stubs.o
 
-$(BUILD)/wrapper_limit_max_pdiff_$(1).elf: $(BUILD)/wrapper_limit_max_pdiff.o $(BUILD)/wrapper_limit_max_pdiff_abi.o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/common_code_$(1).elf | $(BUILD)
+$(BUILD)/wrapper_limit_max_pdiff_$(1).elf: $(BUILD)/wrapper_limit_max_pdiff_$(1).o $(BUILD)/wrapper_limit_max_pdiff_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/common_code_$(1).elf | $(BUILD)
 	$$(LD) --nostdlib --no-dynamic-linker \
 		--Ttext $(wrapper_limit_max_pdiff-offset) \
 		--just-symbols=$$(BUILD)/common_code_$(1).elf \
-		--entry start --sort-section=name -o $$@ $(BUILD)/wrapper_limit_max_pdiff.o $(BUILD)/wrapper_limit_max_pdiff_abi.o $(BUILD)/s10_$(1)_stubs.o
+		--entry start --sort-section=name -o $$@ $(BUILD)/wrapper_limit_max_pdiff_$(1).o $(BUILD)/wrapper_limit_max_pdiff_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o
 
-$(BUILD)/custom_menu_hooks_$(1).elf: $(BUILD)/custom_menu_hooks_entry.o $(BUILD)/custom_menu_hooks.o $(BUILD)/s10_$(1)_stubs.o | $(BUILD)
+$(BUILD)/custom_menu_hooks_$(1).elf: $(BUILD)/custom_menu_hooks_entry_$(1).o $(BUILD)/custom_menu_hooks_$(1).o $(BUILD)/s10_$(1)_stubs.o | $(BUILD)
 	$$(LD) --nostdlib --no-dynamic-linker \
 		--Ttext $(custom_menu_hooks-offset) \
 		--entry custom_menu_hook_therapy -o $$@ $$^
 
-$(BUILD)/backlight_adapt_$(1).elf: $(BUILD)/backlight_adapt.o $(BUILD)/s10_$(1)_stubs.o | $(BUILD)
+$(BUILD)/backlight_adapt_$(1).elf: $(BUILD)/backlight_adapt_$(1).o $(BUILD)/s10_$(1)_stubs.o | $(BUILD)
 	$$(LD) --nostdlib --no-dynamic-linker \
 		--Ttext $(backlight_adapt-offset) \
 		--entry start --sort-section=name -o $$@ $$^
@@ -262,11 +268,8 @@ $(BUILD)/stm32-s9-lcd.bin: patch-airsense-s9 s9_lcd_ili9225 | $(BUILD)
 S10_LCD_OFFSET ?= 0x080FF800
 S10_LCD_VERSIONS := 0401 0402
 
-$(BUILD)/s10_lcd_ili9325.o: $(SRC)/s10_lcd_ili9325.c | $(BUILD)
-	$(CC) $(CFLAGS) -Wno-unused-parameter -c -o $@ $<
-
 define S10_LCD_VERSION_template
-$(BUILD)/s10_lcd_ili9325_$(1).elf: $(BUILD)/s10_lcd_ili9325.o $(BUILD)/s10_$(1)_stubs.o | $(BUILD)
+$(BUILD)/s10_lcd_ili9325_$(1).elf: $(BUILD)/s10_lcd_ili9325_$(1).o $(BUILD)/s10_$(1)_stubs.o | $(BUILD)
 	$$(LD) --nostdlib --no-dynamic-linker \
 		--Ttext $$(S10_LCD_OFFSET) --entry lcd_board_init --sort-section=name \
 		-o $$@ $$^
