@@ -49,7 +49,7 @@
 #define PENDING_LCD 0x01
 #define PENDING_BTN 0x02
 
-extern int variable_get_g8(int var_id);
+extern int variable_get_by_id(int var_id);
 extern void backlight_state_machine(void *ctx);
 
 // backlight context struct (partial, offsets match firmware layout)
@@ -282,13 +282,13 @@ static unsigned char __attribute__((noinline, section(".text.x.apply_step"))) bt
 
 void start(struct bl_ctx *ctx)
 {
-    int asf = variable_get_g8(VAR_ID_ASF);
-    //int asf = variable_get_g8(VAR_ID_ASR);
-    int ath = variable_get_g8(VAR_ID_ATH);
-    unsigned char lcd_low = (unsigned char)variable_get_g8(VAR_ID_LLL);
-    unsigned char lcd_high = (unsigned char)variable_get_g8(VAR_ID_LLH);
-    unsigned char btn_low = (unsigned char)variable_get_g8(VAR_ID_LBL);
-    unsigned char btn_high = (unsigned char)variable_get_g8(VAR_ID_LBH);
+    int asf = variable_get_by_id(VAR_ID_ASF);
+    //int asf = variable_get_by_id(VAR_ID_ASR);
+    int ath = variable_get_by_id(VAR_ID_ATH);
+    unsigned char lcd_low = (unsigned char)variable_get_by_id(VAR_ID_LLL);
+    unsigned char lcd_high = (unsigned char)variable_get_by_id(VAR_ID_LLH);
+    unsigned char btn_low = (unsigned char)variable_get_by_id(VAR_ID_LBL);
+    unsigned char btn_high = (unsigned char)variable_get_by_id(VAR_ID_LBH);
 
     // hysteresis deadband = max(ATH >> 5, MIN_HYST)
     int hyst = ath >> 5;

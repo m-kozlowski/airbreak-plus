@@ -3,7 +3,7 @@
 
 const float EPS_FIXED_TIME = 1.2f;
 
-extern int variable_get_g8(int var_id);
+extern int variable_get_by_id(int var_id);
 extern const unsigned short squarewave_enable_var_id;
 extern const unsigned int squarewave_original_handler;
 
@@ -13,7 +13,7 @@ STATIC bool squarewave_enabled(void) {
   if (squarewave_enable_var_id == 0xFFFFu) {
     return true;
   }
-  return variable_get_g8((int)squarewave_enable_var_id) != 0;
+  return variable_get_by_id((int)squarewave_enable_var_id) != 0;
 }
 
 STATIC void squarewave_call_original(int param_1) {

@@ -25,7 +25,7 @@ extern void *menu_create_numeric_var(void *storage, int var_id, int arg);
 extern void variable_lookup_handler(void *ctx, int var_id, int arg);
 extern void variable_set_visible_from_handler(void *ctx, int visible);
 extern void variable_handler_release(void *ctx);
-extern int variable_get_g8(int var_id);
+extern int variable_get_by_id(int var_id);
 
 extern const u32 custom_menu_registry_addr;
 extern const u32 custom_menu_original_mop_callback;
@@ -99,7 +99,7 @@ void custom_menu_apply_mode_visibility(void)
 	if (!entry)
 		return;
 
-	int mode = variable_get_g8(VAR_ID_MOP);
+	int mode = variable_get_by_id(VAR_ID_MOP);
 
 	for (unsigned guard = 0; guard < 64; guard++, entry++) {
 		if (entry->section == 0xff || entry->var_id == 0xffff)

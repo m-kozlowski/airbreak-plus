@@ -292,27 +292,13 @@ s10_lcd_ili9325: $(foreach v,$(S10_LCD_VERSIONS),$(BUILD)/s10_lcd_ili9325_$(v).b
 
 VID_SPOOF_OFFSET := 0x80fcfa0
 
-#                       ORIG        HANDLER     MOP         VTENTRY
-vid_spoof_addrs_0402 := 0x0806A51D  0x200096A0  0x200104AE  0xF1744
-vid_spoof_addrs_0401 := 0x0806A51D  0x20009694  0x200104A2  0xF14CC
-vid_spoof_addrs_0306 := 0x0806A51D  0x20009694  0x200104A2  0xF126C
-vid_spoof_addrs_0305 := 0x0806A519  0x20009694  0x20010736  0xF1350
-vid_spoof_addrs_0302 := 0x08069DF5  0x20009694  0x20010736  0xF0B54
-
-vid_spoof_ORIG     = $(word 1,$(vid_spoof_addrs_$(1)))
-vid_spoof_HANDLER  = $(word 2,$(vid_spoof_addrs_$(1)))
-vid_spoof_MOP      = $(word 3,$(vid_spoof_addrs_$(1)))
-vid_spoof_VTABLE   = $(word 4,$(vid_spoof_addrs_$(1)))
-
 define vid_spoof_build_template
-$(BUILD)/vid_spoof_$(1).o: $(SRC)/vid_spoof.c | $(BUILD)
+$(BUILD)/vid_spoof_$(1).o: $(SRC)/vid_spoof.c $(SRC)/s10_vars.h $(SRC)/s10_vars_$(1).h | $(BUILD)
 	$$(CC) $$(CFLAGS) \
-		-DVID_SPOOF_ADDR_ORIG=$(call vid_spoof_ORIG,$(1)) \
-		-DVID_SPOOF_ADDR_HANDLER=$(call vid_spoof_HANDLER,$(1)) \
-		-DVID_SPOOF_ADDR_MOP=$(call vid_spoof_MOP,$(1)) \
+		-DCDX_VER_$(1) \
 		-c -o $$@ $$<
 
-$(BUILD)/vid_spoof_$(1).elf: $(BUILD)/vid_spoof_$(1).o | $(BUILD)
+$(BUILD)/vid_spoof_$(1).elf: $(BUILD)/vid_spoof_$(1).o $(BUILD)/s10_$(1)_stubs.o | $(BUILD)
 	$$(LD) --nostdlib --no-dynamic-linker \
 		--Ttext $(VID_SPOOF_OFFSET) --entry start --sort-section=name \
 		-o $$@ $$^

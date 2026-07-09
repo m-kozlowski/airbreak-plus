@@ -18,25 +18,25 @@ STATIC void init_features(features_t *feat) {
 
 // +1 pointer address: 0x000f93d0. Original function address: 0x080bc992
 extern void pressure_limit_max_difference();
-extern int variable_get_g8(int var_id);
+extern int variable_get_by_id(int var_id);
 extern const unsigned short wrapper_limit_max_pdiff_toggle_var_id;
 extern const unsigned short wrapper_limit_max_pdiff_triggercycle_var_id;
 extern const unsigned short wrapper_limit_max_pdiff_asv_max_var_id;
 extern const unsigned short wrapper_limit_max_pdiff_asv_sens_var_id;
 
 STATIC bool custom_g8_toggle(unsigned short var_id, bool fallback) {
-  return (var_id == 0xFFFFu) ? fallback : (variable_get_g8((int)var_id) != 0);
+  return (var_id == 0xFFFFu) ? fallback : (variable_get_by_id((int)var_id) != 0);
 }
 
 STATIC int custom_var_raw(unsigned short var_id, int fallback) {
-  return (var_id == 0xFFFFu) ? fallback : variable_get_g8((int)var_id);
+  return (var_id == 0xFFFFu) ? fallback : variable_get_by_id((int)var_id);
 }
 
 STATIC float custom_asv_max_cm(void) {
   if (wrapper_limit_max_pdiff_asv_max_var_id == 0xFFFFu) {
     return 2.0f * vauto_ps;
   }
-  int raw = variable_get_g8((int)wrapper_limit_max_pdiff_asv_max_var_id);
+  int raw = variable_get_by_id((int)wrapper_limit_max_pdiff_asv_max_var_id);
   return raw / 50.0f;
 }
 

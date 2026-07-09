@@ -2,25 +2,15 @@
  * vid_spoof.c - MOP-based Variant ID override
  *
  * Hooks the g[8] persistent writeback (vtable+0xE4) to update VID
- * whenever MOP (therapy mode) is committed to handler table storage.
+ * whenever MOP (therapy mode) is committed.
  *
  */
 
-#ifndef VID_SPOOF_ADDR_ORIG
-#error "VID_SPOOF_ADDR_ORIG not defined"
-#endif
-#ifndef VID_SPOOF_ADDR_HANDLER
-#error "VID_SPOOF_ADDR_HANDLER not defined"
-#endif
-#ifndef VID_SPOOF_ADDR_MOP
-#error "VID_SPOOF_ADDR_MOP not defined"
-#endif
+#include "s10_vars.h"
 
-static int (* const orig_writeback)(void *) =
-    (int (*)(void *))VID_SPOOF_ADDR_ORIG;
-
-static volatile unsigned int  * const vid_handler  = (void *)VID_SPOOF_ADDR_HANDLER;
-static volatile unsigned char * const mop_byte     = (void *)VID_SPOOF_ADDR_MOP;
+extern int vid_spoof_original_writeback(void *obj);
+extern int variable_get_by_id(int var_id);
+extern void variable_set_by_id(int var_id, int raw_value);
 
 static const unsigned char vid_lut[12] = {
     0x1A,   // CPAP
@@ -40,14 +30,14 @@ static const unsigned char vid_lut[12] = {
 int __attribute__((section(".text.0.main")))
 start(void *obj)
 {
-    int ret = orig_writeback(obj);
+    int ret = vid_spoof_original_writeback(obj);
 
     unsigned char idx = ((unsigned char *)obj)[0x14];
     if (idx == 0) {
-        unsigned char mop = *mop_byte;
+        unsigned int mop = (unsigned int)variable_get_by_id(VAR_ID_MOP);
         if (mop <= 11) {
             unsigned int v = vid_lut[mop];
-            *vid_handler  = v;
+            variable_set_by_id(VAR_ID_VID, v);
         }
     }
 

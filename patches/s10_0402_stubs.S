@@ -43,8 +43,14 @@ NSTUB(0x080E36DD, asv_task_function)
 
 NSTUB_VAR(0x20000BE0, magic_ptr)
 
+// Variable system
+NSTUB(0x08066E7E, variable_set_by_id)
+NSTUB(0x08066FC6, variable_get_by_id)
+
+// VID spoof
+NSTUB(0x0806A51C, vid_spoof_original_writeback)
+
 // Backlight adaptation
-NSTUB(0x08066FC6, variable_get_g8)
 NSTUB(0x0807A2A4, backlight_state_machine)
 
 // LCD driver
