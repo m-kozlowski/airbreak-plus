@@ -34,6 +34,9 @@ NSTUB(0x08066AB5, variable_lookup_handler)
 NSTUB(0x08066AD1, variable_handler_release)
 NSTUB(0x08066D73, variable_set_visible_from_handler)
 
+// Config persistence
+NSTUB(0x0809E4A9, file_get_size)
+
 NSTUB(0x080BCBC3, pressure_limit_max_difference)
 NSTUB_VAR(0x2000E954, fvars)
 NSTUB_VAR(0x2000E75C, ivars)

@@ -1075,10 +1075,10 @@ class ASFirmwarePatches(object):
         self.asf.patch(data, off, checkempty=True)
         return flash, off
 
-    def _patch_menu_hook_site(self, site, expected, target, name):
-        """Replace one stock section-tail append call with a hook call."""
+    def _patch_thumb_bl_checked(self, site, expected, target, name):
+        """Retarget a Thumb BL after verifying its original instruction bytes."""
         if bytes(self.asf.fw[site:site+len(expected)]) != expected:
-            raise ValueError("custom_patch_settings: unexpected %s hook bytes at 0x%X" % (name, site))
+            raise ValueError("unexpected %s call bytes at 0x%X" % (name, site))
         self.asf.patch(self._encode_thumb_bl(site, target), site, clobber=True)
 
     def _patch_clinical_menu_capacity(self, imm_off, stock_capacity):
@@ -1104,6 +1104,8 @@ class ASFirmwarePatches(object):
                 'configuration': 0x628d2,
                 'clinical_capacity_site': 0x61fba,
                 'clinical_capacity': 70,
+                'config_error_size_site': 0xcefa0,
+                'config_error_size_expected': b'\xcf\xf7\x6a\xf9',
             },
             'SX567-0402': {
                 'therapy': 0x62414,
@@ -1113,6 +1115,8 @@ class ASFirmwarePatches(object):
                 'configuration': 0x628d2,
                 'clinical_capacity_site': 0x61fba,
                 'clinical_capacity': 70,
+                'config_error_size_site': 0xcf218,
+                'config_error_size_expected': b'\xcf\xf7\x46\xf9',
             },
         }
         sites = sites_by_version.get(self.asf.cdx_ver)
@@ -1140,20 +1144,46 @@ class ASFirmwarePatches(object):
         hook_configuration = self._elf_symbol_addr(elf_path, 'custom_menu_hook_configuration')
         registry_addr = self._elf_symbol_addr(elf_path, 'custom_menu_registry_addr')
         visibility_handler = self._elf_symbol_addr(elf_path, 'custom_menu_apply_mode_visibility')
+        error_size_hook = self._elf_symbol_addr(elf_path, 'custom_settings_error_file_size')
+        group_index_addr = self._elf_symbol_addr(elf_path, 'custom_settings_group_index')
+
+        group_base = self.asf.globals_offset(16)
+        group_rec = self.asf.find_var_group('CSG')
+        if group_rec is None:
+            raise ValueError("custom_patch_settings: CSG variable group not found")
+        group_index = (group_rec - group_base) // 0x10
 
         self.asf.write_u32(registry_addr - self.asf.FLASH_BASE, registry_flash)
+        self.asf.write_u8(group_index_addr - self.asf.FLASH_BASE, group_index)
 
         self._patch_clinical_menu_capacity(sites['clinical_capacity_site'], sites['clinical_capacity'])
-        self._patch_menu_hook_site(sites['therapy'], b'\x02\xf0\x3a\xfd', hook_therapy, 'therapy')
-        self._patch_menu_hook_site(sites['comfort'], b'\x02\xf0\x0b\xfc', hook_comfort, 'comfort')
-        self._patch_menu_hook_site(sites['accessories'], b'\x02\xf0\xc5\xfb', hook_accessories, 'accessories')
-        self._patch_menu_hook_site(sites['options'], b'\x02\xf0\x9c\xfb', hook_options, 'options')
-        self._patch_menu_hook_site(
-            sites['configuration'], b'\x02\xf0\xdb\xfa', hook_configuration, 'configuration')
+
+        # Replace the final stock append in each clinical menu section. Each payload
+        # hook appends that displaced item first, then its registered custom entries.
+        self._patch_thumb_bl_checked(
+            sites['therapy'], b'\x02\xf0\x3a\xfd', hook_therapy, 'therapy menu append')
+        self._patch_thumb_bl_checked(
+            sites['comfort'], b'\x02\xf0\x0b\xfc', hook_comfort, 'comfort menu append')
+        self._patch_thumb_bl_checked(
+            sites['accessories'], b'\x02\xf0\xc5\xfb', hook_accessories,
+            'accessories menu append')
+        self._patch_thumb_bl_checked(
+            sites['options'], b'\x02\xf0\x9c\xfb', hook_options, 'options menu append')
+        self._patch_thumb_bl_checked(
+            sites['configuration'], b'\x02\xf0\xdb\xfa', hook_configuration,
+            'configuration menu append')
+
+        # Replace the size query reached after config validation fails. The payload
+        # reports CSG as empty, suppressing the fault before stock code rewrites it.
+        self._patch_thumb_bl_checked(
+            sites['config_error_size_site'], sites['config_error_size_expected'],
+            error_size_hook, 'CSG recovery')
         self.mop_callback_register_handler(visibility_handler, 'custom_menu_visibility')
 
         print("  custom menu hooks: build/custom_menu_hooks_%s.bin (%dB) at 0x%08X" %
               (ver, len(data), flash))
+        print("  CSG recovery: group index %d, invalid files reset without system fault" %
+              group_index)
 
     def custom_patch_settings_myasv(self):
         """Expose reclaimed my_asv settings and pass their var_ids to the wrapper."""

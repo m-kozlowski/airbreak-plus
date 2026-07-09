@@ -46,6 +46,13 @@ custom_menu_hook_configuration:
 	movs r2, #4
 	b.n custom_menu_hook_common
 
+/* Patched with the globals[16] index of the renamed CSG storage group. */
+.global custom_settings_group_index
+.type custom_settings_group_index, %object
+custom_settings_group_index:
+	.byte 0xff
+	.balign 4, 0xff
+
 /* Patched by patch-airsense after the payload is copied into CCX. The default
  * erased value keeps the C side in no-registry mode if the slot is not patched.
  */

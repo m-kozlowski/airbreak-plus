@@ -357,6 +357,17 @@ sys.stdout.buffer.write(struct.pack('<HH', hw1, hw2))
 }
 
 
+# Retarget a Thumb BL after verifying its exact original instruction bytes.
+# args: patch site offset, expected bytes, target flash address, site label
+patch_thumb_bl_checked() {
+    local site=$1 expected=$2 target=$3 name=$4
+    if ! printf '%b' "$expected" | check_patch "$site"; then
+        die "unexpected $name call bytes at 0x$(printf "%X" "$site")"
+    fi
+    encode_thumb_bl "$site" "$target" | patch "$site" || die failed
+}
+
+
 # Check that a target patch range is still erased.
 # args: offset size
 check_ff() {
@@ -1331,17 +1342,6 @@ custom_emit_registry() {
 }
 
 
-# Replace one stock section-tail append call with a hook call.
-# args: patch site offset, expected bytes, hook target flash address, site label
-custom_patch_menu_hook_site() {
-    local site=$1 expected=$2 target=$3 name=$4
-    if ! printf '%b' "$expected" | check_patch "$site"; then
-        die "custom_patch_settings: unexpected $name hook bytes at 0x$(printf "%X" "$site")"
-    fi
-    encode_thumb_bl "$site" "$target" | patch "$site" || die failed
-}
-
-
 # The clinical settings page uses one pre-sized scrollbar for all sections.
 # Grow its item-pointer array before section hooks append generated entries.
 # args: movs-r2-immediate offset, stock capacity
@@ -1363,13 +1363,15 @@ custom_patch_clinical_menu_capacity() {
 custom_patch_menu_hooks() {
     local ver bin elf registry_flash
     local therapy_site comfort_site accessories_site options_site configuration_site
+    local config_error_size_site config_error_size_expected
     local clinical_capacity_site clinical_capacity
     local hook_therapy hook_comfort hook_accessories hook_options hook_configuration
-    local registry_addr visibility_handler
+    local registry_addr visibility_handler error_size_hook group_index_addr
+    local group_base group_rec group_index
     ver="${CDX_VER#SX567-}"
 
     case "$CDX_VER" in
-        SX567-0401|SX567-0402)
+        SX567-0401)
             therapy_site=0x62414
             comfort_site=0x62672
             accessories_site=0x626fe
@@ -1377,6 +1379,19 @@ custom_patch_menu_hooks() {
             configuration_site=0x628d2
             clinical_capacity_site=0x61fba
             clinical_capacity=70
+            config_error_size_site=0xcefa0
+            config_error_size_expected="\\xcf\\xf7\\x6a\\xf9"
+            ;;
+        SX567-0402)
+            therapy_site=0x62414
+            comfort_site=0x62672
+            accessories_site=0x626fe
+            options_site=0x62750
+            configuration_site=0x628d2
+            clinical_capacity_site=0x61fba
+            clinical_capacity=70
+            config_error_size_site=0xcf218
+            config_error_size_expected="\\xcf\\xf7\\x46\\xf9"
             ;;
         *)
             echo "  ${FUNCNAME[0]}: skipped (unsupported CDX version $CDX_VER)"
@@ -1401,19 +1416,36 @@ custom_patch_menu_hooks() {
     hook_configuration=$(elf_symbol_addr "$elf" custom_menu_hook_configuration)
     registry_addr=$(elf_symbol_addr "$elf" custom_menu_registry_addr)
     visibility_handler=$(elf_symbol_addr "$elf" custom_menu_apply_mode_visibility)
+    error_size_hook=$(elf_symbol_addr "$elf" custom_settings_error_file_size)
+    group_index_addr=$(elf_symbol_addr "$elf" custom_settings_group_index)
+
+    group_base=$(globals_offset 16) || die "globals[16] not found"
+    group_rec=$(find_var_group CSG) || die "custom_patch_settings: CSG variable group not found"
+    group_index=$(( (group_rec - group_base) / 0x10 ))
 
     write_u32 $(( registry_addr - FLASH_BASE )) "$registry_flash" || die failed
+    write_u8 $(( group_index_addr - FLASH_BASE )) "$group_index" || die failed
 
     custom_patch_clinical_menu_capacity "$clinical_capacity_site" "$clinical_capacity"
-    custom_patch_menu_hook_site "$therapy_site" "\\x02\\xf0\\x3a\\xfd" "$hook_therapy" therapy
-    custom_patch_menu_hook_site "$comfort_site" "\\x02\\xf0\\x0b\\xfc" "$hook_comfort" comfort
-    custom_patch_menu_hook_site "$accessories_site" "\\x02\\xf0\\xc5\\xfb" "$hook_accessories" accessories
-    custom_patch_menu_hook_site "$options_site" "\\x02\\xf0\\x9c\\xfb" "$hook_options" options
-    custom_patch_menu_hook_site "$configuration_site" "\\x02\\xf0\\xdb\\xfa" "$hook_configuration" configuration
+
+    # Replace the final stock append in each clinical menu section. Each payload
+    # hook appends that displaced item first, then its registered custom entries.
+    patch_thumb_bl_checked "$therapy_site" "\\x02\\xf0\\x3a\\xfd" "$hook_therapy" "therapy menu append"
+    patch_thumb_bl_checked "$comfort_site" "\\x02\\xf0\\x0b\\xfc" "$hook_comfort" "comfort menu append"
+    patch_thumb_bl_checked "$accessories_site" "\\x02\\xf0\\xc5\\xfb" "$hook_accessories" "accessories menu append"
+    patch_thumb_bl_checked "$options_site" "\\x02\\xf0\\x9c\\xfb" "$hook_options" "options menu append"
+    patch_thumb_bl_checked "$configuration_site" "\\x02\\xf0\\xdb\\xfa" "$hook_configuration" "configuration menu append"
+
+    # Replace the size query reached after config validation fails. The payload
+    # reports CSG as empty, suppressing the fault before stock code rewrites it.
+    patch_thumb_bl_checked "$config_error_size_site" "$config_error_size_expected" \
+        "$error_size_hook" "CSG recovery"
     mop_callback_register_handler "$visibility_handler" custom_menu_visibility
 
     printf "  custom menu hooks: %s (%dB) at 0x%08X\n" \
         "$bin" "$PAYLOAD_SIZE" "$PAYLOAD_FLASH"
+    printf "  CSG recovery: group index %d, invalid files reset without system fault\n" \
+        "$group_index"
 }
 
 

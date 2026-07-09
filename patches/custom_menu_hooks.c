@@ -26,8 +26,10 @@ extern void variable_lookup_handler(void *ctx, int var_id, int arg);
 extern void variable_set_visible_from_handler(void *ctx, int visible);
 extern void variable_handler_release(void *ctx);
 extern int variable_get_by_id(int var_id);
+extern unsigned file_get_size(void *file);
 
 extern const u32 custom_menu_registry_addr;
+extern const u8 custom_settings_group_index;
 
 static const custom_menu_entry_t *custom_menu_registry(void)
 {
@@ -109,4 +111,18 @@ void custom_menu_apply_mode_visibility(void)
 			visible = (entry->mode_mask & (1u << (unsigned)mode)) != 0;
 		custom_menu_set_visible(entry->var_id, visible);
 	}
+}
+
+/* This replaces only the loader's second size query, reached after validation
+ * has already failed. Report CSG as empty so stock code skips the configuration
+ * fault, then continues through its existing truncate-and-rewrite path.
+ */
+unsigned custom_settings_error_file_size(void *file)
+{
+	unsigned size = file_get_size(file);
+	const u8 *config = (const u8 *)file - 0x2c;
+
+	if (config[0x25] == custom_settings_group_index)
+		return 0;
+	return size;
 }
