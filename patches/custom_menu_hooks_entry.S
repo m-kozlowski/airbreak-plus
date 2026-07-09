@@ -53,12 +53,3 @@ custom_menu_hook_configuration:
 .type custom_menu_registry_addr, %object
 custom_menu_registry_addr:
 	.word 0xffffffff
-
-/* Original callback_table[MOP.callback_id] Thumb pointer, saved by patcher
- * before the table entry is replaced by custom_menu_mop_callback_hook.
- */
-.balign 4
-.global custom_menu_original_mop_callback
-.type custom_menu_original_mop_callback, %object
-custom_menu_original_mop_callback:
-	.word 0xffffffff

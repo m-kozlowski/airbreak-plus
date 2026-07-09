@@ -4,6 +4,8 @@
 SRC=patches
 BUILD=build
 
+MOP_CALLBACK_DISPATCHER_VERSIONS := 0401 0306 0305 0302 0402
+MOP_CALLBACK_DISPATCHER_BINS = $(foreach v,$(MOP_CALLBACK_DISPATCHER_VERSIONS),$(BUILD)/mop_callback_dispatcher_$(v).bin)
 VID_SPOOF_VERSIONS := 0401 0306 0305 0302 0402
 VID_SPOOF_BINS = $(foreach v,$(VID_SPOOF_VERSIONS),$(BUILD)/vid_spoof_$(v).bin)
 
@@ -30,26 +32,26 @@ $(BUILD):
 	mkdir -p $(BUILD)
 
 # unlocked stock-ish
-$(BUILD)/stm32-patched.bin: patch-airsense $(S10_CODE_BINS) $(VID_SPOOF_BINS)
+$(BUILD)/stm32-patched.bin: patch-airsense $(S10_CODE_BINS) $(MOP_CALLBACK_DISPATCHER_BINS) $(VID_SPOOF_BINS)
 	./patch-airsense stm32.bin $@
 
 # graph overlay injected
-$(BUILD)/stm32-graph.bin: patch-airsense $(S10_CODE_BINS) $(VID_SPOOF_BINS)
+$(BUILD)/stm32-graph.bin: patch-airsense $(S10_CODE_BINS) $(MOP_CALLBACK_DISPATCHER_BINS) $(VID_SPOOF_BINS)
 	PATCH_CODE=1 ./patch-airsense stm32.bin $@
 
 # Custom ASV algorithm in VAuto slot + ASV backup-rate suppression + squarewave mode
-$(BUILD)/stm32-asv-plus.bin: patch-airsense $(S10_CODE_BINS) $(VID_SPOOF_BINS)
+$(BUILD)/stm32-asv-plus.bin: patch-airsense $(S10_CODE_BINS) $(MOP_CALLBACK_DISPATCHER_BINS) $(VID_SPOOF_BINS)
 	PATCH_CODE=1 PATCH_ASV_TASK_WRAPPER=1 PATCH_VAUTO_WRAPPER=1 PATCH_S=1 ./patch-airsense stm32.bin $@
 
 # Custom ASV in VAuto slot + backup-rate suppression, no squarewave
-$(BUILD)/stm32-asv-plus_no-squarewave.bin: patch-airsense $(S10_CODE_BINS) $(VID_SPOOF_BINS)
+$(BUILD)/stm32-asv-plus_no-squarewave.bin: patch-airsense $(S10_CODE_BINS) $(MOP_CALLBACK_DISPATCHER_BINS) $(VID_SPOOF_BINS)
 	PATCH_CODE=1 PATCH_ASV_TASK_WRAPPER=1 PATCH_VAUTO_WRAPPER=1 ./patch-airsense stm32.bin $@
 
 # Custom ASV in VAuto slot + squarewave, stock ASV backup-rate preserved
-$(BUILD)/stm32-asv-plus_with-backup.bin: patch-airsense $(S10_CODE_BINS) $(VID_SPOOF_BINS)
+$(BUILD)/stm32-asv-plus_with-backup.bin: patch-airsense $(S10_CODE_BINS) $(MOP_CALLBACK_DISPATCHER_BINS) $(VID_SPOOF_BINS)
 	PATCH_CODE=1 PATCH_VAUTO_WRAPPER=1 PATCH_S=1 ./patch-airsense stm32.bin $@
 
-binaries: $(S10_CODE_BINS) $(VID_SPOOF_BINS)
+binaries: $(S10_CODE_BINS) $(MOP_CALLBACK_DISPATCHER_BINS) $(VID_SPOOF_BINS)
 
 
 # There are decent distances between the different patches, 
@@ -61,7 +63,8 @@ binaries: $(S10_CODE_BINS) $(VID_SPOOF_BINS)
 # Binaries are built per-version: common_code_0401.bin, graph_0402.bin, etc.
 #
 # Code cave layout
-#   0x80fcfa0  vid_spoof                (  96 B)
+#   0x80fcf98  mop_callback_dispatcher  (  44 B)
+#   0x80fcfc4  vid_spoof                (  60 B)
 #   0x80fd000  graph                    (1024 B)
 #   0x80fd400  squarewave               ( 768 B)
 #   0x80fd700  asv_task_wrapper         ( 256 B)
@@ -78,7 +81,11 @@ common_code-offset := 0x80fd800
 backlight_adapt-offset := 0x80fec00
 wrapper_limit_max_pdiff-offset := 0x80ff000
 custom_menu_hooks-offset := 0x80ffc00
-vid_spoof-offset := 0x80fcfa0
+mop_callback_dispatcher-offset := 0x80fcf98
+vid_spoof-offset := 0x80fcfc4
+
+$(BUILD)/s10_%_stubs.o: $(SRC)/s10_%_stubs.S | $(BUILD)
+	$(AS) $(ASFLAGS) -c -o $@ $<
 
 define S10_CODE_VERSION_template
 $(BUILD)/%_$(1).o: $(SRC)/%.c $(SRC)/s10_vars.h $(SRC)/s10_vars_$(1).h | $(BUILD)
@@ -86,9 +93,6 @@ $(BUILD)/%_$(1).o: $(SRC)/%.c $(SRC)/s10_vars.h $(SRC)/s10_vars_$(1).h | $(BUILD
 
 $(BUILD)/%_$(1).o: $(SRC)/%.S $(SRC)/s10_vars.h $(SRC)/s10_vars_$(1).h | $(BUILD)
 	$$(AS) $$(ASFLAGS) -DCDX_VER_$(1) -c -o $$@ $$<
-
-$(BUILD)/s10_$(1)_stubs.o: $(SRC)/s10_$(1)_stubs.S | $(BUILD)
-	$$(AS) $$(ASFLAGS) -c -o $$@ $$<
 
 $(BUILD)/common_code_$(1).elf: $(BUILD)/common_code_$(1).o $(BUILD)/s10_$(1)_stubs.o | $(BUILD)
 	$$(LD) --nostdlib --no-dynamic-linker \
@@ -287,10 +291,32 @@ s10_lcd_ili9325: $(foreach v,$(S10_LCD_VERSIONS),$(BUILD)/s10_lcd_ili9325_$(v).b
 
 
 #
-# VID Spoof - MOP-based Variant ID override
+# MOP callback dispatcher
 #
 
-VID_SPOOF_OFFSET := 0x80fcfa0
+define mop_callback_dispatcher_build_template
+$(BUILD)/mop_callback_dispatcher_$(1).o: $(SRC)/mop_callback_dispatcher.S | $(BUILD)
+	$$(AS) $$(ASFLAGS) -c -o $$@ $$<
+
+$(BUILD)/mop_callback_dispatcher_$(1).elf: $(BUILD)/mop_callback_dispatcher_$(1).o | $(BUILD)
+	$$(LD) --nostdlib --no-dynamic-linker \
+		--Ttext $(mop_callback_dispatcher-offset) --entry start --sort-section=name \
+		-o $$@ $$^
+
+$(BUILD)/mop_callback_dispatcher_$(1).bin: $(BUILD)/mop_callback_dispatcher_$(1).elf
+	$$(OBJCOPY) -Obinary $$< $$@
+endef
+
+$(foreach v,$(MOP_CALLBACK_DISPATCHER_VERSIONS),$(eval $(call mop_callback_dispatcher_build_template,$(v))))
+
+mop_callback_dispatcher: $(MOP_CALLBACK_DISPATCHER_BINS)
+	@echo "MOP callback dispatcher patches built:"
+	@$(foreach v,$(MOP_CALLBACK_DISPATCHER_VERSIONS),echo "  $(BUILD)/mop_callback_dispatcher_$(v).bin";)
+
+
+#
+# VID Spoof - MOP-based Variant ID override handler
+#
 
 define vid_spoof_build_template
 $(BUILD)/vid_spoof_$(1).o: $(SRC)/vid_spoof.c $(SRC)/s10_vars.h $(SRC)/s10_vars_$(1).h | $(BUILD)
@@ -300,7 +326,7 @@ $(BUILD)/vid_spoof_$(1).o: $(SRC)/vid_spoof.c $(SRC)/s10_vars.h $(SRC)/s10_vars_
 
 $(BUILD)/vid_spoof_$(1).elf: $(BUILD)/vid_spoof_$(1).o $(BUILD)/s10_$(1)_stubs.o | $(BUILD)
 	$$(LD) --nostdlib --no-dynamic-linker \
-		--Ttext $(VID_SPOOF_OFFSET) --entry start --sort-section=name \
+		--Ttext $(vid_spoof-offset) --entry vid_spoof_apply_current_mop --sort-section=name \
 		-o $$@ $$^
 
 $(BUILD)/vid_spoof_$(1).bin: $(BUILD)/vid_spoof_$(1).elf

@@ -28,7 +28,6 @@ extern void variable_handler_release(void *ctx);
 extern int variable_get_by_id(int var_id);
 
 extern const u32 custom_menu_registry_addr;
-extern const u32 custom_menu_original_mop_callback;
 
 static const custom_menu_entry_t *custom_menu_registry(void)
 {
@@ -110,16 +109,4 @@ void custom_menu_apply_mode_visibility(void)
 			visible = (entry->mode_mask & (1u << (unsigned)mode)) != 0;
 		custom_menu_set_visible(entry->var_id, visible);
 	}
-}
-
-/* Replaces callback_table[MOP.callback_id]. Stock code first applies globals[24]
- * visibility; this wrapper then applies generated custom registry visibility
- * using the same handler method.
- */
-void custom_menu_mop_callback_hook(void)
-{
-	void (*original)(void) = (void (*)(void))custom_menu_original_mop_callback;
-	if (original && (u32)original != 0xffffffffu)
-		original();
-	custom_menu_apply_mode_visibility();
 }

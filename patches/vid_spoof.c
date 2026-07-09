@@ -1,14 +1,12 @@
 /*
  * vid_spoof.c - MOP-based Variant ID override
  *
- * Hooks the g[8] persistent writeback (vtable+0xE4) to update VID
- * whenever MOP (therapy mode) is committed.
+ * MOP callback dispatcher handler that updates VID whenever MOP changes.
  *
  */
 
 #include "s10_vars.h"
 
-extern int vid_spoof_original_writeback(void *obj);
 extern int variable_get_by_id(int var_id);
 extern void variable_set_by_id(int var_id, int raw_value);
 
@@ -27,19 +25,11 @@ static const unsigned char vid_lut[12] = {
     0x19    // AutoSet For Her
 };
 
-int __attribute__((section(".text.0.main")))
-start(void *obj)
+void vid_spoof_apply_current_mop(void)
 {
-    int ret = vid_spoof_original_writeback(obj);
-
-    unsigned char idx = ((unsigned char *)obj)[0x14];
-    if (idx == 0) {
-        unsigned int mop = (unsigned int)variable_get_by_id(VAR_ID_MOP);
-        if (mop <= 11) {
-            unsigned int v = vid_lut[mop];
-            variable_set_by_id(VAR_ID_VID, v);
-        }
+    unsigned int mop = (unsigned int)variable_get_by_id(VAR_ID_MOP);
+    if (mop <= 11) {
+        unsigned int v = vid_lut[mop];
+        variable_set_by_id(VAR_ID_VID, v);
     }
-
-    return ret;
 }

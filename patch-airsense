@@ -734,6 +734,78 @@ patch_crc() {
 }
 
 
+# Return file offset of firmware callback_table[] for the active CDX.
+mop_callback_table_offset() {
+    case "$CDX_VER" in
+        SX567-0302) echo 0x757e0 ;;
+        SX567-0305) echo 0x75f4c ;;
+        SX567-0306|SX567-0401|SX567-0402) echo 0x75f48 ;;
+        *) return 1 ;;
+    esac
+}
+
+
+# Register one feature handler to run after the stock MOP callback.
+# args: handler flash address, display name
+mop_callback_register_handler() {
+    local handler=$(( $1 | 1 )) name=$2
+    if [[ -n "${MOP_CALLBACK_HANDLER_SEEN[$handler]+x}" ]]; then
+        return
+    fi
+    MOP_CALLBACK_HANDLER_SEEN[$handler]=1
+    MOP_CALLBACK_HANDLER_ADDRS+=("$handler")
+    printf "  MOP callback handler: %s at 0x%08X\n" "$name" "$handler"
+}
+
+
+# Install the shared callback_table[MOP.callback_id] dispatcher if any patch
+# registered a MOP-change handler. The dispatcher first calls the stock MOP
+# callback, then each registered feature handler, then stops at 0xffffffff.
+patch_mop_callback_dispatcher() {
+    (( ${#MOP_CALLBACK_HANDLER_ADDRS[@]} > 0 )) || return
+    (( ${#MOP_CALLBACK_HANDLER_ADDRS[@]} <= 4 )) || \
+        die "mop_callback_dispatcher: too many handlers (${#MOP_CALLBACK_HANDLER_ADDRS[@]})"
+
+    local ver bin elf size start handler_table table_off mop_rec callback_id slot original
+    local i handler
+    ver="${CDX_VER#SX567-}"
+    bin="build/mop_callback_dispatcher_${ver}.bin"
+    elf="build/mop_callback_dispatcher_${ver}.elf"
+    [[ -r "$bin" ]] || die "mop_callback_dispatcher: $bin not found (run make mop_callback_dispatcher)"
+    [[ -r "$elf" ]] || die "mop_callback_dispatcher: $elf not found"
+
+    size=$(stat -c %s "$bin")
+    (( size <= MOP_CALLBACK_DISPATCHER_BUDGET )) || \
+        die "mop_callback_dispatcher: $bin is ${size}B, exceeds ${MOP_CALLBACK_DISPATCHER_BUDGET}B budget"
+    check_ff "$MOP_CALLBACK_DISPATCHER_OFF" "$MOP_CALLBACK_DISPATCHER_BUDGET" || \
+        die "mop_callback_dispatcher: payload area 0x$(printf "%X" "$MOP_CALLBACK_DISPATCHER_OFF") is not empty"
+
+    start=$(elf_symbol_addr "$elf" start)
+    handler_table=$(elf_symbol_addr "$elf" mop_callback_handler_table)
+    table_off=$(mop_callback_table_offset) || \
+        die "mop_callback_dispatcher: unsupported CDX version $CDX_VER"
+    mop_rec=$(find_var MOP)
+    callback_id=$(read_u8 $(( mop_rec + G8_CALLBACK )))
+    slot=$(( table_off + callback_id * 4 ))
+    original=$(read_u32 "$slot")
+
+    patch_direct "$bin" "$MOP_CALLBACK_DISPATCHER_OFF"
+
+    write_u32 $(( handler_table - FLASH_BASE )) "$original" || die failed
+    for (( i = 0; i < ${#MOP_CALLBACK_HANDLER_ADDRS[@]}; i++ )); do
+        handler=${MOP_CALLBACK_HANDLER_ADDRS[$i]}
+        write_u32 $(( handler_table - FLASH_BASE + (i + 1) * 4 )) "$handler" || die failed
+    done
+    write_u32 $(( handler_table - FLASH_BASE + (${#MOP_CALLBACK_HANDLER_ADDRS[@]} + 1) * 4 )) 0xffffffff || die failed
+    write_u32 "$slot" "$(( start | 1 ))" || die failed
+
+    printf "  MOP callback dispatcher: %s (%dB) at 0x%08X\n" \
+        "$bin" "$size" "$MOP_CALLBACK_DISPATCHER_FLASH"
+    printf "  MOP callback[%d]: 0x%08X -> 0x%08X\n" \
+        "$callback_id" "$original" "$(( start | 1 ))"
+}
+
+
 
 # -----------------------------------------------------------------------------
 # Generic custom-settings framework
@@ -1223,10 +1295,9 @@ custom_patch_clinical_menu_capacity() {
 custom_patch_menu_hooks() {
     local ver bin elf size registry_flash
     local therapy_site comfort_site accessories_site options_site configuration_site
-    local callback_table clinical_capacity_site clinical_capacity
+    local clinical_capacity_site clinical_capacity
     local hook_therapy hook_comfort hook_accessories hook_options hook_configuration
-    local hook_mop_callback registry_addr original_cb_addr
-    local mop_rec mop_callback_id mop_callback_slot original_mop_callback hook_mop_callback_thumb
+    local registry_addr visibility_handler
     ver="${CDX_VER#SX567-}"
 
     case "$CDX_VER" in
@@ -1236,7 +1307,6 @@ custom_patch_menu_hooks() {
             accessories_site=0x626fe
             options_site=0x62750
             configuration_site=0x628d2
-            callback_table=0x75f48
             clinical_capacity_site=0x61fba
             clinical_capacity=70
             ;;
@@ -1271,17 +1341,10 @@ custom_patch_menu_hooks() {
     hook_accessories=$(elf_symbol_addr "$elf" custom_menu_hook_accessories)
     hook_options=$(elf_symbol_addr "$elf" custom_menu_hook_options)
     hook_configuration=$(elf_symbol_addr "$elf" custom_menu_hook_configuration)
-    hook_mop_callback=$(elf_symbol_addr "$elf" custom_menu_mop_callback_hook)
     registry_addr=$(elf_symbol_addr "$elf" custom_menu_registry_addr)
-    original_cb_addr=$(elf_symbol_addr "$elf" custom_menu_original_mop_callback)
-    mop_rec=$(find_var MOP)
-    mop_callback_id=$(read_u8 $(( mop_rec + G8_CALLBACK )))
-    mop_callback_slot=$(( callback_table + mop_callback_id * 4 ))
-    original_mop_callback=$(read_u32 "$mop_callback_slot")
-    hook_mop_callback_thumb=$(( hook_mop_callback | 1 ))
+    visibility_handler=$(elf_symbol_addr "$elf" custom_menu_apply_mode_visibility)
 
     write_u32 $(( registry_addr - FLASH_BASE )) "$registry_flash" || die failed
-    write_u32 $(( original_cb_addr - FLASH_BASE )) "$original_mop_callback" || die failed
 
     custom_patch_clinical_menu_capacity "$clinical_capacity_site" "$clinical_capacity"
     custom_patch_menu_hook_site "$therapy_site" "\\x02\\xf0\\x3a\\xfd" "$hook_therapy" therapy
@@ -1289,11 +1352,9 @@ custom_patch_menu_hooks() {
     custom_patch_menu_hook_site "$accessories_site" "\\x02\\xf0\\xc5\\xfb" "$hook_accessories" accessories
     custom_patch_menu_hook_site "$options_site" "\\x02\\xf0\\x9c\\xfb" "$hook_options" options
     custom_patch_menu_hook_site "$configuration_site" "\\x02\\xf0\\xdb\\xfa" "$hook_configuration" configuration
-    write_u32 "$mop_callback_slot" "$hook_mop_callback_thumb" || die failed
+    mop_callback_register_handler "$visibility_handler" custom_menu_visibility
 
     printf "  custom menu hooks: %s (%dB) at 0x%08X\n" "$bin" "$size" "$CUSTOM_MENU_HOOKS_FLASH"
-    printf "  MOP callback[%d]: 0x%08X -> 0x%08X\n" \
-        "$mop_callback_id" "$original_mop_callback" "$hook_mop_callback_thumb"
 }
 
 
@@ -1950,34 +2011,26 @@ custom_palette() {
 
 
 patch_vid_spoof() {
-
-    # Must match Makefile VID_SPOOF_OFFSET
-    local VID_SPOOF_OFFSET=0xFCFA0
-
     local ver=${CDX_VER#SX567-}
-    local BIN=build/vid_spoof_${ver}.bin
-    if [ ! -r "$BIN" ]; then
-        echo "  ${FUNCNAME[0]}: $BIN not found (unsupported version or run make vid_spoof)"
+    local bin=build/vid_spoof_${ver}.bin
+    local elf=build/vid_spoof_${ver}.elf
+    local size handler
+    if [ ! -r "$bin" ]; then
+        echo "  ${FUNCNAME[0]}: $bin not found (unsupported version or run make vid_spoof)"
         return 1
     fi
-    local VTABLE_ENTRY EXPECTED_PTR
-    case "$ver" in
-        0401) VTABLE_ENTRY=0xF14CC; EXPECTED_PTR='\x1d\xa5\x06\x08' ;;
-        0306) VTABLE_ENTRY=0xF126C; EXPECTED_PTR='\x1d\xa5\x06\x08' ;;
-        0305) VTABLE_ENTRY=0xF1350; EXPECTED_PTR='\x19\xa5\x06\x08' ;;
-        0302) VTABLE_ENTRY=0xF0B54; EXPECTED_PTR='\xf5\x9d\x06\x08' ;;
-        0402) VTABLE_ENTRY=0xF1744; EXPECTED_PTR='\x1d\xa5\x06\x08' ;;
-        *) echo "  ${FUNCNAME[0]}: skipped (unsupported CDX version $CDX_VER)"; return ;;
-    esac
-    if ! printf '%b' "$EXPECTED_PTR" | check_patch $VTABLE_ENTRY; then
-        echo "  ${FUNCNAME[0]}: unexpected bytes at vtable entry, already patched?"
-        return 1
-    fi
-    echo "Patching VID spoof..."
-    local HOOK_FLASH=$(( VID_SPOOF_OFFSET + 0x08000000 ))
-    patch_pointer "$BIN" $VID_SPOOF_OFFSET $VTABLE_ENTRY "$(le_thumb_ptr $HOOK_FLASH)"
-    printf "  payload: %s at 0x%X\n" "$BIN" $VID_SPOOF_OFFSET
-    printf "  vtable:  0x%X -> 0x%08X\n" $VTABLE_ENTRY $(( HOOK_FLASH | 1 ))
+    [[ -r "$elf" ]] || die "${FUNCNAME[0]}: $elf not found"
+    size=$(stat -c %s "$bin")
+    (( size <= VID_SPOOF_BUDGET )) || \
+        die "${FUNCNAME[0]}: $bin is ${size}B, exceeds ${VID_SPOOF_BUDGET}B budget"
+    check_ff "$VID_SPOOF_OFF" "$VID_SPOOF_BUDGET" || \
+        die "${FUNCNAME[0]}: payload area 0x$(printf "%X" "$VID_SPOOF_OFF") is not empty"
+
+    echo "Patching VID spoof handler"
+    patch_direct "$bin" "$VID_SPOOF_OFF"
+    handler=$(elf_symbol_addr "$elf" vid_spoof_apply_current_mop)
+    mop_callback_register_handler "$handler" vid_spoof
+    printf "  vid_spoof: %s (%dB) at 0x%08X\n" "$bin" "$size" "$VID_SPOOF_FLASH"
 }
 
 
@@ -2198,6 +2251,12 @@ CUSTOM_SETTINGS_REGISTRY_SIZE=
 CUSTOM_MENU_HOOKS_OFF=0xFFC00
 CUSTOM_MENU_HOOKS_BUDGET=0x3FE
 CUSTOM_MENU_HOOKS_FLASH=$(( FLASH_BASE + CUSTOM_MENU_HOOKS_OFF ))
+MOP_CALLBACK_DISPATCHER_OFF=0xFCF98
+MOP_CALLBACK_DISPATCHER_BUDGET=0x2C
+MOP_CALLBACK_DISPATCHER_FLASH=$(( FLASH_BASE + MOP_CALLBACK_DISPATCHER_OFF ))
+VID_SPOOF_OFF=0xFCFC4
+VID_SPOOF_BUDGET=0x3C
+VID_SPOOF_FLASH=$(( FLASH_BASE + VID_SPOOF_OFF ))
 declare -a CUSTOM_G8_POOL
 declare -a CUSTOM_G4_POOL
 declare -A CUSTOM_G8_RECLAIMED
@@ -2210,6 +2269,8 @@ declare -A CUSTOM_RECLAIMED_STRING_SEEN
 declare -a CUSTOM_MENU_ENTRIES
 declare -A CUSTOM_MENU_REGISTERED
 declare -a CUSTOM_SETTINGS_FEATURES
+declare -a MOP_CALLBACK_HANDLER_ADDRS
+declare -A MOP_CALLBACK_HANDLER_SEEN
 CUSTOM_MENU_FLAG_G4_NUMERIC=1
 declare -A CUSTOM_MENU_SECTIONS=(
     [therapy]=0
@@ -2256,6 +2317,8 @@ if [[ $PATCH_S10_LCD == 1 ]] ; then
 fi
 
 patch_backlight_adapt
+
+patch_mop_callback_dispatcher
 
 patch_crc # ALWAYS keep it as last patch applied
 

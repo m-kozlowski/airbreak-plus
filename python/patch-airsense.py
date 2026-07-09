@@ -661,6 +661,17 @@ class ASFirmwarePatches(object):
 
     CUSTOM_MENU_HOOKS_OFF = 0xFFC00
     CUSTOM_MENU_HOOKS_BUDGET = 0x3FE
+    MOP_CALLBACK_DISPATCHER_OFF = 0xFCF98
+    MOP_CALLBACK_DISPATCHER_BUDGET = 0x2C
+    VID_SPOOF_OFF = 0xFCFC4
+    VID_SPOOF_BUDGET = 0x3C
+    MOP_CALLBACK_TABLES = {
+        'SX567-0302': 0x757e0,
+        'SX567-0305': 0x75f4c,
+        'SX567-0306': 0x75f48,
+        'SX567-0401': 0x75f48,
+        'SX567-0402': 0x75f48,
+    }
     CUSTOM_MENU_FLAG_G4_NUMERIC = 1
     CUSTOM_MENU_SECTIONS = {
         'therapy': 0,
@@ -688,6 +699,8 @@ class ASFirmwarePatches(object):
         self.asf = asf
         self.squarewave_applied = False
         self.wrapper_limit_max_pdiff_applied = False
+        self.mop_callback_handlers = []
+        self.mop_callback_handler_seen = set()
         self.custom_patch_settings_init()
 
     def custom_patch_settings_init(self):
@@ -922,6 +935,67 @@ class ASFirmwarePatches(object):
             off += 8
         self.asf.fill_range(off, 8, 0xff)
 
+    def mop_callback_register_handler(self, handler, name):
+        """Register one feature handler to run after the stock MOP callback."""
+        handler = int(handler) | 1
+        if handler in self.mop_callback_handler_seen:
+            return
+        self.mop_callback_handler_seen.add(handler)
+        self.mop_callback_handlers.append(handler)
+        print("  MOP callback handler: %s at 0x%08X" % (name, handler))
+
+    def patch_mop_callback_dispatcher(self):
+        """Install callback_table[MOP.callback_id] dispatcher if handlers exist."""
+        if not self.mop_callback_handlers:
+            return
+        if len(self.mop_callback_handlers) > 4:
+            raise ValueError("mop_callback_dispatcher: too many handlers (%d)" %
+                             len(self.mop_callback_handlers))
+
+        ver = self.asf.cdx_ver.replace('SX567-', '')
+        bin_path = self._versioned_artifact_path('mop_callback_dispatcher', 'bin', ver)
+        elf_path = self._versioned_artifact_path('mop_callback_dispatcher', 'elf', ver)
+        if not os.path.exists(bin_path):
+            raise ValueError("mop_callback_dispatcher: build/mop_callback_dispatcher_%s.bin not found (run make)" % ver)
+        if not os.path.exists(elf_path):
+            raise ValueError("mop_callback_dispatcher: build/mop_callback_dispatcher_%s.elf not found" % ver)
+
+        with open(bin_path, 'rb') as f:
+            data = f.read()
+        if len(data) > self.MOP_CALLBACK_DISPATCHER_BUDGET:
+            raise ValueError(
+                "mop_callback_dispatcher: %s is %dB, exceeds %dB budget" %
+                (bin_path, len(data), self.MOP_CALLBACK_DISPATCHER_BUDGET))
+
+        off = self.MOP_CALLBACK_DISPATCHER_OFF
+        budget = self.asf.fw[off:off + self.MOP_CALLBACK_DISPATCHER_BUDGET]
+        if budget != [0xff] * self.MOP_CALLBACK_DISPATCHER_BUDGET:
+            raise ValueError("mop_callback_dispatcher: payload area 0x%X is not empty" % off)
+
+        start = self._elf_symbol_addr(elf_path, 'start')
+        handler_table = self._elf_symbol_addr(elf_path, 'mop_callback_handler_table')
+        callback_table = self.MOP_CALLBACK_TABLES.get(self.asf.cdx_ver)
+        if callback_table is None:
+            raise ValueError("mop_callback_dispatcher: unsupported CDX version %s" % self.asf.cdx_ver)
+
+        mop_rec = self.asf.find_var('MOP')
+        callback_id = self.asf.read_u8(mop_rec + self.asf.G8_CALLBACK)
+        slot = callback_table + callback_id * 4
+        original = self.asf.read_u32(slot)
+
+        self.asf.patch(data, off, checkempty=True)
+        table_off = handler_table - self.asf.FLASH_BASE
+        self.asf.write_u32(table_off, original)
+        for i, handler in enumerate(self.mop_callback_handlers):
+            self.asf.write_u32(table_off + (i + 1) * 4, handler)
+        self.asf.write_u32(table_off + (len(self.mop_callback_handlers) + 1) * 4, 0xffffffff)
+        self.asf.write_u32(slot, start | 1)
+
+        print("  MOP callback dispatcher: build/mop_callback_dispatcher_%s.bin (%dB) at 0x%08X" %
+              (ver, len(data), self.asf.FLASH_BASE + off))
+        print("  MOP callback[%d]: 0x%08X -> 0x%08X" %
+              (callback_id, original, start | 1))
+
     def _versioned_artifact_path(self, name, ext, ver):
         return os.path.join(os.path.dirname(os.path.abspath(__file__)),
                             '..', 'build', '%s_%s.%s' % (name, ver, ext))
@@ -953,7 +1027,6 @@ class ASFirmwarePatches(object):
                 'accessories': 0x626fe,
                 'options': 0x62750,
                 'configuration': 0x628d2,
-                'callback_table': 0x75f48,
                 'clinical_capacity_site': 0x61fba,
                 'clinical_capacity': 70,
             },
@@ -963,7 +1036,6 @@ class ASFirmwarePatches(object):
                 'accessories': 0x626fe,
                 'options': 0x62750,
                 'configuration': 0x628d2,
-                'callback_table': 0x75f48,
                 'clinical_capacity_site': 0x61fba,
                 'clinical_capacity': 70,
             },
@@ -1002,18 +1074,10 @@ class ASFirmwarePatches(object):
         hook_accessories = self._elf_symbol_addr(elf_path, 'custom_menu_hook_accessories')
         hook_options = self._elf_symbol_addr(elf_path, 'custom_menu_hook_options')
         hook_configuration = self._elf_symbol_addr(elf_path, 'custom_menu_hook_configuration')
-        hook_mop_callback = self._elf_symbol_addr(elf_path, 'custom_menu_mop_callback_hook')
         registry_addr = self._elf_symbol_addr(elf_path, 'custom_menu_registry_addr')
-        original_cb_addr = self._elf_symbol_addr(elf_path, 'custom_menu_original_mop_callback')
-
-        mop_rec = self.asf.find_var('MOP')
-        mop_callback_id = self.asf.read_u8(mop_rec + self.asf.G8_CALLBACK)
-        mop_callback_slot = sites['callback_table'] + mop_callback_id * 4
-        original_mop_callback = self.asf.read_u32(mop_callback_slot)
-        hook_mop_callback_thumb = hook_mop_callback | 1
+        visibility_handler = self._elf_symbol_addr(elf_path, 'custom_menu_apply_mode_visibility')
 
         self.asf.write_u32(registry_addr - self.asf.FLASH_BASE, registry_flash)
-        self.asf.write_u32(original_cb_addr - self.asf.FLASH_BASE, original_mop_callback)
 
         self._patch_clinical_menu_capacity(sites['clinical_capacity_site'], sites['clinical_capacity'])
         self._patch_menu_hook_site(sites['therapy'], b'\x02\xf0\x3a\xfd', hook_therapy, 'therapy')
@@ -1022,12 +1086,10 @@ class ASFirmwarePatches(object):
         self._patch_menu_hook_site(sites['options'], b'\x02\xf0\x9c\xfb', hook_options, 'options')
         self._patch_menu_hook_site(
             sites['configuration'], b'\x02\xf0\xdb\xfa', hook_configuration, 'configuration')
-        self.asf.write_u32(mop_callback_slot, hook_mop_callback_thumb)
+        self.mop_callback_register_handler(visibility_handler, 'custom_menu_visibility')
 
         print("  custom menu hooks: build/custom_menu_hooks_%s.bin (%dB) at 0x%08X" %
               (ver, len(data), self.asf.FLASH_BASE + self.CUSTOM_MENU_HOOKS_OFF))
-        print("  MOP callback[%d]: 0x%08X -> 0x%08X" %
-              (mop_callback_id, original_mop_callback, hook_mop_callback_thumb))
 
     def custom_patch_settings_myasv(self):
         """Expose reclaimed my_asv settings and pass their var_ids to the wrapper."""
@@ -1692,28 +1754,30 @@ class ASFirmwarePatches(object):
 
 
     def patch_vid_spoof(self):
-        """Hook MOP writeback to dynamically set VID per therapy mode"""
-        VID_SPOOF_OFFSET = 0xFCFA0
-        VTABLE_ENTRIES = {
-            '0402': (0xF1744, b'\x1d\xa5\x06\x08'),
-            '0401': (0xF14CC, b'\x1d\xa5\x06\x08'),
-            '0306': (0xF126C, b'\x1d\xa5\x06\x08'),
-            '0305': (0xF1350, b'\x19\xa5\x06\x08'),
-            '0302': (0xF0B54, b'\xf5\x9d\x06\x08'),
-        }
-        data, ver = self._load_versioned_bin('vid_spoof')
-        if data is None:
+        """Register MOP callback handler to dynamically set VID per therapy mode."""
+        ver = self.asf.cdx_ver.replace('SX567-', '')
+        bin_path = self._versioned_artifact_path('vid_spoof', 'bin', ver)
+        elf_path = self._versioned_artifact_path('vid_spoof', 'elf', ver)
+        if not os.path.exists(bin_path):
+            print("  patch_vid_spoof: build/vid_spoof_%s.bin not found (run make)" % ver)
             return
-        info = VTABLE_ENTRIES.get(ver)
-        if info is None:
-            print("  patch_vid_spoof: skipped (unsupported CDX version %s)" % self.asf.cdx_ver)
-            return
-        vtable_entry, expected_vt = info
-        if bytes(self.asf.fw[vtable_entry:vtable_entry+4]) != expected_vt:
-            print("  patch_vid_spoof: unexpected bytes at vtable entry, already patched?")
-            return
-        self._patch_pointer(data, VID_SPOOF_OFFSET, vtable_entry)
-        print("  %dB payload at 0x%X, vtable 0x%X" % (len(data), VID_SPOOF_OFFSET, vtable_entry))
+        if not os.path.exists(elf_path):
+            raise ValueError("patch_vid_spoof: build/vid_spoof_%s.elf not found" % ver)
+        with open(bin_path, 'rb') as f:
+            data = f.read()
+        if len(data) > self.VID_SPOOF_BUDGET:
+            raise ValueError(
+                "patch_vid_spoof: %s is %dB, exceeds %dB budget" %
+                (bin_path, len(data), self.VID_SPOOF_BUDGET))
+        budget = self.asf.fw[self.VID_SPOOF_OFF:self.VID_SPOOF_OFF + self.VID_SPOOF_BUDGET]
+        if budget != [0xff] * self.VID_SPOOF_BUDGET:
+            raise ValueError("patch_vid_spoof: payload area 0x%X is not empty" % self.VID_SPOOF_OFF)
+
+        self.asf.patch(data, self.VID_SPOOF_OFF, checkempty=True)
+        print("  vid_spoof: build/vid_spoof_%s.bin (%dB) at 0x%08X" %
+              (ver, len(data), self.asf.FLASH_BASE + self.VID_SPOOF_OFF))
+        handler = self._elf_symbol_addr(elf_path, 'vid_spoof_apply_current_mop')
+        self.mop_callback_register_handler(handler, 'vid_spoof')
 
     def custom_palette(self):
         """Patch custom color palette."""
@@ -1823,7 +1887,7 @@ if __name__ == "__main__":
         {'arg':"patch-fw-vauto-wrapper",'desc':"Add VAuto/ASV pressure shaping wrapper.",               'default':False, 'function':'patch_wrapper_limit_max_pdiff'},
         {'arg':"patch-custom-settings", 'desc':"Expose settings for injected custom patch features.",
                                                                                                         'default':True,  'function':'custom_patch_settings'},
-        {'arg':"patch-fw-vidspoof",     'desc':"Hook MOP write to dynamically set VID per therapy mode.", 'default':True, 'function':'patch_vid_spoof'},
+        {'arg':"patch-fw-vidspoof",     'desc':"Register MOP callback handler to dynamically set VID per therapy mode.", 'default':True, 'function':'patch_vid_spoof'},
         {'arg':"patch-custom-palette",  'desc':"Patch custom color palette.",
                                                                                                         'default':True,  'function':'custom_palette'},
         {'arg':"patch-fw-lcd",          'desc':"Universal ILI9325/ILI9328 LCD driver.",                 'default':False, 'function':'patch_lcd_ili9325'},
@@ -1866,6 +1930,7 @@ if __name__ == "__main__":
                 print("PATCH: " + patch['desc'])
                 getattr(patches, patch['function'])()
 
+        patches.patch_mop_callback_dispatcher()
         asf.fix_crcs()
         asf.write_output(args.OUTFILE, args.overwrite)
         patches.print_custom_resource_summary()
