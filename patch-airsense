@@ -266,34 +266,6 @@ patch_direct() {
 }
 
 
-# Include a built binary and patch a pointer to its Thumb entry.
-# args: binary file, payload offset, pointer offset, little-endian Thumb pointer bytes
-patch_pointer() {
-    BIN_FILE=$1
-    ADDR=$2
-    PTR_ADDR=$3
-    PTR_TARGET=$4
-    if [ -r $BIN_FILE ]; then
-        printf "Including $BIN_FILE..."
-        cat $BIN_FILE | patch $ADDR || die " patching failed"
-        printf "$PTR_TARGET" | patch $PTR_ADDR || die " pointer fixup failed"
-        echo " success!"
-    fi
-}
-
-
-# Convert address to a little-endian Thumb pointer string for patch_pointer
-le_thumb_ptr() {
-    local addr=$(printf "%d" "$1")
-    local thumb=$(( addr | 1 ))
-    printf '\\x%02x\\x%02x\\x%02x\\x%02x' \
-        $((thumb & 0xFF)) \
-        $(((thumb >> 8) & 0xFF)) \
-        $(((thumb >> 16) & 0xFF)) \
-        $(((thumb >> 24) & 0xFF))
-}
-
-
 # Return a linked flash symbol address from an ELF.
 # args: elf path, symbol name
 elf_symbol_addr() {
@@ -301,6 +273,67 @@ elf_symbol_addr() {
     addr=$(arm-none-eabi-nm "$elf" 2>/dev/null | awk -v sym="$sym" '$3 == sym { printf "0x%s", $1; found=1 } END { if (!found) exit 1 }')
     [[ -n "$addr" ]] || die "elf_symbol_addr: symbol $sym not found in $elf"
     printf "%s" "$addr"
+}
+
+
+# Load the generated payload address/size map for the active CDX.
+payload_layout_load() {
+    local ver=${CDX_VER#SX567-} file name flash size end
+    [[ $PAYLOAD_LAYOUT_VERSION == "$ver" ]] && return
+
+    file="build/payload_layout_${ver}.tsv"
+    [[ -r "$file" ]] || die "payload layout not found: $file (run make binaries)"
+
+    PAYLOAD_LAYOUT_FLASH=()
+    PAYLOAD_LAYOUT_SIZE=()
+    while read -r name flash size end; do
+        [[ -z "$name" || $name == \#* ]] && continue
+        [[ -n "$flash" && -n "$size" && -n "$end" ]] || \
+            die "payload layout: malformed row in $file"
+        [[ -z "${PAYLOAD_LAYOUT_FLASH[$name]+x}" ]] || \
+            die "payload layout: duplicate payload $name"
+
+        flash=$(( flash ))
+        size=$(( size ))
+        end=$(( end ))
+        (( flash % 4 == 0 && size > 0 && flash + size == end )) || \
+            die "payload layout: invalid range for $name"
+        (( flash >= FLASH_BASE && end <= FLASH_BASE + $(stat -c %s "$OUT") )) || \
+            die "payload layout: $name lies outside firmware"
+
+        PAYLOAD_LAYOUT_FLASH[$name]=$flash
+        PAYLOAD_LAYOUT_SIZE[$name]=$size
+    done < "$file"
+
+    PAYLOAD_LAYOUT_VERSION=$ver
+}
+
+
+# Resolve one built payload and verify that final-link size matches the layout.
+# args: payload name, binary path
+payload_resolve() {
+    local name=$1 bin=$2 actual
+    payload_layout_load
+    [[ -n "${PAYLOAD_LAYOUT_FLASH[$name]+x}" ]] || \
+        die "payload layout: $name not allocated for $CDX_VER"
+    [[ -r "$bin" ]] || die "$bin not found (run make binaries)"
+
+    PAYLOAD_FLASH=${PAYLOAD_LAYOUT_FLASH[$name]}
+    PAYLOAD_SIZE=${PAYLOAD_LAYOUT_SIZE[$name]}
+    PAYLOAD_OFF=$(( PAYLOAD_FLASH - FLASH_BASE ))
+    actual=$(stat -c %s "$bin")
+    (( actual == PAYLOAD_SIZE )) || \
+        die "$name: binary size ${actual}B differs from layout ${PAYLOAD_SIZE}B"
+}
+
+
+# Inject one generated-layout payload after confirming its range is erased.
+# args: payload name, binary path
+payload_inject() {
+    payload_resolve "$1" "$2"
+    check_ff "$PAYLOAD_OFF" "$PAYLOAD_SIZE" || \
+        die "$1: payload area 0x$(printf "%X" "$PAYLOAD_OFF") is not empty"
+    patch_direct "$2" "$PAYLOAD_OFF"
 }
 
 
@@ -766,19 +799,13 @@ patch_mop_callback_dispatcher() {
     (( ${#MOP_CALLBACK_HANDLER_ADDRS[@]} <= 4 )) || \
         die "mop_callback_dispatcher: too many handlers (${#MOP_CALLBACK_HANDLER_ADDRS[@]})"
 
-    local ver bin elf size start handler_table table_off mop_rec callback_id slot original
+    local ver bin elf start handler_table table_off mop_rec callback_id slot original
     local i handler
     ver="${CDX_VER#SX567-}"
     bin="build/mop_callback_dispatcher_${ver}.bin"
     elf="build/mop_callback_dispatcher_${ver}.elf"
     [[ -r "$bin" ]] || die "mop_callback_dispatcher: $bin not found (run make mop_callback_dispatcher)"
     [[ -r "$elf" ]] || die "mop_callback_dispatcher: $elf not found"
-
-    size=$(stat -c %s "$bin")
-    (( size <= MOP_CALLBACK_DISPATCHER_BUDGET )) || \
-        die "mop_callback_dispatcher: $bin is ${size}B, exceeds ${MOP_CALLBACK_DISPATCHER_BUDGET}B budget"
-    check_ff "$MOP_CALLBACK_DISPATCHER_OFF" "$MOP_CALLBACK_DISPATCHER_BUDGET" || \
-        die "mop_callback_dispatcher: payload area 0x$(printf "%X" "$MOP_CALLBACK_DISPATCHER_OFF") is not empty"
 
     start=$(elf_symbol_addr "$elf" start)
     handler_table=$(elf_symbol_addr "$elf" mop_callback_handler_table)
@@ -789,7 +816,7 @@ patch_mop_callback_dispatcher() {
     slot=$(( table_off + callback_id * 4 ))
     original=$(read_u32 "$slot")
 
-    patch_direct "$bin" "$MOP_CALLBACK_DISPATCHER_OFF"
+    payload_inject mop_callback_dispatcher "$bin"
 
     write_u32 $(( handler_table - FLASH_BASE )) "$original" || die failed
     for (( i = 0; i < ${#MOP_CALLBACK_HANDLER_ADDRS[@]}; i++ )); do
@@ -800,7 +827,7 @@ patch_mop_callback_dispatcher() {
     write_u32 "$slot" "$(( start | 1 ))" || die failed
 
     printf "  MOP callback dispatcher: %s (%dB) at 0x%08X\n" \
-        "$bin" "$size" "$MOP_CALLBACK_DISPATCHER_FLASH"
+        "$bin" "$PAYLOAD_SIZE" "$PAYLOAD_FLASH"
     printf "  MOP callback[%d]: 0x%08X -> 0x%08X\n" \
         "$callback_id" "$original" "$(( start | 1 ))"
 }
@@ -1293,7 +1320,7 @@ custom_patch_clinical_menu_capacity() {
 
 # Inject the generic clinical-menu hook payload and patch its ABI slots.
 custom_patch_menu_hooks() {
-    local ver bin elf size registry_flash
+    local ver bin elf registry_flash
     local therapy_site comfort_site accessories_site options_site configuration_site
     local clinical_capacity_site clinical_capacity
     local hook_therapy hook_comfort hook_accessories hook_options hook_configuration
@@ -1323,17 +1350,7 @@ custom_patch_menu_hooks() {
     fi
     [[ -r "$elf" ]] || die "custom_patch_settings: $elf not found"
 
-    size=$(stat -c %s "$bin")
-    if (( size > CUSTOM_MENU_HOOKS_BUDGET )); then
-        die "custom_patch_settings: $bin is ${size}B, exceeds ${CUSTOM_MENU_HOOKS_BUDGET}B budget"
-    fi
-    if ! check_ff "$CUSTOM_MENU_HOOKS_OFF" "$CUSTOM_MENU_HOOKS_BUDGET"; then
-        local payload_hex
-        payload_hex=$(printf "%X" "$CUSTOM_MENU_HOOKS_OFF")
-        die "custom_patch_settings: payload area 0x$payload_hex is not empty"
-    fi
-
-    patch_direct "$bin" "$CUSTOM_MENU_HOOKS_OFF"
+    payload_inject custom_menu_hooks "$bin"
     registry_flash=$(( FLASH_BASE + CUSTOM_SETTINGS_REGISTRY_ADDR ))
 
     hook_therapy=$(elf_symbol_addr "$elf" custom_menu_hook_therapy)
@@ -1354,7 +1371,8 @@ custom_patch_menu_hooks() {
     custom_patch_menu_hook_site "$configuration_site" "\\x02\\xf0\\xdb\\xfa" "$hook_configuration" configuration
     mop_callback_register_handler "$visibility_handler" custom_menu_visibility
 
-    printf "  custom menu hooks: %s (%dB) at 0x%08X\n" "$bin" "$size" "$CUSTOM_MENU_HOOKS_FLASH"
+    printf "  custom menu hooks: %s (%dB) at 0x%08X\n" \
+        "$bin" "$PAYLOAD_SIZE" "$PAYLOAD_FLASH"
 }
 
 
@@ -1405,30 +1423,33 @@ patch_code_common() {
     local ver=${CDX_VER#SX567-}
     local BIN=build/common_code_${ver}.bin
     echo "Patching common_code.c ($ver)"
-    patch_direct "$BIN" 0xfd800
+    payload_inject common_code "$BIN"
 }
 
 
 patch_code_graph() {
     local ver=${CDX_VER#SX567-}
     local BIN=build/graph_${ver}.bin
-    local FPTR
+    local ELF=build/graph_${ver}.elf
+    local FPTR start
     case "$ver" in
         0401) FPTR=0xf9c88 ;;
         0402) FPTR=0xf9f00 ;;
         *) echo "  patch_code_graph: unsupported $ver"; return 1 ;;
     esac
     echo "Patching graphing code ($ver)"
-    patch_pointer "$BIN" 0xfd000 "$FPTR" "$(le_thumb_ptr 0x80fd000)"
+    [[ -r "$ELF" ]] || die "patch_code_graph: $ELF not found"
+    start=$(elf_symbol_addr "$ELF" start)
+    payload_inject graph "$BIN"
+    write_u32 "$FPTR" "$(( start | 1 ))" || die failed
 }
 
 
 patch_code_squarewave() {
     local ver=${CDX_VER#SX567-}
-    local CODE_OFF=0xfd400
     local BIN=build/squarewave_${ver}.bin
     local ELF=build/squarewave_${ver}.elf
-    local FPTR original_slot original payload_thumb
+    local FPTR start original_slot original payload_thumb
     case "$ver" in
         0401) FPTR=0xf9778 ;;
         0402) FPTR=0xf99f0 ;;
@@ -1436,13 +1457,15 @@ patch_code_squarewave() {
     esac
     echo "Patching Squarewave ($ver)"
     [[ -r "$ELF" ]] || die "patch_code_squarewave: $ELF not found"
+    start=$(elf_symbol_addr "$ELF" start)
     original_slot=$(elf_symbol_addr "$ELF" squarewave_original_handler)
-    payload_thumb=$(( FLASH_BASE + CODE_OFF + 1 ))
+    payload_thumb=$(( start | 1 ))
     original=$(read_u32 "$FPTR")
     if (( original == payload_thumb )); then
         original=$(read_u32 $(( original_slot - FLASH_BASE )))
     fi
-    patch_pointer "$BIN" "$CODE_OFF" "$FPTR" "$(le_thumb_ptr $(( FLASH_BASE + CODE_OFF )))"
+    payload_inject squarewave "$BIN"
+    write_u32 "$FPTR" "$payload_thumb" || die failed
     write_u32 $(( original_slot - FLASH_BASE )) "$original" || die failed
     printf "  original handler: 0x%08X -> ABI 0x%08X\n" "$original" "$original_slot"
 }
@@ -1451,28 +1474,36 @@ patch_code_squarewave() {
 patch_code_asv_task_wraper() {
     local ver=${CDX_VER#SX567-}
     local BIN=build/asv_task_wrapper_${ver}.bin
-    local FPTR
+    local ELF=build/asv_task_wrapper_${ver}.elf
+    local FPTR start
     case "$ver" in
         0401|0306) FPTR=0xf44e0 ;;
         0402) FPTR=0xf4758 ;;
         *) echo "  patch_code_asv_task_wraper: unsupported $ver"; return 1 ;;
     esac
     echo "Patching ASV task wrapper ($ver)"
-    patch_pointer "$BIN" 0xfd700 "$FPTR" "$(le_thumb_ptr 0x80fd700)"
+    [[ -r "$ELF" ]] || die "patch_code_asv_task_wraper: $ELF not found"
+    start=$(elf_symbol_addr "$ELF" start)
+    payload_inject asv_task_wrapper "$BIN"
+    write_u32 "$FPTR" "$(( start | 1 ))" || die failed
 }
 
 
 patch_wrapper_limit_max_pdiff() {
     local ver=${CDX_VER#SX567-}
     local BIN=build/wrapper_limit_max_pdiff_${ver}.bin
-    local FPTR
+    local ELF=build/wrapper_limit_max_pdiff_${ver}.elf
+    local FPTR start
     case "$ver" in
         0401) FPTR=0xf93d0 ;;
         0402) FPTR=0xf9648 ;;
         *) echo "  patch_wrapper_limit_max_pdiff: unsupported $ver"; return 1 ;;
     esac
     echo "Patching wrapper for pressure_limit_max_diff ($ver)"
-    patch_pointer "$BIN" 0xff000 "$FPTR" "$(le_thumb_ptr 0x80ff000)"
+    [[ -r "$ELF" ]] || die "patch_wrapper_limit_max_pdiff: $ELF not found"
+    start=$(elf_symbol_addr "$ELF" start)
+    payload_inject wrapper_limit_max_pdiff "$BIN"
+    write_u32 "$FPTR" "$(( start | 1 ))" || die failed
 }
 
 
@@ -2014,23 +2045,18 @@ patch_vid_spoof() {
     local ver=${CDX_VER#SX567-}
     local bin=build/vid_spoof_${ver}.bin
     local elf=build/vid_spoof_${ver}.elf
-    local size handler
+    local handler
     if [ ! -r "$bin" ]; then
         echo "  ${FUNCNAME[0]}: $bin not found (unsupported version or run make vid_spoof)"
         return 1
     fi
     [[ -r "$elf" ]] || die "${FUNCNAME[0]}: $elf not found"
-    size=$(stat -c %s "$bin")
-    (( size <= VID_SPOOF_BUDGET )) || \
-        die "${FUNCNAME[0]}: $bin is ${size}B, exceeds ${VID_SPOOF_BUDGET}B budget"
-    check_ff "$VID_SPOOF_OFF" "$VID_SPOOF_BUDGET" || \
-        die "${FUNCNAME[0]}: payload area 0x$(printf "%X" "$VID_SPOOF_OFF") is not empty"
-
     echo "Patching VID spoof handler"
-    patch_direct "$bin" "$VID_SPOOF_OFF"
+    payload_inject vid_spoof "$bin"
     handler=$(elf_symbol_addr "$elf" vid_spoof_apply_current_mop)
     mop_callback_register_handler "$handler" vid_spoof
-    printf "  vid_spoof: %s (%dB) at 0x%08X\n" "$bin" "$size" "$VID_SPOOF_FLASH"
+    printf "  vid_spoof: %s (%dB) at 0x%08X\n" \
+        "$bin" "$PAYLOAD_SIZE" "$PAYLOAD_FLASH"
 }
 
 
@@ -2045,9 +2071,6 @@ patch_lcd_ili9325() {
     if [ ! -r "$BIN" ]; then
         die "LCD patch binary not found: $BIN (run make s10_lcd_ili9325)"
     fi
-
-    local LCD_FLASH=${S10_LCD_OFFSET:-0x080FF800}
-    local LCD_OFF=$(( LCD_FLASH - 0x08000000 ))
 
     local BL_OFF EXPECTED_BL
     case "$CDX_VER" in
@@ -2066,8 +2089,8 @@ patch_lcd_ili9325() {
         return 1
     fi
 
-    echo "Patching LCD driver (ILI9325) at offset $(printf '0x%X' $LCD_OFF)"
-    patch_direct "$BIN" "$LCD_OFF"
+    payload_inject s10_lcd_ili9325 "$BIN"
+    echo "Patching LCD driver (ILI9325) at 0x$(printf '%08X' "$PAYLOAD_FLASH")"
 
     local BOARD_INIT_ADDR
     BOARD_INIT_ADDR=$(arm-none-eabi-nm "$BIN_ELF" 2>/dev/null | awk '/lcd_board_init/{printf "0x%s", $1}')
@@ -2098,7 +2121,7 @@ patch_backlight_adapt() {
 
     local ver=${CDX_VER#SX567-}
     local BIN=build/backlight_adapt_${ver}.bin
-    local BACKLIGHT_OFFSET=0xFEC00
+    local ELF=build/backlight_adapt_${ver}.elf
 
     case "$ver" in
         0401|0402) ;;
@@ -2106,9 +2129,10 @@ patch_backlight_adapt() {
     esac
 
     if [ ! -r "$BIN" ]; then
-        echo "  ${FUNCNAME[0]}: $BIN not found (run make backlight_adapt)"
+        echo "  ${FUNCNAME[0]}: $BIN not found (run make binaries)"
         return 1
     fi
+    [[ -r "$ELF" ]] || die "${FUNCNAME[0]}: $ELF not found"
 
     # signature: bl A1D0; mov r0,r4; bl A2A4; movs r5,#0
     local off
@@ -2126,7 +2150,7 @@ patch_backlight_adapt() {
     fi
 
     echo "Patching backlight adaptation ($ver)"
-    patch_direct "$BIN" $BACKLIGHT_OFFSET
+    payload_inject backlight_adapt "$BIN"
 
     # NOP the beq that skips ASR->ASF averaging while display is active
     local gate_off=$(( off + 0x1C8 ))
@@ -2137,15 +2161,17 @@ patch_backlight_adapt() {
     fi
 
     # redirect bl backlight_state_machine to our payload
-    local cave_addr=$(( BACKLIGHT_OFFSET + 0x08000000 ))
-    encode_thumb_bl "$hook_off" "$cave_addr" | patch "$hook_off"
+    local start
+    start=$(elf_symbol_addr "$ELF" start)
+    encode_thumb_bl "$hook_off" "$start" | patch "$hook_off"
 
     # tune defaults
     printf '\x20' | patch $(( $(find_var LBL) + 0x08 ))    # LBL = 32 (buttons low)
     printf '\x50' | patch $(( $(find_var LBH) + 0x08 ))    # LBH = 80 (buttons high)
     printf '\x4e\x02\x00\x00' | patch $(( $(find_var ATH) + 0x08 ))  # ATH = 590 (threshold)
 
-    echo "  ${#BIN} at 0x$(printf '%X' $BACKLIGHT_OFFSET), hook at 0x$(printf '%X' $(( hook_off + 0x08000000 )))"
+    printf "  %dB at 0x%08X, hook at 0x%08X\n" \
+        "$PAYLOAD_SIZE" "$PAYLOAD_FLASH" "$(( hook_off + FLASH_BASE ))"
 }
 
 
@@ -2248,15 +2274,12 @@ STR_ID_OFF_ON_BASE=
 
 CUSTOM_SETTINGS_REGISTRY_ADDR=
 CUSTOM_SETTINGS_REGISTRY_SIZE=
-CUSTOM_MENU_HOOKS_OFF=0xFFC00
-CUSTOM_MENU_HOOKS_BUDGET=0x3FE
-CUSTOM_MENU_HOOKS_FLASH=$(( FLASH_BASE + CUSTOM_MENU_HOOKS_OFF ))
-MOP_CALLBACK_DISPATCHER_OFF=0xFCF98
-MOP_CALLBACK_DISPATCHER_BUDGET=0x2C
-MOP_CALLBACK_DISPATCHER_FLASH=$(( FLASH_BASE + MOP_CALLBACK_DISPATCHER_OFF ))
-VID_SPOOF_OFF=0xFCFC4
-VID_SPOOF_BUDGET=0x3C
-VID_SPOOF_FLASH=$(( FLASH_BASE + VID_SPOOF_OFF ))
+PAYLOAD_LAYOUT_VERSION=
+PAYLOAD_FLASH=
+PAYLOAD_OFF=
+PAYLOAD_SIZE=
+declare -A PAYLOAD_LAYOUT_FLASH
+declare -A PAYLOAD_LAYOUT_SIZE
 declare -a CUSTOM_G8_POOL
 declare -a CUSTOM_G4_POOL
 declare -A CUSTOM_G8_RECLAIMED

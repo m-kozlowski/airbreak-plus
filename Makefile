@@ -10,6 +10,16 @@ VID_SPOOF_VERSIONS := 0401 0306 0305 0302 0402
 VID_SPOOF_BINS = $(foreach v,$(VID_SPOOF_VERSIONS),$(BUILD)/vid_spoof_$(v).bin)
 
 S10_CODE_VERSIONS := 0401 0402
+PAYLOAD_LAYOUT_VERSIONS := 0302 0305 0306 0401 0402
+PAYLOADS_0302 := mop_callback_dispatcher vid_spoof
+PAYLOADS_0305 := $(PAYLOADS_0302)
+PAYLOADS_0306 := $(PAYLOADS_0302)
+PAYLOADS_0401 := mop_callback_dispatcher vid_spoof graph squarewave asv_task_wrapper \
+	common_code backlight_adapt wrapper_limit_max_pdiff s10_lcd_ili9325 custom_menu_hooks
+PAYLOADS_0402 := $(PAYLOADS_0401)
+PAYLOAD_LAYOUT_MKS := $(foreach v,$(PAYLOAD_LAYOUT_VERSIONS),$(BUILD)/payload_layout_$(v).mk)
+PAYLOAD_LAYOUT_TSVS := $(foreach v,$(PAYLOAD_LAYOUT_VERSIONS),$(BUILD)/payload_layout_$(v).tsv)
+
 S10_CODE_BINS = $(foreach v,$(S10_CODE_VERSIONS),\
 	$(BUILD)/common_code_$(v).bin \
 	$(BUILD)/graph_$(v).bin \
@@ -31,58 +41,64 @@ all: $(BUILD_VARIANTS)
 $(BUILD):
 	mkdir -p $(BUILD)
 
+ifneq ($(filter clean,$(MAKECMDGOALS)),clean)
+-include $(PAYLOAD_LAYOUT_MKS)
+endif
+
 # unlocked stock-ish
-$(BUILD)/stm32-patched.bin: patch-airsense $(S10_CODE_BINS) $(MOP_CALLBACK_DISPATCHER_BINS) $(VID_SPOOF_BINS)
+$(BUILD)/stm32-patched.bin: patch-airsense $(S10_CODE_BINS) $(MOP_CALLBACK_DISPATCHER_BINS) $(VID_SPOOF_BINS) $(PAYLOAD_LAYOUT_TSVS)
 	./patch-airsense stm32.bin $@
 
 # graph overlay injected
-$(BUILD)/stm32-graph.bin: patch-airsense $(S10_CODE_BINS) $(MOP_CALLBACK_DISPATCHER_BINS) $(VID_SPOOF_BINS)
+$(BUILD)/stm32-graph.bin: patch-airsense $(S10_CODE_BINS) $(MOP_CALLBACK_DISPATCHER_BINS) $(VID_SPOOF_BINS) $(PAYLOAD_LAYOUT_TSVS)
 	PATCH_CODE=1 ./patch-airsense stm32.bin $@
 
 # Custom ASV algorithm in VAuto slot + ASV backup-rate suppression + squarewave mode
-$(BUILD)/stm32-asv-plus.bin: patch-airsense $(S10_CODE_BINS) $(MOP_CALLBACK_DISPATCHER_BINS) $(VID_SPOOF_BINS)
+$(BUILD)/stm32-asv-plus.bin: patch-airsense $(S10_CODE_BINS) $(MOP_CALLBACK_DISPATCHER_BINS) $(VID_SPOOF_BINS) $(PAYLOAD_LAYOUT_TSVS)
 	PATCH_CODE=1 PATCH_ASV_TASK_WRAPPER=1 PATCH_VAUTO_WRAPPER=1 PATCH_S=1 ./patch-airsense stm32.bin $@
 
 # Custom ASV in VAuto slot + backup-rate suppression, no squarewave
-$(BUILD)/stm32-asv-plus_no-squarewave.bin: patch-airsense $(S10_CODE_BINS) $(MOP_CALLBACK_DISPATCHER_BINS) $(VID_SPOOF_BINS)
+$(BUILD)/stm32-asv-plus_no-squarewave.bin: patch-airsense $(S10_CODE_BINS) $(MOP_CALLBACK_DISPATCHER_BINS) $(VID_SPOOF_BINS) $(PAYLOAD_LAYOUT_TSVS)
 	PATCH_CODE=1 PATCH_ASV_TASK_WRAPPER=1 PATCH_VAUTO_WRAPPER=1 ./patch-airsense stm32.bin $@
 
 # Custom ASV in VAuto slot + squarewave, stock ASV backup-rate preserved
-$(BUILD)/stm32-asv-plus_with-backup.bin: patch-airsense $(S10_CODE_BINS) $(MOP_CALLBACK_DISPATCHER_BINS) $(VID_SPOOF_BINS)
+$(BUILD)/stm32-asv-plus_with-backup.bin: patch-airsense $(S10_CODE_BINS) $(MOP_CALLBACK_DISPATCHER_BINS) $(VID_SPOOF_BINS) $(PAYLOAD_LAYOUT_TSVS)
 	PATCH_CODE=1 PATCH_VAUTO_WRAPPER=1 PATCH_S=1 ./patch-airsense stm32.bin $@
 
-binaries: $(S10_CODE_BINS) $(MOP_CALLBACK_DISPATCHER_BINS) $(VID_SPOOF_BINS)
+binaries: $(S10_CODE_BINS) $(MOP_CALLBACK_DISPATCHER_BINS) $(VID_SPOOF_BINS) $(PAYLOAD_LAYOUT_TSVS)
 
-
-# There are decent distances between the different patches, 
-# but if you substantially increase the amount of code, beware collisions.
-# I've already had several happen in the past, whoops :F
 
 # Per-version S10 code patches
 # Each version has its own stubs.S with platform-specific addresses.
 # Binaries are built per-version: common_code_0401.bin, graph_0402.bin, etc.
-#
-# Code cave layout
-#   0x80fcf98  mop_callback_dispatcher  (  44 B)
-#   0x80fcfc4  vid_spoof                (  60 B)
-#   0x80fd000  graph                    (1024 B)
-#   0x80fd400  squarewave               ( 768 B)
-#   0x80fd700  asv_task_wrapper         ( 256 B)
-#   0x80fd800  common_code              (5120 B)
-#   0x80fec00  backlight_adapt          (1024 B)
-#   0x80ff000  wrapper_limit_max_pdiff  (2048 B)
-#   0x80ff800  s10_lcd_ili9325          (1024 B)
-#   0x80ffc00  custom_menu_hooks        (1022 B, leaves CDX CRC)
 
-graph-offset := 0x80fd000
-squarewave-offset := 0x80fd400
-asv_task_wrapper-offset := 0x80fd700
-common_code-offset := 0x80fd800
-backlight_adapt-offset := 0x80fec00
-wrapper_limit_max_pdiff-offset := 0x80ff000
-custom_menu_hooks-offset := 0x80ffc00
-mop_callback_dispatcher-offset := 0x80fcf98
-vid_spoof-offset := 0x80fcfc4
+PROBE_LINK_ADDR := 0x08000000
+
+define PAYLOAD_LAYOUT_template
+PAYLOAD_PROBE_BINS_$(1) := $$(foreach p,$$(PAYLOADS_$(1)),$$(BUILD)/$$(p)_$(1).probe.bin)
+
+$$(BUILD)/payload_sizes_$(1).tsv: $$(PAYLOAD_PROBE_BINS_$(1)) Makefile | $$(BUILD)
+	@rm -f $$@.tmp
+	@for bin in $$(filter %.probe.bin,$$^); do \
+		base=$$$${bin##*/}; \
+		name=$$$${base%.probe.bin}; \
+		name=$$$${name%_$(1)}; \
+		printf '%s\t%s\n' "$$$$name" "$$$$(stat -c %s "$$$$bin")" >> $$@.tmp; \
+	done
+	@mv $$@.tmp $$@
+
+$$(BUILD)/payload_layout_$(1).tsv $$(BUILD)/payload_layout_$(1).mk &: \
+		$$(BUILD)/payload_sizes_$(1).tsv $$(SRC)/s10_code_caves.tsv \
+		$$(SRC)/generate_payload_layout.awk | $$(BUILD)
+	@awk -v version=$(1) -v mkfile=$$(BUILD)/payload_layout_$(1).mk.tmp \
+		-f $$(SRC)/generate_payload_layout.awk \
+		$$(SRC)/s10_code_caves.tsv $$(BUILD)/payload_sizes_$(1).tsv \
+		> $$(BUILD)/payload_layout_$(1).tsv.tmp
+	@mv $$(BUILD)/payload_layout_$(1).mk.tmp $$(BUILD)/payload_layout_$(1).mk
+	@mv $$(BUILD)/payload_layout_$(1).tsv.tmp $$(BUILD)/payload_layout_$(1).tsv
+endef
+
+$(foreach v,$(PAYLOAD_LAYOUT_VERSIONS),$(eval $(call PAYLOAD_LAYOUT_template,$(v))))
 
 $(BUILD)/s10_%_stubs.o: $(SRC)/s10_%_stubs.S | $(BUILD)
 	$(AS) $(ASFLAGS) -c -o $@ $<
@@ -94,44 +110,83 @@ $(BUILD)/%_$(1).o: $(SRC)/%.c $(SRC)/s10_vars.h $(SRC)/s10_vars_$(1).h | $(BUILD
 $(BUILD)/%_$(1).o: $(SRC)/%.S $(SRC)/s10_vars.h $(SRC)/s10_vars_$(1).h | $(BUILD)
 	$$(AS) $$(ASFLAGS) -DCDX_VER_$(1) -c -o $$@ $$<
 
-$(BUILD)/common_code_$(1).elf: $(BUILD)/common_code_$(1).o $(BUILD)/s10_$(1)_stubs.o | $(BUILD)
+$(BUILD)/common_code_$(1).probe.elf: $(BUILD)/common_code_$(1).o $(BUILD)/s10_$(1)_stubs.o | $(BUILD)
 	$$(LD) --nostdlib --no-dynamic-linker \
-		--Ttext $(common_code-offset) --entry start --sort-section=name \
+		--Ttext $(PROBE_LINK_ADDR) --entry start --sort-section=name \
 		-o $$@ $$^
 
-$(BUILD)/graph_$(1).elf: $(BUILD)/graph_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/common_code_$(1).elf | $(BUILD)
+$(BUILD)/graph_$(1).probe.elf: $(BUILD)/graph_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/common_code_$(1).probe.elf | $(BUILD)
 	$$(LD) --nostdlib --no-dynamic-linker \
-		--Ttext $(graph-offset) \
+		--Ttext $(PROBE_LINK_ADDR) \
+		--just-symbols=$$(BUILD)/common_code_$(1).probe.elf \
+		--entry start --sort-section=name -o $$@ $(BUILD)/graph_$(1).o $(BUILD)/s10_$(1)_stubs.o
+
+$(BUILD)/squarewave_$(1).probe.elf: $(BUILD)/squarewave_$(1).o $(BUILD)/squarewave_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/common_code_$(1).probe.elf | $(BUILD)
+	$$(LD) --nostdlib --no-dynamic-linker \
+		--Ttext $(PROBE_LINK_ADDR) \
+		--just-symbols=$$(BUILD)/common_code_$(1).probe.elf \
+		--entry start --sort-section=name -o $$@ $(BUILD)/squarewave_$(1).o $(BUILD)/squarewave_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o
+
+$(BUILD)/asv_task_wrapper_$(1).probe.elf: $(BUILD)/asv_task_wrapper_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/common_code_$(1).probe.elf | $(BUILD)
+	$$(LD) --nostdlib --no-dynamic-linker \
+		--Ttext $(PROBE_LINK_ADDR) \
+		--just-symbols=$$(BUILD)/common_code_$(1).probe.elf \
+		--entry start --sort-section=name -o $$@ $(BUILD)/asv_task_wrapper_$(1).o $(BUILD)/s10_$(1)_stubs.o
+
+$(BUILD)/wrapper_limit_max_pdiff_$(1).probe.elf: $(BUILD)/wrapper_limit_max_pdiff_$(1).o $(BUILD)/wrapper_limit_max_pdiff_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/common_code_$(1).probe.elf | $(BUILD)
+	$$(LD) --nostdlib --no-dynamic-linker \
+		--Ttext $(PROBE_LINK_ADDR) \
+		--just-symbols=$$(BUILD)/common_code_$(1).probe.elf \
+		--entry start --sort-section=name -o $$@ $(BUILD)/wrapper_limit_max_pdiff_$(1).o $(BUILD)/wrapper_limit_max_pdiff_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o
+
+$(BUILD)/custom_menu_hooks_$(1).probe.elf: $(BUILD)/custom_menu_hooks_entry_$(1).o $(BUILD)/custom_menu_hooks_$(1).o $(BUILD)/s10_$(1)_stubs.o | $(BUILD)
+	$$(LD) --nostdlib --no-dynamic-linker \
+		--Ttext $(PROBE_LINK_ADDR) \
+		--entry custom_menu_hook_therapy -o $$@ $$^
+
+$(BUILD)/backlight_adapt_$(1).probe.elf: $(BUILD)/backlight_adapt_$(1).o $(BUILD)/s10_$(1)_stubs.o | $(BUILD)
+	$$(LD) --nostdlib --no-dynamic-linker \
+		--Ttext $(PROBE_LINK_ADDR) \
+		--entry start --sort-section=name -o $$@ $$^
+
+$(BUILD)/common_code_$(1).elf: $(BUILD)/common_code_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/payload_layout_$(1).mk | $(BUILD)
+	$$(LD) --nostdlib --no-dynamic-linker \
+		--Ttext $$(payload_addr_$(1)_common_code) --entry start --sort-section=name \
+		-o $$@ $(BUILD)/common_code_$(1).o $(BUILD)/s10_$(1)_stubs.o
+
+$(BUILD)/graph_$(1).elf: $(BUILD)/graph_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/common_code_$(1).elf $(BUILD)/payload_layout_$(1).mk | $(BUILD)
+	$$(LD) --nostdlib --no-dynamic-linker \
+		--Ttext $$(payload_addr_$(1)_graph) \
 		--just-symbols=$$(BUILD)/common_code_$(1).elf \
 		--entry start --sort-section=name -o $$@ $(BUILD)/graph_$(1).o $(BUILD)/s10_$(1)_stubs.o
 
-$(BUILD)/squarewave_$(1).elf: $(BUILD)/squarewave_$(1).o $(BUILD)/squarewave_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/common_code_$(1).elf | $(BUILD)
+$(BUILD)/squarewave_$(1).elf: $(BUILD)/squarewave_$(1).o $(BUILD)/squarewave_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/common_code_$(1).elf $(BUILD)/payload_layout_$(1).mk | $(BUILD)
 	$$(LD) --nostdlib --no-dynamic-linker \
-		--Ttext $(squarewave-offset) \
+		--Ttext $$(payload_addr_$(1)_squarewave) \
 		--just-symbols=$$(BUILD)/common_code_$(1).elf \
 		--entry start --sort-section=name -o $$@ $(BUILD)/squarewave_$(1).o $(BUILD)/squarewave_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o
 
-$(BUILD)/asv_task_wrapper_$(1).elf: $(BUILD)/asv_task_wrapper_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/common_code_$(1).elf | $(BUILD)
+$(BUILD)/asv_task_wrapper_$(1).elf: $(BUILD)/asv_task_wrapper_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/common_code_$(1).elf $(BUILD)/payload_layout_$(1).mk | $(BUILD)
 	$$(LD) --nostdlib --no-dynamic-linker \
-		--Ttext $(asv_task_wrapper-offset) \
+		--Ttext $$(payload_addr_$(1)_asv_task_wrapper) \
 		--just-symbols=$$(BUILD)/common_code_$(1).elf \
 		--entry start --sort-section=name -o $$@ $(BUILD)/asv_task_wrapper_$(1).o $(BUILD)/s10_$(1)_stubs.o
 
-$(BUILD)/wrapper_limit_max_pdiff_$(1).elf: $(BUILD)/wrapper_limit_max_pdiff_$(1).o $(BUILD)/wrapper_limit_max_pdiff_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/common_code_$(1).elf | $(BUILD)
+$(BUILD)/wrapper_limit_max_pdiff_$(1).elf: $(BUILD)/wrapper_limit_max_pdiff_$(1).o $(BUILD)/wrapper_limit_max_pdiff_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/common_code_$(1).elf $(BUILD)/payload_layout_$(1).mk | $(BUILD)
 	$$(LD) --nostdlib --no-dynamic-linker \
-		--Ttext $(wrapper_limit_max_pdiff-offset) \
+		--Ttext $$(payload_addr_$(1)_wrapper_limit_max_pdiff) \
 		--just-symbols=$$(BUILD)/common_code_$(1).elf \
 		--entry start --sort-section=name -o $$@ $(BUILD)/wrapper_limit_max_pdiff_$(1).o $(BUILD)/wrapper_limit_max_pdiff_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o
 
-$(BUILD)/custom_menu_hooks_$(1).elf: $(BUILD)/custom_menu_hooks_entry_$(1).o $(BUILD)/custom_menu_hooks_$(1).o $(BUILD)/s10_$(1)_stubs.o | $(BUILD)
+$(BUILD)/custom_menu_hooks_$(1).elf: $(BUILD)/custom_menu_hooks_entry_$(1).o $(BUILD)/custom_menu_hooks_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/payload_layout_$(1).mk | $(BUILD)
 	$$(LD) --nostdlib --no-dynamic-linker \
-		--Ttext $(custom_menu_hooks-offset) \
-		--entry custom_menu_hook_therapy -o $$@ $$^
+		--Ttext $$(payload_addr_$(1)_custom_menu_hooks) \
+		--entry custom_menu_hook_therapy -o $$@ $(BUILD)/custom_menu_hooks_entry_$(1).o $(BUILD)/custom_menu_hooks_$(1).o $(BUILD)/s10_$(1)_stubs.o
 
-$(BUILD)/backlight_adapt_$(1).elf: $(BUILD)/backlight_adapt_$(1).o $(BUILD)/s10_$(1)_stubs.o | $(BUILD)
+$(BUILD)/backlight_adapt_$(1).elf: $(BUILD)/backlight_adapt_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/payload_layout_$(1).mk | $(BUILD)
 	$$(LD) --nostdlib --no-dynamic-linker \
-		--Ttext $(backlight_adapt-offset) \
-		--entry start --sort-section=name -o $$@ $$^
+		--Ttext $$(payload_addr_$(1)_backlight_adapt) \
+		--entry start --sort-section=name -o $$@ $(BUILD)/backlight_adapt_$(1).o $(BUILD)/s10_$(1)_stubs.o
 endef
 
 $(foreach v,$(S10_CODE_VERSIONS),$(eval $(call S10_CODE_VERSION_template,$(v))))
@@ -182,6 +237,18 @@ $(BUILD)/%.elf: | $(BUILD)
 
 $(BUILD)/%.bin: $(BUILD)/%.elf
 	$(OBJCOPY) -Obinary $< $@
+	@stem='$*'; ver=$${stem##*_}; payload=$${stem%_*}; \
+		layout=$(BUILD)/payload_layout_$$ver.tsv; \
+		if [ -f "$$layout" ]; then \
+			expected=$$(awk -v name="$$payload" '$$1 == name { print $$3; exit }' "$$layout"); \
+			if [ -n "$$expected" ]; then \
+				actual=$$(stat -c %s "$@"); \
+				[ "$$actual" -eq "$$expected" ] || { \
+					echo "$@: final size $$actual differs from probe size $$expected" >&2; \
+					exit 1; \
+				}; \
+			fi; \
+		fi
 
 
 # eeprom_stub - standalone CDX replacement for s10 platform
@@ -269,17 +336,18 @@ $(BUILD)/stm32-s9-lcd.bin: patch-airsense-s9 s9_lcd_ili9225 | $(BUILD)
 # Build: make s10_lcd_ili9325
 # Usage: PATCH_S10_LCD=1 ./patch-airsense stm32.bin output.bin
 
-S10_LCD_OFFSET ?= 0x080FF800
 S10_LCD_VERSIONS := 0401 0402
 
 define S10_LCD_VERSION_template
-$(BUILD)/s10_lcd_ili9325_$(1).elf: $(BUILD)/s10_lcd_ili9325_$(1).o $(BUILD)/s10_$(1)_stubs.o | $(BUILD)
+$(BUILD)/s10_lcd_ili9325_$(1).probe.elf: $(BUILD)/s10_lcd_ili9325_$(1).o $(BUILD)/s10_$(1)_stubs.o | $(BUILD)
 	$$(LD) --nostdlib --no-dynamic-linker \
-		--Ttext $$(S10_LCD_OFFSET) --entry lcd_board_init --sort-section=name \
+		--Ttext $(PROBE_LINK_ADDR) --entry lcd_board_init --sort-section=name \
 		-o $$@ $$^
 
-$(BUILD)/s10_lcd_ili9325_$(1).bin: $(BUILD)/s10_lcd_ili9325_$(1).elf
-	$$(OBJCOPY) -Obinary $$< $$@
+$(BUILD)/s10_lcd_ili9325_$(1).elf: $(BUILD)/s10_lcd_ili9325_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/payload_layout_$(1).mk | $(BUILD)
+	$$(LD) --nostdlib --no-dynamic-linker \
+		--Ttext $$(payload_addr_$(1)_s10_lcd_ili9325) --entry lcd_board_init --sort-section=name \
+		-o $$@ $(BUILD)/s10_lcd_ili9325_$(1).o $(BUILD)/s10_$(1)_stubs.o
 endef
 
 $(foreach v,$(S10_LCD_VERSIONS),$(eval $(call S10_LCD_VERSION_template,$(v))))
@@ -287,7 +355,6 @@ $(foreach v,$(S10_LCD_VERSIONS),$(eval $(call S10_LCD_VERSION_template,$(v))))
 s10_lcd_ili9325: $(foreach v,$(S10_LCD_VERSIONS),$(BUILD)/s10_lcd_ili9325_$(v).bin)
 	@echo "S10 LCD patches built:"
 	@$(foreach v,$(S10_LCD_VERSIONS),echo "  $(BUILD)/s10_lcd_ili9325_$(v).bin";)
-	@echo "Inject offset: $(S10_LCD_OFFSET)"
 
 
 #
@@ -298,13 +365,15 @@ define mop_callback_dispatcher_build_template
 $(BUILD)/mop_callback_dispatcher_$(1).o: $(SRC)/mop_callback_dispatcher.S | $(BUILD)
 	$$(AS) $$(ASFLAGS) -c -o $$@ $$<
 
-$(BUILD)/mop_callback_dispatcher_$(1).elf: $(BUILD)/mop_callback_dispatcher_$(1).o | $(BUILD)
+$(BUILD)/mop_callback_dispatcher_$(1).probe.elf: $(BUILD)/mop_callback_dispatcher_$(1).o | $(BUILD)
 	$$(LD) --nostdlib --no-dynamic-linker \
-		--Ttext $(mop_callback_dispatcher-offset) --entry start --sort-section=name \
+		--Ttext $(PROBE_LINK_ADDR) --entry start --sort-section=name \
 		-o $$@ $$^
 
-$(BUILD)/mop_callback_dispatcher_$(1).bin: $(BUILD)/mop_callback_dispatcher_$(1).elf
-	$$(OBJCOPY) -Obinary $$< $$@
+$(BUILD)/mop_callback_dispatcher_$(1).elf: $(BUILD)/mop_callback_dispatcher_$(1).o $(BUILD)/payload_layout_$(1).mk | $(BUILD)
+	$$(LD) --nostdlib --no-dynamic-linker \
+		--Ttext $$(payload_addr_$(1)_mop_callback_dispatcher) --entry start --sort-section=name \
+		-o $$@ $(BUILD)/mop_callback_dispatcher_$(1).o
 endef
 
 $(foreach v,$(MOP_CALLBACK_DISPATCHER_VERSIONS),$(eval $(call mop_callback_dispatcher_build_template,$(v))))
@@ -324,13 +393,15 @@ $(BUILD)/vid_spoof_$(1).o: $(SRC)/vid_spoof.c $(SRC)/s10_vars.h $(SRC)/s10_vars_
 		-DCDX_VER_$(1) \
 		-c -o $$@ $$<
 
-$(BUILD)/vid_spoof_$(1).elf: $(BUILD)/vid_spoof_$(1).o $(BUILD)/s10_$(1)_stubs.o | $(BUILD)
+$(BUILD)/vid_spoof_$(1).probe.elf: $(BUILD)/vid_spoof_$(1).o $(BUILD)/s10_$(1)_stubs.o | $(BUILD)
 	$$(LD) --nostdlib --no-dynamic-linker \
-		--Ttext $(vid_spoof-offset) --entry vid_spoof_apply_current_mop --sort-section=name \
+		--Ttext $(PROBE_LINK_ADDR) --entry vid_spoof_apply_current_mop --sort-section=name \
 		-o $$@ $$^
 
-$(BUILD)/vid_spoof_$(1).bin: $(BUILD)/vid_spoof_$(1).elf
-	$$(OBJCOPY) -Obinary $$< $$@
+$(BUILD)/vid_spoof_$(1).elf: $(BUILD)/vid_spoof_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/payload_layout_$(1).mk | $(BUILD)
+	$$(LD) --nostdlib --no-dynamic-linker \
+		--Ttext $$(payload_addr_$(1)_vid_spoof) --entry vid_spoof_apply_current_mop --sort-section=name \
+		-o $$@ $(BUILD)/vid_spoof_$(1).o $(BUILD)/s10_$(1)_stubs.o
 endef
 
 $(foreach v,$(VID_SPOOF_VERSIONS),$(eval $(call vid_spoof_build_template,$(v))))
@@ -338,10 +409,6 @@ $(foreach v,$(VID_SPOOF_VERSIONS),$(eval $(call vid_spoof_build_template,$(v))))
 vid_spoof: $(VID_SPOOF_BINS)
 	@echo "VID spoof patches built:"
 	@$(foreach v,$(VID_SPOOF_VERSIONS),echo "  $(BUILD)/vid_spoof_$(v).bin";)
-
-
-backlight_adapt: $(foreach v,$(S10_CODE_VERSIONS),$(BUILD)/backlight_adapt_$(v).bin)
-
 
 clean:
 	$(RM) $(BUILD)/*

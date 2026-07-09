@@ -659,12 +659,6 @@ class ASFirmware(object):
 class ASFirmwarePatches(object):
     """This class contains the actual patching scripts for specific items"""
 
-    CUSTOM_MENU_HOOKS_OFF = 0xFFC00
-    CUSTOM_MENU_HOOKS_BUDGET = 0x3FE
-    MOP_CALLBACK_DISPATCHER_OFF = 0xFCF98
-    MOP_CALLBACK_DISPATCHER_BUDGET = 0x2C
-    VID_SPOOF_OFF = 0xFCFC4
-    VID_SPOOF_BUDGET = 0x3C
     MOP_CALLBACK_TABLES = {
         'SX567-0302': 0x757e0,
         'SX567-0305': 0x75f4c,
@@ -701,6 +695,8 @@ class ASFirmwarePatches(object):
         self.wrapper_limit_max_pdiff_applied = False
         self.mop_callback_handlers = []
         self.mop_callback_handler_seen = set()
+        self.payload_layout = None
+        self.payload_layout_version = None
         self.custom_patch_settings_init()
 
     def custom_patch_settings_init(self):
@@ -962,15 +958,6 @@ class ASFirmwarePatches(object):
 
         with open(bin_path, 'rb') as f:
             data = f.read()
-        if len(data) > self.MOP_CALLBACK_DISPATCHER_BUDGET:
-            raise ValueError(
-                "mop_callback_dispatcher: %s is %dB, exceeds %dB budget" %
-                (bin_path, len(data), self.MOP_CALLBACK_DISPATCHER_BUDGET))
-
-        off = self.MOP_CALLBACK_DISPATCHER_OFF
-        budget = self.asf.fw[off:off + self.MOP_CALLBACK_DISPATCHER_BUDGET]
-        if budget != [0xff] * self.MOP_CALLBACK_DISPATCHER_BUDGET:
-            raise ValueError("mop_callback_dispatcher: payload area 0x%X is not empty" % off)
 
         start = self._elf_symbol_addr(elf_path, 'start')
         handler_table = self._elf_symbol_addr(elf_path, 'mop_callback_handler_table')
@@ -983,7 +970,7 @@ class ASFirmwarePatches(object):
         slot = callback_table + callback_id * 4
         original = self.asf.read_u32(slot)
 
-        self.asf.patch(data, off, checkempty=True)
+        flash, off = self._inject_payload('mop_callback_dispatcher', data)
         table_off = handler_table - self.asf.FLASH_BASE
         self.asf.write_u32(table_off, original)
         for i, handler in enumerate(self.mop_callback_handlers):
@@ -992,13 +979,62 @@ class ASFirmwarePatches(object):
         self.asf.write_u32(slot, start | 1)
 
         print("  MOP callback dispatcher: build/mop_callback_dispatcher_%s.bin (%dB) at 0x%08X" %
-              (ver, len(data), self.asf.FLASH_BASE + off))
+              (ver, len(data), flash))
         print("  MOP callback[%d]: 0x%08X -> 0x%08X" %
               (callback_id, original, start | 1))
 
     def _versioned_artifact_path(self, name, ext, ver):
         return os.path.join(os.path.dirname(os.path.abspath(__file__)),
                             '..', 'build', '%s_%s.%s' % (name, ver, ext))
+
+    def _load_payload_layout(self):
+        """Load generated payload addresses and measured sizes for this CDX."""
+        ver = self.asf.cdx_ver.replace('SX567-', '')
+        if self.payload_layout_version == ver:
+            return
+
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            '..', 'build', 'payload_layout_%s.tsv' % ver)
+        if not os.path.exists(path):
+            raise ValueError("payload layout not found: build/payload_layout_%s.tsv (run make binaries)" % ver)
+
+        layout = {}
+        with open(path, 'r') as f:
+            for lineno, line in enumerate(f, 1):
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                fields = line.split()
+                if len(fields) != 4:
+                    raise ValueError("payload layout: malformed row %d in %s" % (lineno, path))
+                name, flash_text, size_text, end_text = fields
+                if name in layout:
+                    raise ValueError("payload layout: duplicate payload %s" % name)
+                flash = int(flash_text, 0)
+                size = int(size_text, 0)
+                end = int(end_text, 0)
+                if flash % 4 or size <= 0 or flash + size != end:
+                    raise ValueError("payload layout: invalid range for %s" % name)
+                if flash < self.asf.FLASH_BASE or end > self.asf.FLASH_BASE + len(self.asf.fw):
+                    raise ValueError("payload layout: %s lies outside firmware" % name)
+                layout[name] = (flash, size)
+
+        self.payload_layout = layout
+        self.payload_layout_version = ver
+
+    def _inject_payload(self, name, data):
+        """Verify and inject one payload at its generated layout address."""
+        self._load_payload_layout()
+        if name not in self.payload_layout:
+            raise ValueError("payload layout: %s not allocated for %s" %
+                             (name, self.asf.cdx_ver))
+        flash, expected_size = self.payload_layout[name]
+        if len(data) != expected_size:
+            raise ValueError("%s: binary size %dB differs from layout %dB" %
+                             (name, len(data), expected_size))
+        off = flash - self.asf.FLASH_BASE
+        self.asf.patch(data, off, checkempty=True)
+        return flash, off
 
     def _patch_menu_hook_site(self, site, expected, target, name):
         """Replace one stock section-tail append call with a hook call."""
@@ -1055,18 +1091,7 @@ class ASFirmwarePatches(object):
 
         with open(bin_path, 'rb') as f:
             data = f.read()
-        if len(data) > self.CUSTOM_MENU_HOOKS_BUDGET:
-            raise ValueError(
-                "custom_patch_settings: %s is %dB, exceeds %dB budget" %
-                (bin_path, len(data), self.CUSTOM_MENU_HOOKS_BUDGET))
-
-        budget = self.asf.fw[
-            self.CUSTOM_MENU_HOOKS_OFF:self.CUSTOM_MENU_HOOKS_OFF + self.CUSTOM_MENU_HOOKS_BUDGET]
-        if budget != [0xff] * self.CUSTOM_MENU_HOOKS_BUDGET:
-            raise ValueError("custom_patch_settings: payload area 0x%X is not empty" %
-                             self.CUSTOM_MENU_HOOKS_OFF)
-
-        self.asf.patch(data, self.CUSTOM_MENU_HOOKS_OFF, checkempty=True)
+        flash, _ = self._inject_payload('custom_menu_hooks', data)
         registry_flash = self.asf.FLASH_BASE + self.custom_settings_registry_addr
 
         hook_therapy = self._elf_symbol_addr(elf_path, 'custom_menu_hook_therapy')
@@ -1089,7 +1114,7 @@ class ASFirmwarePatches(object):
         self.mop_callback_register_handler(visibility_handler, 'custom_menu_visibility')
 
         print("  custom menu hooks: build/custom_menu_hooks_%s.bin (%dB) at 0x%08X" %
-              (ver, len(data), self.asf.FLASH_BASE + self.CUSTOM_MENU_HOOKS_OFF))
+              (ver, len(data), flash))
 
     def custom_patch_settings_myasv(self):
         """Expose reclaimed my_asv settings and pass their var_ids to the wrapper."""
@@ -1584,19 +1609,13 @@ class ASFirmwarePatches(object):
                 return int(fields[0], 16)
         raise ValueError("symbol %s not found in %s" % (symbol, elf_path))
 
-    def _patch_pointer(self, data, offset, fptr_offset, flash_base=0x08000000):
-        """Inject binary at offset and write Thumb pointer to fptr_offset."""
-        self.asf.patch(data, offset, checkempty=True)
-        thumb_ptr = struct.pack('<I', flash_base + offset + 1)
-        self.asf.patch(thumb_ptr, fptr_offset, clobber=True)
-
     def patch_common_code(self):
         """Inject common_code shared library (required by graph, squarewave, etc.)"""
         data, ver = self._load_versioned_bin('common_code')
         if data is None:
             return
-        self.asf.patch(data, 0xfd800, checkempty=True)
-        print("  common_code: %dB at 0xFD800" % len(data))
+        flash, _ = self._inject_payload('common_code', data)
+        print("  common_code: %dB at 0x%08X" % (len(data), flash))
 
     def patch_graph(self):
         """Add special graph module"""
@@ -1608,12 +1627,14 @@ class ASFirmwarePatches(object):
         if fptr is None:
             print("  patch_graph: skipped (unsupported CDX version %s)" % self.asf.cdx_ver)
             return
-        self._patch_pointer(data, 0xfd000, fptr)
-        print("  graph: %dB at 0xFD000" % len(data))
+        elf_path = self._versioned_artifact_path('graph', 'elf', ver)
+        start = self._elf_symbol_addr(elf_path, 'start')
+        flash, _ = self._inject_payload('graph', data)
+        self.asf.write_u32(fptr, start | 1)
+        print("  graph: %dB at 0x%08X" % (len(data), flash))
 
     def patch_squarewave(self):
         """Add squarewave pressure mode"""
-        code_off = 0xfd400
         data, ver = self._load_versioned_bin('squarewave')
         if data is None:
             return
@@ -1625,15 +1646,17 @@ class ASFirmwarePatches(object):
         elf_path = self._versioned_artifact_path('squarewave', 'elf', ver)
         if not os.path.exists(elf_path):
             raise ValueError("patch_squarewave: build/squarewave_%s.elf not found" % ver)
+        start = self._elf_symbol_addr(elf_path, 'start')
         original_slot = self._elf_symbol_addr(elf_path, 'squarewave_original_handler')
-        payload_thumb = self.asf.FLASH_BASE + code_off + 1
+        payload_thumb = start | 1
         original = self.asf.read_u32(fptr)
         if original == payload_thumb:
             original = self.asf.read_u32(original_slot - self.asf.FLASH_BASE)
-        self._patch_pointer(data, code_off, fptr)
+        flash, _ = self._inject_payload('squarewave', data)
+        self.asf.write_u32(fptr, payload_thumb)
         self.asf.write_u32(original_slot - self.asf.FLASH_BASE, original)
         self.squarewave_applied = True
-        print("  squarewave: %dB at 0x%05X" % (len(data), code_off))
+        print("  squarewave: %dB at 0x%08X" % (len(data), flash))
         print("  original handler: 0x%08X -> ABI 0x%08X" % (original, original_slot))
 
     def patch_asv_task_wrapper(self):
@@ -1646,8 +1669,11 @@ class ASFirmwarePatches(object):
         if fptr is None:
             print("  patch_asv_task_wrapper: skipped (unsupported CDX version %s)" % self.asf.cdx_ver)
             return
-        self._patch_pointer(data, 0xfd700, fptr)
-        print("  asv_task_wrapper: %dB at 0xFD700" % len(data))
+        elf_path = self._versioned_artifact_path('asv_task_wrapper', 'elf', ver)
+        start = self._elf_symbol_addr(elf_path, 'start')
+        flash, _ = self._inject_payload('asv_task_wrapper', data)
+        self.asf.write_u32(fptr, start | 1)
+        print("  asv_task_wrapper: %dB at 0x%08X" % (len(data), flash))
 
     def patch_wrapper_limit_max_pdiff(self):
         """Add VAuto/ASV pressure shaping wrapper"""
@@ -1659,9 +1685,12 @@ class ASFirmwarePatches(object):
         if fptr is None:
             print("  patch_wrapper_limit_max_pdiff: skipped (unsupported CDX version %s)" % self.asf.cdx_ver)
             return
-        self._patch_pointer(data, 0xff000, fptr)
+        elf_path = self._versioned_artifact_path('wrapper_limit_max_pdiff', 'elf', ver)
+        start = self._elf_symbol_addr(elf_path, 'start')
+        flash, _ = self._inject_payload('wrapper_limit_max_pdiff', data)
+        self.asf.write_u32(fptr, start | 1)
         self.wrapper_limit_max_pdiff_applied = True
-        print("  limit_max_pdiff: %dB at 0xFF000" % len(data))
+        print("  limit_max_pdiff: %dB at 0x%08X" % (len(data), flash))
 
     def patch_lcd_ili9325(self):
         """Universal ILI9325/ILI9328 + ILI9341 LCD driver"""
@@ -1678,10 +1707,11 @@ class ASFirmwarePatches(object):
         data, ver = self._load_versioned_bin('s10_lcd_ili9325')
         if data is None:
             return
-        lcd_offset = 0xFF800
-        self.asf.patch(data, lcd_offset, checkempty=True)
-        print("  lcd_ili9325: %dB at 0x%X" % (len(data), lcd_offset))
-        bl_bytes = self._encode_thumb_bl(bl_off, 0x08000000 + lcd_offset + 1)
+        elf_path = self._versioned_artifact_path('s10_lcd_ili9325', 'elf', ver)
+        board_init = self._elf_symbol_addr(elf_path, 'lcd_board_init')
+        flash, _ = self._inject_payload('s10_lcd_ili9325', data)
+        print("  lcd_ili9325: %dB at 0x%08X" % (len(data), flash))
+        bl_bytes = self._encode_thumb_bl(bl_off, board_init)
         self.asf.patch(bl_bytes, bl_off, clobber=True)
 
     def _encode_thumb_bl(self, src_off, dst_addr):
@@ -1703,7 +1733,6 @@ class ASFirmwarePatches(object):
 
     def patch_backlight_adapt(self):
         """improved backlight response to ambient light"""
-        BACKLIGHT_OFFSET = 0xFEC00
         data, ver = self._load_versioned_bin('backlight_adapt')
         if data is None:
             return
@@ -1725,7 +1754,9 @@ class ASFirmwarePatches(object):
             print("  unexpected bytes at hook site 0x%X, already patched?" % hook_off)
             return
 
-        self.asf.patch(data, BACKLIGHT_OFFSET, checkempty=True)
+        elf_path = self._versioned_artifact_path('backlight_adapt', 'elf', ver)
+        start = self._elf_symbol_addr(elf_path, 'start')
+        flash, _ = self._inject_payload('backlight_adapt', data)
 
         # NOP the beq that skips ASR->ASF averaging
         gate_off = sig_off + 0x1C8
@@ -1733,8 +1764,7 @@ class ASFirmwarePatches(object):
             self.asf.patch(b'\x00\xBF', gate_off, clobber=True)
 
         # redirect bl backlight_state_machine to our payload
-        cave_addr = BACKLIGHT_OFFSET + 0x08000000
-        bl_bytes = self._encode_thumb_bl(hook_off, cave_addr)
+        bl_bytes = self._encode_thumb_bl(hook_off, start)
         self.asf.patch(bl_bytes, hook_off, clobber=True)
 
         # tune defaults
@@ -1742,7 +1772,7 @@ class ASFirmwarePatches(object):
         self.asf.patch(b'\x50', self.asf.find_var('LBH') + self.asf.G4_DEFAULT, clobber=True)  # LBH = 80
         self.asf.patch(struct.pack('<I', 590), self.asf.find_var('ATH') + self.asf.G4_DEFAULT, clobber=True)  # ATH = 590
 
-        print("  backlight_adapt: %dB at 0x%X" % (len(data), BACKLIGHT_OFFSET))
+        print("  backlight_adapt: %dB at 0x%08X" % (len(data), flash))
 
     def patch_breath(self):
         """Add breath routine to allow full control"""
@@ -1765,17 +1795,9 @@ class ASFirmwarePatches(object):
             raise ValueError("patch_vid_spoof: build/vid_spoof_%s.elf not found" % ver)
         with open(bin_path, 'rb') as f:
             data = f.read()
-        if len(data) > self.VID_SPOOF_BUDGET:
-            raise ValueError(
-                "patch_vid_spoof: %s is %dB, exceeds %dB budget" %
-                (bin_path, len(data), self.VID_SPOOF_BUDGET))
-        budget = self.asf.fw[self.VID_SPOOF_OFF:self.VID_SPOOF_OFF + self.VID_SPOOF_BUDGET]
-        if budget != [0xff] * self.VID_SPOOF_BUDGET:
-            raise ValueError("patch_vid_spoof: payload area 0x%X is not empty" % self.VID_SPOOF_OFF)
-
-        self.asf.patch(data, self.VID_SPOOF_OFF, checkempty=True)
+        flash, _ = self._inject_payload('vid_spoof', data)
         print("  vid_spoof: build/vid_spoof_%s.bin (%dB) at 0x%08X" %
-              (ver, len(data), self.asf.FLASH_BASE + self.VID_SPOOF_OFF))
+              (ver, len(data), flash))
         handler = self._elf_symbol_addr(elf_path, 'vid_spoof_apply_current_mop')
         self.mop_callback_register_handler(handler, 'vid_spoof')
 
