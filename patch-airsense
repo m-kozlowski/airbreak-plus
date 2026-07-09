@@ -394,6 +394,27 @@ globals_offset() {
 }
 
 
+# Return file offset of a globals[16] variable-group record by name.
+# args: three-character group name
+find_var_group() {
+    local name=${1^^} base end off current terminator
+    [[ "$name" =~ ^[A-Z0-9]{3}$ ]] || die "find_var_group: invalid group name '$1'"
+
+    base=$(globals_offset 16) || die "globals[16] not found"
+    end=$(next_global_offset_after "$base") || die "cannot infer globals[16] end"
+    for (( off = base; off + 0x10 <= end; off += 0x10 )); do
+        current=$(read_bytes "$off" 3)
+        terminator=$(read_u8 $(( off + 3 )))
+        [[ "$current" =~ ^[A-Z0-9]{3}$ && $terminator -eq 0 ]] || break
+        if [[ "$current" == "$name" ]]; then
+            echo "$off"
+            return 0
+        fi
+    done
+    return 1
+}
+
+
 # Load globals[23] UART tags into name->var_id and var_id-presence maps.
 load_uart_names() {
     [[ "$_uart_names_loaded" == 1 ]] && return 0
@@ -852,6 +873,26 @@ custom_patch_settings_init() {
     CUSTOM_RECLAIMED_STRING_SEEN=()
     CUSTOM_MENU_ENTRIES=()
     CUSTOM_MENU_REGISTERED=()
+}
+
+
+# Move reclaimed Reminder variables to an independent persistent settings file.
+custom_patch_settings_rename_storage_group() {
+    local old=RGL new=CSG old_rec= new_rec=
+    old_rec=$(find_var_group "$old" || true)
+    new_rec=$(find_var_group "$new" || true)
+
+    if [[ -n "$old_rec" && -n "$new_rec" ]]; then
+        die "custom_patch_settings: both $old and $new variable groups exist"
+    fi
+    if [[ -n "$new_rec" ]]; then
+        echo "  custom settings storage group already named $new"
+        return
+    fi
+    [[ -n "$old_rec" ]] || die "custom_patch_settings: variable group $old not found"
+
+    printf '%s\0' "$new" | patch "$old_rec" || die failed
+    echo "  custom settings storage group: $old -> $new"
 }
 
 
@@ -1944,6 +1985,7 @@ custom_patch_settings() {
     echo "Preparing custom patch settings"
     custom_patch_settings_init
     custom_patch_settings_reclaim_reminders || return
+    custom_patch_settings_rename_storage_group
     custom_build_string_pool
 
     local feature

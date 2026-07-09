@@ -145,6 +145,26 @@ class ASFirmware(object):
         ptr = self.read_u32(off)
         return ptr - self.FLASH_BASE
 
+    def find_var_group(self, name):
+        """Return globals[16] variable-group record offset, or None."""
+        name = name.upper()
+        if not re.match(r'^[A-Z0-9]{3}$', name):
+            raise ValueError("find_var_group: invalid group name '%s'" % name)
+
+        base = self.globals_offset(16)
+        end = self._next_global_offset_after(base)
+        if end is None:
+            raise ValueError("cannot infer globals[16] end")
+
+        target = name.encode('ascii') + b'\x00'
+        for off in range(base, end - 0x0f, 0x10):
+            raw_name = bytes(self.fw[off:off + 4])
+            if not re.match(br'^[A-Z0-9]{3}\x00$', raw_name):
+                break
+            if raw_name == target:
+                return off
+        return None
+
     def find_var_id(self, var_id):
         """Return descriptor file offset for numeric var_id."""
         self._load_var_tables()
@@ -715,6 +735,25 @@ class ASFirmwarePatches(object):
         self.custom_settings_registry_addr = None
         self.custom_settings_registry_size = None
 
+    def custom_patch_settings_rename_storage_group(self):
+        """Move reclaimed Reminder variables to an independent settings file."""
+        old_name = 'RGL'
+        new_name = 'CSG'
+        old_rec = self.asf.find_var_group(old_name)
+        new_rec = self.asf.find_var_group(new_name)
+
+        if old_rec is not None and new_rec is not None:
+            raise ValueError("custom_patch_settings: both %s and %s variable groups exist" %
+                             (old_name, new_name))
+        if new_rec is not None:
+            print("  custom settings storage group already named %s" % new_name)
+            return
+        if old_rec is None:
+            raise ValueError("custom_patch_settings: variable group %s not found" % old_name)
+
+        self.asf.patch(new_name.encode('ascii') + b'\x00', old_rec, clobber=True)
+        print("  custom settings storage group: %s -> %s" % (old_name, new_name))
+
     def _custom_note_reclaimed_string_id(self, str_id):
         self.asf.load_firmware_string_metadata()
         if str_id == self.asf.str_id_empty:
@@ -1217,6 +1256,7 @@ class ASFirmwarePatches(object):
         self.custom_patch_settings_init()
         if not self.custom_patch_settings_reclaim_reminders():
             return
+        self.custom_patch_settings_rename_storage_group()
         self.custom_build_string_pool()
 
         for feature in features:
