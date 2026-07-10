@@ -1284,11 +1284,12 @@ class ASFirmwarePatches(object):
         # and saving the same storage group through the existing chain.
         low_rec = self.asf.find_var(low_var)
         low_flags = self.asf.read_u16(low_rec + self.asf.G4_FLAGS)
+        low_flags &= ~0x0080  # B7 forces +/-1 instead of the descriptor step.
         low_callback = self.asf.read_u8(low_rec + self.asf.G4_CALLBACK)
         low_dep = self.asf.read_u16(low_rec + self.asf.G4_NEXT_DEP)
         high_dep = self.asf.find_var_table_index(4, 'RGT')
         self.redefine_g4_var(low_var, low_flags, low_callback, low_dep, low_label,
-                             590, 4090, 0, 0, 1, 10, self.asf.str_id_empty)
+                             590, 4090, 0, 0, 1, 5, self.asf.str_id_empty)
         self.redefine_g4_var(high_var, 0x0007, 0, high_dep, high_label,
                              3070, 4090, 0, 0, 1, 10, self.asf.str_id_empty)
 

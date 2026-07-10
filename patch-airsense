@@ -2014,11 +2014,12 @@ custom_patch_settings_backlight() {
     # continues to dirty and save NGL through its existing dependency chain.
     low_rec=$(find_var "$low_var") || die failed
     low_flags=$(read_u16 $(( low_rec + G4_FLAGS )))
+    low_flags=$(( low_flags & ~0x0080 )) # B7 forces +/-1 instead of descriptor step.
     low_callback=$(read_u8 $(( low_rec + G4_CALLBACK )))
     low_dep=$(read_u16 $(( low_rec + G4_NEXT_DEP )))
     high_dep=$(find_var_table_index 4 RGT)
     #                            #flags        #callback      #dep_chain  #name_str_id  #default #max  #min #decimals #scale #step #units
-    redefine_g4_var "$low_var"   "$low_flags" "$low_callback" "$low_dep"  "$low_label"  590      4090  0    0         1      10    "$STR_ID_EMPTY"
+    redefine_g4_var "$low_var"   "$low_flags" "$low_callback" "$low_dep"  "$low_label"  590      4090  0    0         1      5     "$STR_ID_EMPTY"
     redefine_g4_var "$high_var"  0x0007        0              "$high_dep" "$high_label" 3070     4090  0    0         1      10    "$STR_ID_EMPTY"
 
     all_modes=$(MOP_BITMASK CPAP AutoSet APAP S ST T VAuto ASV ASVAuto iVAPS PAC AFH)

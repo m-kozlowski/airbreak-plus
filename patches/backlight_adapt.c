@@ -291,6 +291,13 @@ void start(struct bl_ctx *ctx)
     if (backlight_adapt_full_asf_var_id != 0xFFFFu)
         full_asf = variable_get_by_id((int)backlight_adapt_full_asf_var_id);
 
+    // A zero full-brightness threshold explicitly selects the unmodified
+    // firmware state machine instead of the continuous adaptation path.
+    if (full_asf == 0) {
+        backlight_state_machine(ctx);
+        return;
+    }
+
     // hysteresis deadband = max(ATH >> 5, MIN_HYST)
     int hyst = ath >> 5;
     if (hyst < MIN_HYST)
