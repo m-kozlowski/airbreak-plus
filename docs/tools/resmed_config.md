@@ -148,3 +148,9 @@ the selected `ETR` command, polls until `ETR=0000`, then restores the original
 | UGL | Usage data |
 | VGL | VAuto params |
 | XGL | ASV fixed params |
+
+This table describes stock variable meanings. Images built with
+`custom_settings` repurpose selected Reminder variables but keep their UART
+names, so the local `RGL` expansion remains useful. Firmware persistence for
+those repurposed values moves to `CSG.set`; see
+[Custom settings](../custom_settings.md).
