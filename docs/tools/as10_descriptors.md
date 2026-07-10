@@ -76,15 +76,18 @@ Useful decoded globals:
 | `0` | device identity |
 | `1` | timer scale table |
 | `2` | localized string table summary |
-| `3` / `4` / `6` / `8` / `9` / `10` | variable descriptor tables |
-| `5` | g[4] display-name override table |
+| `3` / `4` / `6` / `8` / `9` | scalar variable descriptor tables |
+| `10` | PCC/HPI/HUI hardware-interface vector descriptors |
+| `5` | alternate labels for specialized g[4] descriptors |
+| `7` | packed g[6] byte-slice pool |
 | `11` / `12` / `13` / `26` / `27` / `28` | signal channels |
-| `14` / `15` | signal groups |
-| `16` | variable groups |
-| `17` / `18` | descriptor tables used by signal metadata |
+| `14` / `15` | NIGHT_PROFILE_PERIODIC and NPA/ALA aperiodic signal groups |
+| `16` | EEPROM-backed variable groups |
+| `17` / `18` | DAC date and TIC time descriptors |
 | `19` | EEPROM stream table |
-| `20` / `21` | PDL table and PDL rules |
-| `22` / `23` | UART-name lookup tables |
+| `20` / `21` | PDL persistent-state list and derived-variable rules |
+| `22` | identity TGT export list |
+| `23` | UART-name index |
 | `24` | therapy-mode setting map |
 
 Use `--globals 0xADDR` if automatic `globals[]` discovery fails.
@@ -147,17 +150,17 @@ string table record and locale pointers.
 
 ### chain
 
-Walk the firmware dependency chain from a `g[8]` enum variable into dependent
-`g[4]` numeric variables.
+Walk a variable descriptor's dependency chain into g[4] numeric variables.
 
 ```
 as10_descriptors.py firmware.bin chain MOP
 as10_descriptors.py firmware.bin chain 0x020D
 ```
 
-The chain starts at `g[8]+0x04`, which is a g[4] index, not a var id. Each
-g[4] record then follows its own `+0x04` `next_dependent_g4_idx` until
-`0x7FFF` or the firmware's depth limit.
+For g[3], g[6], and g[8], the chain starts at descriptor offset `+0x04`. For a
+g[4] source, `+0x04` is already its next link. These fields contain g[4]
+indexes, not var IDs. Each g[4] record follows its own `+0x04` link until
+`0x7FFF` or the firmware depth limit.
 
 ### dump-tsv
 

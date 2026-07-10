@@ -109,29 +109,29 @@ TABLES = {
 
 GLOBAL_LABELS = {
     0: "device identity/config header",
-    1: "timer/sampling scale table",
+    1: "scheduler/logical-period profiles",
     2: "string descriptor table",
     3: "string variable descriptors",
     4: "numeric/settings descriptors",
-    5: "display-name override table",
+    5: "alternate labels for specialized g[4] descriptors",
     6: "config/status descriptors",
-    7: "unidentified globals[7] table",
+    7: "g[6] byte-slice pool",
     8: "enum/menu descriptors",
-    9: "timer/composite descriptors",
-    10: "internal numeric descriptors",
+    9: "ANV apnea-event record descriptor",
+    10: "PCC/HPI/HUI hardware-interface vector descriptors",
     11: "BRP/PLD/SAD channels",
     12: "CSL/AEV/EVE channels",
-    13: "STR channel fields",
-    14: "NPD signal group",
-    15: "NPA signal group",
-    16: "variable groups",
-    17: "signal group descriptors",
-    18: "stream descriptors",
+    13: "STR channel descriptor",
+    14: "NPD NIGHT_PROFILE_PERIODIC signal group",
+    15: "NPA/ALA aperiodic signal groups",
+    16: "EEPROM-backed variable groups",
+    17: "DAC date descriptor",
+    18: "TIC time descriptor",
     19: "stream table",
-    20: "PDL definition",
-    21: "PDL rules/count record",
-    22: "flat UART name table",
-    23: "UART name lookup buckets",
+    20: "PDL persistent-state list",
+    21: "derived-variable rules",
+    22: "identity TGT export list",
+    23: "UART name index",
     24: "mode membership table",
     25: "mode count",
     26: "TCE/PBT/PMD/FTX/RAW/DRT/CPU/SSK channels",
@@ -144,11 +144,11 @@ FLAG_DEFS = {
     0: ("ACT", "Active -- master enable"),
     1: ("VIS", "Visible in menu"),
     2: ("EDT", "Editable by user"),
-    3: ("B3",  "Unknown/reserved"),
-    4: ("RO",  "Read-only lock"),
-    5: ("DRT", "Dirty/changed"),
-    6: ("FAC", "Factory default marker"),
-    7: ("B7",  "Unknown"),
+    3: ("SGN", "Signed numeric representation"),
+    4: ("LOCK", "Read-only lock"),
+    5: ("RDY", "Runtime initialized/ready"),
+    6: ("EXT", "Harness/periodic external override"),
+    7: ("B7",  "Table-specific"),
 }
 
 
@@ -203,11 +203,10 @@ class Flash:
 
 
 def find_globals_array(flash):
-    """Find the globals[] pointer array by scanning for a run of ascending flash pointers.
+    """Find the globals[] ABI vector by scanning for its pointer-heavy prefix.
 
-    The globals array is a flat array of u32 pointers in the CCX region.
-    Signature: 10+ consecutive u32 values that are valid flash pointers,
-    mostly in ascending order, within the CCX address range.
+    Most entries are ascending CCX pointers, but g[25] is a record count and
+    g[29] is the end marker.
     """
     scan_start = flash.base + 0x4000   # CCX starts after BLX
     scan_end = flash.base + 0x8000     # globals is early in CCX
@@ -238,10 +237,10 @@ def find_globals_array(flash):
 
 
 def find_tables_direct(flash):
-    """Find descriptor tables by locating the globals[] pointer array.
+    """Find descriptor tables by locating the globals[] ABI vector.
 
-    Scans CCX for the globals pointer array (run of ascending flash pointers),
-    then reads table addresses directly from it.
+    Scans CCX for the pointer-heavy vector, then reads object roots directly
+    from it.
     """
     results = {}
 
@@ -270,6 +269,9 @@ def find_tables_direct(flash):
     if ptrs.get(5) and flash.is_flash_ptr(ptrs[5]):
         results['globals5'] = ptrs[5]
 
+    if ptrs.get(7) and flash.is_flash_ptr(ptrs[7]):
+        results['globals7'] = ptrs[7]
+
     if ptrs.get(2) and flash.is_flash_ptr(ptrs[2]):
         results['globals2'] = ptrs[2]
 
@@ -286,7 +288,7 @@ def find_tables_direct(flash):
         results['npa'] = ptrs[15]
 
     if ptrs.get(22) and flash.is_flash_ptr(ptrs[22]):
-        results['signals'] = ptrs[22]
+        results['name_pool'] = ptrs[22]
 
     if ptrs.get(0) and flash.is_flash_ptr(ptrs[0]):
         results['device'] = ptrs[0]
@@ -322,12 +324,17 @@ def find_tables_direct(flash):
     return results
 
 
-def decode_flags(f):
-    return "|".join(s for bit, (s, _) in FLAG_DEFS.items() if f & (1 << bit)) or "-"
+def decode_flags(f, table=None):
+    names = []
+    for bit, (name, _) in FLAG_DEFS.items():
+        if not f & (1 << bit):
+            continue
+        names.append("RAW" if table == 4 and bit == 7 else name)
+    return "|".join(names) or "-"
 
 
-def fmt_flags(f):
-    return f"fl=0x{f:04X} [{decode_flags(f):>20s}]"
+def fmt_flags(f, table=None):
+    return f"fl=0x{f:04X} [{decode_flags(f, table):>20s}]"
 
 
 def _vid_str(var_id, db=None):
@@ -364,7 +371,7 @@ class Entry3:
       +0x00  u16  flags
       +0x02  u8   notify_handler  (callback index, 0=none)
       +0x03  u8   _pad
-      +0x04  s16  linked_var_id   (propagate value on change, 0x7FFF=none)
+      +0x04  s16  dependency_head_g4_idx (0x7FFF=none)
       +0x06  s16  format_str_id   (display format string, 0x00DE=none)
       +0x08  u16  max_length      (max string length / default)
     """
@@ -374,28 +381,28 @@ class Entry3:
         self.var_id = id_base + idx
         self.flags          = fl.u16(addr + 0x00)
         self.notify_handler = fl.u8(addr + 0x02)   # callback jump table index
-        self.linked_var_id  = fl.s16(addr + 0x04)   # value propagation target
+        self.dependency_idx = fl.s16(addr + 0x04)
         self.format_str_id  = fl.s16(addr + 0x06)   # format string, 0xDE=none
         self.max_length     = fl.u16(addr + 0x08)    # max string length
 
     def oneline(self, db=None):
         off = self.addr - (db.table_bases.get(3, self.addr) if db else self.addr)
-        lv = _vid_str(self.linked_var_id, db) if self.linked_var_id != 0x7FFF else "--"
+        lv = _g4_idx_ref(self.dependency_idx, db, none="")
         fs = f"0x{self.format_str_id & 0xFFFF:04X}" if self.format_str_id != 0xDE else "--"
         cb = f"cb={self.notify_handler}" if self.notify_handler else ""
         return (f"0x{self.idx:03X} var={_vid_str(self.var_id, db)} @0x{self.addr:08X} +0x{off:04X}  "
-                f"{fmt_flags(self.flags)}  "
+                f"{fmt_flags(self.flags, self.TABLE)}  "
                 f"maxlen={self.max_length}  linked={lv}  fmt={fs}  {cb}")
 
     def detail(self, db=None):
         off = self.addr - (db.table_bases.get(3, self.addr) if db else self.addr)
-        lv = _vid_str(self.linked_var_id, db) if self.linked_var_id != 0x7FFF else "0x7FFF (none)"
+        lv = _g4_idx_ref(self.dependency_idx, db, none="none", detail=True)
         fs = f"0x{self.format_str_id & 0xFFFF:04X}" if self.format_str_id != 0xDE else "0x00DE (none)"
         return (f"  [3] idx=0x{self.idx:03X}  var_id={_vid_str(self.var_id, db)}  "
                 f"@ 0x{self.addr:08X} +0x{off:04X}\n"
-                f"    flags          = 0x{self.flags:04X} ({decode_flags(self.flags)})\n"
+                f"    flags          = 0x{self.flags:04X} ({decode_flags(self.flags, self.TABLE)})\n"
                 f"    notify_handler = {self.notify_handler}\n"
-                f"    linked_var_id  = {lv}\n"
+                f"    dep_head       = 0x{self.dependency_idx & 0xFFFF:04X} ({lv})\n"
                 f"    format_str_id  = {fs}\n"
                 f"    max_length     = {self.max_length}")
 
@@ -461,11 +468,9 @@ class Entry4:
                     sb = db.string(b) if db.strtab else None
                     parts_g5.append(f'b="{sb}"' if sb else f'b=0x{b:04X}')
                 if parts_g5:
-                    g5 = f"  g5[{', '.join(parts_g5)}]"
-                else:
-                    g5 = "  g5[HIDDEN]"
+                    g5 = f"  alt[{', '.join(parts_g5)}]"
         return (f"0x{self.idx:03X} var={_vid_str(self.var_id, db)} @0x{self.addr:08X} +0x{off:05X}  "
-                f"{fmt_flags(self.flags)}  "
+                f"{fmt_flags(self.flags, self.TABLE)}  "
                 f"def={self._fmt(self.default_value):>8s}  "
                 f"[{self.range_str()}]{unit}  "
                 f"{chain}{name}{g5}")
@@ -487,7 +492,7 @@ class Entry4:
         lines = [
             f"  [4] idx=0x{self.idx:03X}  var_id={_vid_str(self.var_id, db)}  "
             f"@ 0x{self.addr:08X} +0x{off:05X}{sub}",
-            f"    flags      = 0x{self.flags:04X} ({decode_flags(self.flags)})  "
+            f"    flags      = 0x{self.flags:04X} ({decode_flags(self.flags, self.TABLE)})  "
             f"0b{self.flags:016b}",
             f"    callback   = {self.callback_id}",
             f"    next_chain = 0x{self.next_var_idx & 0xFFFF:04X} ({chain_str})",
@@ -507,13 +512,11 @@ class Entry4:
                 a, b = rec
                 sa = db.string(a) if db.strtab and a != 0xDE else None
                 sb = db.string(b) if db.strtab and b != 0xDE else None
-                lines.append(f"    -- globals[5] display-name override --")
+                lines.append(f"    -- globals[5] alternate labels --")
                 lines.append(f"      str_a = 0x{a:04X}"
-                             f'{f" ({sa!r})" if sa else " [HIDDEN]" if a == 0xDE else ""}')
+                             f'{f" ({sa!r})" if sa else " (none)" if a == 0xDE else ""}')
                 lines.append(f"      str_b = 0x{b:04X}"
-                             f'{f" ({sb!r})" if sb else " [HIDDEN]" if b == 0xDE else ""}')
-                if a == 0xDE and b == 0xDE:
-                    lines.append("      -> NOT VISIBLE in any mode")
+                             f'{f" ({sb!r})" if sb else " (none)" if b == 0xDE else ""}')
         return "\n".join(lines)
 
 
@@ -522,50 +525,65 @@ class Entry6:
     def __init__(self, fl, addr, idx, id_base):
         self.addr, self.idx = addr, idx
         self.var_id = id_base + idx
-        self.flags       = fl.u16(addr + 0x00)
-        self.config_group= fl.u16(addr + 0x02)    # sub-group/category index
-        self.linked_var  = fl.u16(addr + 0x04)     # linked var_id pair
-        self.parent_var  = fl.u16(addr + 0x06)     # parent var_id (often 0x00DE)
-        self.default     = fl.u32(addr + 0x08)
-        self.perm_mask   = fl.u32(addr + 0x0C)
-        self.item_count  = fl.u8(addr + 0x10)      # child/option count
-        self.step_div    = fl.u8(addr + 0x11)
-        self.child_index = fl.u16(addr + 0x12)     # first child index (into g[8])
-        self.label_str   = fl.u16(addr + 0x14)     # label string_id
-        self._pad_16     = fl.u16(addr + 0x16)     # always 0
+        self.flags          = fl.u16(addr + 0x00)
+        self.callback_id    = fl.u8(addr + 0x02)
+        self._pad_03        = fl.u8(addr + 0x03)
+        self.dependency_idx = fl.s16(addr + 0x04)
+        self.name_str_id    = fl.u16(addr + 0x06)
+        self.default        = fl.u32(addr + 0x08)
+        self.allowed_bits   = fl.u32(addr + 0x0C)
+        self.item_count     = fl.u8(addr + 0x10)
+        self.display_param  = fl.u8(addr + 0x11)
+        self.pool_offset    = fl.u16(addr + 0x12)
+        self.base_str_id    = fl.u16(addr + 0x14)
+        self._pad_16        = fl.u16(addr + 0x16)
+
+    def pool_values(self, db):
+        if not db or db.g7_addr is None:
+            return []
+        return [db.fl.u8(db.g7_addr + self.pool_offset + i)
+                for i in range(self.item_count)]
 
     def oneline(self, db=None):
         off = self.addr - (db.table_bases.get(6, self.addr) if db else self.addr)
         lbl = ""
-        if db and self.label_str and self.label_str not in (0xFFFF, 0xDE):
-            s = db.string(self.label_str)
+        if db and self.name_str_id and self.name_str_id not in (0xFFFF, 0xDE):
+            s = db.string(self.name_str_id)
             if s: lbl = f' "{s}"'
+        values = self.pool_values(db)
+        pool = f"  pool={','.join(str(v) for v in values)}" if values else ""
         return (f"0x{self.idx:03X} var={_vid_str(self.var_id, db)} @0x{self.addr:08X} +0x{off:04X}  "
-                f"{fmt_flags(self.flags)}  "
-                f"def=0x{self.default:08X}  perm=0x{self.perm_mask:08X}  "
-                f"items={self.item_count}  stepdiv={self.step_div}  "
-                f"child=0x{self.child_index:04X}{lbl}")
+                f"{fmt_flags(self.flags, self.TABLE)}  "
+                f"def=0x{self.default:08X}  allowed=0x{self.allowed_bits:08X}  "
+                f"items={self.item_count}  pooloff=0x{self.pool_offset:04X}"
+                f"{lbl}{pool}")
 
     def detail(self, db=None):
         off = self.addr - (db.table_bases.get(6, self.addr) if db else self.addr)
-        sd = "1" if self.step_div == 0 else f"{self.step_div}/4"
         lbl = ""
-        if db and self.label_str and self.label_str not in (0xFFFF, 0xDE):
-            s = db.string(self.label_str)
+        if db and self.name_str_id and self.name_str_id not in (0xFFFF, 0xDE):
+            s = db.string(self.name_str_id)
             if s: lbl = f' = "{s}"'
-        pv = _vid_str(self.parent_var, db) if self.parent_var != 0xDE else "0x00DE (none)"
-        lv = _vid_str(self.linked_var, db) if self.linked_var != 0 else "0x0000 (none)"
+        base = ""
+        if db and self.base_str_id not in (0xFFFF, 0xDE):
+            s = db.string(self.base_str_id)
+            if s: base = f' = "{s}"'
+        dep = _g4_idx_ref(self.dependency_idx, db, none="none", detail=True)
+        values = self.pool_values(db)
         return (
             f"  [6] idx=0x{self.idx:03X}  var_id={_vid_str(self.var_id, db)}  "
             f"@ 0x{self.addr:08X} +0x{off:04X}\n"
-            f"    flags      = 0x{self.flags:04X} ({decode_flags(self.flags)})\n"
-            f"    group      = {self.config_group}  linked={lv}  parent={pv}\n"
+            f"    flags      = 0x{self.flags:04X} ({decode_flags(self.flags, self.TABLE)})\n"
+            f"    callback   = {self.callback_id}\n"
+            f"    dep_head   = 0x{self.dependency_idx & 0xFFFF:04X} ({dep})\n"
+            f"    name_str   = 0x{self.name_str_id:04X}{lbl}\n"
             f"    default    = 0x{self.default:08X} ({self.default})\n"
-            f"    perm       = 0x{self.perm_mask:08X}  "
-            f"0b{self.perm_mask:032b}\n"
-            f"    item_count = {self.item_count}  step_div={self.step_div} (step={sd})\n"
-            f"    child_idx  = 0x{self.child_index:04X}\n"
-            f"    label_str  = 0x{self.label_str:04X}{lbl}")
+            f"    allowed    = 0x{self.allowed_bits:08X}  "
+            f"0b{self.allowed_bits:032b}\n"
+            f"    item_count = {self.item_count}  display_param={self.display_param}\n"
+            f"    pool_offset = 0x{self.pool_offset:04X}\n"
+            f"    pool_values = {', '.join(str(v) for v in values) if values else 'not loaded'}\n"
+            f"    base_str   = 0x{self.base_str_id:04X}{base}")
 
 
 M36_XML_ENUM_LABELS = {
@@ -654,7 +672,7 @@ class Entry8:
                     parts.append(f"?str#0x{self.base_str_id + i:04X}")
             opts = "  (" + ", ".join(parts) + ")"
         return (f"0x{self.idx:03X} var={_vid_str(self.var_id, db)} @0x{self.addr:08X} +0x{off:04X}  "
-                f"{fmt_flags(self.flags)}  "
+                f"{fmt_flags(self.flags, self.TABLE)}  "
                 f"def={self.default_value}  opts={self.num_options:>2}  "
                 f"perm=0x{self.perm_mask:08X}  {link}{name}{opts}")
 
@@ -674,7 +692,7 @@ class Entry8:
         lines = [
             f"  [8] idx=0x{self.idx:03X}  var_id={_vid_str(self.var_id, db)}  "
             f"@ 0x{self.addr:08X} +0x{off:04X}",
-            f"    flags      = 0x{self.flags:04X} ({decode_flags(self.flags)})  "
+            f"    flags      = 0x{self.flags:04X} ({decode_flags(self.flags, self.TABLE)})  "
             f"0b{self.flags:016b}",
             f"    callback   = {self.callback_id}",
             f"    dep_head   = 0x{self.linked_var_idx & 0xFFFF:04X} ({link})",
@@ -726,24 +744,24 @@ ENTRY_CLS = {3: Entry3, 4: Entry4, 6: Entry6, 8: Entry8}
 
 
 class Entry9:
-    """globals[9] -- Timer/composite variable descriptor (0x18 bytes).
+    """globals[9] -- ANV apnea-event record descriptor (0x18 bytes).
 
-    Only 1 entry (var_id 0x2B2). Similar layout to Entry8 but with
-    min/max/step range fields instead of option strings.
+    The runtime value is an event-time u32 followed by duration and event-type
+    u16 fields. The descriptor constrains duration and event type.
 
     ROM record layout (0x18 = 24 bytes):
       +0x00  u16  flags
       +0x02  u16  pad
-      +0x04  u16  linked_var_idx (0x0141 on AS10)
+      +0x04  u16  dependency_head_g4_idx
       +0x06  u16  name_str_id    (0xDE = hidden)
-      +0x08  u8   default_byte
-      +0x09  u8   num_options
+      +0x08  u8   default event type
+      +0x09  u8   event type count
       +0x0A  u16  pad
-      +0x0C  u32  perm_bitmask
-      +0x10  u16  base_str_id    (0xDE = hidden)
-      +0x12  u16  min_value
-      +0x14  u16  max_value
-      +0x16  u16  step_size
+      +0x0C  u32  allowed event type mask
+      +0x10  u16  event type base string ID
+      +0x12  u16  minimum duration in deciseconds
+      +0x14  u16  maximum duration in deciseconds
+      +0x16  u16  duration units per second
     """
     TABLE = 9
 
@@ -753,7 +771,7 @@ class Entry9:
 
         self.flags        = fl.u16(addr + 0x00)
         self.pad_02       = fl.u16(addr + 0x02)
-        self.linked_var   = fl.u16(addr + 0x04)
+        self.dependency_idx = fl.u16(addr + 0x04)
         self.name_str_id  = fl.u16(addr + 0x06)
         self.default_byte = fl.u8(addr + 0x08)
         self.num_options  = fl.u8(addr + 0x09)
@@ -771,10 +789,11 @@ class Entry9:
             s = db.string(self.name_str_id)
             if s: name = f'  "{s}"'
         return (f"0x{self.idx:03X} var={_vid_str(self.var_id, db)} @0x{self.addr:08X} +0x{off:04X}  "
-                f"{fmt_flags(self.flags)}  "
-                f"def={self.default_byte}  opts={self.num_options}  "
-                f"[{self.min_value}..{self.max_value} step {self.step_size}]  "
-                f"perm=0x{self.perm_bitmask:08X}{name}")
+                f"{fmt_flags(self.flags, self.TABLE)}  "
+                f"type={self.default_byte}  types={self.num_options}  "
+                f"duration={self.min_value}..{self.max_value} ds  "
+                f"units/s={self.step_size}  "
+                f"allowed=0x{self.perm_bitmask:08X}{name}")
 
     def detail(self, db=None):
         off = self.addr - (db.table_bases.get(9, self.addr) if db else self.addr)
@@ -786,30 +805,31 @@ class Entry9:
         if db and self.base_str_id and self.base_str_id not in (0xFFFF, 0xDE):
             s = db.string(self.base_str_id)
             if s: base_str = f' = "{s}"'
-        link = f"-> idx 0x{self.linked_var:04X}" if self.linked_var != 0x7FFF else "none"
+        link = _g4_idx_ref(self.dependency_idx, db, none="none", detail=True)
         return (
             f"  [9] idx=0x{self.idx:03X}  var_id={_vid_str(self.var_id, db)}  "
             f"@ 0x{self.addr:08X} +0x{off:04X}\n"
-            f"    flags      = 0x{self.flags:04X} ({decode_flags(self.flags)})  "
+            f"    flags      = 0x{self.flags:04X} ({decode_flags(self.flags, self.TABLE)})  "
             f"0b{self.flags:016b}\n"
-            f"    linked     = 0x{self.linked_var:04X} ({link})\n"
+            f"    dep_head   = 0x{self.dependency_idx:04X} ({link})\n"
             f"    name_str   = 0x{self.name_str_id:04X}{name}\n"
-            f"    default    = {self.default_byte}\n"
-            f"    num_opts   = {self.num_options}\n"
-            f"    perm_mask  = 0x{self.perm_bitmask:08X}  "
+            f"    default_type = {self.default_byte}\n"
+            f"    event_types  = {self.num_options}\n"
+            f"    allowed_types = 0x{self.perm_bitmask:08X}  "
             f"0b{self.perm_bitmask:032b}\n"
-            f"    base_str   = 0x{self.base_str_id:04X}{base_str}\n"
-            f"    range      = {self.min_value}..{self.max_value} step {self.step_size}")
+            f"    type_base_str = 0x{self.base_str_id:04X}{base_str}\n"
+            f"    duration     = {self.min_value}..{self.max_value} deciseconds\n"
+            f"    units_per_s  = {self.step_size}")
 
 
 ENTRY_CLS[9] = Entry9
 
 
 class Entry10:
-    """globals[10] -- Internal numeric variable descriptor (0x24 bytes).
+    """globals[10] -- Hardware-interface vector descriptor (0x24 bytes).
 
-    3 entries, not exposed through the variable ID dispatch system.
-    Accessed directly by index (0, 1, 2) from specific code paths.
+    Three named vectors bridge accessory-controller reports into the variable
+    system through a separate indexed-element handler.
 
     ROM record layout (0x24 = 36 bytes):
       +0x00  u16  flags
@@ -831,10 +851,9 @@ class Entry10:
     """
     TABLE = 10
 
-    def __init__(self, fl, addr, idx):
+    def __init__(self, fl, addr, idx, id_base):
         self.addr, self.idx = addr, idx
-        # No var_id in the standard dispatch system
-        self.var_id = 0xF000 + idx  # synthetic ID for internal tracking
+        self.var_id = id_base + idx
 
         self.flags          = fl.u16(addr + 0x00)
         self.callback_id    = fl.u8(addr + 0x02)
@@ -869,6 +888,14 @@ class Entry10:
         if s < 0: return f"x{-s}"
         return "raw"
 
+    def role(self, db=None):
+        name = db.uart_name(self.var_id) if db else None
+        return {
+            "PCC": "humidifier-interface parameter vector; climate logic uses elements 0,1,3,4",
+            "HPI": "binary vector received through the heated-tube interface path",
+            "HUI": "binary vector received through the humidifier interface path and used by climate logic",
+        }.get(name, "hardware-interface runtime vector")
+
     def oneline(self, db=None):
         off = self.addr - (db.table_bases.get(10, self.addr) if db else self.addr)
         name = ""
@@ -879,11 +906,13 @@ class Entry10:
         if db and self.units_str_id and self.units_str_id not in (0xFFFF, 0xDE, 0):
             u = db.string(self.units_str_id)
             if u: unit = f" [{u}]"
-        return (f"0x{self.idx:03X} (int) @0x{self.addr:08X} +0x{off:04X}  "
-                f"{fmt_flags(self.flags)}  "
+        return (f"0x{self.idx:03X} var={_vid_str(self.var_id, db)} "
+                f"@0x{self.addr:08X} +0x{off:04X}  "
+                f"{fmt_flags(self.flags, self.TABLE)}  "
                 f"def={self._fmt(self.default_value):>8s}  "
                 f"[{self.range_str()}]{unit}  "
-                f"ram[{self.ram_base_index}..+{self.ram_count}]{name}")
+                f"ram[{self.ram_base_index}..+{self.ram_count}]{name}  "
+                f"[{self.role(db)}]")
 
     def detail(self, db=None):
         off = self.addr - (db.table_bases.get(10, self.addr) if db else self.addr)
@@ -896,9 +925,9 @@ class Entry10:
             u = db.string(self.units_str_id)
             if u: unit = f' = "{u}"'
         return (
-            f"  [10] idx=0x{self.idx:03X}  (internal, no var_id)  "
+            f"  [10] idx=0x{self.idx:03X}  var_id={_vid_str(self.var_id, db)}  "
             f"@ 0x{self.addr:08X} +0x{off:04X}\n"
-            f"    flags      = 0x{self.flags:04X} ({decode_flags(self.flags)})  "
+            f"    flags      = 0x{self.flags:04X} ({decode_flags(self.flags, self.TABLE)})  "
             f"0b{self.flags:016b}\n"
             f"    callback   = {self.callback_id}\n"
             f"    name_str   = 0x{self.name_str_id:04X}{name}\n"
@@ -910,7 +939,8 @@ class Entry10:
             f"dp={self.decimal_places}\n"
             f"    range      : {self.range_str()}\n"
             f"    units_str  = 0x{self.units_str_id:04X}{unit}\n"
-            f"    ram_base   = {self.ram_base_index}  ram_count={self.ram_count}")
+            f"    ram_base   = {self.ram_base_index}  ram_count={self.ram_count}\n"
+            f"    purpose    = {self.role(db)}")
 
 
 ENTRY_CLS[10] = Entry10
@@ -950,15 +980,15 @@ class StringTable:
         else:
             raise ValueError(
                 f"string raw table dereference failed at 0x{raw_addr:08X}")
-        self.max_id = 0
+        self.count = 0
         for i in range(2000):
             ptr = flash.u32(self.g2 + i * 8 + 4)
             if ptr is None or (ptr != 0 and not flash.is_flash_ptr(ptr)):
                 break
-            self.max_id = i + 1
+            self.count = i + 1
 
     def get(self, str_id, lang=0):
-        if str_id < 0 or str_id >= self.max_id:
+        if str_id < 0 or str_id >= self.count:
             return None
         la = self.fl.u32(self.g2 + str_id * 8 + 4)
         if not la or not self.fl.is_flash_ptr(la):
@@ -1020,34 +1050,42 @@ class DeviceIdentity:
     """globals[0]: Device identity and config header.
 
     +0x00: u32[7]  CID components (reordered: CX g[1]-g[0]-g[3]-g[2]-g[5]-g[4]-g[6])
-    +0x20: char[]  catalog number (e.g. '37101')
+    +0x1C: u32     front-panel profile
+    +0x20: char[]  product code (e.g. '37101')
     +0x30: char[]  product name (e.g. 'AirSense 10 AutoSet')
     """
     def __init__(self, flash, addr):
         self.addr = addr
         self.cid_vals = [flash.u32(addr + i * 4) or 0 for i in range(7)]
-        raw_cat = flash.cstr(addr + 0x20)
-        self.catalog = raw_cat.decode('ascii', errors='replace') if raw_cat else ""
+        self.front_panel_profile = flash.u32(addr + 0x1C)
+        raw_product_code = flash.cstr(addr + 0x20)
+        self.product_code = (raw_product_code.decode('ascii', errors='replace')
+                             if raw_product_code else "")
         raw_prod = flash.cstr(addr + 0x30)
         self.product = raw_prod.decode('ascii', errors='replace') if raw_prod else ""
         v = self.cid_vals
         self.cid = "CX%03d-%03d-%03d-%03d-%03d-%03d-%03d" % (
             v[1], v[0], v[3], v[2], v[5], v[4], v[6])
-        if self.catalog or self.product:
-            print(f"[+] globals[0]: {self.catalog} / {self.product} ({self.cid})")
+        if self.product_code or self.product:
+            print(f"[+] globals[0]: {self.product_code} / {self.product} ({self.cid})")
 
     def dump(self):
-        return (f"  Product code:  {self.catalog}\n"
+        profile = {
+            0: "3 buttons, rotary encoder, default logo",
+            1: "5 buttons, no rotary encoder, wave logo",
+        }.get(self.front_panel_profile, "invalid")
+        return (f"  Product code:  {self.product_code}\n"
                 f"  Product name:  {self.product}\n"
-                f"  CID:           {self.cid}")
+                f"  CID:           {self.cid}\n"
+                f"  Front-panel profile: {self.front_panel_profile} ({profile})")
 
 
 class VariableGroups:
-    """globals[16]: variable groups (AGL, CGL, RGL, etc.)
+    """globals[16]: EEPROM-backed .set variable groups.
 
     Each entry: 16 bytes:
       +0x00: char[4]  group name (3-char + null)
-      +0x04: u16      start_var_id
+      +0x04: u16      g4 group-tracker index
       +0x06: u16      param
       +0x08: u32      member_var_id_array_ptr
       +0x0C: u32      member_count
@@ -1063,7 +1101,7 @@ class VariableGroups:
             if not raw_name or not all(0x41 <= b <= 0x5A for b in raw_name[:3]):
                 break
             name = raw_name[:3].decode('ascii')
-            start_vid = flash.u16(base + 4)
+            tracker_idx = flash.u16(base + 4)
             param = flash.u16(base + 6)
             arr_ptr = flash.u32(base + 8)
             count = flash.u32(base + 12)
@@ -1075,10 +1113,10 @@ class VariableGroups:
                         uart = names.name(vid) if names else None
                         members.append((vid, uart))
             self.groups.append({
-                'name': name, 'start_vid': start_vid,
+                'name': name, 'tracker_idx': tracker_idx,
                 'param': param, 'members': members,
             })
-        print(f"[+] globals[16]: {len(self.groups)} variable groups")
+        print(f"[+] globals[16]: {len(self.groups)} EEPROM-backed variable groups")
 
     def dump(self, group_name=None):
         lines = []
@@ -1087,61 +1125,80 @@ class VariableGroups:
                 continue
             members = ', '.join(
                 f"{u}" if u else f"0x{v:04X}" for v, u in g['members'])
-            lines.append(f"  {g['name']} ({len(g['members'])} vars): {members}")
+            tracker = _g4_idx_ref(g['tracker_idx'], None, none="none")
+            lines.append(f"  {g['name']} ({len(g['members'])} vars, "
+                         f"tracker={tracker}): {members}")
         return "\n".join(lines) if lines else f"  group '{group_name}' not found"
 
 
 class DescriptorTable:
-    """globals[17]/[18]: 8-byte descriptor records for signal groups and streams.
+    """globals[17]/[18]: one 8-byte date/time descriptor per root.
 
-    g[17]: 2 entries — descriptors for NPD/NPA signal groups
-    g[18]: 12 entries — descriptors for the 10 EEPROM streams (+ 2 header entries)
-
-    Each record: {u16 a, u16 b, u16 c, u16 var_id}
-    Stream entries share common prefix {0x01F6:UDT, 0x00E1, 0x00AD:NOC, <src_var_id>}.
+    The object var_id is implicit in the global object sequence. The final u16
+    in the record is a string ID, not a var_id. Arrays placed after g[18]
+    belong to g[19].
     """
     STRIDE = 8
 
-    def __init__(self, flash, gidx, addr, end_addr, names=None):
+    def __init__(self, flash, gidx, addr, object_var_id, names=None):
         self.gidx = gidx
+        self.object_var_id = object_var_id
+        self.object_name = names.name(object_var_id) if names else None
         self.entries = []
-        count = (end_addr - addr) // self.STRIDE
-        for i in range(count):
-            base = addr + i * self.STRIDE
-            a = flash.u16(base)
-            b = flash.u16(base + 2)
-            c = flash.u16(base + 4)
-            d = flash.u16(base + 6)
-            if a is None:
-                break
-            uart_d = names.name(d) if names and d else None
-            self.entries.append((a, b, c, d, uart_d))
-        print(f"[+] globals[{gidx}]: {len(self.entries)} descriptor records")
+        self.flags = flash.u16(addr)
+        self.callback = flash.u8(addr + 2)
+        self.dependency_idx = flash.u16(addr + 4)
+        self.string_id = flash.u16(addr + 6)
+        print(f"[+] globals[{gidx}]: {_vid_str(object_var_id, None)} descriptor")
 
     def dump(self):
-        lines = [f"  {len(self.entries)} records (stride 8):"]
-        for i, (a, b, c, d, uart) in enumerate(self.entries):
-            u = f":{uart}" if uart else ""
-            lines.append(f"    [{i:2d}] 0x{a:04X} 0x{b:04X} 0x{c:04X} 0x{d:04X}{u}")
-        return "\n".join(lines)
+        name = f":{self.object_name}" if self.object_name else ""
+        dep = "none" if self.dependency_idx == 0x7FFF else f"[4]0x{self.dependency_idx:04X}"
+        return (f"  0x{self.object_var_id:04X}{name}  flags=0x{self.flags:04X}  "
+                f"callback={self.callback}  dep={dep}  string_id=0x{self.string_id:04X}")
 
 
 class StreamTable:
-    """globals[19]: stream table mapping EEPROM data channels.
+    """globals[19]: stored record-stream definitions.
 
     Each entry: 28 bytes.
       +0x00: char[4]  name (3-char + null)
-      +0x04: u32      descriptor_ptr
-      +0x08: u16      type (0x0004)
+      +0x04: u32      field_var_id_array_ptr
+      +0x08: u8       field_count
+      +0x09: u8       reserved
       +0x0A: u16      capacity
-      +0x0C: u16      source_var_id
-      +0x0E: u16      record_size
-      +0x10-0x17:      reserved / extra fields
-      +0x18: u32      last_field
+      +0x0C: u16      trigger_var_id
+      +0x0E: u8       globals[1] timer index
+      +0x0F: u8       flags
+      +0x10: u16      secondary trigger var_id
+      +0x12: u16      secondary parameter
+      +0x14: u32      trigger idle value
+      +0x18: u16      globals[4] state/cursor index
+      +0x1A: u16      pad
     """
     STRIDE = 28
+    METADATA_NAMES = {
+        'ABR': 'ABORT_ERR',
+        'TXC': 'CLIMATE_CONTROL_ERR_LOG',
+        'TXH': 'HEATED_TUBE_ERROR_LOG',
+        'TXE': 'TRANSDR_ERR',
+        'TXW': 'TRANSDR_ERR_TWO',
+        'TRR': 'TRANSIENT_ERR_LOG',
+    }
+    PURPOSES = {
+        'ABR': 'abort error',
+        'TXC': 'climate-control errors',
+        'TXH': 'heated-tube errors',
+        'TXE': 'transducer errors',
+        'TXW': 'transducer errors 2',
+        'TRR': 'transient errors',
+        'DLL': 'DLA records',
+        'ERR': 'application-error origins',
+        'ELI': 'ELV records',
+        'ZRL': 'saved system errors',
+    }
 
-    def __init__(self, flash, g19_addr, end_addr=None, names=None):
+    def __init__(self, flash, g19_addr, end_addr=None, names=None, g4_id_base=None):
         self.entries = []
         scan_end = end_addr if end_addr and end_addr > g19_addr else g19_addr + 0x400
         i = 0
@@ -1153,46 +1210,68 @@ class StreamTable:
             name = raw_name.split(b'\x00')[0].decode('ascii', errors='replace')
             if not name or not name[0].isalpha():
                 break
-            desc_ptr = flash.u32(base + 4)
-            typ = flash.u16(base + 8)
+            field_ptr = flash.u32(base + 4)
+            field_count = flash.u8(base + 8)
+            reserved_09 = flash.u8(base + 9)
+            fields = []
+            if field_ptr and flash.is_flash_ptr(field_ptr):
+                for j in range(field_count):
+                    field_vid = flash.u16(field_ptr + j * 2)
+                    field_name = names.name(field_vid) if names and field_vid is not None else None
+                    fields.append((field_vid, field_name))
             capacity = flash.u16(base + 0xA)
-            var_id = flash.u16(base + 0xC)
-            rec_size = flash.u16(base + 0x0E)
-            last = flash.u32(base + 0x18)
-            uart_name = names.name(var_id) if names and var_id else None
+            trigger_vid = flash.u16(base + 0xC)
+            timer_index = flash.u8(base + 0xE)
+            flags = flash.u8(base + 0xF)
+            secondary_vid = flash.u16(base + 0x10)
+            secondary_param = flash.u16(base + 0x12)
+            idle_value = flash.u32(base + 0x14)
+            tracker_idx = flash.u16(base + 0x18)
+            trigger_name = names.name(trigger_vid) if names and trigger_vid else None
+            secondary_name = names.name(secondary_vid) if names and secondary_vid else None
+            tracker_vid = g4_id_base + tracker_idx if g4_id_base is not None else None
+            tracker_name = names.name(tracker_vid) if names and tracker_vid is not None else None
             self.entries.append({
-                'name': name, 'desc_ptr': desc_ptr, 'type': typ,
-                'capacity': capacity, 'rec_size': rec_size,
-                'var_id': var_id, 'var_name': uart_name, 'max_records': last,
+                'name': name, 'field_ptr': field_ptr, 'field_count': field_count,
+                'reserved_09': reserved_09, 'fields': fields,
+                'capacity': capacity, 'trigger_vid': trigger_vid,
+                'trigger_name': trigger_name, 'timer_index': timer_index,
+                'flags': flags, 'secondary_vid': secondary_vid,
+                'secondary_name': secondary_name, 'secondary_param': secondary_param,
+                'idle_value': idle_value, 'tracker_idx': tracker_idx,
+                'tracker_vid': tracker_vid, 'tracker_name': tracker_name,
             })
             i += 1
         print(f"[+] globals[19]: stream table, {len(self.entries)} streams")
 
     def dump(self):
-        lines = ["  Stream  Capacity  RecSz  VarID  VarName  +0x18"]
+        lines = ["  Stream  Capacity  Timer  Trigger  State g[4]  Fields             Purpose"]
         for e in self.entries:
-            sn = e['var_name'] or ''
-            lines.append(f"  {e['name']:>5}  {e['capacity']:>8}  {e['rec_size']:>5}  "
-                         f"0x{e['var_id']:04X}    {sn:>7}  0x{e['max_records']:04X}")
+            trigger = e['trigger_name'] or f"0x{e['trigger_vid']:04X}"
+            tracker = e['tracker_name'] or f"idx 0x{e['tracker_idx']:03X}"
+            fields = ','.join(
+                name or (f"0x{vid:04X}" if vid is not None else "?")
+                for vid, name in e['fields'])
+            lines.append(f"  {e['name']:>5}  {e['capacity']:>8}  g1[{e['timer_index']}]  "
+                         f"{trigger:>7}  {tracker:>9}  {fields:<18} "
+                         f"{self.PURPOSES.get(e['name'], '')}")
         return "\n".join(lines)
 
 
-class NameTableFlat:
-    """globals[22]: UART name table (flat format).
+class NameMetadataPool:
+    """Parse the g[22] identity list and adjacent g[23] name-record pool.
 
-    Same data as globals[23] (bucketed name lookup) but as a flat array.
-    Header = u16 var_ids, followed by flat entries.
-    Then entries of {char[2] name_suffix, u16 var_id}.
-    The 2-char suffix = UART name chars 2+3. First char determined by position.
+    The g[22] root contains 16 identity var_ids. The following records are
+    pointer-owned by the g[23] bucket index.
     """
-    FALLBACK_HEADER = 16
+    HEADER_COUNT = 16
 
     def __init__(self, flash, g22_addr, g22_end, names=None):
         self.header_vids = []
         self.entries = []       # (label, var_id, uart_name)
         self.by_label = {}      # label -> var_id
         self.by_varid = {}      # var_id -> label
-        self.header_count = self._infer_header_count(flash, g22_addr, g22_end, names)
+        self.header_count = self.HEADER_COUNT
 
         for i in range(self.header_count):
             vid = flash.u16(g22_addr + i * 2)
@@ -1215,34 +1294,11 @@ class NameTableFlat:
             self.by_varid[vid] = label
             off += 4
 
-        print(f"[+] globals[22]: name table (flat), {len(self.header_vids)} header + {len(self.entries)} entries")
-
-    def _infer_header_count(self, flash, g22_addr, g22_end, names):
-        if not names:
-            return self.FALLBACK_HEADER
-        best_count = self.FALLBACK_HEADER
-        best_hits = -1
-        max_header = min(64, max(0, (g22_end - g22_addr) // 2))
-        for header_count in range(max_header + 1):
-            off = g22_addr + header_count * 2
-            hits = 0
-            while off + 4 <= g22_end:
-                c0 = flash.u8(off)
-                c1 = flash.u8(off + 1)
-                vid = flash.u16(off + 2)
-                name = names.name(vid) if vid is not None else None
-                suffix = (chr(c0) + chr(c1)) if c0 is not None and c1 is not None else None
-                if not name or len(name) != 3 or suffix != name[1:]:
-                    break
-                hits += 1
-                off += 4
-            if hits > best_hits:
-                best_hits = hits
-                best_count = header_count
-        return best_count
+        print(f"[+] globals[22]: {len(self.header_vids)} identity export IDs; "
+              f"adjacent g[23] pool has {len(self.entries)} records")
 
     def dump(self, names=None):
-        lines = [f"  {len(self.entries)} UART name entries:"]
+        lines = [f"  {len(self.entries)} shared UART name-pool records:"]
         lines.append(f"  {'Suffix':>6}  {'VarID':>10}  {'UART':>5}")
         for label, vid, uart in self.entries:
             u = uart or ""
@@ -1250,7 +1306,7 @@ class NameTableFlat:
         return "\n".join(lines)
 
     def dump_header(self, names=None):
-        lines = ["  Header metadata var_ids:"]
+        lines = ["  Identity TGT export var_ids:"]
         for vid in self.header_vids:
             n = names.name(vid) if names else None
             ns = f":{n}" if n else ""
@@ -1258,12 +1314,12 @@ class NameTableFlat:
         return "\n".join(lines)
 
     def lookup(self, query):
-        """Lookup by 2-char label or var_id. Returns list of (label, var_id, uart_name)."""
+        """Lookup by UART name, 2-char suffix, or var_id."""
         if isinstance(query, int):
             return [(l, v, u) for l, v, u in self.entries if v == query]
         else:
             q = query.upper()
-            return [(l, v, u) for l, v, u in self.entries if l == q]
+            return [(l, v, u) for l, v, u in self.entries if l == q or u == q]
 
 
 def _signal_value_info(db, var_id):
@@ -1317,7 +1373,7 @@ class SignalChannel:
       +0x08: u32 var_id_array_ptr
       +0x0C: u32 output_array_ptr
     """
-    def __init__(self, flash, gidx, addr, names=None):
+    def __init__(self, flash, gidx, addr, names=None, forced_header_size=None):
         self.gidx = gidx
         self.addr = addr
         self.name = "?"
@@ -1342,28 +1398,31 @@ class SignalChannel:
             self.name = name_08.decode('ascii')
             self.count = count_08
             arr_ptr = flash.u32(addr + 0x10)
-            # Samples-per-record array at +0x14
-            spr_ptr = flash.u32(addr + 0x14)
-            if spr_ptr and flash.is_flash_ptr(spr_ptr):
-                for i in range(self.count):
-                    v = flash.u16(spr_ptr + i * 2)
-                    self.samples_per_rec.append(v if v is not None else 0)
-            # Check if extended format: +0x1C has a valid flash pointer (name string array)
-            names_ptr = flash.u32(addr + 0x1C)
-            if names_ptr and flash.is_flash_ptr(names_ptr):
-                self.format = 'extended'
-                self.header_size = 0x20
-                self.param = flash.u32(addr + 0x18)
-                for i in range(self.count):
-                    sp = flash.u32(names_ptr + i * 4)
-                    if sp and flash.is_flash_ptr(sp):
-                        s = flash.cstr(sp)
-                        self.field_names.append(s.decode('ascii', errors='replace') if s else None)
-                    else:
-                        self.field_names.append(None)
+            if gidx == 12:
+                self.format = 'event'
+                self.header_size = forced_header_size or 0x18
             else:
-                self.format = 'compact'
-                self.header_size = 0x18
+                # Samples-per-record array at +0x14
+                spr_ptr = flash.u32(addr + 0x14)
+                if spr_ptr and flash.is_flash_ptr(spr_ptr):
+                    for i in range(self.count):
+                        v = flash.u16(spr_ptr + i * 2)
+                        self.samples_per_rec.append(v if v is not None else 0)
+                names_ptr = flash.u32(addr + 0x1C)
+                if names_ptr and flash.is_flash_ptr(names_ptr):
+                    self.format = 'extended'
+                    self.header_size = forced_header_size or 0x20
+                    self.param = flash.u32(addr + 0x18)
+                    for i in range(self.count):
+                        sp = flash.u32(names_ptr + i * 4)
+                        if sp and flash.is_flash_ptr(sp):
+                            s = flash.cstr(sp)
+                            self.field_names.append(s.decode('ascii', errors='replace') if s else None)
+                        else:
+                            self.field_names.append(None)
+                else:
+                    self.format = 'compact'
+                    self.header_size = forced_header_size or 0x18
         elif name_00 and all(0x41 <= b <= 0x5A for b in name_00) and count_00 and 0 < count_00 < 200:
             self.name = name_00.decode('ascii')
             self.count = count_00
@@ -1372,10 +1431,10 @@ class SignalChannel:
             ptr2 = flash.u32(addr + 0x0C)
             if ptr2 and flash.is_flash_ptr(ptr2):
                 self.format = 'oxh_ext'
-                self.header_size = 0x14
+                self.header_size = forced_header_size or 0x14
             else:
                 self.format = 'oxh'
-                self.header_size = 0x10
+                self.header_size = forced_header_size or 0x10
         else:
             return
 
@@ -1403,9 +1462,9 @@ class SignalChannel:
 
 
 class SignalGroup:
-    """Parse NPD or NPA signal group from globals[14] or globals[15].
+    """Parse NPD, NPA, or ALA signal groups from globals[14] or globals[15].
 
-    NPD (globals[14], 32 bytes):
+    NPD (globals[14], 28 bytes):
       +0x00: u16 flags, u16 id
       +0x04: u32 param
       +0x08: u32 threshold
@@ -1413,9 +1472,8 @@ class SignalGroup:
       +0x10: u8  signal_count, char[3] group_name
       +0x14: u32 reserved
       +0x18: u32 var_id_array_ptr
-      +0x1C: u16 linked_var_id
 
-    NPA (globals[15], 24+ bytes):
+    NPA/ALA (globals[15], 24 bytes):
       +0x00: u16 flags, u16 id
       +0x04: u16 sample_rate?, u16 param
       +0x08: u8  signal_count, char[3] group_name
@@ -1423,11 +1481,18 @@ class SignalGroup:
       +0x10: u32 var_id_array_ptr
       +0x14: u16 linked_var_id
     """
+    PURPOSES = {
+        'NPD': 'NIGHT_PROFILE_PERIODIC',
+        'NPA': 'NIGHT_PROFILE_APNEA',
+        'ALA': 'ALARM_LOG_APERIODIC',
+    }
+
     def __init__(self, flash, addr, names=None):
         self.addr = addr
         self.signals = []
         self.name = "?"
         self.linked_vid = None
+        self.linked_uart = None
 
         # Try NPD format first (name at +0x10)
         count_10 = flash.u8(addr + 0x10)
@@ -1442,13 +1507,14 @@ class SignalGroup:
             self.name = name_10.decode('ascii')
             count = count_10
             arr_ptr = flash.u32(addr + 0x18)
-            self.linked_vid = flash.u16(addr + 0x1C)
         elif name_08 and all(0x41 <= b <= 0x5A for b in name_08):
             # NPA format
             self.name = name_08.decode('ascii')
             count = count_08
             arr_ptr = flash.u32(addr + 0x10)
             self.linked_vid = flash.u16(addr + 0x14)
+            if self.linked_vid is not None and names:
+                self.linked_uart = names.name(self.linked_vid)
         else:
             return
 
@@ -1460,23 +1526,44 @@ class SignalGroup:
                     self.signals.append((vid, uart))
 
     def dump(self):
-        linked = f"0x{self.linked_vid:04X}" if self.linked_vid else "?"
-        lines = [f"  {self.name} ({len(self.signals)} signals, linked={linked}):"]
+        linked_name = f":{self.linked_uart}" if self.linked_uart else ""
+        linked = (f", linked=0x{self.linked_vid:04X}{linked_name}"
+                  if self.linked_vid is not None else "")
+        purpose = self.PURPOSES.get(self.name)
+        label = f"{self.name} {purpose}" if purpose else self.name
+        lines = [f"  {label} ({len(self.signals)} signals{linked}):"]
         for vid, uart in self.signals:
             n = f":{uart}" if uart else ""
             lines.append(f"    0x{vid:04X}{n}")
         return "\n".join(lines)
 
 
+class SignalGroupTable:
+    """Sequence of 24-byte g[15] signal-group records."""
+    STRIDE = 0x18
+
+    def __init__(self, flash, addr, end_addr, names=None):
+        self.groups = []
+        count = max(0, (end_addr - addr) // self.STRIDE)
+        for i in range(count):
+            group = SignalGroup(flash, addr + i * self.STRIDE, names)
+            if not group.signals:
+                break
+            self.groups.append(group)
+
+    def dump(self):
+        return "\n".join(group.dump() for group in self.groups)
+
+
 class TimerScaleTable:
-    """Parse globals[1] -- Timer/sampling resolution table.
+    """Parse globals[1] -- Scheduler and logical-period profiles.
 
     14 entries of 16 bytes each:
-      +0x00: u16  level (scale level 0-6, 10)
-      +0x02: u16  ticks (ticks per unit)
-      +0x04: u16  multiplier
-      +0x06: u16  pad (0)
-      +0x08: f64  period_seconds
+      +0x00: u8   scheduler level
+      +0x01: u8   pad
+      +0x02: u16  base cadence in 10 ms ticks
+      +0x04: u32  cadence variant multiplier
+      +0x08: f64  logical period in seconds
     """
     STRIDE = 16
 
@@ -1486,9 +1573,9 @@ class TimerScaleTable:
         count = (end_addr - addr) // self.STRIDE
         for i in range(count):
             ea = addr + i * self.STRIDE
-            level = flash.u16(ea)
+            level = flash.u8(ea)
             ticks = flash.u16(ea + 2)
-            mult = flash.u16(ea + 4)
+            mult = flash.u32(ea + 4)
             o = flash._o(ea + 8)
             period = struct.unpack_from('<d', flash.data, o)[0] if o is not None else 0.0
             self.entries.append(dict(idx=i, level=level, ticks=ticks,
@@ -1496,7 +1583,7 @@ class TimerScaleTable:
 
     def dump(self):
         lines = [f"  {len(self.entries)} entries (stride {self.STRIDE}):"]
-        lines.append(f"  {'idx':>4s}  {'level':>5s}  {'ticks':>5s}  {'mult':>4s}  {'period':>12s}")
+        lines.append(f"  {'idx':>4s}  {'queue':>5s}  {'base':>5s}  {'mult':>4s}  {'period':>12s}")
         for e in self.entries:
             p = e['period']
             if p >= 3600:
@@ -1553,7 +1640,7 @@ class ModeTable:
 
 
 class PDLTable:
-    """Parse globals[20] -- PDL definition.
+    """Parse the globals[20] PDL variable list and globals[21] rules.
 
     Structure at globals[20]:
       +0x00: char[4]  name ("PDL\\0")
@@ -1674,13 +1761,14 @@ class DB:
         self.names = None      # NameLookup (globals[23])
         self.streams = None    # StreamTable (globals[19])
         self.npd = None        # SignalGroup (globals[14])
-        self.npa = None        # SignalGroup (globals[15])
+        self.npa = None        # First SignalGroup from globals[15]
+        self.g15_groups = None # SignalGroupTable (globals[15])
         self.device = None     # DeviceIdentity (globals[0])
         self.vargroups = None  # VariableGroups (globals[16])
         self.desc17 = None     # DescriptorTable (globals[17])
         self.desc18 = None     # DescriptorTable (globals[18])
-        self.nametab = None    # NameTableFlat (globals[22], flat copy of g[23])
-        self.pdl = None        # PDLTable (globals[20], patient data log)
+        self.nametab = None    # g[22] identity list and adjacent g[23] record pool
+        self.pdl = None        # PDLTable (globals[20] list and globals[21] rules)
         self.modes = None      # ModeTable (globals[24], setting-to-mode flags)
         self.timers = None     # TimerScaleTable (globals[1])
         self.channels = {}     # gidx -> SignalChannel (globals[11,12,13,28])
@@ -1691,6 +1779,9 @@ class DB:
         self.g5_base_idx = None
         self.g5_end_idx = None
         self.g5_alias_count = 0
+        self.g7_addr = ta.get('globals7')
+        self.g7_size = 0
+        self.g7_alloc_size = 0
         self.g4_subrange_base_idx = None
         self.no_string_id = None
 
@@ -1698,6 +1789,13 @@ class DB:
         if g23:
             self.names = NameLookup(flash, g23)
         self._load_var_tables(flash, ta)
+        if self.g7_addr and 6 in self.tables:
+            self.g7_size = max(
+                (e.pool_offset + e.item_count for e in self.tables[6]),
+                default=0)
+            g8_addr = ta.get('table8')
+            if g8_addr and g8_addr > self.g7_addr:
+                self.g7_alloc_size = g8_addr - self.g7_addr
 
         # G2 gives string slot count; LAN gives the labels/order for those slots.
         n = infer_language_count_from_g2(flash, g2) if g2 else None
@@ -1716,7 +1814,7 @@ class DB:
             self.strtab = StringTable(flash, g2, self.num_languages, raw)
             raw_s = f"0x{raw:08X}" if raw else "auto"
             print(f"[+] Strings: globals[2]=0x{g2:08X}, "
-                  f"raw={raw_s}, max_id={self.strtab.max_id}")
+                  f"raw={raw_s}, count={self.strtab.count}")
             self.no_string_id = self._infer_no_string_id()
 
         # Load timer scale table (globals[1], bounded by globals[2])
@@ -1740,22 +1838,24 @@ class DB:
         # Load descriptor tables (globals[17], [18])
         g18 = ta.get('desc18')
         g19 = ta.get('streams')
-        if g17 and g18:
-            self.desc17 = DescriptorTable(flash, 17, g17, g18, self.names)
-        if g18 and g19:
-            self.desc18 = DescriptorTable(flash, 18, g18, g19, self.names)
+        object_id = self.id_bases.get(10, 0) + len(self.tables.get(10, []))
+        if g17:
+            self.desc17 = DescriptorTable(flash, 17, g17, object_id, self.names)
+        if g18:
+            self.desc18 = DescriptorTable(flash, 18, g18, object_id + 1, self.names)
 
-        # Load UART name table flat (globals[22], ends at globals[23])
-        g22 = ta.get('signals')
+        # The g[23] record pool is packed directly after the g[22] identity list.
+        g22 = ta.get('name_pool')
         g22_end = ta.get('names')  # g[23] is the end boundary
         if g22 and g22_end:
-            self.nametab = NameTableFlat(flash, g22, g22_end, self.names)
+            self.nametab = NameMetadataPool(flash, g22, g22_end, self.names)
 
         # Load stream table (globals[19])
         g19 = ta.get('streams')
         g20 = ta.get('pdl')
         if g19:
-            self.streams = StreamTable(flash, g19, g20, self.names)
+            self.streams = StreamTable(
+                flash, g19, g20, self.names, self.id_bases.get(4))
 
         # Load signal groups (globals[14]/[15])
         g14 = ta.get('npd')
@@ -1764,10 +1864,14 @@ class DB:
             if self.npd.signals:
                 print(f"[+] globals[14]: {self.npd.name} ({len(self.npd.signals)} signals)")
         g15 = ta.get('npa')
-        if g15:
-            self.npa = SignalGroup(flash, g15, self.names)
-            if self.npa.signals:
-                print(f"[+] globals[15]: {self.npa.name} ({len(self.npa.signals)} signals)")
+        g16 = ta.get('vargroups')
+        if g15 and g16:
+            self.g15_groups = SignalGroupTable(flash, g15, g16, self.names)
+            if self.g15_groups.groups:
+                self.npa = self.g15_groups.groups[0]
+                summary = ", ".join(
+                    f"{g.name} ({len(g.signals)})" for g in self.g15_groups.groups)
+                print(f"[+] globals[15]: {summary}")
 
         # Load PDL (globals[20], also covers g[21] rules)
         if g20:
@@ -1783,28 +1887,54 @@ class DB:
             if self.modes.entries:
                 print(f"[+] globals[24]: mode table ({len(self.modes.entries)} settings x {self.modes.num_flags} modes)")
 
-        # Load signal channels (globals[11,12,13,28])
-        for key, gidx in [('brp', 11), ('csl', 12), ('str_ch', 13),
-                          ('tce', 26), ('apn', 27), ('oxh', 28)]:
-            addr = ta.get(key)
-            if not addr:
-                continue
-            # Some globals entries contain multiple channels packed together
-            # Scan for channel headers until we hit a non-header
-            scan_end = addr + 0x500  # reasonable scan limit
-            off = addr
-            while off < scan_end:
-                ch = SignalChannel(flash, gidx, off, self.names)
-                if not ch.var_ids:
-                    break
-                self.channels[ch.name] = ch
-                off += ch.header_size
+        # Header roots and referenced payload arrays are separate objects. Use
+        # each consumer's record shape instead of the next globals[] root as a
+        # generic table boundary.
+        self._load_channel_records(flash, ta.get('brp'), 11, 3, 0x20)
+        g12_stride = self._detect_g12_stride(flash, ta.get('csl'))
+        self._load_channel_records(flash, ta.get('csl'), 12, 3, g12_stride)
+        self._load_channel_records(flash, ta.get('str_ch'), 13, 1, 0x24)
+        self._load_channel_window(flash, ta.get('tce'), ta.get('apn'), 26, 0x14)
+        self._load_channel_records(flash, ta.get('apn'), 27, 3, 0x10)
+        self._load_channel_records(flash, ta.get('oxh'), 28, 1, 0x14)
 
         g5 = ta.get('globals5')
         if g5:
             self._load_g5(g5)
 
         print(f"[+] Total: {len(self.by_varid)} variables")
+
+    def _load_channel_records(self, flash, addr, gidx, count, stride):
+        if not addr or not stride:
+            return
+        for i in range(count):
+            ch = SignalChannel(
+                flash, gidx, addr + i * stride, self.names,
+                forced_header_size=stride)
+            if not ch.var_ids:
+                break
+            self.channels[ch.name] = ch
+
+    def _load_channel_window(self, flash, addr, end_addr, gidx, stride):
+        if not addr or not end_addr:
+            return
+        count = max(0, (end_addr - addr) // stride)
+        self._load_channel_records(flash, addr, gidx, count, stride)
+
+    @staticmethod
+    def _detect_g12_stride(flash, addr):
+        if not addr:
+            return None
+        for stride in (0x18, 0x1C):
+            valid = True
+            for i in range(3):
+                name = flash.blob(addr + i * stride + 0x09, 3)
+                if not name or not all(0x41 <= b <= 0x5A for b in name):
+                    valid = False
+                    break
+            if valid:
+                return stride
+        return None
 
     def _load_var_tables(self, flash, ta):
         next_id_base = None
@@ -1816,22 +1946,16 @@ class DB:
             info = TABLES[tnum]
             cls = ENTRY_CLS[tnum]
             count = self._table_count(tnum, base, info['stride'])
-            id_base = None
-            if tnum != 10:
-                id_base = self._infer_id_base(tnum, count, next_id_base)
-                self.id_bases[tnum] = id_base
-                next_id_base = id_base + count
+            id_base = self._infer_id_base(tnum, count, next_id_base)
+            self.id_bases[tnum] = id_base
+            next_id_base = id_base + count
             entries = []
             for i in range(count):
                 addr = base + i * info['stride']
-                if tnum == 10:
-                    entries.append(cls(flash, addr, i))
-                else:
-                    entries.append(cls(flash, addr, i, id_base))
+                entries.append(cls(flash, addr, i, id_base))
             self.tables[tnum] = entries
-            if id_base is not None:
-                for e in entries:
-                    self.by_varid[e.var_id] = e
+            for e in entries:
+                self.by_varid[e.var_id] = e
             print(f"[+] globals[{tnum}]: {len(entries)} entries @ 0x{base:08X}")
 
         if 4 in self.tables:
@@ -1977,7 +2101,7 @@ class DB:
         self.g5_base_idx = base_idx
         self.g5_end_idx = base_idx + count
         self.g5_alias_count = alias_count
-        print(f"[+] globals[5]: display-name table @ 0x{addr:08X} "
+        print(f"[+] globals[5]: alternate-label table @ 0x{addr:08X} "
               f"({count} entries, idx 0x{base_idx:03X}..0x{self.g5_end_idx-1:03X})")
 
     def _infer_id_base(self, tnum, count, expected_base):
@@ -2024,7 +2148,7 @@ class DB:
         return self.strtab.get_all(sid) if self.strtab else [None] * self.num_languages
 
     def g5_lookup(self, t4_idx):
-        """Look up globals[5] display-name record for a [4] table index.
+        """Look up globals[5] alternate-label record for a [4] table index.
         Returns (str_id_a, str_id_b) or None if not in range or g5 not loaded."""
         if self.g5_ptr is None or self.g5_base_idx is None:
             return None
@@ -2036,20 +2160,20 @@ class DB:
         b = self.fl.u16(addr + 2)
         return (a, b)
 
-    def g5_visible(self, t4_idx):
-        """Check if a [4] entry is potentially visible via globals[5].
-        Returns True if not in g5 valid range (no override),
-        or if at least one string != 0xDE (visible in some context)."""
-        rec = self.g5_lookup(t4_idx)
-        if rec is None:
-            return True  # not in g5 range -> no g5 restriction
-        return rec[0] != 0xDE or rec[1] != 0xDE
-
     def chain(self, entry):
         result = [entry]
-        if not isinstance(entry, Entry8):
+        if isinstance(entry, Entry3):
+            nxt = entry.dependency_idx
+        elif isinstance(entry, Entry4):
+            nxt = entry.next_var_idx
+        elif isinstance(entry, Entry6):
+            nxt = entry.dependency_idx
+        elif isinstance(entry, Entry8):
+            nxt = entry.linked_var_idx
+        elif isinstance(entry, Entry9):
+            nxt = entry.dependency_idx
+        else:
             return result
-        nxt = entry.linked_var_idx
         seen = set()
         while nxt != 0x7FFF and nxt >= 0 and nxt not in seen and len(result) < 10:
             seen.add(nxt)
@@ -2129,7 +2253,7 @@ def _print_g2_info(db):
     print("  String descriptor table:")
     print(f"    globals[2]  = 0x{st.g2:08X}")
     print(f"    raw base    = 0x{st.raw:08X}")
-    print(f"    max_id      = {st.max_id}")
+    print(f"    count       = {st.count}")
     print(f"    languages   = {db.num_languages} ({', '.join(db.lang_labels)})")
     print("  Use 'strid <id> [lang]' to look up strings.")
 
@@ -2138,7 +2262,7 @@ def _print_g5(db):
     if db.g5_ptr is None:
         print("  globals[5] not loaded")
         return
-    print("  globals[5] display-name override table:")
+    print("  globals[5] alternate-label table:")
     print(f"  addr=0x{db.g5_ptr:08X}  entries={db.g5_count} "
           f"(idx 0x{db.g5_base_idx:03X}..0x{db.g5_end_idx-1:03X})")
     for idx in range(db.g5_base_idx, db.g5_end_idx):
@@ -2149,7 +2273,6 @@ def _print_g5(db):
         vid = idx + db.id_bases[4]
         sa = db.string(a) if db.strtab and a != 0xDE else None
         sb = db.string(b) if db.strtab and b != 0xDE else None
-        vis = "HIDDEN" if (a == 0xDE and b == 0xDE) else "vis"
         la = f'"{sa}"' if sa else ("--" if a == 0xDE else f"0x{a:04X}")
         lb = f'"{sb}"' if sb else ("--" if b == 0xDE else f"0x{b:04X}")
         off = idx - db.g5_base_idx
@@ -2158,7 +2281,22 @@ def _print_g5(db):
         if off < db.g5_alias_count:
             shared = f"  (shared w/ idx 0x{alt_idx:03X})"
         print(f"  [4] idx=0x{idx:03X} var=0x{vid:04X}  off={off:+3d}  "
-              f"a={la:>24s}  b={lb:>24s}  [{vis}]{shared}")
+              f"a={la:>24s}  b={lb:>24s}{shared}")
+
+
+def _print_g7(db):
+    if db.g7_addr is None or 6 not in db.tables:
+        print("  globals[7] not loaded")
+        return
+    size = f"{db.g7_size} referenced"
+    if db.g7_alloc_size:
+        size += f", {db.g7_alloc_size} allocated"
+    print(f"  globals[7] byte-slice pool @ 0x{db.g7_addr:08X} ({size} bytes):")
+    for entry in db.tables[6]:
+        values = entry.pool_values(db)
+        pool = ", ".join(str(v) for v in values)
+        print(f"    {_vid_str(entry.var_id, db):>10}  +0x{entry.pool_offset:04X} "
+              f"[{entry.item_count:2d}]  {pool}")
 
 
 def _print_strinfo(db, sid):
@@ -2168,7 +2306,7 @@ def _print_strinfo(db, sid):
     st = db.strtab
     print(f"  globals[2] base  = 0x{st.g2:08X}")
     print(f"  raw string base  = 0x{st.raw:08X}")
-    print(f"  max string ID    = {st.max_id}")
+    print(f"  max string ID    = {st.count - 1}")
     rec_addr = st.g2 + sid * 8
     field0 = db.fl.u32(rec_addr)
     la = db.fl.u32(rec_addr + 4)
@@ -2270,11 +2408,11 @@ def _print_info(db):
         ("g0 device", db.device),
         ("g1 timers", db.timers),
         ("g14 NPD", db.npd),
-        ("g15 NPA", db.npa),
+        ("g15 signal groups", db.g15_groups),
         ("g16 groups", db.vargroups),
         ("g19 streams", db.streams),
         ("g20 PDL", db.pdl),
-        ("g22 flat names", db.nametab),
+        ("g22 metadata/name pool", db.nametab),
         ("g23 UART names", db.names),
         ("g24 modes", db.modes),
     ):
@@ -2339,7 +2477,7 @@ def add_command_parsers(subparsers):
     p = subparsers.add_parser("search", help="search descriptor strings")
     p.add_argument("query", nargs="+")
 
-    p = subparsers.add_parser("chain", help="walk [8] -> [4] dependency chain")
+    p = subparsers.add_parser("chain", help="walk a descriptor's g[4] dependency chain")
     p.add_argument("ident")
 
     p = subparsers.add_parser("dump-tsv", help="dump descriptor tables as TSV")
@@ -2388,10 +2526,12 @@ def _run_global(db, item):
         _print_g2_info(db)
     elif gidx == 5:
         _print_g5(db)
+    elif gidx == 7:
+        _print_g7(db)
     elif gidx == 14:
         print(db.npd.dump() if db.npd else "  globals[14] not loaded")
     elif gidx == 15:
-        print(db.npa.dump() if db.npa else "  globals[15] not loaded")
+        print(db.g15_groups.dump() if db.g15_groups else "  globals[15] not loaded")
     elif gidx == 16:
         if len(extra) > 1:
             raise ValueError("globals 16 takes at most: :group")
@@ -2473,7 +2613,7 @@ def _run_g22(db, query):
         print("  globals[22] not loaded")
         return
     if query is None:
-        print(db.nametab.dump())
+        print(db.nametab.dump_header(db.names))
     elif query.lower() == 'header':
         print(db.nametab.dump_header(db.names))
     else:
@@ -2674,7 +2814,7 @@ def dump_tsv(db, tables_to_dump, outfile=None):
                     if b != 0xDE: g5nb = s(b)
                 next_vid, next_name = g4_target_fields(e.next_var_idx)
                 out.write(f"0x{e.idx:03X}\t0x{e.var_id:04X}\t0x{e.addr:08X}\t0x{off:05X}\t"
-                          f"0x{e.flags:04X}\t{decode_flags(e.flags)}\t"
+                          f"0x{e.flags:04X}\t{decode_flags(e.flags, tnum)}\t"
                           f"{e.callback_id}\t0x{e.next_var_idx & 0xFFFF:04X}\t"
                           f"{next_vid}\t{next_name}\t"
                           f"0x{e.name_str_id:04X}\t{s(e.name_str_id)}\t"
@@ -2708,7 +2848,7 @@ def dump_tsv(db, tables_to_dump, outfile=None):
                     opts_str = " | ".join(parts_o)
                 linked_vid, linked_name = g4_target_fields(e.linked_var_idx)
                 out.write(f"0x{e.idx:03X}\t0x{e.var_id:04X}\t0x{e.addr:08X}\t0x{off:04X}\t"
-                          f"0x{e.flags:04X}\t{decode_flags(e.flags)}\t"
+                          f"0x{e.flags:04X}\t{decode_flags(e.flags, tnum)}\t"
                           f"{e.callback_id}\t0x{e.linked_var_idx & 0xFFFF:04X}\t"
                           f"{linked_vid}\t{linked_name}\t"
                           f"0x{e.name_str_id:04X}\t{nstr}\t"
@@ -2720,40 +2860,43 @@ def dump_tsv(db, tables_to_dump, outfile=None):
         elif tnum == 6:
             out.write(f"# globals[6] -- base=0x{base:08X}  stride=0x18  count={len(db.tables[6])}\n")
             out.write("idx\tvar_id\taddr\toffset\tflags\tflags_str\t"
-                      "config_group\tlinked_var\tparent_var\t"
-                      "default\tperm_mask\t"
-                      "item_count\tstep_div\tchild_index\tlabel_str\n")
+                      "callback\tdependency_g4_idx\tname_str_id\t"
+                      "default\tallowed_bits\titem_count\tdisplay_param\t"
+                      "pool_offset\tbase_str_id\tpool_values\n")
             for e in db.tables[6]:
                 off = e.addr - base
+                pool = ",".join(str(v) for v in e.pool_values(db))
                 out.write(f"0x{e.idx:03X}\t0x{e.var_id:04X}\t0x{e.addr:08X}\t0x{off:04X}\t"
-                          f"0x{e.flags:04X}\t{decode_flags(e.flags)}\t"
-                          f"{e.config_group}\t0x{e.linked_var:04X}\t0x{e.parent_var:04X}\t"
-                          f"0x{e.default:08X}\t0x{e.perm_mask:08X}\t"
-                          f"{e.item_count}\t{e.step_div}\t0x{e.child_index:04X}\t0x{e.label_str:04X}\n")
+                          f"0x{e.flags:04X}\t{decode_flags(e.flags, tnum)}\t"
+                          f"{e.callback_id}\t0x{e.dependency_idx & 0xFFFF:04X}\t"
+                          f"0x{e.name_str_id:04X}\t0x{e.default:08X}\t"
+                          f"0x{e.allowed_bits:08X}\t{e.item_count}\t{e.display_param}\t"
+                          f"0x{e.pool_offset:04X}\t0x{e.base_str_id:04X}\t{pool}\n")
 
         elif tnum == 3:
             out.write(f"# globals[3] -- base=0x{base:08X}  stride=10  count={len(db.tables[3])}\n")
             out.write("idx\tvar_id\taddr\toffset\tflags\tflags_str\t"
-                      "notify_handler\tlinked_var_id\tformat_str_id\tmax_length\n")
+                      "notify_handler\tdependency_g4_idx\tformat_str_id\tmax_length\n")
             for e in db.tables[3]:
                 off = e.addr - base
                 out.write(f"0x{e.idx:03X}\t0x{e.var_id:04X}\t0x{e.addr:08X}\t0x{off:04X}\t"
-                          f"0x{e.flags:04X}\t{decode_flags(e.flags)}\t"
-                          f"{e.notify_handler}\t0x{e.linked_var_id & 0xFFFF:04X}\t"
+                          f"0x{e.flags:04X}\t{decode_flags(e.flags, tnum)}\t"
+                          f"{e.notify_handler}\t0x{e.dependency_idx & 0xFFFF:04X}\t"
                           f"0x{e.format_str_id & 0xFFFF:04X}\t{e.max_length}\n")
 
         elif tnum == 9:
             out.write(f"# globals[9] -- base=0x{base:08X}  stride=0x18  count={len(db.tables[9])}\n")
             out.write("idx\tvar_id\taddr\toffset\tflags\tflags_str\t"
-                      "linked\tname_str_id\tname\t"
-                      "default\tnum_options\tperm_mask\t"
-                      "base_str_id\tmin\tmax\tstep\n")
+                      "dependency_g4_idx\tname_str_id\tname\t"
+                      "default_event_type\tevent_type_count\tevent_type_mask\t"
+                      "event_type_base_str_id\tduration_min_ds\tduration_max_ds\t"
+                      "duration_units_per_second\n")
             for e in db.tables[9]:
                 off = e.addr - base
                 nstr = s(e.name_str_id) if e.name_str_id not in (0xFFFF, 0xDE) else ""
                 out.write(f"0x{e.idx:03X}\t0x{e.var_id:04X}\t0x{e.addr:08X}\t0x{off:04X}\t"
-                          f"0x{e.flags:04X}\t{decode_flags(e.flags)}\t"
-                          f"0x{e.linked_var:04X}\t"
+                          f"0x{e.flags:04X}\t{decode_flags(e.flags, tnum)}\t"
+                          f"0x{e.dependency_idx:04X}\t"
                           f"0x{e.name_str_id:04X}\t{nstr}\t"
                           f"{e.default_byte}\t{e.num_options}\t"
                           f"0x{e.perm_bitmask:08X}\t"
@@ -2762,16 +2905,16 @@ def dump_tsv(db, tables_to_dump, outfile=None):
 
         elif tnum == 10:
             out.write(f"# globals[10] -- base=0x{base:08X}  stride=0x24  count={len(db.tables[10])}\n")
-            out.write("idx\taddr\toffset\tflags\tflags_str\t"
+            out.write("idx\tvar_id\taddr\toffset\tflags\tflags_str\t"
                       "callback\tname_str_id\tname\t"
                       "default\tmax\tmin\tstep\tscale\tdp\t"
                       "default_fmt\tmax_fmt\tmin_fmt\tstep_fmt\trange\t"
                       "units_str_id\tunits\t"
-                      "ram_base\tram_count\n")
+                      "ram_base\tram_count\tpurpose\n")
             for e in db.tables[10]:
                 off = e.addr - base
-                out.write(f"0x{e.idx:03X}\t0x{e.addr:08X}\t0x{off:04X}\t"
-                          f"0x{e.flags:04X}\t{decode_flags(e.flags)}\t"
+                out.write(f"0x{e.idx:03X}\t0x{e.var_id:04X}\t0x{e.addr:08X}\t0x{off:04X}\t"
+                          f"0x{e.flags:04X}\t{decode_flags(e.flags, tnum)}\t"
                           f"{e.callback_id}\t"
                           f"0x{e.name_str_id:04X}\t{s(e.name_str_id)}\t"
                           f"{e.default_value}\t{e.max_value}\t{e.min_value}\t"
@@ -2780,23 +2923,35 @@ def dump_tsv(db, tables_to_dump, outfile=None):
                           f"{e._fmt(e.min_value)}\t{e._fmt(e.step_size)}\t"
                           f"{e.range_str()}\t"
                           f"0x{e.units_str_id:04X}\t{s(e.units_str_id)}\t"
-                          f"{e.ram_base_index}\t{e.ram_count}\n")
+                          f"{e.ram_base_index}\t{e.ram_count}\t{e.role(db)}\n")
 
         out.write("\n")
 
     # New tables (not keyed by tnum)
     if db.streams:
         out.write("# globals[19] -- stream table\n")
-        out.write("name\tcapacity\trec_size\tvar_id\tvar_name\tlast\n")
+        out.write("name\tcapacity\ttimer_index\ttrigger_var_id\ttrigger_name\t"
+                  "idle_value\tstate_g4_idx\tstate_var_id\tstate_name\t"
+                  "field_var_ids\tfield_names\tflags\tsecondary_var_id\t"
+                  "secondary_name\tsecondary_param\tmetadata_name\tpurpose\n")
         for e in db.streams.entries:
-            sn = e['var_name'] or ''
-            out.write(f"{e['name']}\t{e['capacity']}\t{e['rec_size']}\t"
-                      f"0x{e['var_id']:04X}\t{sn}\t0x{e['max_records']:04X}\n")
+            field_ids = ",".join(f"0x{vid:04X}" for vid, _ in e['fields'])
+            field_names = ",".join(name or "" for _, name in e['fields'])
+            state_vid = f"0x{e['tracker_vid']:04X}" if e['tracker_vid'] is not None else ""
+            out.write(f"{e['name']}\t{e['capacity']}\t{e['timer_index']}\t"
+                      f"0x{e['trigger_vid']:04X}\t{e['trigger_name'] or ''}\t"
+                      f"0x{e['idle_value']:08X}\t0x{e['tracker_idx']:04X}\t"
+                      f"{state_vid}\t{e['tracker_name'] or ''}\t{field_ids}\t"
+                      f"{field_names}\t0x{e['flags']:02X}\t"
+                      f"0x{e['secondary_vid']:04X}\t{e['secondary_name'] or ''}\t"
+                      f"0x{e['secondary_param']:04X}\t"
+                      f"{StreamTable.METADATA_NAMES.get(e['name'], '')}\t"
+                      f"{StreamTable.PURPOSES.get(e['name'], '')}\n")
         out.write("\n")
 
     if db.timers and db.timers.entries:
         out.write(f"# globals[1] -- timer scale table ({len(db.timers.entries)} entries)\n")
-        out.write("idx\tlevel\tticks\tmultiplier\tperiod_s\n")
+        out.write("idx\tscheduler_level\tbase_ticks_10ms\tnominal_multiplier\tperiod_s\n")
         for e in db.timers.entries:
             out.write(f"{e['idx']}\t{e['level']}\t{e['ticks']}\t{e['multiplier']}\t{e['period']}\n")
         out.write("\n")
@@ -2841,12 +2996,14 @@ def dump_tsv(db, tables_to_dump, outfile=None):
             out.write(f"0x{vid:04X}\t{uart or ''}\n")
         out.write("\n")
 
-    if db.npa and db.npa.signals:
-        out.write(f"# globals[15] -- NPA signal group ({len(db.npa.signals)} signals)\n")
-        out.write("var_id\tuart_name\n")
-        for vid, uart in db.npa.signals:
-            out.write(f"0x{vid:04X}\t{uart or ''}\n")
-        out.write("\n")
+    if db.g15_groups and db.g15_groups.groups:
+        for group in db.g15_groups.groups:
+            out.write(f"# globals[15] -- {group.name} signal group "
+                      f"({len(group.signals)} signals)\n")
+            out.write("var_id\tuart_name\n")
+            for vid, uart in group.signals:
+                out.write(f"0x{vid:04X}\t{uart or ''}\n")
+            out.write("\n")
 
     if db.channels:
         out.write(f"# Signal channels ({len(db.channels)} channels)\n")
@@ -2887,6 +3044,7 @@ def load_db(args):
             if fl.is_flash_ptr(ptrs.get(t,0)): ta[f"table{t}"] = ptrs[t]
         if fl.is_flash_ptr(ptrs.get(1,0)): ta['timers'] = ptrs[1]
         if fl.is_flash_ptr(ptrs.get(5,0)): ta['globals5'] = ptrs[5]
+        if fl.is_flash_ptr(ptrs.get(7,0)): ta['globals7'] = ptrs[7]
         if fl.is_flash_ptr(ptrs.get(2,0)): g2 = ptrs[2]
         if fl.is_flash_ptr(ptrs.get(0,0)):  ta['device'] = ptrs[0]
         if fl.is_flash_ptr(ptrs.get(23,0)): ta['names'] = ptrs[23]
@@ -2903,7 +3061,7 @@ def load_db(args):
         if fl.is_flash_ptr(ptrs.get(19,0)): ta['streams'] = ptrs[19]
         if fl.is_flash_ptr(ptrs.get(14,0)): ta['npd'] = ptrs[14]
         if fl.is_flash_ptr(ptrs.get(15,0)): ta['npa'] = ptrs[15]
-        if fl.is_flash_ptr(ptrs.get(22,0)): ta['signals'] = ptrs[22]
+        if fl.is_flash_ptr(ptrs.get(22,0)): ta['name_pool'] = ptrs[22]
         if fl.is_flash_ptr(ptrs.get(11,0)): ta['brp'] = ptrs[11]
         if fl.is_flash_ptr(ptrs.get(12,0)): ta['csl'] = ptrs[12]
         if fl.is_flash_ptr(ptrs.get(13,0)): ta['str_ch'] = ptrs[13]

@@ -191,14 +191,14 @@ var_id	uart	edf_signal	resmed_name	notes
 0x00BD	PHM	PatientHours	PATIENT_HRS_LOW_RES	Patient Hours
 0x00BE	FBD		FIRST_BREATH_DAY	First Breath Day
 0x00BF	FTD		FIRST_THERAPY_DAY	First Therapy Day
-0x00C0	BFL			
+0x00C0	BFL			Blower flow runtime value; /500 L/s
 0x00C1	FID			
 0x00C2	FLG			Flow Gain
 0x00C3	FLW			
 0x00C4	FLZ		FLOW_ZERO	Flow Zero
-0x00C5	BPR			
+0x00C5	BPR			Blower pressure runtime value; /50 cmH2O
 0x00C6	CPR		CAL_PRESSURE	Calibration Pressure Setpoint
-0x00C7	PRS			
+0x00C7	PRS			Raw pressure sensor value
 0x00C8	PSH		HI_PRS_SCALE	Pressure Gain
 0x00C9	PZH		HI_PRSS_ZERO	Pressure Zero
 0x00CA	NOS			
@@ -600,7 +600,7 @@ var_id	uart	edf_signal	resmed_name	notes
 0x0256	TUD			
 0x0257	MQD			Mask Fit
 0x0258	ZRH			
-0x0259	KEY		KEYPAD_STAT	
+0x0259	KEY			
 0x025A	UTY			
 0x025B	CTY			
 0x025C	ZBO			
@@ -660,13 +660,13 @@ var_id	uart	edf_signal	resmed_name	notes
 0x0292	SRC			
 0x0293	TMM			
 0x0294	BVP			
-0x0295	ZLB			
+0x0295	ZLB			Checked by the immediate O frame; when nonzero, ZRO is set to 1 before the UART parser is reset
 0x0296	ZLE			
 0x0297	ZTE			
 0x0298	ZEL			
 0x0299	ZPD			
 0x029A	ZRF			
-0x029B	ZRO			
+0x029B	ZRO			Set to 1 by the immediate O frame when ZLB is nonzero
 0x029C	ZRT			
 0x029D	ECK			
 0x029E	ZWR			
@@ -695,37 +695,37 @@ var_id	uart	edf_signal	resmed_name	notes
 0x02B5	HUI			
 0x02B6	DAC		DATE_DEC	Date
 0x02B7	TIC		TIME_DEC	Time
-0x02B8	OXH			
-0x02B9	TCE			
-0x02BA	PBT			
-0x02BB	PMD			
-0x02BC	FTX			
-0x02BD	RAW			
-0x02BE	DRT			
-0x02BF	CPU			
-0x02C0	SSK			
-0x02C1	APN			
-0x02C2	CSN			
-0x02C3	BRH			
-0x02C4	BRP			
-0x02C5	PLD			
-0x02C6	SAD			
-0x02C7	CSL			
-0x02C8	AEV			
-0x02C9	EVE			
-0x02CA	STR			
-0x02CB	ABR			
-0x02CC	TXC			
-0x02CD	TXH			
-0x02CE	TXE			
-0x02CF	TXW			
-0x02D0	TRR		TMP_R_RATE	
-0x02D1	DLL			
-0x02D2	ERR			
-0x02D3	ELI			
-0x02D4	ZRL			
-0x02D5	NPD		PROGRAM_NAME_PREFIX	
-0x02D6	NPA			
+0x02B8	OXH			Oximetry summary/header
+0x02B9	TCE		TRIG_CYC	Live stream: trigger/cycle and therapy-control samples
+0x02BA	PBT		PERIODIC_BREATH_TXLINK	Live stream: periodic breath TxLink summary
+0x02BB	PMD		MASK_DATA	Live stream: mask pressure, respiratory flow, and leak samples
+0x02BC	FTX			Live stream: flow/pressure sensor diagnostics
+0x02BD	RAW			Live stream: raw pressure, flow, and temperature samples
+0x02BE	DRT			Live stream: internal diagnostic values
+0x02BF	CPU			Live stream: CPU load counters
+0x02C0	SSK			Live stream: internal status values
+0x02C1	APN		APNEA	Live stream: apnea event type and duration
+0x02C2	CSN		CSR_EVENT_RT	Live stream: CSR event state and timing
+0x02C3	BRH		BREATH_TXLINK	Live stream: per-breath TxLink summary
+0x02C4	BRP			EDF periodic signal channel: breath waveform
+0x02C5	PLD			EDF periodic signal channel: 2-second and per-breath statistics
+0x02C6	SAD			EDF periodic signal channel: SpO2 and pulse
+0x02C7	CSL			EDF event channel
+0x02C8	AEV			EDF event channel
+0x02C9	EVE			EDF event channel
+0x02CA	STR			EDF session statistics channel
+0x02CB	ABR		ABORT_ERR	EEPROM stream: abort errors (FAT)
+0x02CC	TXC		CLIMATE_CONTROL_ERR_LOG	EEPROM stream: climate-control errors (SYC)
+0x02CD	TXH		HEATED_TUBE_ERROR_LOG	EEPROM stream: heated-tube errors (SYH)
+0x02CE	TXE		TRANSDR_ERR	EEPROM stream: transducer errors (SYS)
+0x02CF	TXW		TRANSDR_ERR_TWO	EEPROM stream: transducer errors 2 (SYT)
+0x02D0	TRR		TRANSIENT_ERR_LOG	EEPROM stream: transient system errors (TYS)
+0x02D1	DLL			EEPROM stream: DLA records
+0x02D2	ERR			EEPROM stream: application-error origin records (AER)
+0x02D3	ELI			EEPROM stream: ELV records
+0x02D4	ZRL			EEPROM stream: saved system errors (ZSE)
+0x02D5	NPD		NIGHT_PROFILE_PERIODIC	Night profile periodic signal group
+0x02D6	NPA		NIGHT_PROFILE_APNEA	Night profile apnea signal group
 0x02D7	AGL			AutoSet params
 0x02D8	CGL			CPAP params
 0x02D9	RGL			Reminders/replacement
@@ -736,10 +736,10 @@ var_id	uart	edf_signal	resmed_name	notes
 0x02DE	QXJ			iVAPS params
 0x02DF	VGL			VAuto params
 0x02E0	XGL			ASV fixed params
-0x02E1	BGL			Board/identity
-0x02E2	NGL			Backlight?
+0x02E1	BGL			Board/identity/calibration
+0x02E2	NGL			Backlight settings
 0x02E3	UGL			Usage data
 0x02E4	MGL			Machine settings
 0x02E5	PGL			Peripherals/accessories
 0x02E6	SGL			System settings
-0x02E7	PDL			
+0x02E7	PDL			Persistent device-state variable list
