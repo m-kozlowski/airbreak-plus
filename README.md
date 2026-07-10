@@ -1,17 +1,17 @@
 # airbreak-plus
 
-Firmware modification toolkit for ResMed AirSense 10 / AirCurve 10, with partial support for Series 9 and AirSense 11.
+Firmware modification toolkit for ResMed AirSense 10 / AirCurve 10, AirSense 11 and partial support for Series 9.
 
 ## What it does
 
-- Unlocks all therapy modes
-- Unlocks clinical settings menu with full pressure range
-- Removes motor runtime hours nag screen
-- Full EDF signal recording in all therapy modes
-- Maintains myAir cloud compatibility across therapy modes
+- [Unlocks all therapy modes](docs/guide/features/general.md#all-therapy-modes)
+- [Unlocks clinical settings menu with full pressure range](docs/guide/features/general.md#clinical-settings-and-pressure-range)
+- [Removes motor runtime hours nag screen](docs/guide/features/general.md#motor-runtime-warning)
+- [Full EDF signal recording in all therapy modes](docs/guide/features/general.md#edf-recording)
+- [Maintains myAir cloud compatibility across therapy modes](docs/guide/features/general.md#myair-cloud-compatibility)
 - [Custom ASV pressure support](docs/guide/features/custom_asv.md) in the VAuto slot
 - [Continuous LCD and button brightness adaptation](docs/guide/features/backlight.md)
-- ILI9325/ILI9328 LCD driver (the most common replacement panel available for these devices)
+- [ILI9325/ILI9328 LCD driver](docs/guide/features/general.md#replacement-lcd-driver) (the most common replacement panel available for these devices)
 
 Best support for SX567-0401 and SX567-0402 firmware. Other versions are handled with reduced feature coverage.
 
