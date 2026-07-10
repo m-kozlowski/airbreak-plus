@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="620" viewBox="0 0 980 620" role="img" aria-labelledby="title desc">
+  <title id="title">Current patch_backlight_adapt target curves</title>
+  <desc id="desc">Chart showing ASF on the X axis. Targets stay low through Ambient Low, ramp linearly to Ambient High, and then remain at their high values.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+      <path d="M0,0 L9,4.5 L0,9 Z" fill="#263238"/>
+    </marker>
+    <style>
+      .bg { fill: #fbfaf5; }
+      .grid { stroke: #d9d6ca; stroke-width: 1; }
+      .axis { stroke: #263238; stroke-width: 2; marker-end: url(#arrow); }
+      .tick { stroke: #263238; stroke-width: 1.5; }
+      .ath { stroke: #b3422f; stroke-width: 2; stroke-dasharray: 7 5; }
+      .full { stroke: #406b42; stroke-width: 2; stroke-dasharray: 7 5; }
+      .lcd { fill: none; stroke: #1f6f8b; stroke-width: 4; stroke-linejoin: round; stroke-linecap: round; }
+      .btn { fill: none; stroke: #7d4a9e; stroke-width: 4; stroke-linejoin: round; stroke-linecap: round; }
+      .level { stroke: #8e8a7d; stroke-width: 1.5; stroke-dasharray: 4 5; }
+      .label { fill: #263238; font: 15px Consolas, "Liberation Mono", monospace; }
+      .small { fill: #4f554f; font: 13px Consolas, "Liberation Mono", monospace; }
+      .title { fill: #1f2527; font: 22px Consolas, "Liberation Mono", monospace; font-weight: 700; }
+      .panel-title { fill: #1f2527; font: 17px Consolas, "Liberation Mono", monospace; font-weight: 700; }
+      .note { fill: #3c4345; font: 14px Consolas, "Liberation Mono", monospace; }
+    </style>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="980" height="620"/>
+  <text class="title" x="70" y="42">Current patch_backlight_adapt behavior</text>
+  <text class="small" x="70" y="64">Defaults with custom settings: Ambient Low=590, Ambient High=3070. Ambient High=0 selects stock handling.</text>
+
+  <line class="ath" x1="230" y1="88" x2="230" y2="522"/>
+  <line class="full" x1="690" y1="88" x2="690" y2="522"/>
+  <text class="small" x="182" y="548">Ambient Low</text>
+  <text class="small" x="205" y="566">590</text>
+  <text class="small" x="636" y="548">Ambient High</text>
+  <text class="small" x="669" y="566">3070</text>
+
+  <line class="axis" x1="120" y1="520" x2="900" y2="520"/>
+  <text class="label" x="430" y="598">ALS / ASF sensor reading</text>
+  <line class="tick" x1="120" y1="514" x2="120" y2="526"/>
+  <text class="small" x="101" y="548">0x000</text>
+  <line class="tick" x1="230" y1="514" x2="230" y2="526"/>
+  <line class="tick" x1="690" y1="514" x2="690" y2="526"/>
+  <line class="tick" x1="880" y1="514" x2="880" y2="526"/>
+  <text class="small" x="858" y="548">4095</text>
+
+  <text class="panel-title" x="120" y="94">LCD target</text>
+  <line class="axis" x1="120" y1="260" x2="120" y2="86"/>
+  <line class="grid" x1="120" y1="260" x2="880" y2="260"/>
+  <line class="grid" x1="120" y1="100" x2="880" y2="100"/>
+  <line class="level" x1="120" y1="260" x2="880" y2="260"/>
+  <line class="level" x1="120" y1="100" x2="880" y2="100"/>
+  <text class="label" x="72" y="265">LLL</text>
+  <text class="label" x="72" y="105">LLH</text>
+  <polyline class="lcd" points="120,260 230,260 690,100 880,100"/>
+  <circle cx="230" cy="260" r="5" fill="#1f6f8b"/>
+  <circle cx="690" cy="100" r="5" fill="#1f6f8b"/>
+  <text class="small" x="264" y="244">target = LLL + (ASF-low) * (LLH-LLL) / (high-low)</text>
+  <text class="small" x="714" y="119">clamped to LLH</text>
+  <text class="small" x="130" y="244">held at LLL</text>
+
+  <text class="panel-title" x="120" y="334">Button target</text>
+  <line class="axis" x1="120" y1="500" x2="120" y2="326"/>
+  <line class="grid" x1="120" y1="500" x2="880" y2="500"/>
+  <line class="grid" x1="120" y1="340" x2="880" y2="340"/>
+  <line class="level" x1="120" y1="500" x2="880" y2="500"/>
+  <line class="level" x1="120" y1="340" x2="880" y2="340"/>
+  <text class="label" x="62" y="505">LBL=32</text>
+  <text class="label" x="62" y="345">LBH=80</text>
+  <polyline class="btn" points="120,500 230,500 690,340 880,340"/>
+  <circle cx="230" cy="500" r="5" fill="#7d4a9e"/>
+  <circle cx="690" cy="340" r="5" fill="#7d4a9e"/>
+  <text class="small" x="264" y="484">target = LBL + (ASF-low) * (LBH-LBL) / (high-low)</text>
+  <text class="small" x="714" y="359">clamped to LBH</text>
+  <text class="small" x="130" y="484">held at LBL</text>
+
+</svg>
