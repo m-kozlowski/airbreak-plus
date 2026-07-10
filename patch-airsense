@@ -1157,6 +1157,9 @@ custom_reclaim_g8_var() {
     rec=$(find_var "$name") || die failed
     name_str=$(read_u16 $(( rec + G8_NAME_STR )))
     base_str=$(read_u16 $(( rec + G8_BASE_STR )))
+    # Reclaimed variables must not retain stock post-change behavior. In the
+    # Reminder block, callback 19 toggles the runtime state of paired g[4] vars.
+    write_u8  $(( rec + G8_CALLBACK )) 0 || die failed
     write_u16 $(( rec + G8_NAME_STR )) "$STR_ID_EMPTY" || die failed
     write_u16 $(( rec + G8_BASE_STR )) "$STR_ID_EMPTY" || die failed
     custom_note_reclaimed_string_id "$name_str"
@@ -1175,6 +1178,7 @@ custom_reclaim_g4_var() {
     rec=$(find_var "$name") || die failed
     name_str=$(read_u16 $(( rec + G4_NAME_STR )))
     units_str=$(read_u16 $(( rec + G4_UNITS_STR )))
+    write_u8  $(( rec + G4_CALLBACK )) 0 || die failed
     write_u16 $(( rec + G4_NAME_STR )) "$STR_ID_EMPTY" || die failed
     write_u16 $(( rec + G4_UNITS_STR )) "$STR_ID_EMPTY" || die failed
     custom_note_reclaimed_string_id "$name_str"
@@ -1992,6 +1996,49 @@ custom_patch_settings_squarewave() {
 }
 
 
+# Expose the low and full-brightness ASF thresholds in the clinical
+# Configuration menu and pass the reclaimed high-threshold var_id to the
+# backlight payload. ATH remains in its stock NGL storage group.
+custom_patch_settings_backlight() {
+    declare -A AMBIENT_LOW_LABEL=([0]="Ambient Low")
+    declare -A AMBIENT_HIGH_LABEL=([0]="Ambient High")
+    local low_var=ATH high_var low_label high_label
+    local low_rec low_flags low_callback low_dep high_dep high_vid
+    local ver elf high_addr all_modes
+
+    custom_claim_g4_var high_var RCF backlight_ambient_high
+    redefine_fw_string low_label  -1 AMBIENT_LOW_LABEL
+    redefine_fw_string high_label -1 AMBIENT_HIGH_LABEL
+
+    # Preserve ATH's stock descriptor linkage so changing the low threshold
+    # continues to dirty and save NGL through its existing dependency chain.
+    low_rec=$(find_var "$low_var") || die failed
+    low_flags=$(read_u16 $(( low_rec + G4_FLAGS )))
+    low_callback=$(read_u8 $(( low_rec + G4_CALLBACK )))
+    low_dep=$(read_u16 $(( low_rec + G4_NEXT_DEP )))
+    high_dep=$(find_var_table_index 4 RGT)
+    #                            #flags        #callback      #dep_chain  #name_str_id  #default #max  #min #decimals #scale #step #units
+    redefine_g4_var "$low_var"   "$low_flags" "$low_callback" "$low_dep"  "$low_label"  590      4090  0    0         1      10    "$STR_ID_EMPTY"
+    redefine_g4_var "$high_var"  0x0007        0              "$high_dep" "$high_label" 3070     4090  0    0         1      10    "$STR_ID_EMPTY"
+
+    all_modes=$(MOP_BITMASK CPAP AutoSet APAP S ST T VAuto ASV ASVAuto iVAPS PAC AFH)
+    custom_menu_add configuration "$low_var"  "$all_modes"
+    custom_menu_add configuration "$high_var" "$all_modes"
+
+    high_vid=$(resolve_var_id "$high_var")
+    ver=${CDX_VER#SX567-}
+    elf=build/backlight_adapt_${ver}.elf
+    [[ -r "$elf" ]] || die "custom_patch_settings_backlight: $elf not found"
+    high_addr=$(elf_symbol_addr "$elf" backlight_adapt_full_asf_var_id)
+    write_u16 $(( high_addr - FLASH_BASE )) "$(( high_vid ))" || die failed
+
+    printf "  backlight ambient low: %s label_str=0x%04X\n" \
+        "$low_var" "$low_label"
+    printf "  backlight ambient high: %s var_id=0x%04X label_str=0x%04X at 0x%08X\n" \
+        "$high_var" "$(( high_vid ))" "$high_label" "$high_addr"
+}
+
+
 # Select active custom-settings feature functions. The framework itself should
 # run only when at least one feature needs reclaimed variables/menu hooks.
 custom_patch_settings_collect_features() {
@@ -2002,6 +2049,9 @@ custom_patch_settings_collect_features() {
     fi
     if [[ $PATCH_CODE == 1 && $PATCH_S == 1 ]]; then
         CUSTOM_SETTINGS_FEATURES+=(custom_patch_settings_squarewave)
+    fi
+    if [[ $BACKLIGHT_ADAPT_APPLIED == 1 ]]; then
+        CUSTOM_SETTINGS_FEATURES+=(custom_patch_settings_backlight)
     fi
 }
 
@@ -2246,6 +2296,7 @@ patch_backlight_adapt() {
 
     printf "  %dB at 0x%08X, hook at 0x%08X\n" \
         "$PAYLOAD_SIZE" "$PAYLOAD_FLASH" "$(( hook_off + FLASH_BASE ))"
+    BACKLIGHT_ADAPT_APPLIED=1
 }
 
 
@@ -2352,6 +2403,7 @@ PAYLOAD_LAYOUT_VERSION=
 PAYLOAD_FLASH=
 PAYLOAD_OFF=
 PAYLOAD_SIZE=
+BACKLIGHT_ADAPT_APPLIED=0
 declare -A PAYLOAD_LAYOUT_FLASH
 declare -A PAYLOAD_LAYOUT_SIZE
 declare -a CUSTOM_G8_POOL
@@ -2396,6 +2448,7 @@ extra_debug
 extra_modes
 gui_config
 unlock_option_masks
+patch_backlight_adapt
 custom_patch_settings
 motor_nagscreen
 unlock_languages
@@ -2412,8 +2465,6 @@ patch_edf_merge
 if [[ $PATCH_S10_LCD == 1 ]] ; then
     patch_lcd_ili9325
 fi
-
-patch_backlight_adapt
 
 patch_mop_callback_dispatcher
 

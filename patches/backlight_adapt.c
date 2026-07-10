@@ -21,9 +21,8 @@
  *   LBH - button backlight high
  *   LLH - LCD backlight high
  *
- * Buttons keep the existing binary low/high behavior around ATH.
- * LCD stays at LLL up to ATH, then ramps smoothly toward LLH and clamps
- * at LCD_FULL_ASF.
+ * LCD and buttons stay at their low level up to ATH, then ramp smoothly
+ * toward their high level at the configurable full-brightness threshold.
  */
 
 #include "s10_vars.h"
@@ -35,10 +34,9 @@
 #define BTN_STEP  2               // button fade step per tick
                                   //
 #define MIN_HYST         0x10     // minimum ASF hysteresis around ATH
-#define LCD_FULL_ASF     0xC00    // ASF value where linear LCD mode reaches max
+#define DEFAULT_FULL_ASF 0xC00    // fallback ASF value where linear mode reaches max
 #define LCD_LINEAR_ADAPT 1        // 1 = linear LCD ramp above ATH, 0 = legacy two-stage LCD mode
 #define BTN_LINEAR_ADAPT 1        // 1 = linear button ramp above ATH, 0 = legacy two-stage button mode
-#define BTN_FULL_ASF LCD_FULL_ASF // ASF value where linear button mode reaches max
 #define LCD_TARGET_DEADBAND 6     // ignore small LCD target changes caused by brief ASF spikes
 
 #define MODE_DARK 0x01
@@ -51,6 +49,7 @@
 
 extern int variable_get_by_id(int var_id);
 extern void backlight_state_machine(void *ctx);
+extern const unsigned short backlight_adapt_full_asf_var_id;
 
 // backlight context struct (partial, offsets match firmware layout)
 struct bl_ctx {
@@ -182,17 +181,17 @@ static int __attribute__((noinline, section(".text.x.apply_step"))) run_pending_
 }
 
 static unsigned char __attribute__((noinline, section(".text.x.apply_step"))) lcd_target_from_asf(
-    int asf, int ath, unsigned char low, unsigned char high, int dark_mode)
+    int asf, int ath, int full_asf, unsigned char low, unsigned char high, int dark_mode)
 {
 #if LCD_LINEAR_ADAPT
     if (asf <= ath)
         return low;
 
-    if (ath >= LCD_FULL_ASF || asf >= LCD_FULL_ASF)
+    if (ath >= full_asf || asf >= full_asf)
         return high;
 
     {
-        int span = LCD_FULL_ASF - ath;
+        int span = full_asf - ath;
         int level = low + ((asf - ath) * ((int)high - (int)low)) / span;
 
         if (level < low)
@@ -212,55 +211,53 @@ static unsigned char __attribute__((noinline, section(".text.x.apply_step"))) lc
 #endif
 }
 
-static unsigned char __attribute__((noinline, section(".text.x.apply_step"))) stabilize_lcd_target(
-    void *channel, unsigned char target)
+static void __attribute__((noinline, section(".text.x.apply_step"))) apply_lcd_step(
+    void *channel, unsigned char target, unsigned char low, unsigned char high)
 {
 #if LCD_LINEAR_ADAPT
     int current;
     int delta;
-    int adjusted;
+    int adjusted = target;
 
     if (!channel)
-        return target;
+        return;
 
     current = ((unsigned char *)channel)[5];
     delta = current - target;
     if (delta < 0)
         delta = -delta;
 
-    if (delta <= LCD_TARGET_DEADBAND)
-        return (unsigned char)current;
+    if (target != low && target != high) {
+        if (delta <= LCD_TARGET_DEADBAND)
+            return;
 
-    if (current < target) {
-        adjusted = current + (delta - LCD_TARGET_DEADBAND);
-        if (adjusted > target)
-            adjusted = target;
-    } else {
-        adjusted = current - (delta - LCD_TARGET_DEADBAND);
-        if (adjusted < target)
-            adjusted = target;
+        // Advance only by the part of the target movement outside the
+        // deadband. Exact low/high endpoints bypass it and remain reachable.
+        if (current < target)
+            adjusted -= LCD_TARGET_DEADBAND;
+        else
+            adjusted += LCD_TARGET_DEADBAND;
     }
-
-    return (unsigned char)adjusted;
 #else
-    (void)channel;
+    (void)low;
+    (void)high;
 #endif
 
-    return target;
+    apply_step(channel, adjusted, LCD_STEP);
 }
 
 static unsigned char __attribute__((noinline, section(".text.x.apply_step"))) btn_target_from_asf(
-    int asf, int ath, unsigned char low, unsigned char high, int dark_mode)
+    int asf, int ath, int full_asf, unsigned char low, unsigned char high, int dark_mode)
 {
 #if BTN_LINEAR_ADAPT
     if (asf <= ath)
         return low;
 
-    if (ath >= BTN_FULL_ASF || asf >= BTN_FULL_ASF)
+    if (ath >= full_asf || asf >= full_asf)
         return high;
 
     {
-        int span = BTN_FULL_ASF - ath;
+        int span = full_asf - ath;
         int level = low + ((asf - ath) * ((int)high - (int)low)) / span;
 
         if (level < low)
@@ -285,10 +282,14 @@ void start(struct bl_ctx *ctx)
     int asf = variable_get_by_id(VAR_ID_ASF);
     //int asf = variable_get_by_id(VAR_ID_ASR);
     int ath = variable_get_by_id(VAR_ID_ATH);
+    int full_asf = DEFAULT_FULL_ASF;
     unsigned char lcd_low = (unsigned char)variable_get_by_id(VAR_ID_LLL);
     unsigned char lcd_high = (unsigned char)variable_get_by_id(VAR_ID_LLH);
     unsigned char btn_low = (unsigned char)variable_get_by_id(VAR_ID_LBL);
     unsigned char btn_high = (unsigned char)variable_get_by_id(VAR_ID_LBH);
+
+    if (backlight_adapt_full_asf_var_id != 0xFFFFu)
+        full_asf = variable_get_by_id((int)backlight_adapt_full_asf_var_id);
 
     // hysteresis deadband = max(ATH >> 5, MIN_HYST)
     int hyst = ath >> 5;
@@ -315,10 +316,9 @@ void start(struct bl_ctx *ctx)
     ctx->dark_latch = (unsigned char)(mode & MODE_DARK);
 
     unsigned char lcd_target = lcd_target_from_asf(
-        asf, ath, lcd_low, lcd_high, mode & MODE_DARK);
-    lcd_target = stabilize_lcd_target(ctx->ch_lcd, lcd_target);
+        asf, ath, full_asf, lcd_low, lcd_high, mode & MODE_DARK);
     unsigned char btn_target = btn_target_from_asf(
-        asf, ath, btn_low, btn_high, mode & MODE_DARK);
+        asf, ath, full_asf, btn_low, btn_high, mode & MODE_DARK);
 
     // Let stock own nonzero transition states, then hold off briefly after it
     // returns to steady so we don't snap the levels back mid-transition.
@@ -363,7 +363,7 @@ void start(struct bl_ctx *ctx)
 
     ctx->mode = (unsigned char)(MODE_INIT | (mode & MODE_DARK));
 
-    apply_step(ctx->ch_lcd,  lcd_target, LCD_STEP);
+    apply_lcd_step(ctx->ch_lcd, lcd_target, lcd_low, lcd_high);
     apply_step(ctx->ch_btn0, btn_target, BTN_STEP);
     apply_step(ctx->ch_btn1, btn_target, BTN_STEP);
     apply_step(ctx->ch_btn2, btn_target, BTN_STEP);

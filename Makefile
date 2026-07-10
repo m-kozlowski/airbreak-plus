@@ -181,15 +181,15 @@ endef
 $(foreach v,$(S10_CODE_VERSIONS),$(eval $(call S10_CODE_VERSION_template,$(v))))
 
 define S10_STANDALONE_PAYLOAD_template
-$(BUILD)/$(1)_$(2).probe.elf: $(BUILD)/$(1)_$(2).o $(BUILD)/s10_$(2)_stubs.o | $(BUILD)
+$(BUILD)/$(1)_$(2).probe.elf: $(BUILD)/$(1)_$(2).o $(if $(wildcard $(SRC)/$(1)_abi.S),$(BUILD)/$(1)_abi_$(2).o) $(BUILD)/s10_$(2)_stubs.o | $(BUILD)
 	$$(LD) --nostdlib --no-dynamic-linker \
 		--Ttext $(PROBE_LINK_ADDR) --entry start --sort-section=name \
 		-o $$@ $$^
 
-$(BUILD)/$(1)_$(2).elf: $(BUILD)/$(1)_$(2).o $(BUILD)/s10_$(2)_stubs.o $(BUILD)/payload_layout_$(2).mk | $(BUILD)
+$(BUILD)/$(1)_$(2).elf: $(BUILD)/$(1)_$(2).o $(if $(wildcard $(SRC)/$(1)_abi.S),$(BUILD)/$(1)_abi_$(2).o) $(BUILD)/s10_$(2)_stubs.o $(BUILD)/payload_layout_$(2).mk | $(BUILD)
 	$$(LD) --nostdlib --no-dynamic-linker \
 		--Ttext $$(payload_addr_$(2)_$(1)) --entry start --sort-section=name \
-		-o $$@ $(BUILD)/$(1)_$(2).o $(BUILD)/s10_$(2)_stubs.o
+		-o $$@ $(BUILD)/$(1)_$(2).o $(if $(wildcard $(SRC)/$(1)_abi.S),$(BUILD)/$(1)_abi_$(2).o) $(BUILD)/s10_$(2)_stubs.o
 endef
 
 $(foreach p,$(S10_STANDALONE_PAYLOADS),\

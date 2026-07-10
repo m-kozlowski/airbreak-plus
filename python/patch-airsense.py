@@ -713,6 +713,7 @@ class ASFirmwarePatches(object):
         self.asf = asf
         self.squarewave_applied = False
         self.wrapper_limit_max_pdiff_applied = False
+        self.backlight_adapt_applied = False
         self.mop_callback_handlers = []
         self.mop_callback_handler_seen = set()
         self.payload_layout = None
@@ -832,6 +833,9 @@ class ASFirmwarePatches(object):
         rec = self.asf.find_var(vid)
         name_str = self.asf.read_u16(rec + self.asf.G8_NAME_STR)
         base_str = self.asf.read_u16(rec + self.asf.G8_BASE_STR)
+        # Drop stock post-change behavior. Reminder callback 19 toggles the
+        # runtime state of the paired recurrence/date g[4] variables.
+        self.asf.write_u8(rec + self.asf.G8_CALLBACK, 0)
         self.asf.write_u16(rec + self.asf.G8_NAME_STR, self.asf.str_id_empty)
         self.asf.write_u16(rec + self.asf.G8_BASE_STR, self.asf.str_id_empty)
         self._custom_note_reclaimed_string_id(name_str)
@@ -851,6 +855,7 @@ class ASFirmwarePatches(object):
         rec = self.asf.find_var(vid)
         name_str = self.asf.read_u16(rec + self.asf.G4_NAME_STR)
         units_str = self.asf.read_u16(rec + self.asf.G4_UNITS_STR)
+        self.asf.write_u8(rec + self.asf.G4_CALLBACK, 0)
         self.asf.write_u16(rec + self.asf.G4_NAME_STR, self.asf.str_id_empty)
         self.asf.write_u16(rec + self.asf.G4_UNITS_STR, self.asf.str_id_empty)
         self._custom_note_reclaimed_string_id(name_str)
@@ -1266,6 +1271,46 @@ class ASFirmwarePatches(object):
         print("  squarewave toggle var_id=0x%04X at 0x%08X" %
               (square_vid, enable_addr))
 
+    def custom_patch_settings_backlight(self):
+        """Expose ambient low/full thresholds and bind the high one to the payload."""
+        low_var = 'ATH'
+        high_var = self.custom_claim_g4_var('RCF', 'backlight_ambient_high')
+        low_label = self.redefine_fw_string(-1, {0: 'Ambient Low'},
+                                            'backlight_ambient_low_label')
+        high_label = self.redefine_fw_string(-1, {0: 'Ambient High'},
+                                             'backlight_ambient_high_label')
+
+        # ATH remains in NGL; retain its stock linkage so edits keep dirtying
+        # and saving the same storage group through the existing chain.
+        low_rec = self.asf.find_var(low_var)
+        low_flags = self.asf.read_u16(low_rec + self.asf.G4_FLAGS)
+        low_callback = self.asf.read_u8(low_rec + self.asf.G4_CALLBACK)
+        low_dep = self.asf.read_u16(low_rec + self.asf.G4_NEXT_DEP)
+        high_dep = self.asf.find_var_table_index(4, 'RGT')
+        self.redefine_g4_var(low_var, low_flags, low_callback, low_dep, low_label,
+                             590, 4090, 0, 0, 1, 10, self.asf.str_id_empty)
+        self.redefine_g4_var(high_var, 0x0007, 0, high_dep, high_label,
+                             3070, 4090, 0, 0, 1, 10, self.asf.str_id_empty)
+
+        all_modes = self.mop_bitmask(
+            'CPAP', 'AutoSet', 'APAP', 'S', 'ST', 'T', 'VAuto', 'ASV',
+            'ASVAuto', 'iVAPS', 'PAC', 'AFH')
+        self.custom_menu_add('configuration', low_var, all_modes)
+        self.custom_menu_add('configuration', high_var, all_modes)
+
+        high_vid = self.asf.resolve_var_id(high_var)
+        ver = self.asf.cdx_ver.replace('SX567-', '')
+        elf_path = self._versioned_artifact_path('backlight_adapt', 'elf', ver)
+        if not os.path.exists(elf_path):
+            raise ValueError("custom_patch_settings_backlight: build/backlight_adapt_%s.elf not found" % ver)
+        high_addr = self._elf_symbol_addr(elf_path, 'backlight_adapt_full_asf_var_id')
+        self.asf.write_u16(high_addr - self.asf.FLASH_BASE, high_vid)
+
+        print("  backlight ambient low: %s label_str=0x%04X" %
+              (low_var, low_label))
+        print("  backlight ambient high: %s var_id=0x%04X label_str=0x%04X at 0x%08X" %
+              (high_var, high_vid, high_label, high_addr))
+
     def custom_patch_settings_collect_features(self):
         """Return active custom-settings feature functions."""
         features = []
@@ -1273,6 +1318,8 @@ class ASFirmwarePatches(object):
             features.append(self.custom_patch_settings_myasv)
         if self.squarewave_applied:
             features.append(self.custom_patch_settings_squarewave)
+        if self.backlight_adapt_applied:
+            features.append(self.custom_patch_settings_backlight)
         return features
 
     def custom_patch_settings(self):
@@ -1842,6 +1889,7 @@ class ASFirmwarePatches(object):
         self.asf.patch(b'\x50', self.asf.find_var('LBH') + self.asf.G4_DEFAULT, clobber=True)  # LBH = 80
         self.asf.patch(struct.pack('<I', 590), self.asf.find_var('ATH') + self.asf.G4_DEFAULT, clobber=True)  # ATH = 590
 
+        self.backlight_adapt_applied = True
         print("  backlight_adapt: %dB at 0x%08X" % (len(data), flash))
 
     def patch_breath(self):
@@ -1977,13 +2025,13 @@ if __name__ == "__main__":
         {'arg':"patch-fw-squarewave",   'desc':"Add squarewave pressure mode.",                         'default':False, 'function':'patch_squarewave'},
         {'arg':"patch-fw-asv-wrapper",  'desc':"Suppress ASV backup breathing rate.",                   'default':False, 'function':'patch_asv_task_wrapper'},
         {'arg':"patch-fw-vauto-wrapper",'desc':"Add VAuto/ASV pressure shaping wrapper.",               'default':False, 'function':'patch_wrapper_limit_max_pdiff'},
+        {'arg':"patch-fw-backlight",    'desc':"Improved backlight adaptation to ambient light.",       'default':True,  'function':'patch_backlight_adapt'},
         {'arg':"patch-custom-settings", 'desc':"Expose settings for injected custom patch features.",
                                                                                                         'default':True,  'function':'custom_patch_settings'},
         {'arg':"patch-fw-vidspoof",     'desc':"Register MOP callback handler to dynamically set VID per therapy mode.", 'default':True, 'function':'patch_vid_spoof'},
         {'arg':"patch-custom-palette",  'desc':"Patch custom color palette.",
                                                                                                         'default':True,  'function':'custom_palette'},
         {'arg':"patch-fw-lcd",          'desc':"Universal ILI9325/ILI9328 LCD driver.",                 'default':False, 'function':'patch_lcd_ili9325'},
-        {'arg':"patch-fw-backlight",    'desc':"Improved backlight adaptation to ambient light.",       'default':True,  'function':'patch_backlight_adapt'},
         {'arg':"patch-past-date",       'desc':"Allow setting past date in menu and UART.",             'default':True,  'function':'patch_past_date'},
         {'arg':"patch-motor-nagscreen", 'desc':"Remove \"Motor life exceeded\" nag screen",             'default':True,  'function':'motor_nagscreen'},
         {'arg':"patch-edf-merge",       'desc':"Merge universal EDF signal superset into CCX.",         'default':True,  'function':'patch_edf_merge'},
