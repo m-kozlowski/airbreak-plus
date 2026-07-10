@@ -79,6 +79,3 @@ sensor range but does not change endpoint brightness.
 
 ![Backlight target curves](../../images/backlight_adapt_behavior.svg)
 
-## Next
-
-[Patching](../patching.md)
