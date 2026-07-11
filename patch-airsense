@@ -1369,40 +1369,68 @@ custom_patch_menu_hooks() {
     local therapy_site comfort_site accessories_site options_site configuration_site
     local config_error_size_site config_error_size_expected
     local clinical_capacity_site clinical_capacity
+    local therapy_expected comfort_expected accessories_expected options_expected configuration_expected
     local hook_therapy hook_comfort hook_accessories hook_options hook_configuration
     local registry_addr visibility_handler error_size_hook group_index_addr
     local group_base group_rec group_index
     ver="${CDX_VER#SX567-}"
 
     case "$CDX_VER" in
-        SX567-0401)
-            therapy_site=0x62414
-            comfort_site=0x62672
-            accessories_site=0x626fe
-            options_site=0x62750
-            configuration_site=0x628d2
+        SX567-0302)
+            therapy_site=0x61cf4           ; therapy_expected="\\x02\\xf0\\x38\\xfd"
+            comfort_site=0x61f52           ; comfort_expected="\\x02\\xf0\\x09\\xfc"
+            accessories_site=0x61fde       ; accessories_expected="\\x02\\xf0\\xc3\\xfb"
+            options_site=0x62030           ; options_expected="\\x02\\xf0\\x9a\\xfb"
+            configuration_site=0x621b2     ; configuration_expected="\\x02\\xf0\\xd9\\xfa"
+            config_error_size_site=0xce638 ; config_error_size_expected="\\xcf\\xf7\\x6a\\xf9"
+            clinical_capacity_site=0x6189a
+            clinical_capacity=70
+            ;;
+        SX567-0305)
+            therapy_site=0x62414           ; therapy_expected="\\x02\\xf0\\x3a\\xfd"
+            comfort_site=0x62672           ; comfort_expected="\\x02\\xf0\\x0b\\xfc"
+            accessories_site=0x626fe       ; accessories_expected="\\x02\\xf0\\xc5\\xfb"
+            options_site=0x62750           ; options_expected="\\x02\\xf0\\x9c\\xfb"
+            configuration_site=0x628d2     ; configuration_expected="\\x02\\xf0\\xdb\\xfa"
+            config_error_size_site=0xcee28 ; config_error_size_expected="\\xcf\\xf7\\x34\\xf9"
             clinical_capacity_site=0x61fba
             clinical_capacity=70
-            config_error_size_site=0xcefa0
-            config_error_size_expected="\\xcf\\xf7\\x6a\\xf9"
+            ;;
+        SX567-0306)
+            therapy_site=0x62414           ; therapy_expected="\\x02\\xf0\\x3a\\xfd"
+            comfort_site=0x62672           ; comfort_expected="\\x02\\xf0\\x0b\\xfc"
+            accessories_site=0x626fe       ; accessories_expected="\\x02\\xf0\\xc5\\xfb"
+            options_site=0x62750           ; options_expected="\\x02\\xf0\\x9c\\xfb"
+            configuration_site=0x628d2     ; configuration_expected="\\x02\\xf0\\xdb\\xfa"
+            config_error_size_site=0xced40 ; config_error_size_expected="\\xcf\\xf7\\x6a\\xf9"
+            clinical_capacity_site=0x61fba
+            clinical_capacity=70
+            ;;
+        SX567-0401)
+            therapy_site=0x62414           ; therapy_expected="\\x02\\xf0\\x3a\\xfd"
+            comfort_site=0x62672           ; comfort_expected="\\x02\\xf0\\x0b\\xfc"
+            accessories_site=0x626fe       ; accessories_expected="\\x02\\xf0\\xc5\\xfb"
+            options_site=0x62750           ; options_expected="\\x02\\xf0\\x9c\\xfb"
+            configuration_site=0x628d2     ; configuration_expected="\\x02\\xf0\\xdb\\xfa"
+            config_error_size_site=0xcefa0 ; config_error_size_expected="\\xcf\\xf7\\x6a\\xf9"
+            clinical_capacity_site=0x61fba
+            clinical_capacity=70
             ;;
         SX567-0402)
-            therapy_site=0x62414
-            comfort_site=0x62672
-            accessories_site=0x626fe
-            options_site=0x62750
-            configuration_site=0x628d2
+            therapy_site=0x62414           ; therapy_expected="\\x02\\xf0\\x3a\\xfd"
+            comfort_site=0x62672           ; comfort_expected="\\x02\\xf0\\x0b\\xfc"
+            accessories_site=0x626fe       ; accessories_expected="\\x02\\xf0\\xc5\\xfb"
+            options_site=0x62750           ; options_expected="\\x02\\xf0\\x9c\\xfb"
+            configuration_site=0x628d2     ; configuration_expected="\\x02\\xf0\\xdb\\xfa"
+            config_error_size_site=0xcf218 ; config_error_size_expected="\\xcf\\xf7\\x46\\xf9"
             clinical_capacity_site=0x61fba
             clinical_capacity=70
-            config_error_size_site=0xcf218
-            config_error_size_expected="\\xcf\\xf7\\x46\\xf9"
             ;;
         *)
             echo "  ${FUNCNAME[0]}: skipped (unsupported CDX version $CDX_VER)"
             return
             ;;
     esac
-
     bin="build/custom_menu_hooks_${ver}.bin"
     elf="build/custom_menu_hooks_${ver}.elf"
     if [[ ! -r "$bin" ]]; then
@@ -1434,11 +1462,11 @@ custom_patch_menu_hooks() {
 
     # Replace the final stock append in each clinical menu section. Each payload
     # hook appends that displaced item first, then its registered custom entries.
-    patch_thumb_bl_checked "$therapy_site" "\\x02\\xf0\\x3a\\xfd" "$hook_therapy" "therapy menu append"
-    patch_thumb_bl_checked "$comfort_site" "\\x02\\xf0\\x0b\\xfc" "$hook_comfort" "comfort menu append"
-    patch_thumb_bl_checked "$accessories_site" "\\x02\\xf0\\xc5\\xfb" "$hook_accessories" "accessories menu append"
-    patch_thumb_bl_checked "$options_site" "\\x02\\xf0\\x9c\\xfb" "$hook_options" "options menu append"
-    patch_thumb_bl_checked "$configuration_site" "\\x02\\xf0\\xdb\\xfa" "$hook_configuration" "configuration menu append"
+    patch_thumb_bl_checked "$therapy_site" "$therapy_expected" "$hook_therapy" "therapy menu append"
+    patch_thumb_bl_checked "$comfort_site" "$comfort_expected" "$hook_comfort" "comfort menu append"
+    patch_thumb_bl_checked "$accessories_site" "$accessories_expected" "$hook_accessories" "accessories menu append"
+    patch_thumb_bl_checked "$options_site" "$options_expected" "$hook_options" "options menu append"
+    patch_thumb_bl_checked "$configuration_site" "$configuration_expected" "$hook_configuration" "configuration menu append"
 
     # Replace the size query reached after config validation fails. The payload
     # reports CSG as empty, suppressing the fault before stock code rewrites it.
@@ -1510,6 +1538,9 @@ patch_code_graph() {
     local ELF=build/graph_${ver}.elf
     local DRAW_FPTR UPDATE_FPTR start update
     case "$ver" in
+        0302) DRAW_FPTR=0xf92dc; UPDATE_FPTR=0xf92d8 ;;
+        0305) DRAW_FPTR=0xf9a24; UPDATE_FPTR=0xf9a20 ;;
+        0306) DRAW_FPTR=0xf9a28; UPDATE_FPTR=0xf9a24 ;;
         0401) DRAW_FPTR=0xf9c88; UPDATE_FPTR=0xf9c84 ;;
         0402) DRAW_FPTR=0xf9f00; UPDATE_FPTR=0xf9efc ;;
         *) echo "  patch_code_graph: unsupported $ver"; return 1 ;;
@@ -1530,6 +1561,9 @@ patch_code_squarewave() {
     local ELF=build/squarewave_${ver}.elf
     local FPTR start original_slot original payload_thumb
     case "$ver" in
+        0302) FPTR=0xf8dcc ;;
+        0305) FPTR=0xf9514 ;;
+        0306) FPTR=0xf9518 ;;
         0401) FPTR=0xf9778 ;;
         0402) FPTR=0xf99f0 ;;
         *) echo "  patch_code_squarewave: unsupported $ver"; return 1 ;;
@@ -1556,7 +1590,10 @@ patch_code_asv_task_wraper() {
     local ELF=build/asv_task_wrapper_${ver}.elf
     local FPTR start
     case "$ver" in
-        0401|0306) FPTR=0xf44e0 ;;
+        0302) FPTR=0xf3b68 ;;
+        0305) FPTR=0xf427c ;;
+        0306) FPTR=0xf4280 ;;
+        0401) FPTR=0xf44e0 ;;
         0402) FPTR=0xf4758 ;;
         *) echo "  patch_code_asv_task_wraper: unsupported $ver"; return 1 ;;
     esac
@@ -1574,6 +1611,9 @@ patch_wrapper_limit_max_pdiff() {
     local ELF=build/wrapper_limit_max_pdiff_${ver}.elf
     local FPTR start
     case "$ver" in
+        0302) FPTR=0xf8a24 ;;
+        0305) FPTR=0xf916c ;;
+        0306) FPTR=0xf9170 ;;
         0401) FPTR=0xf93d0 ;;
         0402) FPTR=0xf9648 ;;
         *) echo "  patch_wrapper_limit_max_pdiff: unsupported $ver"; return 1 ;;
@@ -1588,21 +1628,22 @@ patch_wrapper_limit_max_pdiff() {
 
 patch_code() {
     if [[ $PATCH_CODE == 1 ]] ; then
-        case "$CDX_VER" in
-            SX567-0401*|SX567-0402*) ;;
-            *) echo "  patch_code: skipped (unsupported CDX version $CDX_VER)"; return ;;
-        esac
         echo "Patching code"
-        patch_code_common
-        patch_code_graph
-        if [[ $PATCH_S == 1 ]] ; then
-            patch_code_squarewave
-        fi
+        case "$CDX_VER" in
+            SX567-0302*|SX567-0305*|SX567-0306*|SX567-0401*|SX567-0402*)
+                patch_code_common
+                patch_code_graph
+                if [[ $PATCH_S == 1 ]] ; then
+                    patch_code_squarewave
+                fi
+                if [[ $PATCH_VAUTO_WRAPPER == 1 ]] ; then
+                    patch_wrapper_limit_max_pdiff
+                fi
+                ;;
+            *) echo "  code payloads: skipped (unsupported CDX version $CDX_VER)" ;;
+        esac
         if [[ $PATCH_ASV_TASK_WRAPPER == 1 ]] ; then
             patch_code_asv_task_wraper
-        fi
-        if [[ $PATCH_VAUTO_WRAPPER == 1 ]] ; then
-            patch_wrapper_limit_max_pdiff
         fi
     fi
 }
@@ -1807,6 +1848,30 @@ custom_patch_settings_reclaim_reminders() {
     local reminders_tick reminder_menu_item reminder_menu_item_end reminder_menu reminder_menu_end
     local reclaimed_string_ids
     case "$CDX_VER" in
+        SX567-0302)
+            reminders_tick=0xebace
+            reminder_menu_item=0x62034
+            reminder_menu_item_end=0x62070
+            reminder_menu=0x63058
+            reminder_menu_end=0x632b4
+            reclaimed_string_ids="0x0048 0x00B7 0x00B8 0x00B9 0x00BA" # Reminders + four reminder message bodies
+            ;;
+        SX567-0305)
+            reminders_tick=0xec2ca
+            reminder_menu_item=0x62754
+            reminder_menu_item_end=0x62790
+            reminder_menu=0x63778
+            reminder_menu_end=0x639d4
+            reclaimed_string_ids="0x0048 0x00B7 0x00B8 0x00B9 0x00BA" # Reminders + four reminder message bodies
+            ;;
+        SX567-0306)
+            reminders_tick=0xec1e6
+            reminder_menu_item=0x62754
+            reminder_menu_item_end=0x62790
+            reminder_menu=0x63778
+            reminder_menu_end=0x639d4
+            reclaimed_string_ids="0x0048 0x00B7 0x00B8 0x00B9 0x00BA" # Reminders + four reminder message bodies
+            ;;
         SX567-0401)
             reminders_tick=0xec446
             reminder_menu_item=0x62754
@@ -2131,9 +2196,13 @@ print_custom_resource_summary() {
 
 custom_palette() {
     echo "Patching custom color palette"
-    # Find palette base by signature - tested on 0401 and 0402
-    local base
-    base=$(find_bytes "286031BD61020000FFFFFF0096969600") || {
+    local base signature
+    case "$CDX_VER" in
+        SX567-0302|SX567-0305) signature="286031BD60020000FFFFFF0096969600" ;;
+        SX567-0306|SX567-0401|SX567-0402) signature="286031BD61020000FFFFFF0096969600" ;;
+        *) echo "  custom_palette: skipped (unsupported CDX version $CDX_VER)"; return ;;
+    esac
+    base=$(find_bytes "$signature") || {
         echo "  custom_palette: palette signature not found"; return 1
     }
     base=$(( base + 8 ))  # first color entry
@@ -2201,6 +2270,18 @@ patch_lcd_ili9325() {
 
     local BL_OFF EXPECTED_BL
     case "$CDX_VER" in
+        SX567-0302)
+            BL_OFF=0x7B8BC
+            EXPECTED_BL='\xFF\xF7\x7A\xFE'
+            ;;
+        SX567-0305)
+            BL_OFF=0x7C034
+            EXPECTED_BL='\xFF\xF7\x7A\xFE'
+            ;;
+        SX567-0306)
+            BL_OFF=0x7C030
+            EXPECTED_BL='\xFF\xF7\x7A\xFE'
+            ;;
         SX567-0401|SX567-0402)
             BL_OFF=0x7C030
             EXPECTED_BL='\xFF\xF7\x7A\xFE'  # bl 0x0807BD28 (ILI9341 board init)
@@ -2251,7 +2332,7 @@ patch_backlight_adapt() {
     local ELF=build/backlight_adapt_${ver}.elf
 
     case "$ver" in
-        0401|0402) ;;
+        0302|0305|0306|0401|0402) ;;
         *) echo "  ${FUNCNAME[0]}: skipped (unsupported version $ver)"; return ;;
     esac
 

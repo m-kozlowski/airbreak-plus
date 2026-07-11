@@ -1100,7 +1100,50 @@ class ASFirmwarePatches(object):
 
     def custom_patch_menu_hooks(self):
         """Inject the generic clinical-menu hook payload and patch its ABI slots."""
+        stock_menu_expected = (
+            b'\x02\xf0\x3a\xfd', b'\x02\xf0\x0b\xfc',
+            b'\x02\xf0\xc5\xfb', b'\x02\xf0\x9c\xfb',
+            b'\x02\xf0\xdb\xfa')
         sites_by_version = {
+            'SX567-0302': {
+                'therapy': 0x61cf4,
+                'comfort': 0x61f52,
+                'accessories': 0x61fde,
+                'options': 0x62030,
+                'configuration': 0x621b2,
+                'clinical_capacity_site': 0x6189a,
+                'clinical_capacity': 70,
+                'config_error_size_site': 0xce638,
+                'config_error_size_expected': b'\xcf\xf7\x6a\xf9',
+                'menu_expected': (
+                    b'\x02\xf0\x38\xfd', b'\x02\xf0\x09\xfc',
+                    b'\x02\xf0\xc3\xfb', b'\x02\xf0\x9a\xfb',
+                    b'\x02\xf0\xd9\xfa'),
+            },
+            'SX567-0305': {
+                'therapy': 0x62414,
+                'comfort': 0x62672,
+                'accessories': 0x626fe,
+                'options': 0x62750,
+                'configuration': 0x628d2,
+                'clinical_capacity_site': 0x61fba,
+                'clinical_capacity': 70,
+                'config_error_size_site': 0xcee28,
+                'config_error_size_expected': b'\xcf\xf7\x34\xf9',
+                'menu_expected': stock_menu_expected,
+            },
+            'SX567-0306': {
+                'therapy': 0x62414,
+                'comfort': 0x62672,
+                'accessories': 0x626fe,
+                'options': 0x62750,
+                'configuration': 0x628d2,
+                'clinical_capacity_site': 0x61fba,
+                'clinical_capacity': 70,
+                'config_error_size_site': 0xced40,
+                'config_error_size_expected': b'\xcf\xf7\x6a\xf9',
+                'menu_expected': stock_menu_expected,
+            },
             'SX567-0401': {
                 'therapy': 0x62414,
                 'comfort': 0x62672,
@@ -1111,6 +1154,7 @@ class ASFirmwarePatches(object):
                 'clinical_capacity': 70,
                 'config_error_size_site': 0xcefa0,
                 'config_error_size_expected': b'\xcf\xf7\x6a\xf9',
+                'menu_expected': stock_menu_expected,
             },
             'SX567-0402': {
                 'therapy': 0x62414,
@@ -1122,6 +1166,7 @@ class ASFirmwarePatches(object):
                 'clinical_capacity': 70,
                 'config_error_size_site': 0xcf218,
                 'config_error_size_expected': b'\xcf\xf7\x46\xf9',
+                'menu_expected': stock_menu_expected,
             },
         }
         sites = sites_by_version.get(self.asf.cdx_ver)
@@ -1163,19 +1208,21 @@ class ASFirmwarePatches(object):
 
         self._patch_clinical_menu_capacity(sites['clinical_capacity_site'], sites['clinical_capacity'])
 
+        menu_expected = sites['menu_expected']
+
         # Replace the final stock append in each clinical menu section. Each payload
         # hook appends that displaced item first, then its registered custom entries.
         self._patch_thumb_bl_checked(
-            sites['therapy'], b'\x02\xf0\x3a\xfd', hook_therapy, 'therapy menu append')
+            sites['therapy'], menu_expected[0], hook_therapy, 'therapy menu append')
         self._patch_thumb_bl_checked(
-            sites['comfort'], b'\x02\xf0\x0b\xfc', hook_comfort, 'comfort menu append')
+            sites['comfort'], menu_expected[1], hook_comfort, 'comfort menu append')
         self._patch_thumb_bl_checked(
-            sites['accessories'], b'\x02\xf0\xc5\xfb', hook_accessories,
+            sites['accessories'], menu_expected[2], hook_accessories,
             'accessories menu append')
         self._patch_thumb_bl_checked(
-            sites['options'], b'\x02\xf0\x9c\xfb', hook_options, 'options menu append')
+            sites['options'], menu_expected[3], hook_options, 'options menu append')
         self._patch_thumb_bl_checked(
-            sites['configuration'], b'\x02\xf0\xdb\xfa', hook_configuration,
+            sites['configuration'], menu_expected[4], hook_configuration,
             'configuration menu append')
 
         # Replace the size query reached after config validation fails. The payload
@@ -1394,6 +1441,30 @@ class ASFirmwarePatches(object):
     def custom_patch_settings_reclaim_reminders(self):
         """Disable stock Reminders behavior and reclaim its storage-backed vars."""
         sites_by_version = {
+            'SX567-0302': {
+                'reminders_tick': 0xebace,
+                'reminder_menu_item': 0x62034,
+                'reminder_menu_item_end': 0x62070,
+                'reminder_menu': 0x63058,
+                'reminder_menu_end': 0x632b4,
+                'reclaimed_string_ids': (0x0048, 0x00B7, 0x00B8, 0x00B9, 0x00BA), # Reminders + four reminder message bodies
+            },
+            'SX567-0305': {
+                'reminders_tick': 0xec2ca,
+                'reminder_menu_item': 0x62754,
+                'reminder_menu_item_end': 0x62790,
+                'reminder_menu': 0x63778,
+                'reminder_menu_end': 0x639d4,
+                'reclaimed_string_ids': (0x0048, 0x00B7, 0x00B8, 0x00B9, 0x00BA), # Reminders + four reminder message bodies
+            },
+            'SX567-0306': {
+                'reminders_tick': 0xec1e6,
+                'reminder_menu_item': 0x62754,
+                'reminder_menu_item_end': 0x62790,
+                'reminder_menu': 0x63778,
+                'reminder_menu_end': 0x639d4,
+                'reclaimed_string_ids': (0x0048, 0x00B7, 0x00B8, 0x00B9, 0x00BA), # Reminders + four reminder message bodies
+            },
             'SX567-0401': {
                 'reminders_tick': 0xec446,
                 'reminder_menu_item': 0x62754,
@@ -1741,6 +1812,9 @@ class ASFirmwarePatches(object):
         if data is None:
             return
         FPTR = {
+            '0302': (0xf92dc, 0xf92d8),
+            '0305': (0xf9a24, 0xf9a20),
+            '0306': (0xf9a28, 0xf9a24),
             '0401': (0xf9c88, 0xf9c84),
             '0402': (0xf9f00, 0xf9efc),
         }
@@ -1762,7 +1836,13 @@ class ASFirmwarePatches(object):
         data, ver = self._load_versioned_bin('squarewave')
         if data is None:
             return
-        FPTR = {'0401': 0xf9778, '0402': 0xf99f0}
+        FPTR = {
+            '0302': 0xf8dcc,
+            '0305': 0xf9514,
+            '0306': 0xf9518,
+            '0401': 0xf9778,
+            '0402': 0xf99f0,
+        }
         fptr = FPTR.get(ver)
         if fptr is None:
             print("  patch_squarewave: skipped (unsupported CDX version %s)" % self.asf.cdx_ver)
@@ -1788,7 +1868,13 @@ class ASFirmwarePatches(object):
         data, ver = self._load_versioned_bin('asv_task_wrapper')
         if data is None:
             return
-        FPTR = {'0401': 0xf44e0, '0306': 0xf44e0, '0402': 0xf4758}
+        FPTR = {
+            '0302': 0xf3b68,
+            '0305': 0xf427c,
+            '0306': 0xf4280,
+            '0401': 0xf44e0,
+            '0402': 0xf4758,
+        }
         fptr = FPTR.get(ver)
         if fptr is None:
             print("  patch_asv_task_wrapper: skipped (unsupported CDX version %s)" % self.asf.cdx_ver)
@@ -1804,7 +1890,13 @@ class ASFirmwarePatches(object):
         data, ver = self._load_versioned_bin('wrapper_limit_max_pdiff')
         if data is None:
             return
-        FPTR = {'0401': 0xf93d0, '0402': 0xf9648}
+        FPTR = {
+            '0302': 0xf8a24,
+            '0305': 0xf916c,
+            '0306': 0xf9170,
+            '0401': 0xf93d0,
+            '0402': 0xf9648,
+        }
         fptr = FPTR.get(ver)
         if fptr is None:
             print("  patch_wrapper_limit_max_pdiff: skipped (unsupported CDX version %s)" % self.asf.cdx_ver)
@@ -1819,7 +1911,13 @@ class ASFirmwarePatches(object):
     def patch_lcd_ili9325(self):
         """Universal ILI9325/ILI9328 + ILI9341 LCD driver"""
         ver = self.asf.cdx_ver.replace('SX567-', '')
-        BL_OFF_MAP = {'0401': 0x7C030, '0402': 0x7C030}
+        BL_OFF_MAP = {
+            '0302': 0x7b8bc,
+            '0305': 0x7c034,
+            '0306': 0x7c030,
+            '0401': 0x7c030,
+            '0402': 0x7c030,
+        }
         bl_off = BL_OFF_MAP.get(ver)
         if bl_off is None:
             print("  patch_lcd_ili9325: skipped (unsupported CDX version %s)" % self.asf.cdx_ver)
@@ -1861,7 +1959,7 @@ class ASFirmwarePatches(object):
         if data is None:
             return
 
-        if ver not in ('0401', '0402'):
+        if ver not in ('0302', '0305', '0306', '0401', '0402'):
             print("  skipped (unsupported version %s)" % ver)
             return
 
@@ -1932,8 +2030,19 @@ class ASFirmwarePatches(object):
 
     def custom_palette(self):
         """Patch custom color palette."""
+        signatures = {
+            'SX567-0302': '286031BD60020000FFFFFF0096969600',
+            'SX567-0305': '286031BD60020000FFFFFF0096969600',
+            'SX567-0306': '286031BD61020000FFFFFF0096969600',
+            'SX567-0401': '286031BD61020000FFFFFF0096969600',
+            'SX567-0402': '286031BD61020000FFFFFF0096969600',
+        }
+        signature = signatures.get(self.asf.cdx_ver)
+        if signature is None:
+            print("  custom_palette: skipped (unsupported CDX version %s)" % self.asf.cdx_ver)
+            return
         try:
-            base = self.asf.find_bytes(bytes.fromhex('286031BD61020000FFFFFF0096969600'))
+            base = self.asf.find_bytes(bytes.fromhex(signature))
         except ValueError:
             print("  custom_palette: palette signature not found")
             return

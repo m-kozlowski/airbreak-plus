@@ -5,7 +5,8 @@ SRC=patches
 BUILD=build
 
 PAYLOAD_LAYOUT_VERSIONS := 0302 0305 0306 0401 0402
-PAYLOADS_0302 := mop_callback_dispatcher vid_spoof
+PAYLOADS_0302 := mop_callback_dispatcher vid_spoof graph squarewave asv_task_wrapper \
+	common_code backlight_adapt wrapper_limit_max_pdiff s10_lcd_ili9325 custom_menu_hooks
 PAYLOADS_0305 := $(PAYLOADS_0302)
 PAYLOADS_0306 := $(PAYLOADS_0302)
 PAYLOADS_0401 := mop_callback_dispatcher vid_spoof graph squarewave asv_task_wrapper \
@@ -18,7 +19,7 @@ payload_bins = $(foreach v,$(call payload_versions,$(1)),$(BUILD)/$(1)_$(v).bin)
 PAYLOAD_BINS := $(foreach v,$(PAYLOAD_LAYOUT_VERSIONS),\
 	$(foreach p,$(PAYLOADS_$(v)),$(BUILD)/$(p)_$(v).bin))
 S10_CODE_VERSIONS := $(call payload_versions,common_code)
-S10_STANDALONE_PAYLOADS := backlight_adapt vid_spoof
+S10_STANDALONE_PAYLOADS := asv_task_wrapper backlight_adapt vid_spoof
 PAYLOAD_LAYOUT_MKS := $(foreach v,$(PAYLOAD_LAYOUT_VERSIONS),$(BUILD)/payload_layout_$(v).mk)
 PAYLOAD_LAYOUT_TSVS := $(foreach v,$(PAYLOAD_LAYOUT_VERSIONS),$(BUILD)/payload_layout_$(v).tsv)
 
@@ -125,12 +126,6 @@ $(BUILD)/squarewave_$(1).probe.elf: $(BUILD)/squarewave_$(1).o $(BUILD)/squarewa
 		--just-symbols=$$(BUILD)/common_code_$(1).probe.elf \
 		--entry start --sort-section=name -o $$@ $(BUILD)/squarewave_$(1).o $(BUILD)/squarewave_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o
 
-$(BUILD)/asv_task_wrapper_$(1).probe.elf: $(BUILD)/asv_task_wrapper_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/common_code_$(1).probe.elf | $(BUILD)
-	$$(LD) --nostdlib --no-dynamic-linker \
-		--Ttext $(PROBE_LINK_ADDR) \
-		--just-symbols=$$(BUILD)/common_code_$(1).probe.elf \
-		--entry start --sort-section=name -o $$@ $(BUILD)/asv_task_wrapper_$(1).o $(BUILD)/s10_$(1)_stubs.o
-
 $(BUILD)/wrapper_limit_max_pdiff_$(1).probe.elf: $(BUILD)/wrapper_limit_max_pdiff_$(1).o $(BUILD)/wrapper_limit_max_pdiff_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/common_code_$(1).probe.elf | $(BUILD)
 	$$(LD) --nostdlib --no-dynamic-linker \
 		--Ttext $(PROBE_LINK_ADDR) \
@@ -158,12 +153,6 @@ $(BUILD)/squarewave_$(1).elf: $(BUILD)/squarewave_$(1).o $(BUILD)/squarewave_abi
 		--Ttext $$(payload_addr_$(1)_squarewave) \
 		--just-symbols=$$(BUILD)/common_code_$(1).elf \
 		--entry start --sort-section=name -o $$@ $(BUILD)/squarewave_$(1).o $(BUILD)/squarewave_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o
-
-$(BUILD)/asv_task_wrapper_$(1).elf: $(BUILD)/asv_task_wrapper_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/common_code_$(1).elf $(BUILD)/payload_layout_$(1).mk | $(BUILD)
-	$$(LD) --nostdlib --no-dynamic-linker \
-		--Ttext $$(payload_addr_$(1)_asv_task_wrapper) \
-		--just-symbols=$$(BUILD)/common_code_$(1).elf \
-		--entry start --sort-section=name -o $$@ $(BUILD)/asv_task_wrapper_$(1).o $(BUILD)/s10_$(1)_stubs.o
 
 $(BUILD)/wrapper_limit_max_pdiff_$(1).elf: $(BUILD)/wrapper_limit_max_pdiff_$(1).o $(BUILD)/wrapper_limit_max_pdiff_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/common_code_$(1).elf $(BUILD)/payload_layout_$(1).mk | $(BUILD)
 	$$(LD) --nostdlib --no-dynamic-linker \
