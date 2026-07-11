@@ -7,6 +7,18 @@
 #define DRAW_PRESSURE 1
 #define DRAW_FLOW 0
 
+typedef struct {
+	int last_pos_x;
+} graph_state_t;
+
+STATIC void init_graph_state(graph_state_t *state) {
+	state->last_pos_x = -1;
+}
+
+STATIC graph_state_t *get_graph_state(void) {
+	return GET_PTR(PTR_GRAPH_DATA, graph_state_t, init_graph_state);
+}
+
 STATIC float rescale(float value, float start, float end, float graph_height) {
 	return remap01(value, start, end) * graph_height;
 }
@@ -23,10 +35,18 @@ STATIC void LCD_FillRect_Alt(int x, int y, int w, int h) {
 	LCD_FillRect2(x, y, x+w-1, y+h-1);
 }
 
-// Replaces `gui_fill_rect_set_colors`
-int MAIN start(void) {
+STATIC int graph_draw_current_column(bool only_if_new) {
+	graph_state_t *state = get_graph_state();
+
 	// don't do anything if we are not in an active therapy mode
-	if (*therapy_mode == 0) return 0;
+	if (*therapy_mode == 0) {
+		state->last_pos_x = -1;
+		return 0;
+	}
+
+	const unsigned pos_x = (*pap_timer / 15) % 240; // ~6.66px per second (unit of timer is 10ms)
+	if (only_if_new && state->last_pos_x == (int)pos_x) return 0;
+	state->last_pos_x = pos_x;
 
 	// break out of the current clipping so we can drawon the entire screen
 	unsigned * const color_ptr = (unsigned*)(gui_context + 60);
@@ -59,8 +79,6 @@ int MAIN start(void) {
 	const float p_min = 0.0f;
 	const float p_max = 20.0f;
 	
-	const unsigned pos_x = (*pap_timer / 15) % width; // ~6.66px per second (unit of timer is 10ms)
-
 	int pressure = rescale(p_actual, p_min, p_max, HEIGHT_PRES);
 	int command = rescale(p_command, p_min, p_max, HEIGHT_PRES);
 	int error = -p_error * ( HEIGHT_PRES / (p_max-p_min) * 3.0f); // Error 
@@ -115,6 +133,18 @@ int MAIN start(void) {
 	*color_ptr = old_color;
 
 	return 1;
+}
+
+// Replaces the stock bar draw method.
+int MAIN start(void) {
+	return graph_draw_current_column(false);
+}
+
+// The stock update method only redraws when the quantized bar position changes.
+// Preserve its state, but drive the time-based graph directly on each new column.
+int MAIN graph_widget_update(int *obj, int new_position) {
+	obj[2] = new_position;
+	return graph_draw_current_column(true);
 }
 
 

@@ -153,6 +153,7 @@ typedef enum {
   PTR_ASV_DATA,
   PTR_FEATURES,
   PTR_TRIGGERCYCLE,
+  PTR_GRAPH_DATA,
 
   __PTR_LAST,
 } ptr_index;

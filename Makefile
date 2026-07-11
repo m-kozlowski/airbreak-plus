@@ -97,7 +97,7 @@ $(BUILD)/s10_%_stubs.o: $(SRC)/s10_%_stubs.S | $(BUILD)
 	$(AS) $(ASFLAGS) -c -o $@ $<
 
 define S10_VERSIONED_OBJECTS_template
-$(BUILD)/%_$(1).o: $(SRC)/%.c $(SRC)/s10_vars.h $(SRC)/s10_vars_$(1).h | $(BUILD)
+$(BUILD)/%_$(1).o: $(SRC)/%.c $(SRC)/common_code.h $(SRC)/s10_vars.h $(SRC)/s10_vars_$(1).h | $(BUILD)
 	$$(CC) $$(CFLAGS) -DCDX_VER_$(1) -c -o $$@ $$<
 
 $(BUILD)/%_$(1).o: $(SRC)/%.S $(SRC)/s10_vars.h $(SRC)/s10_vars_$(1).h | $(BUILD)

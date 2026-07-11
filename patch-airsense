@@ -1508,17 +1508,19 @@ patch_code_graph() {
     local ver=${CDX_VER#SX567-}
     local BIN=build/graph_${ver}.bin
     local ELF=build/graph_${ver}.elf
-    local FPTR start
+    local DRAW_FPTR UPDATE_FPTR start update
     case "$ver" in
-        0401) FPTR=0xf9c88 ;;
-        0402) FPTR=0xf9f00 ;;
+        0401) DRAW_FPTR=0xf9c88; UPDATE_FPTR=0xf9c84 ;;
+        0402) DRAW_FPTR=0xf9f00; UPDATE_FPTR=0xf9efc ;;
         *) echo "  patch_code_graph: unsupported $ver"; return 1 ;;
     esac
     echo "Patching graphing code ($ver)"
     [[ -r "$ELF" ]] || die "patch_code_graph: $ELF not found"
     start=$(elf_symbol_addr "$ELF" start)
+    update=$(elf_symbol_addr "$ELF" graph_widget_update)
     payload_inject graph "$BIN"
-    write_u32 "$FPTR" "$(( start | 1 ))" || die failed
+    write_u32 "$DRAW_FPTR" "$(( start | 1 ))" || die failed
+    write_u32 "$UPDATE_FPTR" "$(( update | 1 ))" || die failed
 }
 
 

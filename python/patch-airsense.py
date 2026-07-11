@@ -1740,15 +1740,21 @@ class ASFirmwarePatches(object):
         data, ver = self._load_versioned_bin('graph')
         if data is None:
             return
-        FPTR = {'0401': 0xf9c88, '0402': 0xf9f00}
-        fptr = FPTR.get(ver)
-        if fptr is None:
+        FPTR = {
+            '0401': (0xf9c88, 0xf9c84),
+            '0402': (0xf9f00, 0xf9efc),
+        }
+        fptrs = FPTR.get(ver)
+        if fptrs is None:
             print("  patch_graph: skipped (unsupported CDX version %s)" % self.asf.cdx_ver)
             return
+        draw_fptr, update_fptr = fptrs
         elf_path = self._versioned_artifact_path('graph', 'elf', ver)
         start = self._elf_symbol_addr(elf_path, 'start')
+        update = self._elf_symbol_addr(elf_path, 'graph_widget_update')
         flash, _ = self._inject_payload('graph', data)
-        self.asf.write_u32(fptr, start | 1)
+        self.asf.write_u32(draw_fptr, start | 1)
+        self.asf.write_u32(update_fptr, update | 1)
         print("  graph: %dB at 0x%08X" % (len(data), flash))
 
     def patch_squarewave(self):
