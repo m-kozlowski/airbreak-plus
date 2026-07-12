@@ -4,6 +4,19 @@
 SRC=patches
 BUILD=build
 
+# Use all cores unless the caller selected -j, and keep output lines intact.
+JOBS ?= $(shell nproc)
+ifeq ($(MAKELEVEL),0)
+ifeq ($(filter -j%,$(MAKEFLAGS)),)
+MAKEFLAGS += -j$(JOBS)
+endif
+endif
+
+# Print compact build steps by default. Use `make V=1` for full commands.
+ifneq ($(V),1)
+.SILENT:
+endif
+
 PAYLOAD_LAYOUT_VERSIONS := 0302 0305 0306 0401 0402
 PAYLOADS_0302 := mop_callback_dispatcher vid_spoof graph squarewave asv_task_wrapper \
 	common_code backlight_adapt wrapper_limit_max_pdiff s10_lcd_ili9325 custom_menu_hooks
@@ -16,8 +29,8 @@ PAYLOADS_0402 := $(PAYLOADS_0401)
 payload_versions = $(foreach v,$(PAYLOAD_LAYOUT_VERSIONS),$(if $(filter $(1),$(PAYLOADS_$(v))),$(v)))
 payload_bins = $(foreach v,$(call payload_versions,$(1)),$(BUILD)/$(1)_$(v).bin)
 
-PAYLOAD_BINS := $(foreach v,$(PAYLOAD_LAYOUT_VERSIONS),\
-	$(foreach p,$(PAYLOADS_$(v)),$(BUILD)/$(p)_$(v).bin))
+PAYLOAD_NAMES := $(sort $(foreach v,$(PAYLOAD_LAYOUT_VERSIONS),$(PAYLOADS_$(v))))
+PAYLOAD_STAMPS := $(foreach p,$(PAYLOAD_NAMES),$(BUILD)/payload_$(p).stamp)
 S10_CODE_VERSIONS := $(call payload_versions,common_code)
 S10_STANDALONE_PAYLOADS := asv_task_wrapper backlight_adapt vid_spoof
 PAYLOAD_LAYOUT_MKS := $(foreach v,$(PAYLOAD_LAYOUT_VERSIONS),$(BUILD)/payload_layout_$(v).mk)
@@ -30,7 +43,11 @@ BUILD_VARIANTS = \
 	$(BUILD)/stm32-asv-plus_no-squarewave.bin \
 	$(BUILD)/stm32-asv-plus_with-backup.bin
 
-all: $(BUILD_VARIANTS)
+# Payloads build in parallel; firmware patchers run serially for streaming output.
+all: binaries
+	set -e; for image in $(BUILD_VARIANTS); do \
+		$(MAKE) --no-print-directory "$$image"; \
+	done
 
 $(BUILD):
 	mkdir -p $(BUILD)
@@ -40,26 +57,34 @@ ifneq ($(filter clean,$(MAKECMDGOALS)),clean)
 endif
 
 # unlocked stock-ish
-$(BUILD)/stm32-patched.bin: patch-airsense $(PAYLOAD_BINS) $(PAYLOAD_LAYOUT_TSVS)
+$(BUILD)/stm32-patched.bin: patch-airsense $(PAYLOAD_STAMPS) $(PAYLOAD_LAYOUT_TSVS)
 	./patch-airsense stm32.bin $@
 
 # graph overlay injected
-$(BUILD)/stm32-graph.bin: patch-airsense $(PAYLOAD_BINS) $(PAYLOAD_LAYOUT_TSVS)
+$(BUILD)/stm32-graph.bin: patch-airsense $(PAYLOAD_STAMPS) $(PAYLOAD_LAYOUT_TSVS)
 	PATCH_CODE=1 ./patch-airsense stm32.bin $@
 
 # Custom ASV algorithm in VAuto slot + ASV backup-rate suppression + squarewave mode
-$(BUILD)/stm32-asv-plus.bin: patch-airsense $(PAYLOAD_BINS) $(PAYLOAD_LAYOUT_TSVS)
+$(BUILD)/stm32-asv-plus.bin: patch-airsense $(PAYLOAD_STAMPS) $(PAYLOAD_LAYOUT_TSVS)
 	PATCH_CODE=1 PATCH_ASV_TASK_WRAPPER=1 PATCH_VAUTO_WRAPPER=1 PATCH_S=1 ./patch-airsense stm32.bin $@
 
 # Custom ASV in VAuto slot + backup-rate suppression, no squarewave
-$(BUILD)/stm32-asv-plus_no-squarewave.bin: patch-airsense $(PAYLOAD_BINS) $(PAYLOAD_LAYOUT_TSVS)
+$(BUILD)/stm32-asv-plus_no-squarewave.bin: patch-airsense $(PAYLOAD_STAMPS) $(PAYLOAD_LAYOUT_TSVS)
 	PATCH_CODE=1 PATCH_ASV_TASK_WRAPPER=1 PATCH_VAUTO_WRAPPER=1 ./patch-airsense stm32.bin $@
 
 # Custom ASV in VAuto slot + squarewave, stock ASV backup-rate preserved
-$(BUILD)/stm32-asv-plus_with-backup.bin: patch-airsense $(PAYLOAD_BINS) $(PAYLOAD_LAYOUT_TSVS)
+$(BUILD)/stm32-asv-plus_with-backup.bin: patch-airsense $(PAYLOAD_STAMPS) $(PAYLOAD_LAYOUT_TSVS)
 	PATCH_CODE=1 PATCH_VAUTO_WRAPPER=1 PATCH_S=1 ./patch-airsense stm32.bin $@
 
-binaries: $(PAYLOAD_BINS) $(PAYLOAD_LAYOUT_TSVS)
+binaries: $(PAYLOAD_STAMPS) $(PAYLOAD_LAYOUT_TSVS)
+
+define PAYLOAD_STAMP_template
+$(BUILD)/payload_$(1).stamp: $(call payload_bins,$(1)) Makefile | $(BUILD)
+	@printf '  %-8s %-30s [%s]\n' PAYLOAD $(1) '$(call payload_versions,$(1))'
+	@touch $$@
+endef
+
+$(foreach p,$(PAYLOAD_NAMES),$(eval $(call PAYLOAD_STAMP_template,$(p))))
 
 
 # Per-version S10 code patches
@@ -109,9 +134,10 @@ $(foreach v,$(PAYLOAD_LAYOUT_VERSIONS),$(eval $(call S10_VERSIONED_OBJECTS_templ
 
 define S10_CODE_VERSION_template
 
+# common_code provides shared symbols and has no executable entry point.
 $(BUILD)/common_code_$(1).probe.elf: $(BUILD)/common_code_$(1).o $(BUILD)/s10_$(1)_stubs.o | $(BUILD)
 	$$(LD) --nostdlib --no-dynamic-linker \
-		--Ttext $(PROBE_LINK_ADDR) --entry start --sort-section=name \
+		--Ttext $(PROBE_LINK_ADDR) --entry 0 --sort-section=name \
 		-o $$@ $$^
 
 $(BUILD)/graph_$(1).probe.elf: $(BUILD)/graph_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/common_code_$(1).probe.elf | $(BUILD)
@@ -139,7 +165,7 @@ $(BUILD)/custom_menu_hooks_$(1).probe.elf: $(BUILD)/custom_menu_hooks_entry_$(1)
 
 $(BUILD)/common_code_$(1).elf: $(BUILD)/common_code_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/payload_layout_$(1).mk | $(BUILD)
 	$$(LD) --nostdlib --no-dynamic-linker \
-		--Ttext $$(payload_addr_$(1)_common_code) --entry start --sort-section=name \
+		--Ttext $$(payload_addr_$(1)_common_code) --entry 0 --sort-section=name \
 		-o $$@ $(BUILD)/common_code_$(1).o $(BUILD)/s10_$(1)_stubs.o
 
 $(BUILD)/graph_$(1).elf: $(BUILD)/graph_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/common_code_$(1).elf $(BUILD)/payload_layout_$(1).mk | $(BUILD)
