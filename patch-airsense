@@ -884,6 +884,8 @@ custom_patch_settings_init() {
     CUSTOM_RECLAIMED_STRING_SEEN=()
     CUSTOM_MENU_ENTRIES=()
     CUSTOM_MENU_REGISTERED=()
+    CUSTOM_STORAGE_MEMBERS=()
+    CUSTOM_STORAGE_MEMBER_SEEN=()
 }
 
 
@@ -904,6 +906,77 @@ custom_patch_settings_rename_storage_group() {
 
     printf '%s\0' "$new" | patch "$old_rec" || die failed
     echo "  custom settings storage group: $old -> $new"
+}
+
+
+# Reserve aligned bytes from the end of the reclaimed registry range.
+# args: output variable name, byte count, alignment
+custom_settings_reserve_tail() {
+    local __out=$1 size=$2 align=$3
+    (( size > 0 && align > 0 && (align & (align - 1)) == 0 )) || \
+        die "custom_settings_reserve_tail: invalid size/alignment"
+
+    local end=$(( CUSTOM_SETTINGS_REGISTRY_ADDR + CUSTOM_SETTINGS_REGISTRY_SIZE ))
+    local start=$(( (end - size) & ~(align - 1) ))
+    (( start >= CUSTOM_SETTINGS_REGISTRY_ADDR )) || \
+        die "custom_settings_reserve_tail: reclaimed settings space exhausted"
+
+    CUSTOM_SETTINGS_REGISTRY_SIZE=$(( start - CUSTOM_SETTINGS_REGISTRY_ADDR ))
+    printf -v "$__out" "%s" "$start"
+}
+
+
+# Queue an existing firmware variable for addition to the CSG member list.
+# args: variable name/id
+custom_storage_add() {
+    local var=$1 vid
+    vid=$(( $(resolve_var_id "$var") ))
+    [[ -z "${CUSTOM_STORAGE_MEMBER_SEEN[$vid]+x}" ]] || \
+        die "custom_storage_add: duplicate variable $var (var_id 0x$(printf "%04X" "$vid"))"
+    CUSTOM_STORAGE_MEMBER_SEEN[$vid]=1
+    CUSTOM_STORAGE_MEMBERS+=("$var")
+}
+
+
+# Rebuild CSG's member array in reclaimed flash and append queued variables.
+custom_emit_storage_members() {
+    (( ${#CUSTOM_STORAGE_MEMBERS[@]} > 0 )) || return
+
+    local rec old_ptr old_off old_count new_count new_off size image_size
+    rec=$(find_var_group CSG) || die "custom_patch_settings: CSG variable group not found"
+    old_ptr=$(read_u32 $(( rec + 8 )))
+    old_off=$(( old_ptr - FLASH_BASE ))
+    old_count=$(read_u32 $(( rec + 0x0c )))
+    new_count=$(( old_count + ${#CUSTOM_STORAGE_MEMBERS[@]} ))
+    (( new_count <= 0xff )) || die "custom_patch_settings: CSG member count exceeds firmware limit"
+
+    image_size=$(stat -c %s "$OUT")
+    (( old_off >= 0 && old_off + old_count * 2 <= image_size )) || \
+        die "custom_patch_settings: invalid CSG member array pointer"
+
+    size=$(( new_count * 2 ))
+    custom_settings_reserve_tail new_off "$size" 4
+
+    local i vid var
+    declare -A seen=()
+    for (( i = 0; i < old_count; i++ )); do
+        vid=$(read_u16 $(( old_off + i * 2 )))
+        seen[$vid]=1
+        write_u16 $(( new_off + i * 2 )) "$vid" || die failed
+    done
+    for var in "${CUSTOM_STORAGE_MEMBERS[@]}"; do
+        vid=$(( $(resolve_var_id "$var") ))
+        [[ -z "${seen[$vid]+x}" ]] || \
+            die "custom_patch_settings: $var already belongs to CSG"
+        seen[$vid]=1
+        write_u16 $(( new_off + i * 2 )) "$vid" || die failed
+        i=$(( i + 1 ))
+    done
+
+    write_u32 $(( rec + 8 )) $(( FLASH_BASE + new_off )) || die failed
+    write_u32 $(( rec + 0x0c )) "$new_count" || die failed
+    printf "  CSG members: %d -> %d, table at 0x%08X\n" \
+        "$old_count" "$new_count" $(( FLASH_BASE + new_off ))
 }
 
 
@@ -1324,6 +1397,17 @@ custom_menu_add() {
     fi
     CUSTOM_MENU_REGISTERED[$vid]=1
     CUSTOM_MENU_ENTRIES+=("$section $flags $vid $mode_mask")
+}
+
+
+# Register a localized static heading in a menu section.
+# args: section name/id, string id
+custom_menu_add_heading() {
+    local section_name=${1,,} str_id=$2
+    local section=${CUSTOM_MENU_SECTIONS[$section_name]}
+    [[ -n "$section" ]] || die "custom_menu_add_heading: unknown section $1"
+    str_id=$(( str_id ))
+    CUSTOM_MENU_ENTRIES+=("$section $CUSTOM_MENU_FLAG_HEADING $str_id 0xffffffff")
 }
 
 
@@ -2176,6 +2260,7 @@ custom_patch_settings() {
         "$feature"
     done
 
+    custom_emit_storage_members
     custom_emit_registry
     custom_patch_menu_hooks
 }
@@ -2537,10 +2622,13 @@ declare -a CUSTOM_RECLAIMED_STRING_CANDIDATES
 declare -A CUSTOM_RECLAIMED_STRING_SEEN
 declare -a CUSTOM_MENU_ENTRIES
 declare -A CUSTOM_MENU_REGISTERED
+declare -a CUSTOM_STORAGE_MEMBERS
+declare -A CUSTOM_STORAGE_MEMBER_SEEN
 declare -a CUSTOM_SETTINGS_FEATURES
 declare -a MOP_CALLBACK_HANDLER_ADDRS
 declare -A MOP_CALLBACK_HANDLER_SEEN
 CUSTOM_MENU_FLAG_G4_NUMERIC=1
+CUSTOM_MENU_FLAG_HEADING=2
 declare -A CUSTOM_MENU_SECTIONS=(
     [therapy]=0
     [comfort]=1

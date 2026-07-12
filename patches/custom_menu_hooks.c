@@ -12,16 +12,18 @@ typedef unsigned int u32;
 typedef struct {
 	u8 section;
 	u8 flags;
-	u16 var_id;
+	u16 item_id;
 	u32 mode_mask;
 } custom_menu_entry_t;
 
 #define CUSTOM_MENU_FLAG_G4_NUMERIC 0x01
+#define CUSTOM_MENU_FLAG_HEADING    0x02
 
 extern void *malloc(unsigned size);
 extern void scrollbar_add_item(void *list, void *item);
 extern void *menu_create_text_or_float(int var_id, int arg);
 extern void *menu_create_numeric_var(void *storage, int var_id, int arg);
+extern void *menu_create_static_string(void *storage, int str_id);
 extern void variable_lookup_handler(void *ctx, int var_id, int arg);
 extern void variable_set_visible_from_handler(void *ctx, int visible);
 extern void variable_handler_release(void *ctx);
@@ -42,14 +44,21 @@ static const custom_menu_entry_t *custom_menu_registry(void)
 
 static void *custom_menu_create_item(const custom_menu_entry_t *entry)
 {
+	if (entry->flags & CUSTOM_MENU_FLAG_HEADING) {
+		void *storage = malloc(0x0c);
+		if (!storage)
+			return 0;
+		return menu_create_static_string(storage, entry->item_id);
+	}
+
 	if (entry->flags & CUSTOM_MENU_FLAG_G4_NUMERIC) {
 		void *storage = malloc(0x1c);
 		if (!storage)
 			return 0;
-		return menu_create_numeric_var(storage, entry->var_id, 0);
+		return menu_create_numeric_var(storage, entry->item_id, 0);
 	}
 
-	return menu_create_text_or_float(entry->var_id, 0);
+	return menu_create_text_or_float(entry->item_id, 0);
 }
 
 /* All section-specific assembly stubs tail-call here after replacing one stock
@@ -74,7 +83,7 @@ void custom_menu_hook_common(void *list, void *item, unsigned section)
 	 * image cannot walk arbitrary flash if the terminator is missing.
 	 */
 	for (unsigned guard = 0; guard < 64; guard++, entry++) {
-		if (entry->section == 0xff || entry->var_id == 0xffff)
+		if (entry->section == 0xff || entry->item_id == 0xffff)
 			return;
 		if (entry->section != section)
 			continue;
@@ -103,13 +112,15 @@ void custom_menu_apply_mode_visibility(void)
 	int mode = variable_get_by_id(VAR_ID_MOP);
 
 	for (unsigned guard = 0; guard < 64; guard++, entry++) {
-		if (entry->section == 0xff || entry->var_id == 0xffff)
+		if (entry->section == 0xff || entry->item_id == 0xffff)
 			return;
+		if (entry->flags & CUSTOM_MENU_FLAG_HEADING)
+			continue;
 
 		int visible = 0;
 		if ((unsigned)mode < 32)
 			visible = (entry->mode_mask & (1u << (unsigned)mode)) != 0;
-		custom_menu_set_visible(entry->var_id, visible);
+		custom_menu_set_visible(entry->item_id, visible);
 	}
 }
 

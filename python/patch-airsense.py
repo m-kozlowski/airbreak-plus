@@ -687,6 +687,7 @@ class ASFirmwarePatches(object):
         'SX567-0402': 0x75f48,
     }
     CUSTOM_MENU_FLAG_G4_NUMERIC = 1
+    CUSTOM_MENU_FLAG_HEADING = 2
     CUSTOM_MENU_SECTIONS = {
         'therapy': 0,
         'comfort': 1,
@@ -734,6 +735,8 @@ class ASFirmwarePatches(object):
         self.custom_reclaimed_string_seen = set()
         self.custom_menu_entries = []
         self.custom_menu_registered = set()
+        self.custom_storage_members = []
+        self.custom_storage_member_seen = set()
         self.custom_settings_registry_addr = None
         self.custom_settings_registry_size = None
 
@@ -755,6 +758,64 @@ class ASFirmwarePatches(object):
 
         self.asf.patch(new_name.encode('ascii') + b'\x00', old_rec, clobber=True)
         print("  custom settings storage group: %s -> %s" % (old_name, new_name))
+
+    def _custom_settings_reserve_tail(self, size, alignment):
+        """Reserve aligned bytes from the end of the reclaimed registry range."""
+        if size <= 0 or alignment <= 0 or alignment & (alignment - 1):
+            raise ValueError("custom_settings_reserve_tail: invalid size/alignment")
+        end = self.custom_settings_registry_addr + self.custom_settings_registry_size
+        start = (end - size) & ~(alignment - 1)
+        if start < self.custom_settings_registry_addr:
+            raise ValueError("custom_settings_reserve_tail: reclaimed settings space exhausted")
+        self.custom_settings_registry_size = start - self.custom_settings_registry_addr
+        return start
+
+    def custom_storage_add(self, var):
+        """Queue an existing firmware variable for addition to CSG."""
+        vid = self.asf.resolve_var_id(var)
+        if vid in self.custom_storage_member_seen:
+            raise ValueError(
+                "custom_storage_add: duplicate variable %s (var_id 0x%04X)" %
+                (var, vid))
+        self.custom_storage_member_seen.add(vid)
+        self.custom_storage_members.append(var)
+
+    def custom_emit_storage_members(self):
+        """Rebuild CSG's member array and append queued variables."""
+        if not self.custom_storage_members:
+            return
+
+        rec = self.asf.find_var_group('CSG')
+        if rec is None:
+            raise ValueError("custom_patch_settings: CSG variable group not found")
+        old_ptr = self.asf.read_u32(rec + 8)
+        old_off = old_ptr - self.asf.FLASH_BASE
+        old_count = self.asf.read_u32(rec + 0x0c)
+        new_count = old_count + len(self.custom_storage_members)
+        if new_count > 0xff:
+            raise ValueError("custom_patch_settings: CSG member count exceeds firmware limit")
+        if old_off < 0 or old_off + old_count * 2 > len(self.asf.fw):
+            raise ValueError("custom_patch_settings: invalid CSG member array pointer")
+
+        new_off = self._custom_settings_reserve_tail(new_count * 2, 4)
+        seen = set()
+        for i in range(old_count):
+            vid = self.asf.read_u16(old_off + i * 2)
+            seen.add(vid)
+            self.asf.write_u16(new_off + i * 2, vid)
+        write_index = old_count
+        for var in self.custom_storage_members:
+            vid = self.asf.resolve_var_id(var)
+            if vid in seen:
+                raise ValueError("custom_patch_settings: %s already belongs to CSG" % var)
+            seen.add(vid)
+            self.asf.write_u16(new_off + write_index * 2, vid)
+            write_index += 1
+
+        self.asf.write_u32(rec + 8, self.asf.FLASH_BASE + new_off)
+        self.asf.write_u32(rec + 0x0c, new_count)
+        print("  CSG members: %d -> %d, table at 0x%08X" %
+              (old_count, new_count, self.asf.FLASH_BASE + new_off))
 
     def _custom_note_reclaimed_string_id(self, str_id):
         self.asf.load_firmware_string_metadata()
@@ -943,6 +1004,14 @@ class ASFirmwarePatches(object):
             raise ValueError("custom_menu_add: duplicate variable %s (var_id 0x%04X)" % (var, vid))
         self.custom_menu_registered.add(vid)
         self.custom_menu_entries.append((section, flags, vid, int(mode_mask)))
+
+    def custom_menu_add_heading(self, section_name, str_id):
+        """Register a localized static heading in a menu section."""
+        section = self.CUSTOM_MENU_SECTIONS.get(section_name.lower())
+        if section is None:
+            raise ValueError("custom_menu_add_heading: unknown section %s" % section_name)
+        self.custom_menu_entries.append(
+            (section, self.CUSTOM_MENU_FLAG_HEADING, int(str_id), 0xffffffff))
 
     def mop_bitmask(self, *modes):
         """Build a g[24]/MOP visibility mask from MOP names or numeric indexes."""
@@ -1419,6 +1488,7 @@ class ASFirmwarePatches(object):
         for feature in features:
             feature()
 
+        self.custom_emit_storage_members()
         self.custom_emit_registry()
         self.custom_patch_menu_hooks()
 
