@@ -71,20 +71,27 @@ STATIC float reshape_vauto_ps(float ps1, float mult) {
 
 
 void MAIN start() {
+  bool custom_enabled = custom_g8_toggle(wrapper_limit_max_pdiff_toggle_var_id, true);
+  if ((*therapy_mode == MODE_VAUTO) && !custom_enabled) {
+    pressure_limit_max_difference();
+    return;
+  }
+
   history_t *hist = get_history();
   update_history(hist);
   tracking_t *tr = get_tracking();
   update_tracking(tr);
   asv_data_t *asv = get_asv_data();
+  float asv_max = custom_asv_max_cm();
   asv->asv_sens = custom_asv_sens_multiplier();
   update_asv_data(asv, tr);
+  if (asv_max <= 0.0f) { asv->asv_factor = 1.0f; }
 
   features_t *feat = GET_PTR(PTR_FEATURES, features_t, init_features);
 
   apply_jitter(true);
 
   float dps = 0.0f;
-  bool toggle = custom_g8_toggle(wrapper_limit_max_pdiff_toggle_var_id, true);
   bool triggercycle_toggle = custom_g8_toggle(wrapper_limit_max_pdiff_triggercycle_var_id, true);
 
   triggercycle_t *trc = get_triggercycle();
@@ -112,10 +119,10 @@ void MAIN start() {
     if (tr->st_inhaling) {
       float base_ps = remap(ps1, 0.0f, 1.0f, feat->eps, vauto_ps-INSTANT_PS) + INSTANT_PS;
       new_ps = base_ps;
-      if (toggle) {
+      if (asv_max > 0.0f) {
         float new_ps1 = reshape_vauto_ps(ps1, asv->asv_factor);
         float boosted_ps = remap(new_ps1, 0.0f, 1.0f, feat->eps, vauto_ps - INSTANT_PS) + INSTANT_PS*asv->asv_factor;
-        new_ps = min(boosted_ps, base_ps + custom_asv_max_cm());
+        new_ps = min(boosted_ps, base_ps + asv_max);
       }
 
       feat->ips_fa = 0.0f;

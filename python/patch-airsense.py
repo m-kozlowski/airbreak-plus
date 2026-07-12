@@ -1239,12 +1239,12 @@ class ASFirmwarePatches(object):
               group_index)
 
     def custom_patch_settings_myasv(self):
-        """Expose reclaimed my_asv settings and pass their var_ids to the wrapper."""
+        """Expose reclaimed custom VAuto settings and pass their var_ids to the wrapper."""
         myasv_var = self.custom_claim_g8_var('RPO', 'my_asv_enable')
         tc_var = self.custom_claim_g8_var('RPH', 'my_asv_triggercycle')
         max_var = self.custom_claim_g4_var('RCM', 'my_asv_max')
         sens_var = self.custom_claim_g8_var('RXM', 'my_asv_sens')
-        myasv_label = self.redefine_fw_string(-1, {0: 'Custom ASV'}, 'my_asv_label')
+        myasv_label = self.redefine_fw_string(-1, {0: 'Custom VAuto'}, 'my_asv_label')
         tc_label = self.redefine_fw_string(-1, {0: 'Custom T/C'}, 'my_asv_triggercycle_label')
         max_label = self.redefine_fw_string(-1, {0: 'ASV Max'}, 'my_asv_max_label')
         sens_label = self.redefine_fw_string(-1, {0: 'ASV Sens'}, 'my_asv_sens_label')
@@ -1282,7 +1282,7 @@ class ASFirmwarePatches(object):
         sens_addr = self._elf_symbol_addr(elf_path, 'wrapper_limit_max_pdiff_asv_sens_var_id')
         self.asf.write_u16(sens_addr - self.asf.FLASH_BASE, sens_vid)
 
-        print("  my_asv enable: %s var_id=0x%04X label_str=0x%04X" %
+        print("  custom VAuto enable: %s var_id=0x%04X label_str=0x%04X" %
               (myasv_var, myasv_vid, myasv_label))
         print("  my_asv max: %s var_id=0x%04X label_str=0x%04X" %
               (max_var, max_vid, max_label))

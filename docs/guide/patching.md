@@ -90,10 +90,10 @@ and the original `RGL.set` are left separate.
 
 | Setting | What it does | Menu section | Visible modes | Default | Behavior without `custom_settings` |
 |---------|--------------|--------------|---------------|---------|------------------------------------|
-| Custom ASV | Enables adaptive inspiratory pressure boost in the VAuto slot | Therapy | VAuto | Off | Custom ASV is active |
-| ASV Max | Limits additional adaptive boost above the base VAuto pressure shape | Therapy | VAuto | 3.0 cmH2O | Extra boost limit is `2 * VAuto PS` |
+| Custom VAuto | Enables all custom VAuto behavior; Off bypasses the wrapper and preserves stock VAuto behavior | Therapy | VAuto | Off | Custom VAuto is active |
+| ASV Max | Limits additional adaptive boost above the base VAuto pressure shape; zero disables adaptive boost | Therapy | VAuto | 3.0 cmH2O | Extra boost limit is `2 * VAuto PS` |
 | ASV Sens | Scales how strongly the adaptive controller responds to breath error | Therapy | VAuto | Normal | Normal, multiplier 1.0 |
-| Custom T/C | Enables custom trigger and cycle assistance independently of Custom ASV | Therapy | S, ST, T, VAuto, PAC | Off | Custom trigger and cycle assist are active where supported by the runtime path |
+| Custom T/C | Enables the shared custom trigger and cycle assistance | Therapy | S, ST, T, VAuto, PAC | Off | Custom trigger and cycle assist are active where supported by the runtime path |
 | Backup Rate | Restores stock timed backup-rate handling | Therapy | ASV, ASVAuto | Off | Backup rate remains suppressed |
 | Square Wave | Selects the square-wave inspiratory pressure path | Therapy | S, ST, T, PAC | On | Square Wave is active |
 | Ambient Low | Sets the ambient reading where LCD and button targets start rising from LLL and LBL | Configuration | all modes | 590 | Backlight patch uses the patched ATH default of 590 |

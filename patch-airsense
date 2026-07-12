@@ -1953,10 +1953,10 @@ custom_patch_settings_reclaim_reminders() {
 }
 
 
-# Reuse reclaimed Reminder vars as custom ASV runtime settings, expose them in
+# Reuse reclaimed Reminder vars as custom VAuto runtime settings, expose them in
 # the clinical Therapy menu, and pass their var_ids to the VAuto wrapper.
 custom_patch_settings_myasv() {
-    declare -A MYASV_LABEL=([0]="Custom ASV")
+    declare -A MYASV_LABEL=([0]="Custom VAuto")
     declare -A MYASV_TC_LABEL=([0]="Custom T/C")
     declare -A MYASV_MAX_LABEL=([0]="ASV Max")
     declare -A MYASV_SENS_LABEL=([0]="ASV Sens")
@@ -2019,7 +2019,7 @@ custom_patch_settings_myasv() {
     sens_addr=$(elf_symbol_addr "$elf" wrapper_limit_max_pdiff_asv_sens_var_id)
     write_u16 $(( sens_addr - FLASH_BASE )) "$(( sens_vid ))" || die failed
 
-    printf "  my_asv enable: %s var_id=0x%04X label_str=0x%04X\n" \
+    printf "  custom VAuto enable: %s var_id=0x%04X label_str=0x%04X\n" \
         "$myasv_var" "$(( myasv_vid ))" "$myasv_label"
     printf "  my_asv max: %s var_id=0x%04X label_str=0x%04X\n" \
         "$max_var" "$(( max_vid ))" "$max_label"
