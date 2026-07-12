@@ -1418,13 +1418,16 @@ class ASFirmwarePatches(object):
               (backup_var, backup_vid, backup_label, backup_addr))
 
     def custom_patch_settings_backlight(self):
-        """Expose ambient low/full thresholds and bind the high one to the payload."""
+        """Expose persistent Backlight controls in clinical Configuration."""
         low_var = 'ATH'
         high_var = self.custom_claim_g4_var('RCF', 'backlight_ambient_high')
         low_label = self.redefine_fw_string(-1, {0: 'Ambient Low'},
                                             'backlight_ambient_low_label')
         high_label = self.redefine_fw_string(-1, {0: 'Ambient High'},
                                              'backlight_ambient_high_label')
+        lcd_label = self.redefine_fw_string(-1, {0: 'LCD'}, 'backlight_lcd_label')
+        buttons_label = self.redefine_fw_string(
+            -1, {0: 'Buttons'}, 'backlight_buttons_label')
 
         # ATH remains in NGL; retain its stock linkage so edits keep dirtying
         # and saving the same storage group through the existing chain.
@@ -1439,11 +1442,32 @@ class ASFirmwarePatches(object):
         self.redefine_g4_var(high_var, 0x0007, 0, high_dep, high_label,
                              3070, 4090, 0, 0, 1, 10, self.asf.str_id_empty)
 
+        level_base = self.asf.read_u16(
+            self.asf.find_var('VCS') + self.asf.G8_BASE_STR)
+        level_low_str = level_base + 1
+        level_high_str = level_base + 3
+        for var in ('LLL', 'LBL'):
+            rec = self.asf.find_var(var)
+            self.asf.write_u16(rec + self.asf.G4_NAME_STR, level_low_str)
+            self.asf.write_u16(rec + self.asf.G4_NEXT_DEP, high_dep)
+        for var in ('LLH', 'LBH'):
+            rec = self.asf.find_var(var)
+            self.asf.write_u16(rec + self.asf.G4_NAME_STR, level_high_str)
+            self.asf.write_u16(rec + self.asf.G4_NEXT_DEP, high_dep)
+        for var in ('LLL', 'LLH', 'LBL', 'LBH'):
+            self.custom_storage_add(var)
+
         all_modes = self.mop_bitmask(
             'CPAP', 'AutoSet', 'APAP', 'S', 'ST', 'T', 'VAuto', 'ASV',
             'ASVAuto', 'iVAPS', 'PAC', 'AFH')
         self.custom_menu_add('configuration', low_var, all_modes)
         self.custom_menu_add('configuration', high_var, all_modes)
+        self.custom_menu_add_heading('configuration', lcd_label)
+        self.custom_menu_add('configuration', 'LLL', all_modes)
+        self.custom_menu_add('configuration', 'LLH', all_modes)
+        self.custom_menu_add_heading('configuration', buttons_label)
+        self.custom_menu_add('configuration', 'LBL', all_modes)
+        self.custom_menu_add('configuration', 'LBH', all_modes)
 
         high_vid = self.asf.resolve_var_id(high_var)
         ver = self.asf.cdx_ver.replace('SX567-', '')
@@ -1453,6 +1477,8 @@ class ASFirmwarePatches(object):
         high_addr = self._elf_symbol_addr(elf_path, 'backlight_adapt_full_asf_var_id')
         self.asf.write_u16(high_addr - self.asf.FLASH_BASE, high_vid)
 
+        print("  backlight headings: lcd_str=0x%04X buttons_str=0x%04X" %
+              (lcd_label, buttons_label))
         print("  backlight ambient low: %s label_str=0x%04X" %
               (low_var, low_label))
         print("  backlight ambient high: %s var_id=0x%04X label_str=0x%04X at 0x%08X" %
