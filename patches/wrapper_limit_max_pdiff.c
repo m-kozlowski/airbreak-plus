@@ -72,7 +72,7 @@ STATIC float reshape_vauto_ps(float ps1, float mult) {
 
 void MAIN start() {
   bool custom_enabled = custom_g8_toggle(wrapper_limit_max_pdiff_toggle_var_id, true);
-  if ((*therapy_mode == MODE_VAUTO) && !custom_enabled) {
+  if ((*therapy_mode == MODE_VAUTO) && (!custom_enabled || vauto_ps <= 0.0f)) {
     pressure_limit_max_difference();
     return;
   }

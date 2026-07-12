@@ -25,15 +25,15 @@ void update_triggercycle(triggercycle_t *trc, tracking_t *tr) {
   if (sens_cycle != trc->last_cycle) {
     trc->real_cycle = sens_cycle;
   }
+
+  if (!trc->custom_trigger) { sens_trigger = trc->real_trigger; }
+  if (!trc->custom_cycle) { sens_cycle = trc->real_cycle; }
   
   history_t *hist = get_history();
 
   if (tr->st_inhaling) {
     const float cti = tr->current.ti;
     const float s = trc->real_cycle;
-
-    // There should be no dynamic collapse this early into the breath, if flow drops heavily(might drop slightly with squarewave), it was likely an autotriggered breath.
-    if (cti <= 0.4f) { sens_cycle = (s + 0.8f) / 2.0f; }
 
     if (trc->custom_cycle) {
       float s2 = -0.225f + 0.5f * s; // Results in thresholds of: 0.025, -0.05, -0.1, -0.15, -0.185 (% of peak flow)
