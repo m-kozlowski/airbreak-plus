@@ -1930,11 +1930,14 @@ patch_defaults() {
 #   g[4] RCF/RCM/RCH/RCW: recurrence period value in months
 #   g[4] RDF/RDM/RDH/RDW: reminder due-date value
 custom_patch_settings_reclaim_reminders() {
-    local reminders_tick reminder_menu_item reminder_menu_item_end reminder_menu reminder_menu_end
+    local reminders_tick reminder_list_create reminder_state_update
+    local reminder_menu_item reminder_menu_item_end reminder_menu reminder_menu_end
     local reclaimed_string_ids
     case "$CDX_VER" in
         SX567-0302)
             reminders_tick=0xebace
+            reminder_list_create=0xebb98
+            reminder_state_update=0x758b2
             reminder_menu_item=0x62034
             reminder_menu_item_end=0x62070
             reminder_menu=0x63058
@@ -1943,6 +1946,8 @@ custom_patch_settings_reclaim_reminders() {
             ;;
         SX567-0305)
             reminders_tick=0xec2ca
+            reminder_list_create=0xec394
+            reminder_state_update=0x7601e
             reminder_menu_item=0x62754
             reminder_menu_item_end=0x62790
             reminder_menu=0x63778
@@ -1951,6 +1956,8 @@ custom_patch_settings_reclaim_reminders() {
             ;;
         SX567-0306)
             reminders_tick=0xec1e6
+            reminder_list_create=0xec2b0
+            reminder_state_update=0x7601a
             reminder_menu_item=0x62754
             reminder_menu_item_end=0x62790
             reminder_menu=0x63778
@@ -1959,6 +1966,8 @@ custom_patch_settings_reclaim_reminders() {
             ;;
         SX567-0401)
             reminders_tick=0xec446
+            reminder_list_create=0xec510
+            reminder_state_update=0x7601a
             reminder_menu_item=0x62754
             reminder_menu_item_end=0x62790
             reminder_menu=0x63778
@@ -1967,6 +1976,8 @@ custom_patch_settings_reclaim_reminders() {
             ;;
         SX567-0402)
             reminders_tick=0xec6be
+            reminder_list_create=0xec788
+            reminder_state_update=0x7601a
             reminder_menu_item=0x62754
             reminder_menu_item_end=0x62790
             reminder_menu=0x63778
@@ -1985,6 +1996,21 @@ custom_patch_settings_reclaim_reminders() {
         printf '\x70\x47' | patch "$reminders_tick" || die failed
     elif ! printf '\x70\x47' | check_patch "$reminders_tick"; then
         die "custom_patch_settings: unexpected reminder tick bytes"
+    fi
+
+    # movs r0,#0; bx lr ; prevent the stock manager from retaining hardcoded
+    # references to variables reclaimed below.
+    if printf '\x1f\xb5\x1c\x20' | check_patch "$reminder_list_create"; then
+        printf '\x00\x20\x70\x47' | patch "$reminder_list_create" || die failed
+    elif ! printf '\x00\x20\x70\x47' | check_patch "$reminder_list_create"; then
+        die "custom_patch_settings: unexpected reminder list constructor bytes"
+    fi
+
+    # bx lr ; disable the hardcoded RX* -> RC* editability updater.
+    if printf '\xf0\xb5\xa3\xb0' | check_patch "$reminder_state_update"; then
+        printf '\x70\x47' | patch "$reminder_state_update" || die failed
+    elif ! printf '\x70\x47' | check_patch "$reminder_state_update"; then
+        die "custom_patch_settings: unexpected reminder state updater bytes"
     fi
 
     local item_reclaim=$(( reminder_menu_item + 2 ))

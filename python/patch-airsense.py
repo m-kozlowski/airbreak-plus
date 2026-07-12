@@ -1571,6 +1571,8 @@ class ASFirmwarePatches(object):
         sites_by_version = {
             'SX567-0302': {
                 'reminders_tick': 0xebace,
+                'reminder_list_create': 0xebb98,
+                'reminder_state_update': 0x758b2,
                 'reminder_menu_item': 0x62034,
                 'reminder_menu_item_end': 0x62070,
                 'reminder_menu': 0x63058,
@@ -1579,6 +1581,8 @@ class ASFirmwarePatches(object):
             },
             'SX567-0305': {
                 'reminders_tick': 0xec2ca,
+                'reminder_list_create': 0xec394,
+                'reminder_state_update': 0x7601e,
                 'reminder_menu_item': 0x62754,
                 'reminder_menu_item_end': 0x62790,
                 'reminder_menu': 0x63778,
@@ -1587,6 +1591,8 @@ class ASFirmwarePatches(object):
             },
             'SX567-0306': {
                 'reminders_tick': 0xec1e6,
+                'reminder_list_create': 0xec2b0,
+                'reminder_state_update': 0x7601a,
                 'reminder_menu_item': 0x62754,
                 'reminder_menu_item_end': 0x62790,
                 'reminder_menu': 0x63778,
@@ -1595,6 +1601,8 @@ class ASFirmwarePatches(object):
             },
             'SX567-0401': {
                 'reminders_tick': 0xec446,
+                'reminder_list_create': 0xec510,
+                'reminder_state_update': 0x7601a,
                 'reminder_menu_item': 0x62754,
                 'reminder_menu_item_end': 0x62790,
                 'reminder_menu': 0x63778,
@@ -1603,6 +1611,8 @@ class ASFirmwarePatches(object):
             },
             'SX567-0402': {
                 'reminders_tick': 0xec6be,
+                'reminder_list_create': 0xec788,
+                'reminder_state_update': 0x7601a,
                 'reminder_menu_item': 0x62754,
                 'reminder_menu_item_end': 0x62790,
                 'reminder_menu': 0x63778,
@@ -1616,12 +1626,20 @@ class ASFirmwarePatches(object):
             return False
 
         reminders_tick = sites['reminders_tick']
+        reminder_list_create = sites['reminder_list_create']
+        reminder_state_update = sites['reminder_state_update']
         reminder_menu_item = sites['reminder_menu_item']
         reminder_menu_item_end = sites['reminder_menu_item_end']
         reminder_menu = sites['reminder_menu']
         reminder_menu_end = sites['reminder_menu_end']
 
         self._patch_or_verify(reminders_tick, b'\x38\xb5\x04\x46', b'\x70\x47', 'reminder tick')
+        self._patch_or_verify(
+            reminder_list_create, b'\x1f\xb5\x1c\x20', b'\x00\x20\x70\x47',
+            'reminder list constructor')
+        self._patch_or_verify(
+            reminder_state_update, b'\xf0\xb5\xa3\xb0', b'\x70\x47',
+            'reminder state updater')
 
         item_reclaim = reminder_menu_item + 2
         item_reclaim_size = reminder_menu_item_end - item_reclaim
