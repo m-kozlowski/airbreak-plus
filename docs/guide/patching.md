@@ -77,50 +77,35 @@ All patches below are **enabled by default** unless noted.
 | Bypass integrity check | Disables firmware integrity checks that prevent boot on crc mismatch | `patch_tamper` | `--patch-bypass-start` |
 | Bypass PSU check | Disables power supply ID check at startup | `patch_psu_id` | `--patch-bypass-psuid` |
 | Color palette | Applies custom color scheme | `custom_palette` | `--patch-custom-palette` |
-| Backlight adaptation | Continuously adjusts LCD and button brightness to ambient light | `patch_backlight_adapt` | `--patch-fw-backlight` |
-| Custom settings | Exposes persistent settings for active compiled payloads | `custom_patch_settings` | `--patch-custom-settings` |
+| [Backlight adaptation](features/backlight.md) | Continuously adjusts LCD and button brightness to ambient light | `patch_backlight_adapt` | `--patch-fw-backlight` |
+| [Custom settings](../custom_settings.md) | Exposes menu settings for active compiled payloads | `custom_patch_settings` | `--patch-custom-settings` |
 
-### Custom settings
 
-The framework is supported on SX567-0302, SX567-0305, SX567-0306, SX567-0401,
-and SX567-0402. It removes
-the stock Reminders menu and background processing, reuses selected Reminder
-variables, and stores the custom values in new `CSG.set`. Stock settings files
-and the original `RGL.set` are left separate.
+### Therapy modifications
 
-| Setting | What it does | Menu section | Visible modes | Default | Behavior without `custom_settings` |
-|---------|--------------|--------------|---------------|---------|------------------------------------|
-| Custom VAuto | Enables all custom VAuto behavior; Off bypasses the wrapper and preserves stock VAuto behavior | Therapy | VAuto | Off | Custom VAuto is active |
-| ASV Max | Limits additional adaptive boost above the base VAuto pressure shape; zero disables adaptive boost | Therapy | VAuto | 3.0 cmH2O | Extra boost limit is `2 * VAuto PS` |
-| ASV Sens | Scales how strongly the adaptive controller responds to breath error | Therapy | VAuto | Normal | Normal, multiplier 1.0 |
-| Custom T/C | Enables the shared custom trigger and cycle assistance | Therapy | S, ST, T, VAuto, PAC | Off | Custom trigger and cycle assist are active where supported by the runtime path |
-| Backup Rate | Restores stock timed backup-rate handling | Therapy | ASV, ASVAuto | Off | Backup rate remains suppressed |
-| Square Wave | Selects the square-wave inspiratory pressure path | Therapy | S, ST, T, PAC | On | Square Wave is active |
-| Ambient Low | Sets the ambient reading where LCD and button targets start rising from LLL and LBL | Configuration | all modes | 590 | Backlight patch uses the patched ATH default of 590 |
-| Ambient High | Sets the ambient reading where LCD and button targets reach LLH and LBH; zero selects stock handling | Configuration | all modes | 3070 | Backlight patch uses the fixed fallback `0xC00` |
-
-The variable pools, persistence, menu registry, and payload ABI are documented
-in [Custom settings](../custom_settings.md).
-
-### Compiled patches (off by default)
-
-These require `arm-none-eabi-gcc` and are controlled by environment variables:
+These optional payloads require `arm-none-eabi-gcc` and are controlled by
+environment variables.
 
 | Env variable | What it does |
 |-------------|-------------|
-| `PATCH_CODE=1` | Inject shared code library + graph overlay |
-| `PATCH_S=1` | Enable the Square Wave pressure path in S, ST, T, and PAC (requires PATCH_CODE) |
-| `PATCH_ASV_TASK_WRAPPER=1` | Add runtime control for stock ASV/ASVAuto backup rate; defaults to Off/suppressed (requires PATCH_CODE) |
-| `PATCH_VAUTO_WRAPPER=1` | Add Custom ASV pressure shaping and trigger/cycle assist (requires PATCH_CODE) |
-| `PATCH_S10_LCD=1` | ILI9325/ILI9328 LCD driver |
+| `PATCH_CODE=1` | Add the therapy graph overlay and inject shared code used by the other therapy payloads |
+| `PATCH_S=1` | Enable [Square Wave](features/squarewave.md) pressure shaping in S, ST, T, and PAC (requires `PATCH_CODE=1`) |
+| `PATCH_ASV_TASK_WRAPPER=1` | Add [runtime control](features/asv_backup_rate.md) for stock ASV/ASVAuto backup rate (requires `PATCH_CODE=1`) |
+| `PATCH_VAUTO_WRAPPER=1` | Add [Custom VAuto](features/custom_vauto.md) pressure shaping and trigger/cycle assist (requires `PATCH_CODE=1`) |
 
-Example with custom ASV:
+Example with custom VAuto:
 ```
 export PATCH_CODE=1
 export PATCH_ASV_TASK_WRAPPER=1
 export PATCH_VAUTO_WRAPPER=1
 ./patch-airsense stm32.bin build/stm32-asv-plus.bin
 ```
+
+### Other
+
+| Env variable | What it does |
+|-------------|-------------|
+| `PATCH_S10_LCD=1` | ILI9325/ILI9328 LCD driver |
 
 ## Disabling a default patch
 

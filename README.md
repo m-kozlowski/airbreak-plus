@@ -9,7 +9,9 @@ Firmware modification toolkit for ResMed AirSense 10 / AirCurve 10, AirSense 11 
 - [Removes motor runtime hours nag screen](docs/guide/features/general.md#motor-runtime-warning)
 - [Full EDF signal recording in all therapy modes](docs/guide/features/general.md#edf-recording)
 - [Maintains myAir cloud compatibility across therapy modes](docs/guide/features/general.md#myair-cloud-compatibility)
-- [Custom ASV pressure support](docs/guide/features/custom_asv.md) in the VAuto slot
+- [Custom VAuto pressure support](docs/guide/features/custom_vauto.md) in the VAuto slot
+- [Runtime ASV and ASVAuto backup-rate control](docs/guide/features/asv_backup_rate.md)
+- [Selectable Square Wave pressure shaping](docs/guide/features/squarewave.md) for S, ST, T, and PAC
 - [Continuous LCD and button brightness adaptation](docs/guide/features/backlight.md)
 - [ILI9325/ILI9328 LCD driver](docs/guide/features/general.md#replacement-lcd-driver) (the most common replacement panel available for these devices)
 
@@ -37,13 +39,13 @@ See the [quickstart guide](docs/guide/quickstart.md) for a full walkthrough.
 | [resmed_flash](docs/tools/resmed_flash.md) | UART firmware flash tool |
 | [Config variables](docs/config_variables.md) | Firmware variable system and globals[] structures |
 | [Variable reference](docs/var_reference.tsv) | Firmware variables with var_id, UART name, EDF signal |
-| [Patching: Custom settings](docs/custom_settings.md) | Reclaimed variables, persistence, menu registry, and payload fallbacks |
+| [Patching: Custom settings](docs/custom_settings.md) | Variable assignments, reclaimed resources, persistence, and menu registry |
 | [Patching: Patch payloads](docs/patch_payloads.md) | Versioned payload build, code-cave allocation, stubs, and ABI slots |
-| [eeprom_tool](docs/eeprom_tool.md) | SPI EEPROM access (deprecated, see [native support](https://github.com/m-kozlowski/airbreak-plus/blob/master/docs/tools/resmed_config.md#calibration-eeprom) |
+| [eeprom_tool](docs/tools/eeprom_tool.md) | SPI EEPROM access (deprecated, see [native support](https://github.com/m-kozlowski/airbreak-plus/blob/master/docs/tools/resmed_config.md#calibration-eeprom)) |
 | [UART protocol](docs/serial_protocol.md) | Frame format and commands |
 | [oximeter protocol](docs/oximeter_protocol.md) | Oximetry data submission specification |
 
 ## Related
 
 - [airbridge](https://github.com/m-kozlowski/airbridge) - ESP32 WiFi bridge for AirSense 10 service port
-- [aircannect](https://github.com/m-kozlowski/aircannect) - Wireless adapter for AirSense/AirCurve 11 devices 
+- [aircannect](https://github.com/m-kozlowski/aircannect) - Wireless adapter for AirSense/AirCurve 11 devices

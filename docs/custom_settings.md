@@ -2,31 +2,50 @@
 
 The custom settings framework exposes persistent controls for injected Air 10
 payloads in the stock clinical menu. It is separate from the payloads
-themselves. A payload can run without the framework by using the fallback values
-stored in its ABI slots.
+themselves. A payload can run without the framework by recognizing unpatched
+ABI slots and using its built-in fallback values.
 
-The framework is supported on SX567-0401 and SX567-0402.
+The framework is supported on SX567-0302, SX567-0305, SX567-0306, SX567-0401,
+and SX567-0402.
+
+## Assignments
+
+Only settings requested by active payloads are assigned. `Storage` names the
+globals[16] persistence group used by the patched image.
+
+| Feature | Setting | UART | Table | Storage |
+|---------|---------|------|-------|---------|
+| [Custom VAuto](guide/features/custom_vauto.md) | Custom VAuto | RPO | g[8] | CSG |
+| [Custom VAuto](guide/features/custom_vauto.md) | ASV Max | RCM | g[4] | CSG |
+| [Custom VAuto](guide/features/custom_vauto.md) | ASV Sens | RXM | g[8] | CSG |
+| [Custom VAuto](guide/features/custom_vauto.md) | Custom T/C | RPH | g[8] | CSG |
+| [ASV backup-rate control](guide/features/asv_backup_rate.md) | Backup Rate | RPW | g[8] | CSG |
+| [Square Wave](guide/features/squarewave.md) | Square Wave | RPF | g[8] | CSG |
+| [Backlight adaptation](guide/features/backlight.md) | Ambient Low | ATH | g[4] | NGL |
+| [Backlight adaptation](guide/features/backlight.md) | Ambient High | RCF | g[4] | CSG |
+| [Backlight adaptation](guide/features/backlight.md) | LCD / Low | LLL | g[4] | CSG |
+| [Backlight adaptation](guide/features/backlight.md) | LCD / High | LLH | g[4] | CSG |
+| [Backlight adaptation](guide/features/backlight.md) | Buttons / Low | LBL | g[4] | CSG |
+| [Backlight adaptation](guide/features/backlight.md) | Buttons / High | LBH | g[4] | CSG |
 
 ## Application sequence
 
 The patcher performs these operations when at least one active payload requests
 custom settings:
 
-1. disable stock Reminder processing and remove its menu page
+1. disable stock Reminder processing and remove its menu row and page
 2. rename the Reminder persistence group from `RGL` to `CSG`
 3. reclaim selected Reminder variables and string IDs
 4. let each active feature claim and redefine its variables
-5. emit the custom menu registry into reclaimed CCX space
-6. inject the clinical-menu hook payload
-7. register mode visibility with the MOP callback dispatcher
+5. extend the CSG member list with any additional persistent firmware variables
+6. emit the custom menu registry into reclaimed CDX space
+7. inject the clinical menu hooks
+8. register mode visibility with the MOP callback dispatcher
 
 If no active feature requests settings, the framework is skipped and the stock
 Reminder implementation remains unchanged.
 
 ## Payload fallback contract
-
-User-visible settings, defaults, and behavior without the framework are listed
-in the [custom settings table](guide/patching.md#custom-settings).
 
 An unpatched ABI slot contains `0xFFFF`. Payload code treats that value as a
 request for its built-in fallback. The menu framework therefore configures a
@@ -35,9 +54,10 @@ payload but is not a runtime dependency of that payload.
 ## Persistence
 
 Stock Reminder variables belong to the globals[16] group named `RGL`. The
-framework renames that group to `CSG` before redefining its members. Membership
-and dependency-chain storage tracking remain in place, so reclaimed values are
-loaded from and saved to `CSG.set`.
+framework renames that group to `CSG` before redefining its members. Reclaimed
+Reminder variables retain that membership. Features may also append existing
+firmware variables to the group. Both kinds are loaded from and saved to
+`CSG.set` through the normal dependency-chain storage tracking.
 
 The rename is storage-format isolation, not only a new label. Redefining group
 members can change the expected length of the serialized group file. Reusing
@@ -57,8 +77,13 @@ is unchanged.
 The reclaim pass disables:
 
 - periodic Reminder processing
+- the hardcoded `RX*` to `RC*` state updater
+- construction of the Reminder record list
 - the Reminders row in clinical Options
-- construction of the Reminders submenu page
+- construction of the Reminders page
+
+The removed menu code provides space for the generated registry. Its title and
+message string IDs become candidates for the reclaimed string pool.
 
 It then makes these variables available in typed pools:
 
@@ -79,21 +104,6 @@ same variable cannot be claimed twice, and a request for a variable outside the
 reclaimed pool stops patching. Exact claims keep the patched UART API stable
 across feature combinations.
 
-## Current assignments
-
-| UART name | Table | Patched meaning | Menu visibility |
-|-----------|-------|-----------------|-----------------|
-| RPO | g[8] | Custom ASV | VAuto |
-| RPH | g[8] | Custom T/C | S, ST, T, VAuto, PAC |
-| RXM | g[8] | ASV Sens | VAuto |
-| RPF | g[8] | Square Wave | S, ST, T, PAC |
-| RCM | g[4] | ASV Max | VAuto |
-| RCF | g[4] | Ambient High | all modes |
-| ATH | g[4] | Ambient Low | all modes; stock variable, not reclaimed |
-
-The stock meanings remain canonical for original firmware and continue to be
-listed in `var_reference.tsv`. This table describes patched assignments only.
-
 ## Localized strings
 
 Feature labels are indexed by ResMed language ID. The patcher updates only the
@@ -112,13 +122,17 @@ Pool membership is required only for automatic allocation.
 
 ## Menu registry
 
+Feature settings are appended through one shared registry. Sections 0 through 4
+represent the five stock clinical menu sections. Variable items and static
+headings use the same registry and section hooks.
+
 The patcher emits sentinel-terminated 8-byte records:
 
 ```c
 typedef struct {
     uint8_t section;
     uint8_t flags;
-    uint16_t var_id;
+    uint16_t item_id;
     uint32_t mode_mask;
 } custom_menu_entry_t;
 ```
@@ -127,11 +141,12 @@ typedef struct {
 |-------|---------|
 | section | Therapy, Comfort, Accessories, Options, or Configuration |
 | flags bit 0 | construct a g[4] numeric item; clear for g[8] enum items |
-| var_id | numeric firmware variable ID |
+| flags bit 1 | construct a static heading; `item_id` is a string ID |
+| item_id | variable ID, or string ID for a static heading |
 | mode_mask | one bit per MOP option |
 
-An entry with section `0xFF` or var_id `0xFFFF` terminates the registry.
-Duplicate var IDs are rejected before registry emission.
+An entry with section `0xFF` or item ID `0xFFFF` terminates the registry.
+Duplicate variable IDs are rejected before registry emission.
 
 The payload hooks the final stock append operation in each clinical section.
 It first appends the displaced stock item, then appends matching custom entries.
@@ -140,16 +155,11 @@ count.
 
 ## Mode visibility
 
-Clinical menu pages are constructed once. Per-mode visibility is therefore not
-implemented by omitting items during construction.
-
-The MOP callback dispatcher calls the stock MOP callback first, followed by the
-custom visibility handler. For every registry entry, the handler tests the
-current MOP bit in `mode_mask` and updates the variable handler's runtime VIS
-flag. Existing menu refresh code then shows or hides the item.
-
-The g[4] and g[8] dependency fields are not used for visibility. They retain
-their normal update and persistence roles.
+Clinical menu pages are constructed once. The MOP callback dispatcher calls the
+stock MOP callback first, followed by the custom visibility handler. For every
+variable entry, the handler tests the current MOP bit in `mode_mask` and updates
+the variable handler's runtime VIS flag. Existing menu refresh code then shows
+or hides the variable item. Static headings are always visible.
 
 ## Adding a feature
 
@@ -159,7 +169,7 @@ A feature setup function should:
 2. claim exact g[4] or g[8] variables
 3. allocate localized label strings
 4. redefine complete variable descriptors
-5. register each menu item with a section and MOP mask
+5. register each item with a section and MOP mask
 6. patch payload ABI slots with resolved var IDs
 
 Firmware-stable variables used directly by compiled code belong in the

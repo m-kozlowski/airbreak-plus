@@ -150,7 +150,7 @@ the selected `ETR` command, polls until `ETR=0000`, then restores the original
 | XGL | ASV fixed params |
 
 This table describes stock variable meanings. Images built with
-`custom_settings` repurpose selected Reminder variables but keep their UART
-names, so the local `RGL` expansion remains useful. Firmware persistence for
-those repurposed values moves to `CSG.set`; see
+`custom_settings` reuse selected Reminder variables but keep their UART names,
+so `resmed_config` continues to list them under its static `RGL` group.
+Device-side persistence for those values moves to `CSG.set`; see
 [Custom settings](../custom_settings.md).
