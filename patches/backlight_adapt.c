@@ -6,8 +6,8 @@
  * State 0 is the steady "screen on" loop. Nonzero states handle wake,
  * timeout dim, and off transitions in stock firmware.
  *
- * After stock wake/start-stop/dim/off transitions, this hook waits briefly
- * before resuming active ambient control so it does not fight their tail end.
+ * After stock wake/start-stop/dim/off transitions, this hook briefly reasserts
+ * the ambient targets so the stock transition tail cannot leave stale levels.
  *
  * Start/stop while steady uses per-channel transition flags at 0x4C..0x50
  * without changing ctx->state. We advance those channel transitions here, but
@@ -33,23 +33,19 @@
 #define LCD_STEP  10              // LCD fade step per tick
 #define BTN_STEP  2               // button fade step per tick
                                   //
-#define MIN_HYST         0x10     // minimum ASF hysteresis around ATH
 #define DEFAULT_FULL_ASF 0xC00    // fallback ASF value where linear mode reaches max
-#define LCD_LINEAR_ADAPT 1        // 1 = linear LCD ramp above ATH, 0 = legacy two-stage LCD mode
-#define BTN_LINEAR_ADAPT 1        // 1 = linear button ramp above ATH, 0 = legacy two-stage button mode
-#define LCD_TARGET_DEADBAND 6     // ignore small LCD target changes caused by brief ASF spikes
+#define LCD_TARGET_DEADBAND 1     // ignore small LCD target changes caused by brief ASF spikes
 
-#define MODE_DARK 0x01
-#define MODE_DELAY_SHIFT 1
-#define MODE_DELAY_MASK  0x3E
-#define MODE_INIT 0x80
-#define RESUME_DELAY 12           // ticks to wait after stock transitions before adaptation
+#define RESUME_REASSERT_TICKS 12  // ticks to override the tail of stock transitions
 #define PENDING_LCD 0x01
 #define PENDING_BTN 0x02
 
 extern int variable_get_by_id(int var_id);
 extern void backlight_state_machine(void *ctx);
 extern const unsigned short backlight_adapt_full_asf_var_id;
+
+typedef void (*set_fn_t)(void *, int);
+typedef void (*step_fn_t)(void *);
 
 // backlight context struct (partial, offsets match firmware layout)
 struct bl_ctx {
@@ -58,7 +54,7 @@ struct bl_ctx {
     char _pad0[0x32];
     unsigned char dark_latch;    // 0x34: stock low/high selector
     unsigned char gate35;        // 0x35: stock steady-state gate
-    unsigned char mode;          // 0x36: 0=bright, 1=dark
+    unsigned char reassert_ticks; // 0x36: unused stock padding claimed by this patch
     unsigned char _pad1;
     void *ch_lcd;                // 0x38
     void *ch_btn0;               // 0x3C
@@ -77,7 +73,6 @@ static void __attribute__((noinline, section(".text.x.apply_step"))) apply_value
     ch[5] = (unsigned char)value;
 
     // call channel->vtable[7] (set_brightness)
-    typedef void (*set_fn_t)(void *, int);
     unsigned int *vtable = *(unsigned int **)channel;
     set_fn_t set = (set_fn_t)vtable[7];
     set(channel, value);
@@ -106,13 +101,7 @@ static void __attribute__((noinline, section(".text.x.apply_step"))) apply_step(
         if (next > target) next = target;
     }
 
-    ch[5] = (unsigned char)next;
-
-    // call channel->vtable[7] (set_brightness)
-    typedef void (*set_fn_t)(void *, int);
-    unsigned int *vtable = *(unsigned int **)channel;
-    set_fn_t set = (set_fn_t)vtable[7];
-    set(channel, next);
+    apply_value(channel, next);
 
     // prevent tail call, compiler must return here
     __asm volatile ("" ::: "memory");
@@ -123,7 +112,6 @@ static void __attribute__((noinline, section(".text.x.apply_step"))) run_pending
     if (!channel)
         return;
 
-    typedef void (*step_fn_t)(void *);
     unsigned int *vtable = *(unsigned int **)channel;
     step_fn_t step;
 
@@ -180,10 +168,9 @@ static int __attribute__((noinline, section(".text.x.apply_step"))) run_pending_
     return active;
 }
 
-static unsigned char __attribute__((noinline, section(".text.x.apply_step"))) lcd_target_from_asf(
-    int asf, int ath, int full_asf, unsigned char low, unsigned char high, int dark_mode)
+static unsigned char __attribute__((noinline, section(".text.x.apply_step"))) target_from_asf(
+    int asf, int ath, int full_asf, unsigned char low, unsigned char high)
 {
-#if LCD_LINEAR_ADAPT
     if (asf <= ath)
         return low;
 
@@ -201,20 +188,11 @@ static unsigned char __attribute__((noinline, section(".text.x.apply_step"))) lc
 
         return (unsigned char)level;
     }
-#else
-    (void)asf;
-    (void)ath;
-
-    if (dark_mode)
-        return low;
-    return high;
-#endif
 }
 
 static void __attribute__((noinline, section(".text.x.apply_step"))) apply_lcd_step(
     void *channel, unsigned char target, unsigned char low, unsigned char high)
 {
-#if LCD_LINEAR_ADAPT
     int current;
     int delta;
     int adjusted = target;
@@ -238,55 +216,22 @@ static void __attribute__((noinline, section(".text.x.apply_step"))) apply_lcd_s
         else
             adjusted += LCD_TARGET_DEADBAND;
     }
-#else
-    (void)low;
-    (void)high;
-#endif
 
     apply_step(channel, adjusted, LCD_STEP);
 }
 
-static unsigned char __attribute__((noinline, section(".text.x.apply_step"))) btn_target_from_asf(
-    int asf, int ath, int full_asf, unsigned char low, unsigned char high, int dark_mode)
-{
-#if BTN_LINEAR_ADAPT
-    if (asf <= ath)
-        return low;
-
-    if (ath >= full_asf || asf >= full_asf)
-        return high;
-
-    {
-        int span = full_asf - ath;
-        int level = low + ((asf - ath) * ((int)high - (int)low)) / span;
-
-        if (level < low)
-            level = low;
-        if (level > high)
-            level = high;
-
-        return (unsigned char)level;
-    }
-#else
-    (void)asf;
-    (void)ath;
-
-    if (dark_mode)
-        return low;
-    return high;
-#endif
-}
-
 void start(struct bl_ctx *ctx)
 {
-    int asf = variable_get_by_id(VAR_ID_ASF);
-    //int asf = variable_get_by_id(VAR_ID_ASR);
-    int ath = variable_get_by_id(VAR_ID_ATH);
+    // Let stock own nonzero transition states. The stock constructor does not
+    // initialize byte 0x36, so only values in our bounded counter range are
+    // accepted when steady-state processing resumes.
+    if (ctx->state != 0) {
+        ctx->reassert_ticks = RESUME_REASSERT_TICKS;
+        backlight_state_machine(ctx);
+        return;
+    }
+
     int full_asf = DEFAULT_FULL_ASF;
-    unsigned char lcd_low = (unsigned char)variable_get_by_id(VAR_ID_LLL);
-    unsigned char lcd_high = (unsigned char)variable_get_by_id(VAR_ID_LLH);
-    unsigned char btn_low = (unsigned char)variable_get_by_id(VAR_ID_LBL);
-    unsigned char btn_high = (unsigned char)variable_get_by_id(VAR_ID_LBH);
 
     if (backlight_adapt_full_asf_var_id != 0xFFFFu)
         full_asf = variable_get_by_id((int)backlight_adapt_full_asf_var_id);
@@ -298,43 +243,20 @@ void start(struct bl_ctx *ctx)
         return;
     }
 
-    // hysteresis deadband = max(ATH >> 5, MIN_HYST)
-    int hyst = ath >> 5;
-    if (hyst < MIN_HYST)
-        hyst = MIN_HYST;
-
-    int mode = ctx->mode;
-    int delay = (mode & MODE_DELAY_MASK) >> MODE_DELAY_SHIFT;
-
-    if ((mode & MODE_INIT) == 0) {
-        mode = (asf < ath) ? MODE_DARK : 0;
-        delay = 0;
-    } else {
-        mode &= MODE_DARK;
-        if (mode == 0) {
-            if (asf + hyst < ath)
-                mode = MODE_DARK;
-        } else {
-            if (asf > ath + hyst)
-                mode = 0;
-        }
+    int reassert_ticks = ctx->reassert_ticks;
+    if (reassert_ticks > RESUME_REASSERT_TICKS) {
+        reassert_ticks = 0;
+        ctx->reassert_ticks = 0;
     }
 
-    ctx->dark_latch = (unsigned char)(mode & MODE_DARK);
-
-    unsigned char lcd_target = lcd_target_from_asf(
-        asf, ath, full_asf, lcd_low, lcd_high, mode & MODE_DARK);
-    unsigned char btn_target = btn_target_from_asf(
-        asf, ath, full_asf, btn_low, btn_high, mode & MODE_DARK);
-
-    // Let stock own nonzero transition states, then hold off briefly after it
-    // returns to steady so we don't snap the levels back mid-transition.
-    if (ctx->state != 0) {
-        ctx->mode = (unsigned char)(MODE_INIT | (mode & MODE_DARK) |
-                                    ((RESUME_DELAY << MODE_DELAY_SHIFT) & MODE_DELAY_MASK));
-        backlight_state_machine(ctx);
-        return;
-    }
+    int asf = variable_get_by_id(VAR_ID_ASF);
+    int ath = variable_get_by_id(VAR_ID_ATH);
+    unsigned char lcd_low = (unsigned char)variable_get_by_id(VAR_ID_LLL);
+    unsigned char lcd_high = (unsigned char)variable_get_by_id(VAR_ID_LLH);
+    unsigned char btn_low = (unsigned char)variable_get_by_id(VAR_ID_LBL);
+    unsigned char btn_high = (unsigned char)variable_get_by_id(VAR_ID_LBH);
+    unsigned char lcd_target = target_from_asf(asf, ath, full_asf, lcd_low, lcd_high);
+    unsigned char btn_target = target_from_asf(asf, ath, full_asf, btn_low, btn_high);
 
     {
         int pending = run_pending_transitions(ctx);
@@ -352,8 +274,8 @@ void start(struct bl_ctx *ctx)
             return;
     }
 
-    if (delay > 0) {
-        // During the post-transition cooldown, keep outputs pinned to their
+    if (reassert_ticks > 0) {
+        // During the post-transition window, keep outputs pinned to their
         // ambient-selected targets. For LCD this avoids wake overshoot where
         // stock briefly lands at LLH before the steady-state hook pulls it
         // back down.
@@ -362,13 +284,9 @@ void start(struct bl_ctx *ctx)
         apply_value(ctx->ch_btn1, btn_target);
         apply_value(ctx->ch_btn2, btn_target);
         apply_value(ctx->ch_btn3, btn_target);
-        delay--;
-        ctx->mode = (unsigned char)(MODE_INIT | (mode & MODE_DARK) |
-                                    ((delay << MODE_DELAY_SHIFT) & MODE_DELAY_MASK));
+        ctx->reassert_ticks = (unsigned char)(reassert_ticks - 1);
         return;
     }
-
-    ctx->mode = (unsigned char)(MODE_INIT | (mode & MODE_DARK));
 
     apply_lcd_step(ctx->ch_lcd, lcd_target, lcd_low, lcd_high);
     apply_step(ctx->ch_btn0, btn_target, BTN_STEP);

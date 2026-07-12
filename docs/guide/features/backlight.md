@@ -29,13 +29,12 @@ group. Ambient High reuses RCF and is stored with the other custom values in
 | between Ambient Low and Ambient High | linear interpolation from LLL to LLH | linear interpolation from LBL to LBH |
 | ASF at or above Ambient High | LLH | LBH |
 
-The patch applies a small deadband to LCD target changes and advances brightness
-gradually. It also preserves a hysteresis region around Ambient Low so small
-sensor changes do not repeatedly switch the low-light state.
+The patch applies a one-level deadband to intermediate LCD target changes and
+advances brightness gradually. Exact low and high endpoints remain reachable.
 
 When stock firmware enters a non-steady transition, the patch calls the stock
-state machine. Ambient control resumes after a short cooldown to avoid fighting
-the end of the stock transition.
+state machine. Afterward, it briefly reasserts the ambient-selected levels so
+the end of the stock transition cannot leave stale brightness values.
 
 ## Settings
 
@@ -78,4 +77,3 @@ change the ambient thresholds. Changing Ambient Low or Ambient High changes the
 sensor range but does not change endpoint brightness.
 
 ![Backlight target curves](../../images/backlight_adapt_behavior.svg)
-

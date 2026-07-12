@@ -1878,23 +1878,27 @@ class ASFirmwarePatches(object):
             print("  unexpected bytes at hook site 0x%X, already patched?" % hook_off)
             return
 
+        # This gate must be removed so ASF continues tracking ASR while the display is active.
+        gate_off = sig_off + 0x1C8
+        if bytes(self.asf.fw[gate_off:gate_off+2]) != b'\x4F\xD0':
+            print("  ASF update gate not found at expected offset")
+            return
+
         elf_path = self._versioned_artifact_path('backlight_adapt', 'elf', ver)
         start = self._elf_symbol_addr(elf_path, 'start')
         flash, _ = self._inject_payload('backlight_adapt', data)
 
         # NOP the beq that skips ASR->ASF averaging
-        gate_off = sig_off + 0x1C8
-        if bytes(self.asf.fw[gate_off:gate_off+2]) == b'\x4F\xD0':
-            self.asf.patch(b'\x00\xBF', gate_off, clobber=True)
+        self.asf.patch(b'\x00\xBF', gate_off, clobber=True)
 
         # redirect bl backlight_state_machine to our payload
         bl_bytes = self._encode_thumb_bl(hook_off, start)
         self.asf.patch(bl_bytes, hook_off, clobber=True)
 
         # tune defaults
-        self.asf.patch(b'\x20', self.asf.find_var('LBL') + self.asf.G4_DEFAULT, clobber=True)  # LBL = 32
-        self.asf.patch(b'\x50', self.asf.find_var('LBH') + self.asf.G4_DEFAULT, clobber=True)  # LBH = 80
-        self.asf.patch(struct.pack('<I', 590), self.asf.find_var('ATH') + self.asf.G4_DEFAULT, clobber=True)  # ATH = 590
+        self.asf.write_u32(self.asf.find_var('LBL') + self.asf.G4_DEFAULT, 32)  # buttons low
+        self.asf.write_u32(self.asf.find_var('LBH') + self.asf.G4_DEFAULT, 80)  # buttons high
+        self.asf.write_u32(self.asf.find_var('ATH') + self.asf.G4_DEFAULT, 590)  # ambient low threshold
 
         self.backlight_adapt_applied = True
         print("  backlight_adapt: %dB at 0x%08X" % (len(data), flash))

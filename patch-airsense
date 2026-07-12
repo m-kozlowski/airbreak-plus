@@ -2276,16 +2276,18 @@ patch_backlight_adapt() {
         return 1
     fi
 
+    # This gate must be removed so ASF continues tracking ASR while the display is active.
+    local gate_off=$(( off + 0x1C8 ))
+    if ! printf '\x4F\xD0' | check_patch "$gate_off"; then
+        echo "  ${FUNCNAME[0]}: ASF update gate not found at expected offset"
+        return 1
+    fi
+
     echo "Patching backlight adaptation ($ver)"
     payload_inject backlight_adapt "$BIN"
 
     # NOP the beq that skips ASR->ASF averaging while display is active
-    local gate_off=$(( off + 0x1C8 ))
-    if printf '\x4F\xD0' | check_patch $gate_off ; then
-        printf '\x00\xBF' | patch $gate_off
-    else
-        echo "  warning: ASF gate not found at expected offset"
-    fi
+    printf '\x00\xBF' | patch "$gate_off"
 
     # redirect bl backlight_state_machine to our payload
     local start
@@ -2293,9 +2295,9 @@ patch_backlight_adapt() {
     encode_thumb_bl "$hook_off" "$start" | patch "$hook_off"
 
     # tune defaults
-    printf '\x20' | patch $(( $(find_var LBL) + 0x08 ))    # LBL = 32 (buttons low)
-    printf '\x50' | patch $(( $(find_var LBH) + 0x08 ))    # LBH = 80 (buttons high)
-    printf '\x4e\x02\x00\x00' | patch $(( $(find_var ATH) + 0x08 ))  # ATH = 590 (threshold)
+    write_u32 $(( $(find_var LBL) + G4_DEFAULT )) 32 || die failed   # buttons low
+    write_u32 $(( $(find_var LBH) + G4_DEFAULT )) 80 || die failed   # buttons high
+    write_u32 $(( $(find_var ATH) + G4_DEFAULT )) 590 || die failed  # ambient low threshold
 
     printf "  %dB at 0x%08X, hook at 0x%08X\n" \
         "$PAYLOAD_SIZE" "$PAYLOAD_FLASH" "$(( hook_off + FLASH_BASE ))"
