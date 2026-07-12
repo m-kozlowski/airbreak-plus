@@ -712,6 +712,7 @@ class ASFirmwarePatches(object):
     def __init__(self, asf):
         self.asf = asf
         self.squarewave_applied = False
+        self.asv_task_wrapper_applied = False
         self.wrapper_limit_max_pdiff_applied = False
         self.backlight_adapt_applied = False
         self.mop_callback_handlers = []
@@ -1318,6 +1319,35 @@ class ASFirmwarePatches(object):
         print("  squarewave toggle var_id=0x%04X at 0x%08X" %
               (square_vid, enable_addr))
 
+    def custom_patch_settings_asv_task_wrapper(self):
+        """Expose the stock ASV/ASVAuto backup-rate runtime switch."""
+        backup_var = self.custom_claim_g8_var('RPW', 'asv_backup_rate')
+        backup_label = self.asf.read_u16(
+            self.asf.find_var('BRE') + self.asf.G8_NAME_STR)
+        backup_dep = self.asf.find_var_table_index(4, 'RGT')
+
+        # BRE supplies the localized label, but its stock options are Off/10.
+        # The reclaimed variable uses the standard boolean option strings.
+        self.redefine_g8_var(backup_var, 0x0007, 0, backup_dep, backup_label, 0,
+                             2, 0, 0x00000003, self.asf.str_id_off_on_base, 0)
+
+        backup_vid = self.asf.resolve_var_id(backup_var)
+        self.custom_menu_add('therapy', backup_var,
+                             self.mop_bitmask('ASV', 'ASVAuto'))
+
+        ver = self.asf.cdx_ver.replace('SX567-', '')
+        elf_path = self._versioned_artifact_path('asv_task_wrapper', 'elf', ver)
+        if not os.path.exists(elf_path):
+            raise ValueError(
+                "custom_patch_settings_asv_task_wrapper: "
+                "build/asv_task_wrapper_%s.elf not found" % ver)
+        backup_addr = self._elf_symbol_addr(
+            elf_path, 'asv_task_wrapper_backup_rate_var_id')
+        self.asf.write_u16(backup_addr - self.asf.FLASH_BASE, backup_vid)
+
+        print("  ASV backup rate: %s var_id=0x%04X label_str=0x%04X at 0x%08X" %
+              (backup_var, backup_vid, backup_label, backup_addr))
+
     def custom_patch_settings_backlight(self):
         """Expose ambient low/full thresholds and bind the high one to the payload."""
         low_var = 'ATH'
@@ -1364,6 +1394,8 @@ class ASFirmwarePatches(object):
         features = []
         if self.wrapper_limit_max_pdiff_applied:
             features.append(self.custom_patch_settings_myasv)
+        if self.asv_task_wrapper_applied:
+            features.append(self.custom_patch_settings_asv_task_wrapper)
         if self.squarewave_applied:
             features.append(self.custom_patch_settings_squarewave)
         if self.backlight_adapt_applied:
@@ -1864,7 +1896,7 @@ class ASFirmwarePatches(object):
         print("  original handler: 0x%08X -> ABI 0x%08X" % (original, original_slot))
 
     def patch_asv_task_wrapper(self):
-        """Suppress ASV backup breathing rate"""
+        """Add runtime-controllable ASV backup-rate suppression."""
         data, ver = self._load_versioned_bin('asv_task_wrapper')
         if data is None:
             return
@@ -1883,6 +1915,7 @@ class ASFirmwarePatches(object):
         start = self._elf_symbol_addr(elf_path, 'start')
         flash, _ = self._inject_payload('asv_task_wrapper', data)
         self.asf.write_u32(fptr, start | 1)
+        self.asv_task_wrapper_applied = True
         print("  asv_task_wrapper: %dB at 0x%08X" % (len(data), flash))
 
     def patch_wrapper_limit_max_pdiff(self):
@@ -2143,7 +2176,7 @@ if __name__ == "__main__":
         {'arg':"patch-fw-common-code",  'desc':"Inject shared code library (required by graph, squarewave, etc.).", 'default':False, 'function':'patch_common_code'},
         {'arg':"patch-fw-graph",        'desc':"Add graph binary to allow graphing of pressures.",      'default':False, 'function':'patch_graph'},
         {'arg':"patch-fw-squarewave",   'desc':"Add squarewave pressure mode.",                         'default':False, 'function':'patch_squarewave'},
-        {'arg':"patch-fw-asv-wrapper",  'desc':"Suppress ASV backup breathing rate.",                   'default':False, 'function':'patch_asv_task_wrapper'},
+        {'arg':"patch-fw-asv-wrapper",  'desc':"Add ASV backup-rate control wrapper.",                  'default':False, 'function':'patch_asv_task_wrapper'},
         {'arg':"patch-fw-vauto-wrapper",'desc':"Add VAuto/ASV pressure shaping wrapper.",               'default':False, 'function':'patch_wrapper_limit_max_pdiff'},
         {'arg':"patch-fw-backlight",    'desc':"Improved backlight adaptation to ambient light.",       'default':True,  'function':'patch_backlight_adapt'},
         {'arg':"patch-custom-settings", 'desc':"Expose settings for injected custom patch features.",

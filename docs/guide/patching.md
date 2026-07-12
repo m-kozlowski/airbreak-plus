@@ -82,7 +82,8 @@ All patches below are **enabled by default** unless noted.
 
 ### Custom settings
 
-The framework is currently supported on SX567-0401 and SX567-0402. It removes
+The framework is supported on SX567-0302, SX567-0305, SX567-0306, SX567-0401,
+and SX567-0402. It removes
 the stock Reminders menu and background processing, reuses selected Reminder
 variables, and stores the custom values in new `CSG.set`. Stock settings files
 and the original `RGL.set` are left separate.
@@ -93,6 +94,7 @@ and the original `RGL.set` are left separate.
 | ASV Max | Limits additional adaptive boost above the base VAuto pressure shape | Therapy | VAuto | 3.0 cmH2O | Extra boost limit is `2 * VAuto PS` |
 | ASV Sens | Scales how strongly the adaptive controller responds to breath error | Therapy | VAuto | Normal | Normal, multiplier 1.0 |
 | Custom T/C | Enables custom trigger and cycle assistance independently of Custom ASV | Therapy | S, ST, T, VAuto, PAC | Off | Custom trigger and cycle assist are active where supported by the runtime path |
+| Backup Rate | Restores stock timed backup-rate handling | Therapy | ASV, ASVAuto | Off | Backup rate remains suppressed |
 | Square Wave | Selects the square-wave inspiratory pressure path | Therapy | S, ST, T, PAC | On | Square Wave is active |
 | Ambient Low | Sets the ambient reading where LCD and button targets start rising from LLL and LBL | Configuration | all modes | 590 | Backlight patch uses the patched ATH default of 590 |
 | Ambient High | Sets the ambient reading where LCD and button targets reach LLH and LBH; zero selects stock handling | Configuration | all modes | 3070 | Backlight patch uses the fixed fallback `0xC00` |
@@ -108,7 +110,7 @@ These require `arm-none-eabi-gcc` and are controlled by environment variables:
 |-------------|-------------|
 | `PATCH_CODE=1` | Inject shared code library + graph overlay |
 | `PATCH_S=1` | Enable the Square Wave pressure path in S, ST, T, and PAC (requires PATCH_CODE) |
-| `PATCH_ASV_TASK_WRAPPER=1` | Suppress ASV backup breathing rate (requires PATCH_CODE) |
+| `PATCH_ASV_TASK_WRAPPER=1` | Add runtime control for stock ASV/ASVAuto backup rate; defaults to Off/suppressed (requires PATCH_CODE) |
 | `PATCH_VAUTO_WRAPPER=1` | Add Custom ASV pressure shaping and trigger/cycle assist (requires PATCH_CODE) |
 | `PATCH_S10_LCD=1` | ILI9325/ILI9328 LCD driver |
 

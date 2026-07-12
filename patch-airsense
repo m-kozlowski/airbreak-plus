@@ -1584,7 +1584,7 @@ patch_code_squarewave() {
 }
 
 
-patch_code_asv_task_wraper() {
+patch_code_asv_task_wrapper() {
     local ver=${CDX_VER#SX567-}
     local BIN=build/asv_task_wrapper_${ver}.bin
     local ELF=build/asv_task_wrapper_${ver}.elf
@@ -1595,13 +1595,14 @@ patch_code_asv_task_wraper() {
         0306) FPTR=0xf4280 ;;
         0401) FPTR=0xf44e0 ;;
         0402) FPTR=0xf4758 ;;
-        *) echo "  patch_code_asv_task_wraper: unsupported $ver"; return 1 ;;
+        *) echo "  patch_code_asv_task_wrapper: unsupported $ver"; return 1 ;;
     esac
     echo "Patching ASV task wrapper ($ver)"
-    [[ -r "$ELF" ]] || die "patch_code_asv_task_wraper: $ELF not found"
+    [[ -r "$ELF" ]] || die "patch_code_asv_task_wrapper: $ELF not found"
     start=$(elf_symbol_addr "$ELF" start)
     payload_inject asv_task_wrapper "$BIN"
     write_u32 "$FPTR" "$(( start | 1 ))" || die failed
+    ASV_TASK_WRAPPER_APPLIED=1
 }
 
 
@@ -1643,7 +1644,7 @@ patch_code() {
             *) echo "  code payloads: skipped (unsupported CDX version $CDX_VER)" ;;
         esac
         if [[ $PATCH_ASV_TASK_WRAPPER == 1 ]] ; then
-            patch_code_asv_task_wraper
+            patch_code_asv_task_wrapper
         fi
     fi
 }
@@ -2033,6 +2034,35 @@ custom_patch_settings_myasv() {
 }
 
 
+# Reuse a reclaimed Reminder switch to select between backup-rate suppression
+# and the original ASV/ASVAuto task behavior.
+custom_patch_settings_asv_task_wrapper() {
+    local backup_var backup_label backup_dep backup_vid
+    local ver elf backup_addr
+
+    custom_claim_g8_var backup_var RPW asv_backup_rate
+
+    # BRE already provides the exact localized label, but its stock options are
+    # Off/10. Keep only the label and use the standard boolean option strings.
+    backup_label=$(read_u16 $(( $(find_var BRE) + G8_NAME_STR )))
+    backup_dep=$(find_var_table_index 4 RGT)
+    #                              #flags #callback #dep_chain    #name_str_id    #default #opt_count #param_0a #opt_mask  #options_str_base     #param_12
+    redefine_g8_var "$backup_var" 0x0007 0         "$backup_dep" "$backup_label" 0        2          0         0x00000003 "$STR_ID_OFF_ON_BASE" 0
+
+    backup_vid=$(resolve_var_id "$backup_var")
+    custom_menu_add therapy "$backup_var" "$(MOP_BITMASK ASV ASVAuto)"
+
+    ver=${CDX_VER#SX567-}
+    elf=build/asv_task_wrapper_${ver}.elf
+    [[ -r "$elf" ]] || die "custom_patch_settings_asv_task_wrapper: $elf not found"
+    backup_addr=$(elf_symbol_addr "$elf" asv_task_wrapper_backup_rate_var_id)
+    write_u16 $(( backup_addr - FLASH_BASE )) "$(( backup_vid ))" || die failed
+
+    printf "  ASV backup rate: %s var_id=0x%04X label_str=0x%04X at 0x%08X\n" \
+        "$backup_var" "$(( backup_vid ))" "$backup_label" "$backup_addr"
+}
+
+
 # Reuse a reclaimed Reminder switch to enable/disable the injected squarewave
 # pressure waveform while preserving the stock handler for the Off path.
 custom_patch_settings_squarewave() {
@@ -2114,6 +2144,9 @@ custom_patch_settings_collect_features() {
 
     if [[ $PATCH_CODE == 1 && $PATCH_VAUTO_WRAPPER == 1 ]]; then
         CUSTOM_SETTINGS_FEATURES+=(custom_patch_settings_myasv)
+    fi
+    if [[ $ASV_TASK_WRAPPER_APPLIED == 1 ]]; then
+        CUSTOM_SETTINGS_FEATURES+=(custom_patch_settings_asv_task_wrapper)
     fi
     if [[ $PATCH_CODE == 1 && $PATCH_S == 1 ]]; then
         CUSTOM_SETTINGS_FEATURES+=(custom_patch_settings_squarewave)
@@ -2490,6 +2523,7 @@ PAYLOAD_FLASH=
 PAYLOAD_OFF=
 PAYLOAD_SIZE=
 BACKLIGHT_ADAPT_APPLIED=0
+ASV_TASK_WRAPPER_APPLIED=0
 declare -A PAYLOAD_LAYOUT_FLASH
 declare -A PAYLOAD_LAYOUT_SIZE
 declare -a CUSTOM_G8_POOL
