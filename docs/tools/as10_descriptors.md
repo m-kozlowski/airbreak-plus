@@ -4,7 +4,8 @@ Offline CCX descriptor explorer for AirSense 10 / AirCurve 10 firmware images.
 
 Use this tool to inspect variable descriptors, option masks, therapy-mode
 tables, EDF metadata, variable groups, dependency chains, and localized GUI
-text. It does not connect to a device and does not modify the input image.
+text. It does not connect to a device. Read commands do not modify firmware;
+`edit` writes a separate output image and never overwrites the input image.
 
 ## Output
 
@@ -16,6 +17,8 @@ is compact and intended for scanning with shell tools.
 ```
 
 Use `--verbose` with `var` for multi-line details.
+For editable descriptor types, verbose output also lists the accepted `edit`
+field names.
 
 Bare numeric values are decimal. Use `0x` for hexadecimal.
 
@@ -162,6 +165,54 @@ g[4] source, `+0x04` is already its next link. These fields contain g[4]
 indexes, not var IDs. Each g[4] record follows its own `+0x04` link until
 `0x7FFF` or the firmware depth limit.
 
+### edit
+
+Edit one or more variable descriptors and write a new firmware image.
+
+```
+as10_descriptors.py firmware.bin edit -o edited.bin \
+    MXS.min=0 MXS.max=25 MXS.default=15 \
+    MOP.flags=0x0007 MOP.dependency=RGT
+```
+
+Assignments use `VAR.FIELD=VALUE`. `VAR` may be a UART tag or numeric var ID.
+All assignments are validated before any output is written, and the modified
+image is parsed again to verify the stored values. The command validates the
+input BLX, CCX, and CDX checksums and updates the CCX checksum after editing.
+
+Use `--dry-run` to validate and display the result without writing a file. Use
+`--overwrite` to replace an existing output file. `--ignore-input-crc` permits
+research on an image whose input checksums are already invalid; it does not
+permit overwriting the input image.
+
+Editable descriptor tables are g[3], g[4], g[6], and g[8]. Run `edit --help`
+for the fields accepted by each table. Invalid fields also report the valid
+fields for that variable type.
+
+Numeric g[4] values such as `default`, `min`, `max`, and `step` use the
+descriptor's display scaling:
+
+```
+MXS.max=25
+MXS.max_raw=1250
+```
+
+The first form writes 25 cmH2O using the descriptor scale. The second form
+writes the raw integer directly. If `scale` and a scaled field are changed in
+one command, the scaled field uses the new scale. A value that cannot be
+represented exactly is rejected.
+
+Dependency fields accept `none`, a g[4] table index, or the UART name of a
+g[4] variable. String fields accept an existing numeric string ID. Flags accept
+a numeric mask or a quoted symbolic expression:
+
+```
+MOP.flags='ACT|VIS|EDT'
+```
+
+`edit` changes existing descriptor records. It does not resize descriptor
+tables, allocate strings, or change EEPROM group and therapy-mode tables.
+
 ### dump-tsv
 
 Write descriptor tables as TSV for spreadsheets or diffing between firmware
@@ -185,7 +236,7 @@ as10_descriptors.py firmware.bin -i
 ```
 
 Inside the shell, use the same command names without repeating the firmware
-path:
+path. Firmware editing is available only as a non-interactive command.
 
 ```
 as10> var MOP

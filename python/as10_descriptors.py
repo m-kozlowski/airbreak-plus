@@ -4,9 +4,12 @@ import struct
 import sys
 import os
 import argparse
+import binascii
 import contextlib
+from decimal import Decimal, InvalidOperation
 import io
 import shlex
+import tempfile
 try:
     import readline  # arrow-key history
 except ImportError:
@@ -153,9 +156,24 @@ FLAG_DEFS = {
 
 
 class Flash:
+    BID_OFFSET = 0x3F80
+    PLATFORM_LAYOUTS = {
+        "SX577-0200": {
+            "BLX": (0x00000, 0x04000),
+            "CCX": (0x04000, 0x3C000),
+            "CDX": (0x40000, 0xC0000),
+        },
+        "SX585-0200": {
+            "BLX": (0x00000, 0x04000),
+            "CCX": (0x04000, 0x1C000),
+            "CDX": (0x20000, 0xE0000),
+        },
+    }
+
     def __init__(self, path, base=FLASH_BASE):
         with open(path, "rb") as f:
-            self.data = f.read()
+            self.data = bytearray(f.read())
+        self.path = path
         self.base = base
         self.end  = base + len(self.data)
 
@@ -183,6 +201,28 @@ class Flash:
         o = self._o(a)
         return struct.unpack_from("<i", self.data, o)[0] if o is not None and o+4 <= len(self.data) else None
 
+    def write(self, a, fmt, value):
+        o = self._o(a)
+        size = struct.calcsize(fmt)
+        if o is None or o + size > len(self.data):
+            raise ValueError(f"write outside image at 0x{a:08X}")
+        struct.pack_into(fmt, self.data, o, value)
+
+    def write_u8(self, a, value):
+        self.write(a, "<B", value)
+
+    def write_u16(self, a, value):
+        self.write(a, "<H", value)
+
+    def write_s16(self, a, value):
+        self.write(a, "<h", value)
+
+    def write_u32(self, a, value):
+        self.write(a, "<I", value)
+
+    def write_s32(self, a, value):
+        self.write(a, "<i", value)
+
     def blob(self, a, n):
         o = self._o(a)
         return self.data[o:o+n] if o is not None and o+n <= len(self.data) else None
@@ -199,6 +239,187 @@ class Flash:
 
     def is_ram_ptr(self, v):
         return v is not None and RAM_BASE <= v < RAM_BASE + 0x20000
+
+    def firmware_regions(self):
+        if len(self.data) < self.BID_OFFSET + 16:
+            raise ValueError("image is too small to contain an Air10 bootloader ID")
+        raw = bytes(self.data[self.BID_OFFSET:self.BID_OFFSET + 16])
+        bid = raw.split(b"\x00", 1)[0].decode("ascii", errors="replace")
+        for prefix, regions in self.PLATFORM_LAYOUTS.items():
+            if not bid.startswith(prefix):
+                continue
+            for name, (off, size) in regions.items():
+                if off + size > len(self.data):
+                    raise ValueError(
+                        f"{prefix} {name} region exceeds the input image")
+            return bid, regions
+        raise ValueError(f"unsupported bootloader ID {bid!r}")
+
+    def region_crc(self, name):
+        _, regions = self.firmware_regions()
+        try:
+            off, size = regions[name]
+        except KeyError as exc:
+            raise ValueError(f"unknown firmware region {name!r}") from exc
+        return binascii.crc_hqx(self.data[off:off + size], 0xFFFF)
+
+    def validate_crcs(self):
+        _, regions = self.firmware_regions()
+        invalid = []
+        for name, (off, size) in regions.items():
+            crc = binascii.crc_hqx(self.data[off:off + size], 0xFFFF)
+            if crc != 0:
+                invalid.append(f"{name}=0x{crc:04X}")
+        if invalid:
+            raise ValueError("firmware CRC mismatch: " + ", ".join(invalid))
+
+    def fix_crc(self, name):
+        _, regions = self.firmware_regions()
+        try:
+            off, size = regions[name]
+        except KeyError as exc:
+            raise ValueError(f"unknown firmware region {name!r}") from exc
+        crc_off = off + size - 2
+        crc = binascii.crc_hqx(self.data[off:crc_off], 0xFFFF)
+        struct.pack_into(">H", self.data, crc_off, crc)
+        if self.region_crc(name) != 0:
+            raise ValueError(f"failed to update {name} CRC")
+        return crc
+
+    def write_output(self, path, overwrite=False):
+        input_path = os.path.normcase(os.path.abspath(self.path))
+        output_path = os.path.normcase(os.path.abspath(path))
+        if input_path == output_path:
+            raise ValueError("output path must differ from the input image")
+        if os.path.exists(path) and not overwrite:
+            raise FileExistsError(f"output file already exists: {path}")
+
+        output_dir = os.path.dirname(os.path.abspath(path)) or "."
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                    mode="wb", dir=output_dir, prefix=".as10-edit-",
+                    delete=False) as tmp:
+                tmp_path = tmp.name
+                tmp.write(self.data)
+                tmp.flush()
+                os.fsync(tmp.fileno())
+            os.replace(tmp_path, path)
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+
+
+class DescriptorField:
+    def __init__(self, name, attr, offset, fmt, kind="int", editable=True):
+        self.name = name
+        self.attr = attr
+        self.offset = offset
+        self.fmt = fmt
+        self.kind = kind
+        self.editable = editable
+
+    @property
+    def size(self):
+        return struct.calcsize("<" + self.fmt)
+
+    @property
+    def signed(self):
+        return self.fmt in "bhi"
+
+    def read(self, flash, addr):
+        data = flash.blob(addr + self.offset, self.size)
+        if data is None:
+            raise ValueError(
+                f"cannot read descriptor field at 0x{addr + self.offset:08X}")
+        return struct.unpack("<" + self.fmt, data)[0]
+
+    def write(self, flash, addr, value):
+        flash.write(addr + self.offset, "<" + self.fmt, value)
+
+    def normalize(self, value):
+        bits = self.size * 8
+        if self.signed:
+            minimum = -(1 << (bits - 1))
+            maximum = (1 << (bits - 1)) - 1
+            if maximum < value < (1 << bits):
+                value -= 1 << bits
+        else:
+            minimum = 0
+            maximum = (1 << bits) - 1
+        if not minimum <= value <= maximum:
+            raise ValueError(
+                f"{self.name} value {value} does not fit {bits}-bit "
+                f"{'signed' if self.signed else 'unsigned'} storage")
+        return value
+
+
+# One schema drives descriptor decoding, editing, validation, and CLI help.
+DESCRIPTOR_FIELDS = {
+    3: (
+        DescriptorField("flags", "flags", 0x00, "H", "flags"),
+        DescriptorField("callback", "notify_handler", 0x02, "B"),
+        DescriptorField("_pad_03", "_pad_03", 0x03, "B", editable=False),
+        DescriptorField("dependency", "dependency_idx", 0x04, "h", "dependency"),
+        DescriptorField("format_str", "format_str_id", 0x06, "h", "str_id"),
+        DescriptorField("max_length", "max_length", 0x08, "H"),
+    ),
+    4: (
+        DescriptorField("flags", "flags", 0x00, "H", "flags"),
+        DescriptorField("callback", "callback_id", 0x02, "B"),
+        DescriptorField("_pad_03", "_pad_03", 0x03, "B", editable=False),
+        DescriptorField("next", "next_var_idx", 0x04, "h", "dependency"),
+        DescriptorField("name_str", "name_str_id", 0x06, "H", "str_id"),
+        DescriptorField("default", "default_value", 0x08, "i", "scaled"),
+        DescriptorField("max", "max_value", 0x0C, "i", "scaled"),
+        DescriptorField("min", "min_value", 0x10, "i", "scaled"),
+        DescriptorField("decimals", "decimal_places", 0x14, "B"),
+        DescriptorField("_pad_15", "_pad_15", 0x15, "B", editable=False),
+        DescriptorField("scale", "scale_factor", 0x16, "h"),
+        DescriptorField("step", "step_size", 0x18, "h", "scaled"),
+        DescriptorField("units_str", "units_str_id", 0x1A, "H", "str_id"),
+    ),
+    6: (
+        DescriptorField("flags", "flags", 0x00, "H", "flags"),
+        DescriptorField("callback", "callback_id", 0x02, "B"),
+        DescriptorField("_pad_03", "_pad_03", 0x03, "B", editable=False),
+        DescriptorField("dependency", "dependency_idx", 0x04, "h", "dependency"),
+        DescriptorField("name_str", "name_str_id", 0x06, "H", "str_id"),
+        DescriptorField("default", "default", 0x08, "I"),
+        DescriptorField("allowed_bits", "allowed_bits", 0x0C, "I", "mask"),
+        DescriptorField("item_count", "item_count", 0x10, "B"),
+        DescriptorField("display_param", "display_param", 0x11, "B"),
+        DescriptorField("pool_offset", "pool_offset", 0x12, "H"),
+        DescriptorField("base_str", "base_str_id", 0x14, "H", "str_id"),
+        DescriptorField("_pad_16", "_pad_16", 0x16, "H", editable=False),
+    ),
+    8: (
+        DescriptorField("flags", "flags", 0x00, "H", "flags"),
+        DescriptorField("callback", "callback_id", 0x02, "B"),
+        DescriptorField("_pad_03", "_pad_03", 0x03, "B", editable=False),
+        DescriptorField("dependency", "linked_var_idx", 0x04, "h", "dependency"),
+        DescriptorField("name_str", "name_str_id", 0x06, "H", "str_id"),
+        DescriptorField("default", "default_value", 0x08, "B"),
+        DescriptorField("num_options", "num_options", 0x09, "B"),
+        DescriptorField("param_0a", "param_0a", 0x0A, "h", editable=False),
+        DescriptorField("perm_mask", "perm_mask", 0x0C, "I", "mask"),
+        DescriptorField("base_str", "base_str_id", 0x10, "h", "str_id"),
+        DescriptorField("param_12", "param_12", 0x12, "h", editable=False),
+    ),
+}
+
+
+def load_descriptor_fields(entry, flash, table):
+    for field in DESCRIPTOR_FIELDS[table]:
+        setattr(entry, field.attr, field.read(flash, entry.addr))
+
+
+def editable_fields(table):
+    return tuple(field for field in DESCRIPTOR_FIELDS.get(table, ()) if field.editable)
+
+
+def editable_field_map(table):
+    return {field.name: field for field in editable_fields(table)}
 
 
 
@@ -379,11 +600,7 @@ class Entry3:
     def __init__(self, fl, addr, idx, id_base):
         self.addr, self.idx = addr, idx
         self.var_id = id_base + idx
-        self.flags          = fl.u16(addr + 0x00)
-        self.notify_handler = fl.u8(addr + 0x02)   # callback jump table index
-        self.dependency_idx = fl.s16(addr + 0x04)
-        self.format_str_id  = fl.s16(addr + 0x06)   # format string, 0xDE=none
-        self.max_length     = fl.u16(addr + 0x08)    # max string length
+        load_descriptor_fields(self, fl, self.TABLE)
 
     def oneline(self, db=None):
         off = self.addr - (db.table_bases.get(3, self.addr) if db else self.addr)
@@ -412,19 +629,7 @@ class Entry4:
     def __init__(self, fl, addr, idx, id_base):
         self.addr, self.idx = addr, idx
         self.var_id = id_base + idx
-        self.flags         = fl.u16(addr + 0x00)
-        self.callback_id   = fl.u8(addr + 0x02)
-        self._pad_03       = fl.u8(addr + 0x03)   # alignment padding (always 0)
-        self.next_var_idx  = fl.s16(addr + 0x04)
-        self.name_str_id   = fl.u16(addr + 0x06)  # variable name/label string ID
-        self.default_value = fl.s32(addr + 0x08)
-        self.max_value     = fl.s32(addr + 0x0C)
-        self.min_value     = fl.s32(addr + 0x10)
-        self.decimal_places= fl.u8(addr + 0x14)
-        self._pad_15       = fl.u8(addr + 0x15)   # alignment padding (always 0)
-        self.scale_factor  = fl.s16(addr + 0x16)
-        self.step_size     = fl.s16(addr + 0x18)
-        self.units_str_id  = fl.u16(addr + 0x1A)
+        load_descriptor_fields(self, fl, self.TABLE)
 
     def _fmt(self, v):
         s = self.scale_factor
@@ -525,18 +730,7 @@ class Entry6:
     def __init__(self, fl, addr, idx, id_base):
         self.addr, self.idx = addr, idx
         self.var_id = id_base + idx
-        self.flags          = fl.u16(addr + 0x00)
-        self.callback_id    = fl.u8(addr + 0x02)
-        self._pad_03        = fl.u8(addr + 0x03)
-        self.dependency_idx = fl.s16(addr + 0x04)
-        self.name_str_id    = fl.u16(addr + 0x06)
-        self.default        = fl.u32(addr + 0x08)
-        self.allowed_bits   = fl.u32(addr + 0x0C)
-        self.item_count     = fl.u8(addr + 0x10)
-        self.display_param  = fl.u8(addr + 0x11)
-        self.pool_offset    = fl.u16(addr + 0x12)
-        self.base_str_id    = fl.u16(addr + 0x14)
-        self._pad_16        = fl.u16(addr + 0x16)
+        load_descriptor_fields(self, fl, self.TABLE)
 
     def pool_values(self, db):
         if not db or db.g7_addr is None:
@@ -615,17 +809,7 @@ class Entry8:
     def __init__(self, fl, addr, idx, id_base):
         self.addr, self.idx = addr, idx
         self.var_id = id_base + idx
-        self.flags         = fl.u16(addr + 0x00)
-        self.callback_id   = fl.u8(addr + 0x02)
-        self._pad_03       = fl.u8(addr + 0x03)   # alignment padding (always 0)
-        self.linked_var_idx= fl.s16(addr + 0x04)
-        self.name_str_id   = fl.u16(addr + 0x06)
-        self.default_value = fl.u8(addr + 0x08)
-        self.num_options   = fl.u8(addr + 0x09)
-        self.param_0a      = fl.s16(addr + 0x0A)   # s16 param slot (0 = unused)
-        self.perm_mask     = fl.u32(addr + 0x0C)
-        self.base_str_id   = fl.s16(addr + 0x10)
-        self.param_12      = fl.s16(addr + 0x12)   # s16 param slot (0 = unused)
+        load_descriptor_fields(self, fl, self.TABLE)
 
     def has_strings(self, db=None):
         return self.base_str_id >= 0 and not _is_no_string_id(db, self.base_str_id)
@@ -2207,6 +2391,281 @@ def resolve_var_arg(db, ident):
     raise ValueError(f"could not resolve {ident!r} to a var_id")
 
 
+def edit_field_names(table):
+    names = []
+    for field in editable_fields(table):
+        names.append(field.name)
+        if field.kind == "scaled":
+            names.append(field.name + "_raw")
+    return names
+
+
+def edit_fields_help():
+    lines = [
+        "assignments use VAR.FIELD=VALUE; bare numbers are decimal and 0x is hex",
+        "",
+        "editable fields:",
+    ]
+    for table in sorted(DESCRIPTOR_FIELDS):
+        lines.append(f"  g[{table}]  " + " ".join(edit_field_names(table)))
+    lines.extend((
+        "",
+        "scaled g[4] fields accept display values; *_raw writes the stored integer",
+        "dependencies accept a g[4] UART name, a g[4] index, or none",
+        "flags accept a numeric mask or a quoted expression such as ACT|VIS|EDT",
+        "string fields accept an existing numeric string ID",
+    ))
+    return "\n".join(lines)
+
+
+def _parse_edit_int(value, what):
+    text = value.strip()
+    if not text:
+        raise ValueError(f"{what} requires a value")
+    signless = text[1:] if text[:1] in "+-" else text
+    base = 16 if signless.lower().startswith("0x") else 10
+    try:
+        return int(text, base)
+    except ValueError as exc:
+        raise ValueError(
+            f"{what} must be decimal or explicit hexadecimal") from exc
+
+
+def _parse_edit_decimal(value, what):
+    text = value.strip()
+    signless = text[1:] if text[:1] in "+-" else text
+    if signless.lower().startswith("0x"):
+        return Decimal(_parse_edit_int(text, what))
+    try:
+        result = Decimal(text)
+    except InvalidOperation as exc:
+        raise ValueError(f"{what} must be numeric") from exc
+    if not result.is_finite():
+        raise ValueError(f"{what} must be finite")
+    return result
+
+
+def _parse_edit_flags(value, table, field):
+    text = value.strip()
+    signless = text[1:] if text[:1] in "+-" else text
+    if signless[:1].isdigit():
+        return field.normalize(_parse_edit_int(text, field.name))
+
+    by_name = {name: bit for bit, (name, _) in FLAG_DEFS.items()}
+    if table == 4:
+        by_name["RAW"] = 7
+    mask = 0
+    parts = [part.strip().upper() for part in value.split("|")]
+    if not parts or any(not part for part in parts):
+        raise ValueError(f"invalid flags expression {value!r}")
+    for part in parts:
+        if part not in by_name:
+            known = ", ".join(sorted(by_name))
+            raise ValueError(f"unknown flag {part!r}; known flags: {known}")
+        mask |= 1 << by_name[part]
+    return field.normalize(mask)
+
+
+def _parse_edit_dependency(db, value, field):
+    if value.strip().lower() == "none":
+        return field.normalize(0x7FFF)
+    try:
+        idx = _parse_edit_int(value, field.name)
+    except ValueError:
+        vid = resolve_var_arg(db, value.strip())
+        target = db.get(vid)
+        if not isinstance(target, Entry4):
+            raise ValueError(
+                f"{value!r} resolves to {_vid_str(vid, db)}, not a g[4] variable")
+        idx = target.idx
+    if idx == 0x7FFF:
+        return field.normalize(idx)
+    if db.g4_by_idx(idx) is None:
+        raise ValueError(f"g[4] dependency index 0x{idx:X} is out of range")
+    return field.normalize(idx)
+
+
+def _parse_edit_string_id(db, value, field):
+    sid = _parse_edit_int(value, field.name)
+    if not db.strtab:
+        raise ValueError("string table not loaded")
+    if not 0 <= sid < db.strtab.count:
+        raise ValueError(
+            f"string ID 0x{sid & 0xFFFF:04X} is outside the loaded string table")
+    return field.normalize(sid)
+
+
+def _encode_scaled_value(value, scale, field):
+    display = _parse_edit_decimal(value, field.name)
+    if scale > 0:
+        raw = display * scale
+    elif scale < 0:
+        raw = display / (-scale)
+    else:
+        raw = display
+    integral = raw.to_integral_value()
+    if raw != integral:
+        raise ValueError(
+            f"{field.name}={value!r} is not exactly representable with scale {scale}; "
+            f"use {field.name}_raw for an explicit stored value")
+    return field.normalize(int(integral))
+
+
+def _parse_edit_assignment(db, text):
+    if "=" not in text:
+        raise ValueError(
+            f"invalid assignment {text!r}; expected VAR.FIELD=VALUE")
+    target, value = text.split("=", 1)
+    if "." not in target:
+        raise ValueError(
+            f"invalid assignment target {target!r}; expected VAR.FIELD")
+    ident, field_name = target.rsplit(".", 1)
+    ident = ident.strip()
+    field_name = field_name.strip().lower()
+    if not ident or not field_name:
+        raise ValueError(
+            f"invalid assignment target {target!r}; expected VAR.FIELD")
+
+    vid = resolve_var_arg(db, ident)
+    entry = db.get(vid)
+    if entry is None:
+        raise ValueError(f"variable {_vid_str(vid, db)} has no loaded descriptor")
+    fields = editable_field_map(entry.TABLE)
+    raw = field_name.endswith("_raw")
+    base_name = field_name[:-4] if raw else field_name
+    field = fields.get(base_name)
+    if field is None or (raw and field.kind != "scaled"):
+        available = ", ".join(edit_field_names(entry.TABLE)) or "none"
+        raise ValueError(
+            f"{_vid_str(vid, db)}.{field_name} is not valid for g[{entry.TABLE}]; "
+            f"available fields: {available}")
+    return {
+        "text": text,
+        "vid": vid,
+        "entry": entry,
+        "field": field,
+        "field_name": field_name,
+        "value_text": value.strip(),
+        "raw": raw,
+    }
+
+
+def _parse_edit_value(db, edit, state):
+    field = edit["field"]
+    value = edit["value_text"]
+    if field.kind == "flags":
+        return _parse_edit_flags(value, edit["entry"].TABLE, field)
+    if field.kind == "dependency":
+        return _parse_edit_dependency(db, value, field)
+    if field.kind == "str_id":
+        return _parse_edit_string_id(db, value, field)
+    if field.kind == "scaled" and not edit["raw"]:
+        return _encode_scaled_value(value, state["scale_factor"], field)
+    return field.normalize(_parse_edit_int(value, field.name))
+
+
+def _validate_edit_state(db, entry, state, touched):
+    warnings = []
+    if entry.TABLE == 4 and touched & {
+            "default_value", "min_value", "max_value"}:
+        if state["min_value"] > state["max_value"]:
+            raise ValueError(
+                f"{_vid_str(entry.var_id, db)} has min greater than max")
+        if not state["min_value"] <= state["default_value"] <= state["max_value"]:
+            raise ValueError(
+                f"{_vid_str(entry.var_id, db)} default is outside min..max")
+
+    if entry.TABLE == 6 and touched & {"item_count", "pool_offset"}:
+        if not db.g7_addr or not db.g7_alloc_size:
+            raise ValueError("globals[7] pool bounds are not available")
+        end = state["pool_offset"] + state["item_count"]
+        if end > db.g7_alloc_size:
+            raise ValueError(
+                f"{_vid_str(entry.var_id, db)} g[7] slice ends at 0x{end:X}, "
+                f"beyond allocation 0x{db.g7_alloc_size:X}")
+
+    if entry.TABLE == 8 and touched & {
+            "default_value", "num_options", "perm_mask"}:
+        options = state["num_options"]
+        default = state["default_value"]
+        if options > 32:
+            raise ValueError(
+                f"{_vid_str(entry.var_id, db)} num_options exceeds its 32-bit mask")
+        if options == 0 and default != 0:
+            raise ValueError(
+                f"{_vid_str(entry.var_id, db)} has a nonzero default with no options")
+        if options and default >= options:
+            raise ValueError(
+                f"{_vid_str(entry.var_id, db)} default is outside its option range")
+        if touched & {"num_options", "perm_mask"}:
+            outside = (state["perm_mask"] & ~((1 << options) - 1)
+                       if options else state["perm_mask"])
+            if outside:
+                warnings.append(
+                    f"{_vid_str(entry.var_id, db)} permission mask has bits "
+                    f"outside num_options: 0x{outside:08X}")
+    return warnings
+
+
+def prepare_edits(db, assignments):
+    edits = [_parse_edit_assignment(db, text) for text in assignments]
+    seen = {}
+    states = {}
+    touched = {}
+    for edit in edits:
+        key = (edit["vid"], edit["field"].attr)
+        if key in seen:
+            raise ValueError(
+                f"duplicate assignment for {_vid_str(edit['vid'], db)}."
+                f"{edit['field'].name}")
+        seen[key] = edit
+        entry = edit["entry"]
+        if edit["vid"] not in states:
+            states[edit["vid"]] = {
+                field.attr: getattr(entry, field.attr)
+                for field in DESCRIPTOR_FIELDS[entry.TABLE]
+            }
+            touched[edit["vid"]] = set()
+
+    # Resolve structural fields first so scaled assignments use the final scale.
+    for edit in edits:
+        if edit["field"].kind == "scaled" and not edit["raw"]:
+            continue
+        state = states[edit["vid"]]
+        edit["new_value"] = _parse_edit_value(db, edit, state)
+        state[edit["field"].attr] = edit["new_value"]
+        touched[edit["vid"]].add(edit["field"].attr)
+    for edit in edits:
+        if "new_value" in edit:
+            continue
+        state = states[edit["vid"]]
+        edit["new_value"] = _parse_edit_value(db, edit, state)
+        state[edit["field"].attr] = edit["new_value"]
+        touched[edit["vid"]].add(edit["field"].attr)
+
+    warnings = []
+    for vid, state in states.items():
+        warnings.extend(
+            _validate_edit_state(db, db.get(vid), state, touched[vid]))
+    return edits, warnings
+
+
+def _format_edit_value(db, entry, field, value):
+    if field.kind == "scaled":
+        return f"{entry._fmt(value)} (raw {value})"
+    if field.kind == "flags":
+        return f"0x{value:04X} ({decode_flags(value, entry.TABLE)})"
+    if field.kind == "dependency":
+        return _g4_idx_ref(value, db, none="none")
+    if field.kind == "str_id":
+        sid = value & 0xFFFF
+        label = db.string(sid) if db.strtab and sid < db.strtab.count else None
+        return f"0x{sid:04X}" + (f' ("{label}")' if label else "")
+    if field.kind == "mask":
+        return f"0x{value:0{field.size * 2}X}"
+    return str(value)
+
+
 def _print_var_detail(db, ident, verbose=False):
     vid = resolve_var_arg(db, ident)
     e = db.get(vid)
@@ -2214,6 +2673,9 @@ def _print_var_detail(db, ident, verbose=False):
         print(f"  var 0x{vid:04X} not found")
         return
     print(e.detail(db) if verbose else f"  {e.oneline(db)}")
+    if verbose and e.TABLE in DESCRIPTOR_FIELDS:
+        print("    -- editable fields --")
+        print("      " + " ".join(edit_field_names(e.TABLE)))
 
 
 def _print_table(db, tnum, idx=None, to=None):
@@ -2453,7 +2915,68 @@ def _print_globals(db):
         print(f"       raw strings 0x{db.raw_strings:08X}")
 
 
-def add_command_parsers(subparsers):
+def _run_edit(db, args):
+    if not args.dry_run and not args.output:
+        raise ValueError("edit requires -o/--output unless --dry-run is used")
+
+    if not args.ignore_input_crc:
+        db.fl.validate_crcs()
+
+    edits, warnings = prepare_edits(db, args.assignments)
+    _, regions = db.fl.firmware_regions()
+    ccx_off, ccx_size = regions["CCX"]
+    ccx_start = db.fl.base + ccx_off
+    ccx_end = ccx_start + ccx_size - 2
+    for edit in edits:
+        field = edit["field"]
+        start = edit["entry"].addr + field.offset
+        if start < ccx_start or start + field.size > ccx_end:
+            raise ValueError(
+                f"{_vid_str(edit['vid'], db)}.{field.name} is outside CCX data")
+
+    for edit in edits:
+        edit["field"].write(
+            db.fl, edit["entry"].addr, edit["new_value"])
+
+    crc = db.fl.fix_crc("CCX")
+    with contextlib.redirect_stdout(io.StringIO()):
+        new_db = build_db(db.fl, args.globals)
+
+    for edit in edits:
+        new_entry = new_db.get(edit["vid"])
+        if new_entry is None:
+            raise ValueError(
+                f"edited variable {_vid_str(edit['vid'], db)} disappeared after reload")
+        actual = getattr(new_entry, edit["field"].attr)
+        if actual != edit["new_value"]:
+            raise ValueError(
+                f"failed to verify {_vid_str(edit['vid'], db)}.{edit['field'].name}: "
+                f"wrote {edit['new_value']}, read {actual}")
+
+    if not args.dry_run:
+        db.fl.write_output(args.output, overwrite=args.overwrite)
+
+    for warning in warnings:
+        print(f"warning: {warning}", file=sys.stderr)
+    for edit in edits:
+        old_entry = edit["entry"]
+        new_entry = new_db.get(edit["vid"])
+        field = edit["field"]
+        old_value = getattr(old_entry, field.attr)
+        new_value = getattr(new_entry, field.attr)
+        name = db.uart_name(edit["vid"]) or f"0x{edit['vid']:04X}"
+        old_text = _format_edit_value(db, old_entry, field, old_value)
+        new_text = _format_edit_value(new_db, new_entry, field, new_value)
+        print(f"  {name}.{edit['field_name']}: {old_text} -> {new_text}")
+    print(f"  CCX CRC: 0x{crc:04X}")
+
+    if args.dry_run:
+        print("  Dry run; output not written")
+    else:
+        print(f"  Wrote {args.output}")
+
+
+def add_command_parsers(subparsers, include_edit=False):
     subparsers.add_parser("info", help="show firmware summary and loaded tables")
     p = subparsers.add_parser("globals", help="show globals[] map or decoded entries")
     p.add_argument("items", nargs="*", help="globals[] indices")
@@ -2485,6 +3008,21 @@ def add_command_parsers(subparsers):
     p.add_argument("--tables", default="3,4,6,8,9,10",
                    help="tables to dump (default: 3,4,6,8,9,10)")
 
+    if include_edit:
+        p = subparsers.add_parser(
+            "edit", help="edit variable descriptors in a new firmware image",
+            description="Edit variable descriptors in a new firmware image.",
+            epilog=edit_fields_help(),
+            formatter_class=argparse.RawDescriptionHelpFormatter)
+        p.add_argument("assignments", nargs="+", metavar="VAR.FIELD=VALUE")
+        p.add_argument("-o", "--output", help="new firmware image")
+        p.add_argument("--dry-run", action="store_true",
+                       help="validate and show changes without writing an image")
+        p.add_argument("--overwrite", action="store_true",
+                       help="replace an existing output image")
+        p.add_argument("--ignore-input-crc", action="store_true",
+                       help="allow editing an image with invalid input CRCs")
+
 
 def build_command_parser(prog="as10"):
     parser = argparse.ArgumentParser(prog=prog)
@@ -2495,7 +3033,7 @@ def build_command_parser(prog="as10"):
 
 def build_main_parser():
     parser = argparse.ArgumentParser(
-        description="ResMed Air10 - Descriptor Navigator")
+        description="ResMed Air10 - Descriptor Navigator and Editor")
     parser.add_argument("firmware", help="raw flash binary")
     parser.add_argument("-i", "--interactive", action="store_true",
                         help="start interactive descriptor shell")
@@ -2504,7 +3042,7 @@ def build_main_parser():
     parser.add_argument("--globals", type=lambda x: int(x, 0), default=None,
                         help="globals[] pointer array address in flash")
     subparsers = parser.add_subparsers(dest="command")
-    add_command_parsers(subparsers)
+    add_command_parsers(subparsers, include_edit=True)
     return parser
 
 
@@ -2604,6 +3142,8 @@ def run_command(db, args):
         tables = [int(t.strip()) for t in args.tables.split(",")]
         outfile = None if args.outfile == "-" else args.outfile
         dump_tsv(db, tables, outfile)
+    elif command == "edit":
+        _run_edit(db, args)
     else:
         raise ValueError(f"unknown command: {command}")
 
@@ -3021,8 +3561,7 @@ def dump_tsv(db, tables_to_dump, outfile=None):
         print(f"[+] Wrote {outfile}")
 
 
-def load_db(args):
-    fl = Flash(args.firmware)
+def build_db(fl, globals_override=None):
     print(f"[+] {len(fl.data)} bytes  0x{fl.base:08X}..0x{fl.end:08X}")
 
     ta = {}
@@ -3030,12 +3569,12 @@ def load_db(args):
     globals_addr = None
     globals_values = None
 
-    if args.globals:
+    if globals_override:
         # User provided a flash address containing the pointer array
-        ptrs = {i: fl.u32(args.globals + i * 4) for i in range(30)}
-        globals_addr = args.globals
+        ptrs = {i: fl.u32(globals_override + i * 4) for i in range(30)}
+        globals_addr = globals_override
         globals_values = ptrs
-        print(f"[+] globals[] @ 0x{args.globals:08X}:")
+        print(f"[+] globals[] @ 0x{globals_override:08X}:")
         for i in range(30):
             tag = f"  <- [{i}]" if i in (2,3,4,5,6,8,9,10) else ""
             if ptrs[i] and fl.is_flash_ptr(ptrs[i]):
@@ -3085,6 +3624,10 @@ def load_db(args):
         raise ValueError("no descriptor tables found; use --globals 0xADDR if needed")
 
     return DB(fl, ta, g2, None, globals_addr, globals_values)
+
+
+def load_db(args):
+    return build_db(Flash(args.firmware), args.globals)
 
 
 def _main():
