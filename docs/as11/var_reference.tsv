@@ -711,7 +711,7 @@ g2	PPD		Duration		0x029E	0x02B6	0x02C1	0..1440 step 1
 g2	SNC				0x029F	0x02B7	0x02C2	0..2147483647 step 1
 g2	SSV				0x02A0	0x02B8	0x02C3	-2147483647..2147483647 step 1
 g2	ZRE				0x02A1	0x02B9	0x02C4	0..2147483647 step 1
-g2	SCL				0x02A2	0x02BA	0x02C5	0..3750 step 1
+g2	SCL				0x02A2	0x02BA	0x02C5	0..3750 step 1; runtime current limit: 2625 for 65W, 3638 for 90W; reduced by 208 when TxLink2Connected is nonzero
 g2	SCM				0x02A3	0x02BB	0x02C6	0..5000 step 1
 g2	SCG				0x02A4	0x02BC	0x02C7	1000..3000 step 1
 g2	ZPM				0x02A5	0x02BD	0x02C8	0..2147483647 step 1
@@ -1058,7 +1058,7 @@ g5	QNC				0x03E7	0x0404	0x0416	2 opts mask=0x00000003
 g5	AAA				0x03E8	0x0405	0x0417	12 opts mask=0x00000fff
 g5	MER				0x03E9	0x0406	0x0418	2 opts mask=0x00000003
 g5	ZME				0x03EA	0x0407	0x0419	2 opts mask=0x00000003
-g5	BMT	MotorType			0x03EB	0x0408	0x041A	2 opts mask=0x00000003
+g5	BMT	MotorType			0x03EB	0x0408	0x041A	2 opts mask=0x00000003; options: Triptych, MaxiTube4; detected motor hardware class used by driver setup and SoundCheck
 g5	AIR				0x03EC	0x0409	0x041B	2 opts mask=0x00000003
 g5	MAI	CareCheckToggle		Care Check	0x03ED	0x040A	0x041C	2 opts mask=0x00000003; options: Off, On
 g5	MAM				0x03EE	0x040B	0x041D	2 opts mask=0x00000003
@@ -1084,11 +1084,11 @@ g5	KEY	PhantomKey			0x0401	0x041E	0x0430	12 opts mask=0x00000e6f
 g5	PKP				0x0402	0x041F	0x0431	2 opts mask=0x00000003
 g5	PTF				0x0403	0x0420	0x0432	2 opts mask=0x00000003
 g5	ZPV				0x0404	0x0421	0x0433	2 opts mask=0x00000003
-g5	P90				0x0405	0x0422	0x0434	2 opts mask=0x00000001
+g5	P90				0x0405	0x0422	0x0434	2 opts mask=0x00000001; options: No, Yes; product requires 90W for insufficient-power warning
 g5	ZRM	FGState			0x0406	0x0423	0x0435	12 opts mask=0x000007ff
-g5	PSC	PowerSupplyCapacity			0x0407	0x0424	0x0436	2 opts mask=0x00000003
-g5	PSD				0x0408	0x0425	0x0437	2 opts mask=0x00000003
-g5	PSU	PowerSupplyType			0x0409	0x0426	0x0438	3 opts mask=0x00000007
+g5	PSC	PowerSupplyCapacity			0x0407	0x0424	0x0436	2 opts mask=0x00000003; options: PowerSupply90W, PowerSupply65W; detected capacity, initially 65W until 90W CAN identification
+g5	PSD				0x0408	0x0425	0x0437	2 opts mask=0x00000003; options: No, Yes; power-supply detection or 65W fallback completed
+g5	PSU	PowerSupplyType			0x0409	0x0426	0x0438	3 opts mask=0x00000007; options: Unknown, AcMains, DcMains; supply-source classification from CAN identification
 g5	CYM				0x040A	0x0427	0x0439	3 opts mask=0x00000007
 g5	QNT				0x040B	0x0428	0x043A	2 opts mask=0x00000003
 g5	RMA	RampEnable	S.RampEnable	Ramp	0x040C	0x0429	0x043B	3 opts mask=0x00000007; options: Off, On, Auto
@@ -1198,7 +1198,7 @@ g5	TRG				0x046A	0x048F	0x04A2	9 opts mask=0x000001ff
 g5	TSS			Therapy Screen	0x046B	0x0490	0x04A3	3 opts mask=0x00000001; options: Dots, PressureBar
 g5	TCV				0x046C	0x0491	0x04A4	9 opts mask=0x000001ff
 g5	TOM				0x046D	0x0492	0x04A5	MODE_SELECTOR; 11 opts mask=0x000007ff
-g5	TXC	TxLink2Connected			0x046E	0x0493	0x04A6	3 opts mask=0x00000007
+g5	TXC	TxLink2Connected			0x046E	0x0493	0x04A6	3 opts mask=0x00000007; nonzero reserves 208 from the SCL current limit
 g5	XB9	Timed-FallTimeEnable		Fall Time	0x046F	0x0494		INACT; 2 opts mask=0x00000000; modes=Timed; not in 16.8.5.0; options: Off, On
 g5	XB6	Timed-RiseTimeEnable	S.T.RiseEnable	Rise Time	0x0470	0x0495	0x04A7	active_vids=10; 2 opts mask=0x00000000; modes=Timed; options: Off, On
 g5	ZBO				0x0471	0x0496	0x04A8	2 opts mask=0x00000003

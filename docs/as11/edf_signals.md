@@ -44,6 +44,40 @@ Annotation-only `EVE.edf` and `CSL.edf` files are documented separately in \
 Rows marked <sup>[map](#str-enum-export-maps)</sup> are exported through
 an enum value map before being written to EDF.
 
+### STR scaling
+
+STR rows carry two scale fields in the firmware `SummaryRecord` schema:
+
+| Field | Meaning |
+|-------|---------|
+| `logical_scale` | source-value scale used by the STR formatter |
+| `edf_output_scale` | digital EDF sample scale used by the EDF header |
+
+For setting snapshot rows, the source is the runtime CONF value. The
+formatter first converts it to a logical value, then packs it with
+`edf_output_scale`.
+
+For summary statistic rows (`Summary-*` values), the source value is already
+the Summary/statistic wire value. The firmware divides by `logical_scale`
+before writing the EDF digital sample:
+
+```text
+edf_raw = round(summary_wire / logical_scale)
+edf_value = edf_raw / edf_output_scale
+```
+
+Most statistic rows use `logical_scale * edf_output_scale == 100`, so the
+Summary wire value is effectively centi-units. `Ti.*` rows use product
+`1000`, because their Summary source is in milliseconds.
+
+Examples:
+
+| Signal | Summary wire | logical_scale | edf_output_scale | EDF raw | EDF value |
+|--------|--------------|---------------|------------------|---------|-----------|
+| `RespRate.50` | `1680` | `20` | `5` | `84` | `16.8 bpm` |
+| `Flow.95` | `40` | `0.2` | `500` | `200` | `0.4 L/s` |
+| `Ti.50` | `1000` | `20` | `50` | `50` | `1.0 seconds` |
+
 ### Session header [0-3]
 
 | # | Signal | name | short |
