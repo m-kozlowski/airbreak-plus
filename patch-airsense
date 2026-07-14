@@ -911,6 +911,10 @@ custom_patch_settings_init() {
     CUSTOM_RECLAIMED_STRING_SEEN=()
     CUSTOM_MENU_ENTRIES=()
     CUSTOM_MENU_REGISTERED=()
+    CUSTOM_MENU_PAGES=()
+    CUSTOM_MENU_PAGE_COUNT=0
+    CUSTOM_MENU_CLINICAL_PAGE_ID=
+    CUSTOM_MENU_BACK_STR_ID=
     CUSTOM_STORAGE_MEMBERS=()
     CUSTOM_STORAGE_MEMBER_SEEN=()
 }
@@ -1403,12 +1407,43 @@ MOP_BITMASK() {
 }
 
 
-# Register one variable to be appended to a clinical menu section.
-# args: section name, variable name/id, mode visibility mask
+# Resolve a stock clinical section or a previously declared custom page.
+# args: output variable name, container name
+custom_menu_resolve_container() {
+    local __out=$1 name=${2,,} resolved
+    if [[ -n "${CUSTOM_MENU_SECTIONS[$name]+x}" ]]; then
+        resolved=${CUSTOM_MENU_SECTIONS[$name]}
+    elif [[ -n "${CUSTOM_MENU_PAGES[$name]+x}" ]]; then
+        resolved=${CUSTOM_MENU_PAGES[$name]}
+    else
+        die "custom menu: unknown container $2"
+    fi
+    printf -v "$__out" "%s" "$resolved"
+}
+
+
+# Declare a generated page and register its navigation row in a parent container.
+# args: page name, parent container name, title string id
+custom_menu_add_page() {
+    local name=${1,,} parent title_str=$3
+    [[ -z "${CUSTOM_MENU_SECTIONS[$name]+x}" && -z "${CUSTOM_MENU_PAGES[$name]+x}" ]] || \
+        die "custom_menu_add_page: duplicate container $1"
+    custom_menu_resolve_container parent "$2"
+
+    local ordinal=$CUSTOM_MENU_PAGE_COUNT
+    (( ordinal < 0x7f )) || die "custom_menu_add_page: page limit exceeded"
+    title_str=$(( title_str ))
+    CUSTOM_MENU_PAGES[$name]=$(( CUSTOM_MENU_PAGE_CONTAINER_BASE + ordinal ))
+    CUSTOM_MENU_PAGE_COUNT=$(( ordinal + 1 ))
+    CUSTOM_MENU_ENTRIES+=("$parent $CUSTOM_MENU_FLAG_PAGE $title_str 0xffffffff")
+}
+
+
+# Register one variable to be appended to a clinical section or custom page.
+# args: container name, variable name/id, mode visibility mask
 custom_menu_add() {
-    local section_name=${1,,} var=$2 mode_mask=${3:-0xffffffff}
-    local section=${CUSTOM_MENU_SECTIONS[$section_name]}
-    [[ -n "$section" ]] || die "custom_menu_add: unknown section $1"
+    local container var=$2 mode_mask=${3:-0xffffffff}
+    custom_menu_resolve_container container "$1"
 
     local vid table flags=0
     vid=$(( $(resolve_var_id "$var") ))
@@ -1423,31 +1458,34 @@ custom_menu_add() {
         die "custom_menu_add: duplicate variable $var (var_id 0x$(printf "%04X" "$vid"))"
     fi
     CUSTOM_MENU_REGISTERED[$vid]=1
-    CUSTOM_MENU_ENTRIES+=("$section $flags $vid $mode_mask")
+    CUSTOM_MENU_ENTRIES+=("$container $flags $vid $mode_mask")
 }
 
 
-# Register a localized static heading in a menu section.
-# args: section name/id, string id
+# Register a localized static heading in a clinical section or custom page.
+# args: container name, string id
 custom_menu_add_heading() {
-    local section_name=${1,,} str_id=$2
-    local section=${CUSTOM_MENU_SECTIONS[$section_name]}
-    [[ -n "$section" ]] || die "custom_menu_add_heading: unknown section $1"
+    local container str_id=$2
+    custom_menu_resolve_container container "$1"
     str_id=$(( str_id ))
-    CUSTOM_MENU_ENTRIES+=("$section $CUSTOM_MENU_FLAG_HEADING $str_id 0xffffffff")
+    CUSTOM_MENU_ENTRIES+=("$container $CUSTOM_MENU_FLAG_HEADING $str_id 0xffffffff")
 }
 
 
-# Serialize the generated registry into the reclaimed Reminders page space.
+# Serialize the generated registry into firmware space reclaimed by Reminder removal.
 custom_emit_registry() {
     local need=$(( (${#CUSTOM_MENU_ENTRIES[@]} + 1) * 8 ))
     (( need <= CUSTOM_SETTINGS_REGISTRY_SIZE )) || \
         die "custom_patch_settings: registry ${need}B exceeds reclaimed ${CUSTOM_SETTINGS_REGISTRY_SIZE}B"
 
-    local off=$CUSTOM_SETTINGS_REGISTRY_ADDR entry section flags vid mode_mask
+    local off=$CUSTOM_SETTINGS_REGISTRY_ADDR entry container flags vid mode_mask extra
     for entry in "${CUSTOM_MENU_ENTRIES[@]}"; do
-        read -r section flags vid mode_mask <<< "$entry"
-        write_u8  "$off" "$section" || die failed
+        read -r container flags vid mode_mask extra <<< "$entry"
+        [[ -n "$container" && -n "$flags" && -n "$vid" && -n "$mode_mask" && -z "$extra" ]] || \
+            die "custom_patch_settings: malformed menu registry entry '$entry'"
+        (( container >= 0 && container < 0xff )) || \
+            die "custom_patch_settings: invalid menu container $container"
+        write_u8  "$off" "$container" || die failed
         write_u8  $(( off + 1 )) "$flags" || die failed
         write_u16 $(( off + 2 )) "$vid" || die failed
         write_u32 $(( off + 4 )) "$mode_mask" || die failed
@@ -1462,7 +1500,12 @@ custom_emit_registry() {
 # args: movs-r2-immediate offset, stock capacity
 custom_patch_clinical_menu_capacity() {
     local imm_off=$1 stock_capacity=$2
-    local custom_count=${#CUSTOM_MENU_ENTRIES[@]}
+    local custom_count=0 entry container
+    for entry in "${CUSTOM_MENU_ENTRIES[@]}"; do
+        read -r container _ <<< "$entry"
+        (( container < CUSTOM_MENU_PAGE_CONTAINER_BASE )) && \
+            custom_count=$(( custom_count + 1 ))
+    done
     local new_capacity=$(( stock_capacity + custom_count ))
 
     if (( $(read_u8 "$imm_off") != stock_capacity || $(read_u8 $(( imm_off + 1 ))) != 0x22 )); then
@@ -1480,9 +1523,13 @@ custom_patch_menu_hooks() {
     local therapy_site comfort_site accessories_site options_site configuration_site
     local config_error_size_site config_error_size_expected
     local clinical_capacity_site clinical_capacity
+    local page_create_site page_create_expected page_limit_site
+    local page_direct_site page_zero_site page_get_site page_activate_site
     local therapy_expected comfort_expected accessories_expected options_expected configuration_expected
     local hook_therapy hook_comfort hook_accessories hook_options hook_configuration
     local registry_addr visibility_handler error_size_hook group_index_addr
+    local page_wrapper stock_page_count_addr clinical_page_addr back_str_addr
+    local stock_page_count total_page_count
     local group_base group_rec group_index
     ver="${CDX_VER#SX567-}"
 
@@ -1496,6 +1543,12 @@ custom_patch_menu_hooks() {
             config_error_size_site=0xce638 ; config_error_size_expected="\\xcf\\xf7\\x6a\\xf9"
             clinical_capacity_site=0x6189a
             clinical_capacity=70
+            page_create_site=0x6db5c       ; page_create_expected="\\xf3\\xf7\\xda\\xf8"
+            page_limit_site=0x6dbcc
+            page_direct_site=0x6dc12
+            page_zero_site=0x6dc32
+            page_get_site=0x6dc48
+            page_activate_site=0x6dc52
             ;;
         SX567-0305)
             therapy_site=0x62414           ; therapy_expected="\\x02\\xf0\\x3a\\xfd"
@@ -1506,6 +1559,12 @@ custom_patch_menu_hooks() {
             config_error_size_site=0xcee28 ; config_error_size_expected="\\xcf\\xf7\\x34\\xf9"
             clinical_capacity_site=0x61fba
             clinical_capacity=70
+            page_create_site=0x6e28c       ; page_create_expected="\\xf3\\xf7\\xd2\\xf8"
+            page_limit_site=0x6e2fc
+            page_direct_site=0x6e342
+            page_zero_site=0x6e362
+            page_get_site=0x6e378
+            page_activate_site=0x6e382
             ;;
         SX567-0306)
             therapy_site=0x62414           ; therapy_expected="\\x02\\xf0\\x3a\\xfd"
@@ -1516,6 +1575,12 @@ custom_patch_menu_hooks() {
             config_error_size_site=0xced40 ; config_error_size_expected="\\xcf\\xf7\\x6a\\xf9"
             clinical_capacity_site=0x61fba
             clinical_capacity=70
+            page_create_site=0x6e28c       ; page_create_expected="\\xf3\\xf7\\xd2\\xf8"
+            page_limit_site=0x6e2fc
+            page_direct_site=0x6e342
+            page_zero_site=0x6e362
+            page_get_site=0x6e378
+            page_activate_site=0x6e382
             ;;
         SX567-0401)
             therapy_site=0x62414           ; therapy_expected="\\x02\\xf0\\x3a\\xfd"
@@ -1526,6 +1591,12 @@ custom_patch_menu_hooks() {
             config_error_size_site=0xcefa0 ; config_error_size_expected="\\xcf\\xf7\\x6a\\xf9"
             clinical_capacity_site=0x61fba
             clinical_capacity=70
+            page_create_site=0x6e28c       ; page_create_expected="\\xf3\\xf7\\xd2\\xf8"
+            page_limit_site=0x6e2fc
+            page_direct_site=0x6e342
+            page_zero_site=0x6e362
+            page_get_site=0x6e378
+            page_activate_site=0x6e382
             ;;
         SX567-0402)
             therapy_site=0x62414           ; therapy_expected="\\x02\\xf0\\x3a\\xfd"
@@ -1536,6 +1607,12 @@ custom_patch_menu_hooks() {
             config_error_size_site=0xcf218 ; config_error_size_expected="\\xcf\\xf7\\x46\\xf9"
             clinical_capacity_site=0x61fba
             clinical_capacity=70
+            page_create_site=0x6e28c       ; page_create_expected="\\xf3\\xf7\\xd2\\xf8"
+            page_limit_site=0x6e2fc
+            page_direct_site=0x6e342
+            page_zero_site=0x6e362
+            page_get_site=0x6e378
+            page_activate_site=0x6e382
             ;;
         *)
             echo "  ${FUNCNAME[0]}: skipped (unsupported CDX version $CDX_VER)"
@@ -1561,6 +1638,10 @@ custom_patch_menu_hooks() {
     visibility_handler=$(elf_symbol_addr "$elf" custom_menu_apply_mode_visibility)
     error_size_hook=$(elf_symbol_addr "$elf" custom_settings_error_file_size)
     group_index_addr=$(elf_symbol_addr "$elf" custom_settings_group_index)
+    page_wrapper=$(elf_symbol_addr "$elf" custom_menu_create_pages)
+    stock_page_count_addr=$(elf_symbol_addr "$elf" custom_menu_stock_page_count)
+    clinical_page_addr=$(elf_symbol_addr "$elf" custom_menu_clinical_page_id)
+    back_str_addr=$(elf_symbol_addr "$elf" custom_menu_back_str_id)
 
     group_base=$(globals_offset 16) || die "globals[16] not found"
     group_rec=$(find_var_group CSG) || die "custom_patch_settings: CSG variable group not found"
@@ -1568,6 +1649,15 @@ custom_patch_menu_hooks() {
 
     write_u32 $(( registry_addr - FLASH_BASE )) "$registry_flash" || die failed
     write_u8 $(( group_index_addr - FLASH_BASE )) "$group_index" || die failed
+
+    (( $(read_u8 $(( page_limit_site + 1 ))) == 0x2f )) || \
+        die "custom_patch_settings: unexpected page limit instruction at 0x$(printf "%X" "$page_limit_site")"
+    stock_page_count=$(read_u8 "$page_limit_site")
+    [[ -n "$CUSTOM_MENU_CLINICAL_PAGE_ID" && -n "$CUSTOM_MENU_BACK_STR_ID" ]] || \
+        die "custom_patch_settings: stock page metadata not captured"
+    write_u8 $(( stock_page_count_addr - FLASH_BASE )) "$stock_page_count" || die failed
+    write_u8 $(( clinical_page_addr - FLASH_BASE )) "$CUSTOM_MENU_CLINICAL_PAGE_ID" || die failed
+    write_u16 $(( back_str_addr - FLASH_BASE )) "$CUSTOM_MENU_BACK_STR_ID" || die failed
 
     custom_patch_clinical_menu_capacity "$clinical_capacity_site" "$clinical_capacity"
 
@@ -1583,6 +1673,34 @@ custom_patch_menu_hooks() {
     # reports CSG as empty, suppressing the fault before stock code rewrites it.
     patch_thumb_bl_checked "$config_error_size_site" "$config_error_size_expected" \
         "$error_size_hook" "CSG recovery"
+
+    if (( CUSTOM_MENU_PAGE_COUNT > 0 )); then
+        total_page_count=$(( stock_page_count + CUSTOM_MENU_PAGE_COUNT ))
+        (( total_page_count <= 0xff )) || \
+            die "custom_patch_settings: page count exceeds ZML range"
+
+        patch_thumb_bl_checked "$page_create_site" "$page_create_expected" \
+            "$page_wrapper" "menu page constructor"
+        patch_bytes_checked "$page_direct_site" \
+            "\\x20\\x78\\x04\\xeb\\x80\\x00\\x29\\x46\\xc0\\x6b" \
+            "\\xe0\\x6b\\x22\\x78\\x50\\xf8\\x22\\x00\\x29\\x46" \
+            "direct current-page lookup"
+        patch_bytes_checked "$page_zero_site" \
+            "\\x20\\x78\\x04\\xeb\\x80\\x00\\x00\\x21\\xc0\\x6b\\x70\\x47" \
+            "\\xe0\\x6b\\x22\\x78\\x50\\xf8\\x22\\x00\\x00\\x21\\x70\\x47" \
+            "zero-argument page resolver"
+        patch_bytes_checked "$page_get_site" \
+            "\\x20\\x78\\x04\\xeb\\x80\\x00\\xc0\\x6b\\x70\\x47" \
+            "\\xe0\\x6b\\x22\\x78\\x50\\xf8\\x22\\x00\\x70\\x47" \
+            "current-page resolver"
+        patch_bytes_checked "$page_activate_site" \
+            "\\x20\\x78\\x04\\xeb\\x80\\x00\\xc0\\x6b\\x01\\x68\\xc9\\x6a\\x08\\x47" \
+            "\\xe0\\x6b\\x21\\x78\\x50\\xf8\\x21\\x00\\x01\\x68\\xc9\\x6a\\x08\\x47" \
+            "current-page activation"
+        write_u8 "$page_limit_site" "$total_page_count" || die failed
+        printf "  custom pages: %d, page range %d..%d\n" \
+            "$CUSTOM_MENU_PAGE_COUNT" "$stock_page_count" $(( total_page_count - 1 ))
+    fi
     mop_callback_register_handler "$visibility_handler" custom_menu_visibility
 
     printf "  custom menu hooks: %s (%dB) at 0x%08X\n" \
@@ -2016,6 +2134,15 @@ custom_patch_settings_reclaim_reminders() {
             return 1
             ;;
     esac
+
+    # Preserve the stock Back action metadata before the page constructor is
+    # reclaimed. Both values are operands of validated movs instructions.
+    if (( $(read_u8 $(( reminder_menu + 0x2d ))) != 0x21 ||
+          $(read_u8 $(( reminder_menu + 0x4b ))) != 0x21 )); then
+        die "custom_patch_settings: unexpected Reminders navigation metadata"
+    fi
+    CUSTOM_MENU_CLINICAL_PAGE_ID=$(read_u8 $(( reminder_menu + 0x2c )))
+    CUSTOM_MENU_BACK_STR_ID=$(read_u8 $(( reminder_menu + 0x4a )))
 
     # disable reminder periodic processing.
     # bx lr ;
@@ -2693,6 +2820,7 @@ declare -a CUSTOM_RECLAIMED_STRING_CANDIDATES
 declare -A CUSTOM_RECLAIMED_STRING_SEEN
 declare -a CUSTOM_MENU_ENTRIES
 declare -A CUSTOM_MENU_REGISTERED
+declare -A CUSTOM_MENU_PAGES
 declare -a CUSTOM_STORAGE_MEMBERS
 declare -A CUSTOM_STORAGE_MEMBER_SEEN
 declare -a CUSTOM_SETTINGS_FEATURES
@@ -2700,6 +2828,11 @@ declare -a MOP_CALLBACK_HANDLER_ADDRS
 declare -A MOP_CALLBACK_HANDLER_SEEN
 CUSTOM_MENU_FLAG_G4_NUMERIC=1
 CUSTOM_MENU_FLAG_HEADING=2
+CUSTOM_MENU_FLAG_PAGE=4
+CUSTOM_MENU_PAGE_CONTAINER_BASE=0x80
+CUSTOM_MENU_PAGE_COUNT=0
+CUSTOM_MENU_CLINICAL_PAGE_ID=
+CUSTOM_MENU_BACK_STR_ID=
 declare -A CUSTOM_MENU_SECTIONS=(
     [therapy]=0
     [comfort]=1

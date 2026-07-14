@@ -122,15 +122,15 @@ Pool membership is required only for automatic allocation.
 
 ## Menu registry
 
-Feature settings are appended through one shared registry. Sections 0 through 4
-represent the five stock clinical menu sections. Variable items and static
-headings use the same registry and section hooks.
+Feature settings and generated pages use one shared registry. Containers 0
+through 4 represent the five stock clinical menu sections. Containers starting
+at `0x80` represent generated pages in declaration order.
 
 The patcher emits sentinel-terminated 8-byte records:
 
 ```c
 typedef struct {
-    uint8_t section;
+    uint8_t container;
     uint8_t flags;
     uint16_t item_id;
     uint32_t mode_mask;
@@ -139,19 +139,25 @@ typedef struct {
 
 | Field | Meaning |
 |-------|---------|
-| section | Therapy, Comfort, Accessories, Options, or Configuration |
+| container | stock clinical section or generated page |
 | flags bit 0 | construct a g[4] numeric item; clear for g[8] enum items |
 | flags bit 1 | construct a static heading; `item_id` is a string ID |
-| item_id | variable ID, or string ID for a static heading |
+| flags bit 2 | construct a page link; `item_id` is the page title string ID |
+| item_id | variable ID, heading string ID, or page title string ID |
 | mode_mask | one bit per MOP option |
 
-An entry with section `0xFF` or item ID `0xFFFF` terminates the registry.
+An entry with container `0xFF` or item ID `0xFFFF` terminates the registry.
 Duplicate variable IDs are rejected before registry emission.
 
 The payload hooks the final stock append operation in each clinical section.
-It first appends the displaced stock item, then appends matching custom entries.
-The patcher also increases the stock menu item capacity by the generated entry
-count.
+It first appends the displaced stock item, then appends matching variable,
+heading, and page-link records. The patcher increases the stock menu item
+capacity only for records added directly to stock sections.
+
+When the registry contains pages, the menu constructor preserves all stock page
+pointers in a larger table and appends the generated pages. Each generated page
+has a stock Back row followed by records assigned to its container. Page records
+may use a stock section or an earlier generated page as their parent.
 
 ## Mode visibility
 
@@ -159,7 +165,7 @@ Clinical menu pages are constructed once. The MOP callback dispatcher calls the
 stock MOP callback first, followed by the custom visibility handler. For every
 variable entry, the handler tests the current MOP bit in `mode_mask` and updates
 the variable handler's runtime VIS flag. Existing menu refresh code then shows
-or hides the variable item. Static headings are always visible.
+or hides the variable item. Static headings and page links are always visible.
 
 ## Adding a feature
 
@@ -169,7 +175,8 @@ A feature setup function should:
 2. claim exact g[4] or g[8] variables
 3. allocate localized label strings
 4. redefine complete variable descriptors
-5. register each item with a section and MOP mask
+5. optionally declare generated pages and register each item with a container
+   and MOP mask
 6. patch payload ABI slots with resolved var IDs
 
 Firmware-stable variables used directly by compiled code belong in the

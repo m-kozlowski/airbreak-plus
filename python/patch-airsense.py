@@ -688,6 +688,8 @@ class ASFirmwarePatches(object):
     }
     CUSTOM_MENU_FLAG_G4_NUMERIC = 1
     CUSTOM_MENU_FLAG_HEADING = 2
+    CUSTOM_MENU_FLAG_PAGE = 4
+    CUSTOM_MENU_PAGE_CONTAINER_BASE = 0x80
     CUSTOM_MENU_SECTIONS = {
         'therapy': 0,
         'comfort': 1,
@@ -735,6 +737,10 @@ class ASFirmwarePatches(object):
         self.custom_reclaimed_string_seen = set()
         self.custom_menu_entries = []
         self.custom_menu_registered = set()
+        self.custom_menu_pages = {}
+        self.custom_menu_page_count = 0
+        self.custom_menu_clinical_page_id = None
+        self.custom_menu_back_str_id = None
         self.custom_storage_members = []
         self.custom_storage_member_seen = set()
         self.custom_settings_registry_addr = None
@@ -984,11 +990,32 @@ class ASFirmwarePatches(object):
         self.asf.write_u16(rec + self.asf.G4_STEP, step)
         self.asf.write_u16(rec + self.asf.G4_UNITS_STR, units_str)
 
-    def custom_menu_add(self, section_name, var, mode_mask=0xffffffff):
-        """Register one variable to be appended to a clinical menu section."""
-        section = self.CUSTOM_MENU_SECTIONS.get(section_name.lower())
-        if section is None:
-            raise ValueError("custom_menu_add: unknown section %s" % section_name)
+    def _custom_menu_container_id(self, name):
+        """Resolve a stock clinical section or a declared custom page."""
+        key = name.lower()
+        if key in self.CUSTOM_MENU_SECTIONS:
+            return self.CUSTOM_MENU_SECTIONS[key]
+        if key in self.custom_menu_pages:
+            return self.custom_menu_pages[key]
+        raise ValueError("custom menu: unknown container %s" % name)
+
+    def custom_menu_add_page(self, name, parent_name, title_str_id):
+        """Declare a generated page and register its parent navigation row."""
+        key = name.lower()
+        if key in self.CUSTOM_MENU_SECTIONS or key in self.custom_menu_pages:
+            raise ValueError("custom_menu_add_page: duplicate container %s" % name)
+        parent = self._custom_menu_container_id(parent_name)
+        ordinal = self.custom_menu_page_count
+        if ordinal >= 0x7f:
+            raise ValueError("custom_menu_add_page: page limit exceeded")
+        self.custom_menu_pages[key] = self.CUSTOM_MENU_PAGE_CONTAINER_BASE + ordinal
+        self.custom_menu_page_count += 1
+        self.custom_menu_entries.append(
+            (parent, self.CUSTOM_MENU_FLAG_PAGE, int(title_str_id), 0xffffffff))
+
+    def custom_menu_add(self, container_name, var, mode_mask=0xffffffff):
+        """Register one variable in a clinical section or custom page."""
+        container = self._custom_menu_container_id(container_name)
 
         vid = self.asf.resolve_var_id(var)
         table_num = self.asf.find_var_table_number(var)
@@ -1003,15 +1030,13 @@ class ASFirmwarePatches(object):
         if vid in self.custom_menu_registered:
             raise ValueError("custom_menu_add: duplicate variable %s (var_id 0x%04X)" % (var, vid))
         self.custom_menu_registered.add(vid)
-        self.custom_menu_entries.append((section, flags, vid, int(mode_mask)))
+        self.custom_menu_entries.append((container, flags, vid, int(mode_mask)))
 
-    def custom_menu_add_heading(self, section_name, str_id):
-        """Register a localized static heading in a menu section."""
-        section = self.CUSTOM_MENU_SECTIONS.get(section_name.lower())
-        if section is None:
-            raise ValueError("custom_menu_add_heading: unknown section %s" % section_name)
+    def custom_menu_add_heading(self, container_name, str_id):
+        """Register a localized heading in a clinical section or custom page."""
+        container = self._custom_menu_container_id(container_name)
         self.custom_menu_entries.append(
-            (section, self.CUSTOM_MENU_FLAG_HEADING, int(str_id), 0xffffffff))
+            (container, self.CUSTOM_MENU_FLAG_HEADING, int(str_id), 0xffffffff))
 
     def mop_bitmask(self, *modes):
         """Build a g[24]/MOP visibility mask from MOP names or numeric indexes."""
@@ -1029,7 +1054,7 @@ class ASFirmwarePatches(object):
         return mask
 
     def custom_emit_registry(self):
-        """Serialize the generated registry into the reclaimed Reminders page space."""
+        """Serialize the registry into firmware space reclaimed by Reminder removal."""
         need = (len(self.custom_menu_entries) + 1) * 8
         if need > self.custom_settings_registry_size:
             raise ValueError(
@@ -1037,8 +1062,8 @@ class ASFirmwarePatches(object):
                 (need, self.custom_settings_registry_size))
 
         off = self.custom_settings_registry_addr
-        for section, flags, vid, mode_mask in self.custom_menu_entries:
-            self.asf.write_u8(off, section)
+        for container, flags, vid, mode_mask in self.custom_menu_entries:
+            self.asf.write_u8(off, container)
             self.asf.write_u8(off + 1, flags)
             self.asf.write_u16(off + 2, vid)
             self.asf.write_u32(off + 4, mode_mask)
@@ -1164,7 +1189,9 @@ class ASFirmwarePatches(object):
 
     def _patch_clinical_menu_capacity(self, imm_off, stock_capacity):
         """Grow the clinical settings scrollbar capacity for generated entries."""
-        custom_count = len(self.custom_menu_entries)
+        custom_count = sum(
+            1 for container, _, _, _ in self.custom_menu_entries
+            if container < self.CUSTOM_MENU_PAGE_CONTAINER_BASE)
         new_capacity = stock_capacity + custom_count
         if (self.asf.read_u8(imm_off) != stock_capacity or
                 self.asf.read_u8(imm_off + 1) != 0x22):
@@ -1191,6 +1218,13 @@ class ASFirmwarePatches(object):
                 'clinical_capacity': 70,
                 'config_error_size_site': 0xce638,
                 'config_error_size_expected': b'\xcf\xf7\x6a\xf9',
+                'page_create_site': 0x6db5c,
+                'page_create_expected': b'\xf3\xf7\xda\xf8',
+                'page_limit_site': 0x6dbcc,
+                'page_direct_site': 0x6dc12,
+                'page_zero_site': 0x6dc32,
+                'page_get_site': 0x6dc48,
+                'page_activate_site': 0x6dc52,
                 'menu_expected': (
                     b'\x02\xf0\x38\xfd', b'\x02\xf0\x09\xfc',
                     b'\x02\xf0\xc3\xfb', b'\x02\xf0\x9a\xfb',
@@ -1206,6 +1240,13 @@ class ASFirmwarePatches(object):
                 'clinical_capacity': 70,
                 'config_error_size_site': 0xcee28,
                 'config_error_size_expected': b'\xcf\xf7\x34\xf9',
+                'page_create_site': 0x6e28c,
+                'page_create_expected': b'\xf3\xf7\xd2\xf8',
+                'page_limit_site': 0x6e2fc,
+                'page_direct_site': 0x6e342,
+                'page_zero_site': 0x6e362,
+                'page_get_site': 0x6e378,
+                'page_activate_site': 0x6e382,
                 'menu_expected': stock_menu_expected,
             },
             'SX567-0306': {
@@ -1218,6 +1259,13 @@ class ASFirmwarePatches(object):
                 'clinical_capacity': 70,
                 'config_error_size_site': 0xced40,
                 'config_error_size_expected': b'\xcf\xf7\x6a\xf9',
+                'page_create_site': 0x6e28c,
+                'page_create_expected': b'\xf3\xf7\xd2\xf8',
+                'page_limit_site': 0x6e2fc,
+                'page_direct_site': 0x6e342,
+                'page_zero_site': 0x6e362,
+                'page_get_site': 0x6e378,
+                'page_activate_site': 0x6e382,
                 'menu_expected': stock_menu_expected,
             },
             'SX567-0401': {
@@ -1230,6 +1278,13 @@ class ASFirmwarePatches(object):
                 'clinical_capacity': 70,
                 'config_error_size_site': 0xcefa0,
                 'config_error_size_expected': b'\xcf\xf7\x6a\xf9',
+                'page_create_site': 0x6e28c,
+                'page_create_expected': b'\xf3\xf7\xd2\xf8',
+                'page_limit_site': 0x6e2fc,
+                'page_direct_site': 0x6e342,
+                'page_zero_site': 0x6e362,
+                'page_get_site': 0x6e378,
+                'page_activate_site': 0x6e382,
                 'menu_expected': stock_menu_expected,
             },
             'SX567-0402': {
@@ -1242,6 +1297,13 @@ class ASFirmwarePatches(object):
                 'clinical_capacity': 70,
                 'config_error_size_site': 0xcf218,
                 'config_error_size_expected': b'\xcf\xf7\x46\xf9',
+                'page_create_site': 0x6e28c,
+                'page_create_expected': b'\xf3\xf7\xd2\xf8',
+                'page_limit_site': 0x6e2fc,
+                'page_direct_site': 0x6e342,
+                'page_zero_site': 0x6e362,
+                'page_get_site': 0x6e378,
+                'page_activate_site': 0x6e382,
                 'menu_expected': stock_menu_expected,
             },
         }
@@ -1272,6 +1334,12 @@ class ASFirmwarePatches(object):
         visibility_handler = self._elf_symbol_addr(elf_path, 'custom_menu_apply_mode_visibility')
         error_size_hook = self._elf_symbol_addr(elf_path, 'custom_settings_error_file_size')
         group_index_addr = self._elf_symbol_addr(elf_path, 'custom_settings_group_index')
+        page_wrapper = self._elf_symbol_addr(elf_path, 'custom_menu_create_pages')
+        stock_page_count_addr = self._elf_symbol_addr(
+            elf_path, 'custom_menu_stock_page_count')
+        clinical_page_addr = self._elf_symbol_addr(
+            elf_path, 'custom_menu_clinical_page_id')
+        back_str_addr = self._elf_symbol_addr(elf_path, 'custom_menu_back_str_id')
 
         group_base = self.asf.globals_offset(16)
         group_rec = self.asf.find_var_group('CSG')
@@ -1281,6 +1349,23 @@ class ASFirmwarePatches(object):
 
         self.asf.write_u32(registry_addr - self.asf.FLASH_BASE, registry_flash)
         self.asf.write_u8(group_index_addr - self.asf.FLASH_BASE, group_index)
+
+        page_limit_site = sites['page_limit_site']
+        if self.asf.read_u8(page_limit_site + 1) != 0x2f:
+            raise ValueError(
+                "custom_patch_settings: unexpected page limit instruction at 0x%X" %
+                page_limit_site)
+        stock_page_count = self.asf.read_u8(page_limit_site)
+        if (self.custom_menu_clinical_page_id is None or
+                self.custom_menu_back_str_id is None):
+            raise ValueError("custom_patch_settings: stock page metadata not captured")
+        self.asf.write_u8(
+            stock_page_count_addr - self.asf.FLASH_BASE, stock_page_count)
+        self.asf.write_u8(
+            clinical_page_addr - self.asf.FLASH_BASE,
+            self.custom_menu_clinical_page_id)
+        self.asf.write_u16(
+            back_str_addr - self.asf.FLASH_BASE, self.custom_menu_back_str_id)
 
         self._patch_clinical_menu_capacity(sites['clinical_capacity_site'], sites['clinical_capacity'])
 
@@ -1306,6 +1391,39 @@ class ASFirmwarePatches(object):
         self._patch_thumb_bl_checked(
             sites['config_error_size_site'], sites['config_error_size_expected'],
             error_size_hook, 'CSG recovery')
+
+        if self.custom_menu_page_count:
+            total_page_count = stock_page_count + self.custom_menu_page_count
+            if total_page_count > 0xff:
+                raise ValueError("custom_patch_settings: page count exceeds ZML range")
+
+            self._patch_thumb_bl_checked(
+                sites['page_create_site'], sites['page_create_expected'],
+                page_wrapper, 'menu page constructor')
+            self._patch_bytes_checked(
+                sites['page_direct_site'],
+                b'\x20\x78\x04\xeb\x80\x00\x29\x46\xc0\x6b',
+                b'\xe0\x6b\x22\x78\x50\xf8\x22\x00\x29\x46',
+                'direct current-page lookup')
+            self._patch_bytes_checked(
+                sites['page_zero_site'],
+                b'\x20\x78\x04\xeb\x80\x00\x00\x21\xc0\x6b\x70\x47',
+                b'\xe0\x6b\x22\x78\x50\xf8\x22\x00\x00\x21\x70\x47',
+                'zero-argument page resolver')
+            self._patch_bytes_checked(
+                sites['page_get_site'],
+                b'\x20\x78\x04\xeb\x80\x00\xc0\x6b\x70\x47',
+                b'\xe0\x6b\x22\x78\x50\xf8\x22\x00\x70\x47',
+                'current-page resolver')
+            self._patch_bytes_checked(
+                sites['page_activate_site'],
+                b'\x20\x78\x04\xeb\x80\x00\xc0\x6b\x01\x68\xc9\x6a\x08\x47',
+                b'\xe0\x6b\x21\x78\x50\xf8\x21\x00\x01\x68\xc9\x6a\x08\x47',
+                'current-page activation')
+            self.asf.write_u8(page_limit_site, total_page_count)
+            print("  custom pages: %d, page range %d..%d" %
+                  (self.custom_menu_page_count, stock_page_count,
+                   total_page_count - 1))
         self.mop_callback_register_handler(visibility_handler, 'custom_menu_visibility')
 
         print("  custom menu hooks: build/custom_menu_hooks_%s.bin (%dB) at 0x%08X" %
@@ -1638,6 +1756,13 @@ class ASFirmwarePatches(object):
         reminder_menu_item_end = sites['reminder_menu_item_end']
         reminder_menu = sites['reminder_menu']
         reminder_menu_end = sites['reminder_menu_end']
+
+        if (self.asf.read_u8(reminder_menu + 0x2d) != 0x21 or
+                self.asf.read_u8(reminder_menu + 0x4b) != 0x21):
+            raise ValueError(
+                "custom_patch_settings: unexpected Reminders navigation metadata")
+        self.custom_menu_clinical_page_id = self.asf.read_u8(reminder_menu + 0x2c)
+        self.custom_menu_back_str_id = self.asf.read_u8(reminder_menu + 0x4a)
 
         self._patch_or_verify(reminders_tick, b'\x38\xb5\x04\x46', b'\x70\x47', 'reminder tick')
         self._patch_or_verify(

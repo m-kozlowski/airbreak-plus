@@ -60,3 +60,21 @@ custom_settings_group_index:
 .type custom_menu_registry_addr, %object
 custom_menu_registry_addr:
 	.word 0xffffffff
+
+/* Stock page-table metadata recovered by the patcher from the verified menu
+ * controller and Reminders page constructor before those sites are changed.
+ */
+.global custom_menu_stock_page_count
+.type custom_menu_stock_page_count, %object
+custom_menu_stock_page_count:
+	.byte 0xff
+
+.global custom_menu_clinical_page_id
+.type custom_menu_clinical_page_id, %object
+custom_menu_clinical_page_id:
+	.byte 0xff
+
+.global custom_menu_back_str_id
+.type custom_menu_back_str_id, %object
+custom_menu_back_str_id:
+	.short 0xffff
