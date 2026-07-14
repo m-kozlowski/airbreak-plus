@@ -11,6 +11,15 @@ typedef struct {
 	int last_pos_x;
 } graph_state_t;
 
+typedef void (*graph_header_update_t)(void *obj);
+typedef void (*graph_numbers_update_t)(void *obj, int left_var, int right_var);
+
+extern const uint32 graph_header_update_original;
+extern const uint32 graph_numbers_update_original;
+extern void gui_invalidate_window(void *obj);
+extern void gui_method_fc104_setup_and_invalidate(
+	uint32 hwin, int left, int top, int right, int bottom);
+
 STATIC void init_graph_state(graph_state_t *state) {
 	state->last_pos_x = -1;
 }
@@ -33,6 +42,45 @@ STATIC void LCD_FillRect2(int x1, int y1, int x2, int y2) {
 
 STATIC void LCD_FillRect_Alt(int x, int y, int w, int h) {
 	LCD_FillRect2(x, y, x+w-1, y+h-1);
+}
+
+// The parent also calls this draw method when only the numeric row is invalidated.
+STATIC bool graph_widget_is_invalidated(void) {
+	const short * const clip = (short*)(gui_context + 8);
+	const short xOff = *(short*)(gui_context + 76);
+	const short yOff = *(short*)(gui_context + 78);
+	const int left = xOff + 0x39;
+	const int top = yOff;
+	const int right = xOff + 0xd5;
+	const int bottom = yOff + 0x0e;
+
+	return clip[0] <= right && clip[2] >= left &&
+	       clip[1] <= bottom && clip[3] >= top;
+}
+
+STATIC void copy_bytes(uint8 *dst, const uint8 *src, unsigned size) {
+	while (size--)
+		*dst++ = *src++;
+}
+
+STATIC bool fixed_string_changed(const uint8 *before, const uint8 *after,
+				 unsigned size) {
+	for (unsigned i = 0; i < size; i++) {
+		if (before[i] != after[i])
+			return true;
+		if (before[i] == 0)
+			return false;
+	}
+	return false;
+}
+
+STATIC bool bytes_changed(const uint8 *before, const uint8 *after,
+			  unsigned size) {
+	for (unsigned i = 0; i < size; i++) {
+		if (before[i] != after[i])
+			return true;
+	}
+	return false;
 }
 
 STATIC int graph_draw_current_column(bool only_if_new) {
@@ -137,6 +185,7 @@ STATIC int graph_draw_current_column(bool only_if_new) {
 
 // Replaces the stock bar draw method.
 int MAIN start(void) {
+	if (!graph_widget_is_invalidated()) return 0;
 	return graph_draw_current_column(false);
 }
 
@@ -145,6 +194,57 @@ int MAIN start(void) {
 int MAIN graph_widget_update(int *obj, int new_position) {
 	obj[2] = new_position;
 	return graph_draw_current_column(true);
+}
+
+/* The stock header updater invalidates on every raw MOP or PSP change, even
+ * when one-decimal formatting produces the same visible text. Let it refresh
+ * its caches and strings with invalidation suppressed, then invalidate only
+ * when the rendered strings or widget status actually changed.
+ */
+void MAIN graph_header_update(void *obj) {
+	uint8 *base = (uint8 *)obj;
+	uint32 *hwin = (uint32 *)(base + 4);
+	uint8 old_left[0x15];
+	uint8 old_right[9];
+	uint8 old_status[4];
+
+	copy_bytes(old_left, base + 0x90, sizeof(old_left));
+	copy_bytes(old_right, base + 0xa5, sizeof(old_right));
+	copy_bytes(old_status, base + 0x8c, sizeof(old_status));
+
+	uint32 saved_hwin = *hwin;
+	*hwin = 0;
+	((graph_header_update_t)graph_header_update_original)(obj);
+	*hwin = saved_hwin;
+
+	if (fixed_string_changed(old_left, base + 0x90, sizeof(old_left)) ||
+	    fixed_string_changed(old_right, base + 0xa5, sizeof(old_right)) ||
+	    bytes_changed(old_status, base + 0x8c, sizeof(old_status)))
+		gui_invalidate_window(obj);
+}
+
+/* The two pressure values use five-byte display buffers. Filter sub-display
+ * raw changes after the stock formatter has updated those buffers.
+ */
+void MAIN graph_numbers_update(void *obj, int left_var, int right_var) {
+	uint8 *base = (uint8 *)obj;
+	uint32 *hwin = (uint32 *)(base + 4);
+	uint8 old_left[5];
+	uint8 old_right[5];
+
+	copy_bytes(old_left, base + 0x10, sizeof(old_left));
+	copy_bytes(old_right, base + 0x15, sizeof(old_right));
+
+	uint32 saved_hwin = *hwin;
+	*hwin = 0;
+	((graph_numbers_update_t)graph_numbers_update_original)(
+		obj, left_var, right_var);
+	*hwin = saved_hwin;
+
+	if (fixed_string_changed(old_left, base + 0x10, sizeof(old_left)) ||
+	    fixed_string_changed(old_right, base + 0x15, sizeof(old_right)))
+		gui_method_fc104_setup_and_invalidate(
+			saved_hwin, 6, 0x19, 0xd6, 0x2d);
 }
 
 

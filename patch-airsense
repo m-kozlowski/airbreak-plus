@@ -1765,22 +1765,66 @@ patch_code_graph() {
     local ver=${CDX_VER#SX567-}
     local BIN=build/graph_${ver}.bin
     local ELF=build/graph_${ver}.elf
-    local DRAW_FPTR UPDATE_FPTR start update
+    local DRAW_FPTR UPDATE_FPTR HEADER_FPTR HEADER_EXPECTED NUMBERS_FPTR NUMBERS_EXPECTED
+    local start update header_wrapper numbers_wrapper header_slot numbers_slot
+    local header_original numbers_original
     case "$ver" in
-        0302) DRAW_FPTR=0xf92dc; UPDATE_FPTR=0xf92d8 ;;
-        0305) DRAW_FPTR=0xf9a24; UPDATE_FPTR=0xf9a20 ;;
-        0306) DRAW_FPTR=0xf9a28; UPDATE_FPTR=0xf9a24 ;;
-        0401) DRAW_FPTR=0xf9c88; UPDATE_FPTR=0xf9c84 ;;
-        0402) DRAW_FPTR=0xf9f00; UPDATE_FPTR=0xf9efc ;;
+        0302)
+            DRAW_FPTR=0xf92dc; UPDATE_FPTR=0xf92d8
+            HEADER_FPTR=0xf396c; HEADER_EXPECTED=0x080672f5
+            NUMBERS_FPTR=0xfaa04; NUMBERS_EXPECTED=0x0806771d
+            ;;
+        0305)
+            DRAW_FPTR=0xf9a24; UPDATE_FPTR=0xf9a20
+            HEADER_FPTR=0xf4080; HEADER_EXPECTED=0x08067a19
+            NUMBERS_FPTR=0xfb14c; NUMBERS_EXPECTED=0x08067e41
+            ;;
+        0306)
+            DRAW_FPTR=0xf9a28; UPDATE_FPTR=0xf9a24
+            HEADER_FPTR=0xf4084; HEADER_EXPECTED=0x08067a21
+            NUMBERS_FPTR=0xfb150; NUMBERS_EXPECTED=0x08067e49
+            ;;
+        0401)
+            DRAW_FPTR=0xf9c88; UPDATE_FPTR=0xf9c84
+            HEADER_FPTR=0xf42e4; HEADER_EXPECTED=0x08067a21
+            NUMBERS_FPTR=0xfb3b0; NUMBERS_EXPECTED=0x08067e49
+            ;;
+        0402)
+            DRAW_FPTR=0xf9f00; UPDATE_FPTR=0xf9efc
+            HEADER_FPTR=0xf455c; HEADER_EXPECTED=0x08067a21
+            NUMBERS_FPTR=0xfb628; NUMBERS_EXPECTED=0x08067e49
+            ;;
         *) echo "  patch_code_graph: unsupported $ver"; return 1 ;;
     esac
     echo "Patching graphing code ($ver)"
     [[ -r "$ELF" ]] || die "patch_code_graph: $ELF not found"
     start=$(elf_symbol_addr "$ELF" start)
     update=$(elf_symbol_addr "$ELF" graph_widget_update)
+    header_wrapper=$(elf_symbol_addr "$ELF" graph_header_update)
+    numbers_wrapper=$(elf_symbol_addr "$ELF" graph_numbers_update)
+    header_slot=$(elf_symbol_addr "$ELF" graph_header_update_original)
+    numbers_slot=$(elf_symbol_addr "$ELF" graph_numbers_update_original)
+
+    header_original=$(read_u32 "$HEADER_FPTR")
+    numbers_original=$(read_u32 "$NUMBERS_FPTR")
+    if (( header_original == (header_wrapper | 1) )); then
+        header_original=$(read_u32 $(( header_slot - FLASH_BASE )))
+    fi
+    if (( numbers_original == (numbers_wrapper | 1) )); then
+        numbers_original=$(read_u32 $(( numbers_slot - FLASH_BASE )))
+    fi
+    (( header_original == HEADER_EXPECTED )) || \
+        die "patch_code_graph: unexpected header update pointer 0x$(printf '%08X' "$header_original")"
+    (( numbers_original == NUMBERS_EXPECTED )) || \
+        die "patch_code_graph: unexpected pressure update pointer 0x$(printf '%08X' "$numbers_original")"
+
     payload_inject graph "$BIN"
+    write_u32 $(( header_slot - FLASH_BASE )) "$header_original" || die failed
+    write_u32 $(( numbers_slot - FLASH_BASE )) "$numbers_original" || die failed
     write_u32 "$DRAW_FPTR" "$(( start | 1 ))" || die failed
     write_u32 "$UPDATE_FPTR" "$(( update | 1 ))" || die failed
+    write_u32 "$HEADER_FPTR" "$(( header_wrapper | 1 ))" || die failed
+    write_u32 "$NUMBERS_FPTR" "$(( numbers_wrapper | 1 ))" || die failed
 }
 
 

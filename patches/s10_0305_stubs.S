@@ -15,6 +15,8 @@
 NSTUB(0x0807B5E9, GUI_SetColor)
 NSTUB(0x0807B80D, LCD_FillRect)
 NSTUB_VAR(0x680000A0, gui_context)
+NSTUB(0x0806D38B, gui_invalidate_window)
+NSTUB(0x0806A2DF, gui_method_fc104_setup_and_invalidate)
 
 NSTUB(0x08063D5D, malloc)
 NSTUB(0x08082117, tim_read_tim5)

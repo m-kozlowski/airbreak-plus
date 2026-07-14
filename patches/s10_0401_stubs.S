@@ -24,6 +24,8 @@ NSTUB(0x0807BCE9, GUI_GotoXY)
 NSTUB(0x08072F6D, GUI_DispStringAt)
 NSTUB_VAR(0x08060DB4, font_16)
 NSTUB_VAR(0x680000A0, gui_context)
+NSTUB(0x0806D38F, gui_invalidate_window)
+NSTUB(0x0806A2E3, gui_method_fc104_setup_and_invalidate)
 
 NSTUB(0x08063D5D, malloc)
 NSTUB(0x08082097, tim_read_tim5)

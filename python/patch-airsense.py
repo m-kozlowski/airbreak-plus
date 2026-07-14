@@ -2090,24 +2090,51 @@ class ASFirmwarePatches(object):
         data, ver = self._load_versioned_bin('graph')
         if data is None:
             return
-        FPTR = {
-            '0302': (0xf92dc, 0xf92d8),
-            '0305': (0xf9a24, 0xf9a20),
-            '0306': (0xf9a28, 0xf9a24),
-            '0401': (0xf9c88, 0xf9c84),
-            '0402': (0xf9f00, 0xf9efc),
+        SITES = {
+            '0302': ((0xf92dc, 0xf92d8),
+                     (0xf396c, 0x080672f5), (0xfaa04, 0x0806771d)),
+            '0305': ((0xf9a24, 0xf9a20),
+                     (0xf4080, 0x08067a19), (0xfb14c, 0x08067e41)),
+            '0306': ((0xf9a28, 0xf9a24),
+                     (0xf4084, 0x08067a21), (0xfb150, 0x08067e49)),
+            '0401': ((0xf9c88, 0xf9c84),
+                     (0xf42e4, 0x08067a21), (0xfb3b0, 0x08067e49)),
+            '0402': ((0xf9f00, 0xf9efc),
+                     (0xf455c, 0x08067a21), (0xfb628, 0x08067e49)),
         }
-        fptrs = FPTR.get(ver)
-        if fptrs is None:
+        sites = SITES.get(ver)
+        if sites is None:
             print("  patch_graph: skipped (unsupported CDX version %s)" % self.asf.cdx_ver)
             return
-        draw_fptr, update_fptr = fptrs
+        (draw_fptr, update_fptr), header_site, numbers_site = sites
         elf_path = self._versioned_artifact_path('graph', 'elf', ver)
         start = self._elf_symbol_addr(elf_path, 'start')
         update = self._elf_symbol_addr(elf_path, 'graph_widget_update')
+        header_wrapper = self._elf_symbol_addr(elf_path, 'graph_header_update')
+        numbers_wrapper = self._elf_symbol_addr(elf_path, 'graph_numbers_update')
+        header_slot = self._elf_symbol_addr(elf_path, 'graph_header_update_original')
+        numbers_slot = self._elf_symbol_addr(elf_path, 'graph_numbers_update_original')
+
+        originals = []
+        for name, (site, expected), wrapper, slot in (
+                ('header', header_site, header_wrapper, header_slot),
+                ('pressure', numbers_site, numbers_wrapper, numbers_slot)):
+            original = self.asf.read_u32(site)
+            if original == (wrapper | 1):
+                original = self.asf.read_u32(slot - self.asf.FLASH_BASE)
+            if original != expected:
+                raise ValueError(
+                    "patch_graph: unexpected %s update pointer 0x%08X" %
+                    (name, original))
+            originals.append(original)
+
         flash, _ = self._inject_payload('graph', data)
+        self.asf.write_u32(header_slot - self.asf.FLASH_BASE, originals[0])
+        self.asf.write_u32(numbers_slot - self.asf.FLASH_BASE, originals[1])
         self.asf.write_u32(draw_fptr, start | 1)
         self.asf.write_u32(update_fptr, update | 1)
+        self.asf.write_u32(header_site[0], header_wrapper | 1)
+        self.asf.write_u32(numbers_site[0], numbers_wrapper | 1)
         print("  graph: %dB at 0x%08X" % (len(data), flash))
 
     def patch_squarewave(self):
