@@ -177,8 +177,35 @@ The apnea, hypopnea, and RERA labels are completion events. Their
 `DiagnosticExceptionEvents-AlarmAppErrors`,
 `DiagnosticExceptionEvents-ErrorLogInfos`
 
-The static formatter labels for these selectors use the system-error and alarm-error
-dictionaries listed above.
+`AppErrors`, `FatalErrors`, `ResettableErrors`, and `AlarmAppErrors` use a raw
+16-bit payload. Their code domains are selector-specific and must not be
+decoded through the system-error or alarm-event dictionaries.
+
+`AppErrors` includes direct application codes, translated filesystem/backend
+statuses, and the `0x2d76` flood marker. For translated statuses below 2000,
+the stored code is `uint16(status + 0x2d7e)`; statuses of 2000 or greater are
+stored as `0x354e`. Direct application codes overlap this numeric range, so a
+code can have more than one valid interpretation.
+
+`FatalErrors` contains the fatal code retained before a reset. A valid retained
+code in the range 1 through 70 is published during the next startup and then
+cleared. Source filename and line are not included in the event.
+
+`ResettableErrors` contains a persisted resettable-error snapshot. Firmware
+stores the error code with date and time, then publishes the snapshot when a
+valid settings unit is loaded. Codes can come from a mapped lower-controller
+status or from direct internal producers; no complete symbolic code dictionary
+is available.
+
+`AlarmAppErrors` contains the unmodified `EventCode` received from the alarm
+application. The selector is present in the checked 8.4.0 and 8.5.0 images but
+not in 8.3.0. The flow-generator application does not provide a local symbolic
+dictionary for these values.
+
+`ErrorLogInfos` uses a different payload: an 8-bit type followed by a 32-bit
+value. For type 1, the value is the stacked program counter retained by an NMI,
+HardFault, MemManage, BusFault, or UsageFault reset path. The record does not
+identify which of those five reset causes produced it.
 
 ### Alarm profiles
 

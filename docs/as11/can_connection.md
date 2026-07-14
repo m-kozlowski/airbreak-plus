@@ -1,31 +1,32 @@
 # AS11 CAN Connection
 
-This is a stub bring-up document. It is meant to give users enough practical
-information to build a first adapter and talk to the AS11 CAN service port.
-The connector notes, adapter list, and mechanical details will need a more
-careful rewrite later.
-
-Protocol details are documented separately in [can_protocol.md](can_protocol.md).
+This document covers the physical AS11 CAN connection, pass-through adapter
+wiring, and tested USB-CAN hardware. Datagram framing, VCIDs, RPC transport,
+and accessory traffic are documented separately in
+[can_protocol.md](can_protocol.md).
 
 ## Contents
 
 - [Scope](#scope)
 - [Bus settings](#bus-settings)
+- [SocketCAN example](#socketcan-example)
 - [Connector and pinout](#connector-and-pinout)
 - [Adapter wiring](#adapter-wiring)
 - [Tested adapters](#tested-adapters)
 - [CAN-FD and STM32 adapter notes](#can-fd-and-stm32-adapter-notes)
 - [Flashing WeAct USB2CANFDV1](#flashing-weact-usb2canfdv1)
-- [Known limitations](#known-limitations)
 
 ## Scope
 
 AS11 exposes a local CAN bus on the power connector area. The bus carries a
 plaintext JSON-RPC service lane and a diagnostic log stream.
 
-This document is about the physical connection and adapter choice only. It
-does not describe a specific USB-CAN serial protocol and it does not replace
-the protocol notes in [can_protocol.md](can_protocol.md).
+The practical adapter is a pass-through cable: the original PSU continues to
+power the device while a USB-CAN interface connects to the device-side CAN
+pair and common ground. The USB-CAN adapter does not replace the PSU.
+
+This document is independent of the host-side adapter protocol. The tools can
+use SocketCAN, SLCAN, or the explicitly selected Waveshare serial protocol.
 
 ## Bus settings
 
@@ -43,6 +44,13 @@ Observed settings:
 Use normal CAN mode for RPC. Silent mode is useful for passive sniffing, but
 it does not ACK frames and is not the right mode for normal request/response
 traffic.
+
+## SocketCAN example
+
+```bash
+sudo ip link set can0 up type can bitrate 1000000
+python3 python/as11_config.py -d can:can0 get ApplicationIdentifier
+```
 
 ## Connector and pinout
 
@@ -68,12 +76,23 @@ With the connectors oriented as shown in the photo:
 | PSU side | 3 | not connected |
 | PSU side | 4 | `GND` |
 
-Verify orientation before soldering. The photo labels are the current
-reference; this document is still a stub.
+Verify orientation before soldering. Pin numbering in the table follows the
+orientation shown in the photo, not an identified connector part datasheet.
 
 ## Adapter wiring
 
-Minimal CAN adapter wiring:
+The 65 W PSU requires only the power connections. The 90 W PSU identifies
+itself over CAN, so a pass-through used with it must also carry the CAN pair
+between the PSU and device:
+
+| PSU side | Device side | Required for |
+|----------|-------------|--------------|
+| `+24V` | `+24V` | 65 W and 90 W |
+| `GND` | `GND` | 65 W and 90 W |
+| `CAN-H` | `CAN-H` | 90 W |
+| `CAN-L` | `CAN-L` | 90 W |
+
+The USB-CAN adapter taps the CAN pair in parallel:
 
 | AS11 pin | Adapter pin |
 |----------|-------------|
@@ -81,9 +100,8 @@ Minimal CAN adapter wiring:
 | `CAN-L` | `CAN-L` |
 | `GND` | `GND` |
 
-Do not connect `+24V` to a USB-CAN adapter unless the adapter documentation
-explicitly requires external power. The tested USB adapters are powered from
-USB.
+Do not connect device `+24V` to a USB-CAN adapter. The tested adapters are
+powered from USB. Their CAN ground still connects to device ground.
 
 An assembled adapter connected to the device:
 
@@ -127,8 +145,8 @@ the MCU does not have an FDCAN peripheral.
 ## Flashing WeAct USB2CANFDV1
 
 The WeAct USB2CANFDV1 can be reflashed through SWD. The board exposes the SWD
-pads along the lower edge. From left to right, with the board oriented like the
-project reference image:
+pads along the lower edge. From left to right, with the USB connector on the
+left and the CAN terminal block on the right:
 
 | Pad | Signal |
 |-----|--------|
@@ -155,16 +173,3 @@ stm32l4x option_load 0
 
 program /path/to/STM32G0B1_Slcan2.5_WeActUSB2CANFDV1_0x*.bin 0x08000000 verify reset
 ```
-
-
-## Known limitations
-
-This page is intentionally incomplete:
-
-- connector sourcing is based on the current salvage method, not an identified
-  part number
-- pinout notes should be rechecked against more cables and photos
-- adapter firmware recommendations are based on current project testing
-- no formal termination or signal-integrity guidance is documented yet
-
-Treat this as a practical starting point, not final hardware documentation.
