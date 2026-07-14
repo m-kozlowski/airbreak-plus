@@ -362,9 +362,36 @@ sys.stdout.buffer.write(struct.pack('<HH', hw1, hw2))
 patch_thumb_bl_checked() {
     local site=$1 expected=$2 target=$3 name=$4
     if ! printf '%b' "$expected" | check_patch "$site"; then
-        die "unexpected $name call bytes at 0x$(printf "%X" "$site")"
+        die "${FUNCNAME[1]}: unexpected $name call bytes at 0x$(printf "%X" "$site")"
     fi
     encode_thumb_bl "$site" "$target" | patch "$site" || die failed
+}
+
+
+# Replace a fixed instruction sequence after verifying its exact bytes.
+# args: patch site offset, expected bytes, replacement bytes, site label
+patch_bytes_checked() {
+    local site=$1 expected=$2 replacement=$3 name=$4
+    if ! printf '%b' "$expected" | check_patch "$site"; then
+        die "${FUNCNAME[1]}: unexpected $name bytes at 0x$(printf "%X" "$site")"
+    fi
+    printf '%b' "$replacement" | patch "$site" || die failed
+}
+
+
+# Apply a fixed replacement once, or accept an already-patched site.
+# Returns 0 when replacement was written and 1 when it was already present.
+# args: patch site offset, expected bytes, replacement bytes, site label
+patch_or_verify() {
+    local site=$1 expected=$2 replacement=$3 name=$4
+    if printf '%b' "$expected" | check_patch "$site"; then
+        printf '%b' "$replacement" | patch "$site" || die failed
+        return 0
+    fi
+    if printf '%b' "$replacement" | check_patch "$site"; then
+        return 1
+    fi
+    die "${FUNCNAME[1]}: unexpected $name bytes at 0x$(printf "%X" "$site")"
 }
 
 

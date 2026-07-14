@@ -1156,6 +1156,12 @@ class ASFirmwarePatches(object):
             raise ValueError("unexpected %s call bytes at 0x%X" % (name, site))
         self.asf.patch(self._encode_thumb_bl(site, target), site, clobber=True)
 
+    def _patch_bytes_checked(self, site, expected, replacement, name):
+        """Replace a fixed instruction sequence after verifying its bytes."""
+        if bytes(self.asf.fw[site:site+len(expected)]) != expected:
+            raise ValueError("unexpected %s bytes at 0x%X" % (name, site))
+        self.asf.patch(replacement, site, clobber=True)
+
     def _patch_clinical_menu_capacity(self, imm_off, stock_capacity):
         """Grow the clinical settings scrollbar capacity for generated entries."""
         custom_count = len(self.custom_menu_entries)
