@@ -1,10 +1,7 @@
 # Air11 CONF Block Format
 
 Reference for the Air11 CONF block layout, globals[] master table, var-id
-dispatch, descriptor record shapes, and per-table semantics. Cross-checked
-against the official 14.8.3.0 vid03 dump, the official 15.8.4.0 variant
-dumps (vid03 AirSense, vid07 AirCurve VAuto, vid10 AirCurve S/ST/T, vid12
-AirCurve ASV), and Ghidra decompilation.
+dispatch, descriptor record shapes, and per-table semantics.
 
 ## Table of contents
 
@@ -54,7 +51,7 @@ AirCurve ASV), and Ghidra decompilation.
 | g[8] | A-Z short-name bucket headers (3-char tag -> var_id) |
 | g[9] | linear var-id -> 3-char short-tag pool |
 | g[10] | per-mode variable registration rows |
-| g[11] | scalar count for g[10], `0x67` / 103 |
+| g[11] | scalar count for g[10] |
 | g[12] | event/log definitions; later bytes in its physical interval are pointer-owned payloads |
 | g[13] | event route table root; the adjacent `DDO` var-id payload is pointed to by g[6] |
 | g[14] | periodic/session collections (`CSF`, `TIP`, `MLK`, `MPD`, `RFD`, `NRF`, `APD`) |
@@ -73,19 +70,20 @@ AirCurve ASV), and Ghidra decompilation.
   record, not the start of the CONF block.
 - File offsets such as `0x02d040` refer to a full firmware image with CONF at
   file offset `0x020000`. Runtime flash addresses use the `0x080xxxxx` form.
+- Raw example bytes are shown in file order. Multi-byte fields decode as
+  little-endian values.
 - Var IDs are firmware `DataItem` IDs, but they are **version-local**. They
   are assigned by descriptor array order and drift when records are inserted
   or removed. The three-letter tag (`MOP`, `LAN`, etc.) and RPC long name are
   better semantic anchors for cross-version work. RPC may expose long
   names such as `ActiveTherapyProfile` and underscore aliases such as `_MOP`,
   but bare three-letter tags are internal names.
-- [Variable reference](var_reference.tsv) lists the same variables against the known
-  14.8.3.0 and 15.8.4.0 var IDs. Treat the ID columns as lookup results for
-  those specific releases, not as portable constants. Its `notes` column is
-  based on the 15.8.4.0 variant superset unless a row is explicitly marked
-  `14.8.3.0 only`.
-- Unless stated otherwise, record counts and examples are from 15.8.4.0
-  variant dumps.
+- [Variable reference](var_reference.tsv) lists variables against the known
+  14.8.3.0, 15.8.4.0, and 16.8.5.0 var IDs. Treat the ID columns as lookup
+  results for those specific releases, not as portable constants.
+- Record layouts describe the structure shared by the listed firmware
+  versions. Counts, addresses, IDs, masks, and example values belong to the
+  version named in the adjacent table or example.
 
 ---
 
@@ -229,6 +227,10 @@ firmware releases.
 | 15.8.4.0 | g[2] | `0x0074..0x031f` | 32 | 684 |
 | 15.8.4.0 | g[3] | `0x0320..0x0339` | 20 | 26 |
 | 15.8.4.0 | g[5] | `0x033a..0x049f` | 16 | 358 |
+| 16.8.5.0 | g[1] | `0x0000..0x0076` | 10 | 119 |
+| 16.8.5.0 | g[2] | `0x0077..0x0329` | 32 | 691 |
+| 16.8.5.0 | g[3] | `0x032a..0x0343` | 20 | 26 |
+| 16.8.5.0 | g[5] | `0x0344..0x04b1` | 16 | 366 |
 
 Example from 15.8.4.0: `TherapyLEDAlwaysOn` var_id `0x0484` ->
 `g[5][0x0484 - 0x033a]` = `g[5][330]` -> file offset `0x28628`.
@@ -244,23 +246,24 @@ g[5] id_base = g[1] count + g[2] count + g[3] count
 |---------|----------------|--------------|
 | 14.8.3.0 | 111 + 664 + 26 | `0x0321` |
 | 15.8.4.0 | 116 + 684 + 26 | `0x033a` |
+| 16.8.5.0 | 119 + 691 + 26 | `0x0344` |
 
 Using a different version's `id_base` shifts every enum var onto the wrong
 record. Patchers must recompute it from the target image's master table and
 resolve variables by short/long name or descriptor shape before using a
 var_id.
 
-Observed examples:
+Version-local examples:
 
-| Variable | 14.8.3.0 | 15.8.4.0 |
-|----------|---------:|---------:|
-| `HeartRate` / `HRT` | `0x0157` | `0x0168` |
-| `SpO2` / `SAO` | `0x0285` | `0x029c` |
-| `LanguageConfiguration` / `LNC` | `0x0312` | `0x032b` |
-| `BluetoothPassthrough` / `BNP` | `0x033e` | `0x0357` |
-| `ActiveTherapyProfile` / `MOP` | `0x03f1` | `0x040e` |
-| `PeripheralMsg` / `PMS` | `0x03fe` | `0x041b` |
-| `RampEnablePatientAccess` / `RPE` | `0x0410` | `0x042d` |
+| Variable | 14.8.3.0 | 15.8.4.0 | 16.8.5.0 |
+|----------|---------:|---------:|---------:|
+| `HeartRate` / `HRT` | `0x0157` | `0x0168` | `0x0173` |
+| `SpO2` / `SAO` | `0x0285` | `0x029c` | `0x02a7` |
+| `LanguageConfiguration` / `LNC` | `0x0312` | `0x032b` | `0x0335` |
+| `BluetoothPassthrough` / `BNP` | `0x033e` | `0x0357` | `0x0365` |
+| `ActiveTherapyProfile` / `MOP` | `0x03f1` | `0x040e` | `0x0420` |
+| `PeripheralMsg` / `PMS` | `0x03fe` | `0x041b` | `0x042d` |
+| `RampEnablePatientAccess` / `RPE` | `0x0410` | `0x042d` | `0x043f` |
 
 ---
 
@@ -449,6 +452,16 @@ in SRAM; this descriptor only describes its shape.
 | +0x06 | 2 | factory_tag | common descriptor field; `0x0017` in observed records |
 | +0x08 | 2 | max_length | maximum string length in bytes (e.g. 30, 32, 50, 64, 192) |
 
+Example -- `SID` / `ApplicationIdentifier` in 16.8.5.0:
+
+| Offset | Raw bytes | Field | Decoded value |
+|-------:|-----------|-------|---------------|
+| `+0x00` | `07 02` | flags | `0x0207` |
+| `+0x02` | `00 00` | ui_group_id | `0` |
+| `+0x04` | `FF 7F` | owner_ref | `0x7fff` (none) |
+| `+0x06` | `17 00` | factory_tag | `0x0017` |
+| `+0x08` | `40 00` | max_length | 64 bytes |
+
 ---
 
 ## g[2] -- numeric DataItem descriptors
@@ -572,13 +585,23 @@ Across the 15.8.4.0 variants, the observed classes are:
 | `0x0b` | ramp/time minutes |
 | `0x0c` | generic unitless/status/mixed scalar |
 
-Example -- `Cpap-SetPressure`:
+Example -- `Cpap-SetPressure` in 16.8.5.0:
 
-```text
-default/min/max/step raw = 500/200/1000/10
-scale = 50
-displayed values = 10.0 / 4.0 / 20.0 / 0.2 cmH2O
-```
+| Offset | Raw bytes | Field | Decoded value |
+|-------:|-----------|-------|---------------|
+| `+0x00` | `07 0E` | flags | `0x0e07` |
+| `+0x02` | `0E 00` | ui_group_id | `0x000e` |
+| `+0x04` | `13 01` | owner_ref | `0x0113` (`HST`) |
+| `+0x06` | `17 00` | factory_tag | `0x0017` |
+| `+0x08` | `F4 01 00 00` | default_raw | 500 -> 10.0 cmH2O |
+| `+0x0c` | `E8 03 00 00` | max_raw | 1000 -> 20.0 cmH2O |
+| `+0x10` | `C8 00 00 00` | min_raw | 200 -> 4.0 cmH2O |
+| `+0x14` | `01 00` | format_selector | 1 (scaled) |
+| `+0x16` | `32 00` | scale | 50 |
+| `+0x18` | `0A 00` | step_raw | 10 -> 0.2 cmH2O |
+| `+0x1a` | `3D` | bounds_slot | dynamic bounds slot `0x3d` |
+| `+0x1b` | `00` | sample_source_id | 0 |
+| `+0x1c` | `00 00 00 00` | quantity_class | 0 (pressure) |
 
 ---
 
@@ -588,8 +611,8 @@ displayed values = 10.0 / 4.0 / 20.0 / 0.2 cmH2O
 
 Backs `BitFieldDataItem` -- multi-bit toggle variables (e.g.
 `LanguageConfiguration`, `NodeAccessFlags`). The runtime value is a u32
-bitmask masked through `editable_mask`. `LanguageConfiguration` (`LNC`,
-var_id `0x032b`) lives here, not in the enum table.
+bitmask masked through `editable_mask`. `LanguageConfiguration` (`LNC`)
+lives here, not in the enum table.
 
 | Offset | Size | Field | Description |
 |--------|------|-------|-------------|
@@ -608,6 +631,20 @@ Apply rule:
 ```text
 new_value = (requested & editable_mask) | (fixed_mask & ~editable_mask)
 ```
+
+Example -- `LNC` / `LanguageConfiguration` in 16.8.5.0:
+
+| Offset | Raw bytes | Field | Decoded value |
+|-------:|-----------|-------|---------------|
+| `+0x00` | `07 06` | flags | `0x0607` |
+| `+0x02` | `2C 00` | ui_group_id | `0x002c` |
+| `+0x04` | `13 01` | owner_ref | `0x0113` (`HST`) |
+| `+0x06` | `17 00` | factory_tag | `0x0017` |
+| `+0x08` | `A3 00 00 00` | fixed_mask | `0x000000a3` |
+| `+0x0c` | `FF FF FF 07` | editable_mask | `0x07ffffff` |
+| `+0x10` | `1B` | bit_count | 27 |
+| `+0x11` | `00` | reserved | 0 |
+| `+0x12` | `54 00` | g4_list_offset | `0x0054` |
 
 ---
 
@@ -680,6 +717,21 @@ To decode an enum descriptor, read `n_options` bytes at
 for logical option slot `i`; `option_mask` decides whether that slot is
 available in the current variant.
 
+Example -- `MOP` / `ActiveTherapyProfile` in 16.8.5.0 vid03:
+
+| Offset | Raw bytes | Field | Decoded value |
+|-------:|-----------|-------|---------------|
+| `+0x00` | `07 06` | flags | `0x0607` |
+| `+0x02` | `34 00` | g4_options_offset | `0x0034` |
+| `+0x04` | `13 01` | owner_ref | `0x0113` (`HST`) |
+| `+0x06` | `17 00` | factory_tag | `0x0017` |
+| `+0x08` | `01` | default_option | slot 1 (`AutoSetProfile`) |
+| `+0x09` | `0B` | n_options | 11 |
+| `+0x0a` | `00 00` | reserved | 0 |
+| `+0x0c` | `07 00 00 00` | option_mask | slots 0, 1, and 2 enabled |
+
+The 11 bytes at `g[4]+0x0034` are enum codes `0x0b..0x15`.
+
 ---
 
 ## g[6] -- named var-id list headers
@@ -698,6 +750,15 @@ Observed tags: `BGL`, `DDO`, `DID`, `HST`, `MCA`, `MCF`, `TLP`.
 The field at +0x04 is not an arithmetic base for the following list. For
 example, `DDO` has +0x04 = `0x00a5`, but its first list entry is `0x0022`.
 Treat it as a list identifier or anchor used by the consuming subsystem.
+
+Example -- the 16.8.5.0 `BGL` header:
+
+| Offset | Raw bytes | Field | Decoded value |
+|-------:|-----------|-------|---------------|
+| `+0x00` | `42 47 4C 00` | tag | `BGL` |
+| `+0x04` | `73 00 00 00` | list_id | `0x0073` |
+| `+0x08` | `08 D1 02 08` | var_id_list_ptr | `0x0802d108` |
+| `+0x0c` | `06 00 00 00` | count | 6 u16 var IDs |
 
 Known list roles:
 
@@ -812,26 +873,47 @@ Each entry (4 bytes):
 | +0x00 | 2 | suffix (chars 2 and 3) |
 | +0x02 | 2 | var_id |
 
+Example -- resolving `MOP` in 16.8.5.0:
+
+| Step | Value |
+|------|-------|
+| Bucket index | `'M' - 'A' = 12` |
+| Bucket header | `g[8] + 12 * 8` (file offset `0x02bb78`) |
+| Entry table | `0x0802b630` |
+| Matching entry | entry 69: suffix `OP`, var_id `0x0420` |
+
 ---
 
 ## g[9] -- short-name reverse table
 
 Linear var_id -> 3-char short tag pool. Functions at `0x08071086` and
-`0x080710ba` use `g[9] + var_id * 3`. Contains all 1180 A-Z bucket short names
-plus four underscore-prefixed internal tags (`_UD`, `_HU`, `_HR`, `_HS`) and
+`0x080710ba` use `g[9] + var_id * 3`. It contains the A-Z bucket names plus
+four underscore-prefixed internal tags (`_UD`, `_HU`, `_HR`, `_HS`) and a
 zero tail.
+
+| Version | A-Z names | Internal names | Indexed slots |
+|---------|----------:|---------------:|--------------:|
+| 14.8.3.0 | 1143 | 4 | 1147 |
+| 15.8.4.0 | 1180 | 4 | 1184 |
+| 16.8.5.0 | 1198 | 4 | 1202 |
+
+Example -- `MOP` in 16.8.5.0:
+
+| Input | Calculation | Result |
+|-------|-------------|--------|
+| var_id `0x0420` | `g[9] + 0x0420 * 3` | file offset `0x029560`, tag `MOP` |
 
 ---
 
 ## g[10] -- per-mode variable registration
 
-**Record stride:** 14 bytes, **Entry count:** 103.
+**Record stride:** 14 bytes
 
 | Offset | Size | Field |
 |--------|------|-------|
 | +0x00 | 2 | var_id |
 | +0x02 | 11 | per-mode membership bytes |
-| +0x0d | 1 | reserved / zero in observed rows |
+| +0x0d | 1 | reserved / zero |
 
 The mode membership fields are bytes, not a packed bitmask. A non-zero byte
 means the row's var_id belongs to that therapy mode, so each row stores eleven
@@ -851,15 +933,29 @@ membership bytes instead of a compact u16 mode mask.
 | +0x0b | iVAPS |
 | +0x0c | PAC |
 
-Variant gating does not happen by adding or removing g[10] rows; rows are
-identical across all four 15.8.4.0 variants. The active mode set is controlled
-by descriptor activity bits, enum option masks, and SummaryRecord activation.
+Example -- `Cpap-SetPressure` in 16.8.5.0:
+
+| Offset | Raw bytes | Field | Decoded value |
+|-------:|-----------|-------|---------------|
+| `+0x00` | `0C 01` | var_id | `0x010c` (`Cpap-SetPressure`) |
+| `+0x02` | `01 00 00 00 00 00 00 00 00 00 00` | membership | CPAP only |
+| `+0x0d` | `00` | reserved | 0 |
+
+g[10] is a mode-membership registry, not the product-variant mode gate. The
+active mode set is controlled by descriptor activity bits, enum option masks,
+and SummaryRecord activation.
 
 ---
 
 ## g[11] -- record count for g[10]
 
-Not a pointer. Scalar value `0x67` / 103.
+Not a pointer. Its scalar value is the number of g[10] records.
+
+| Version | g[10] records | g[11] value |
+|---------|--------------:|------------:|
+| 14.8.3.0 | 103 | `0x67` |
+| 15.8.4.0 | 103 | `0x67` |
+| 16.8.5.0 | 101 | `0x65` |
 
 ---
 
@@ -1022,27 +1118,31 @@ SummarySync/EDF construction path.
 
 ### Header
 
-| Offset | Size | Value |
+| Offset | Size | Field |
 |--------|------|-------|
 | +0x00 | 2 | `0x016d` |
 | +0x02 | 2 | `0x0014` |
-| +0x04 | 2 | record_count = `0x00c0` (192) |
-| +0x06 | 2 | special_key_count = 3 |
-| +0x08 | 4 | `SummaryRecord*` = `0x08025688` |
+| +0x04 | 2 | record_count |
+| +0x06 | 2 | special_key_count |
+| +0x08 | 4 | `SummaryRecord*` |
 | +0x0c | 4 | special_key_table_ptr |
 
-The `SummaryRecord` table is not physically after this header; in the checked
-15.8.4.0 images it starts at `0x08025688`, inside the g[2] physical interval.
-The special-key table pointer also points elsewhere (`0x0802c970` in vid03,
-inside the g[16] physical interval), where the three padded ASCII keys
-`XA5`, `XB3`, and `ZZ6` are stored. The bytes immediately after the 16-byte
-g[15] header are a small inline auxiliary key map: vid03 stores four
-two-letter code plus var_id pairs (`PA`/`WPA`, `PM`/`WPM`, `UC`/`WUC`,
-`UP`/`WUP`), followed by EDF label strings referenced by SummaryRecord rows.
+| Version | Records | SummaryRecord file offset | Key count | Special keys |
+|---------|--------:|--------------------------:|----------:|--------------|
+| 14.8.3.0 | 190 | `0x025408` | 3 | `XA5`, `XB3`, `ZZ6` |
+| 15.8.4.0 | 192 | `0x025688` | 3 | `XA5`, `XB3`, `ZZ6` |
+| 16.8.5.0 | 190 | `0x025768` | 5 | `XA5`, `XB3`, `ZZ6`, `XB9`, `XBA` |
+
+The `SummaryRecord` and special-key tables are reached through the header
+pointers and are not physically required to follow g[15]. The bytes
+immediately after the 16-byte g[15] header are a small inline auxiliary key
+map. In 15.8.4.0 vid03 it contains four two-letter code plus var_id pairs
+(`PA`/`WPA`, `PM`/`WPM`, `UC`/`WUC`, `UP`/`WUP`), followed by EDF label
+strings referenced by SummaryRecord rows.
 
 ### SummaryRecord layout
 
-**Record stride:** 36 bytes, **Entry count:** 192, **start:** `0x08025688`.
+**Record stride:** 36 bytes
 
 | Offset | Size | Field | Description |
 |--------|------|-------|-------------|
@@ -1087,14 +1187,17 @@ Code support:
 
 Active SummaryRecord counts:
 
-| VID | Active |
-|----:|---:|
-| 3  | 74 |
-| 7  | 92 |
-| 10 | 93 |
-| 12 | 70 |
+| Version | VID | Active | Total |
+|---------|----:|-------:|------:|
+| 14.8.3.0 | 3 | 74 | 190 |
+| 15.8.4.0 | 3 | 74 | 192 |
+| 15.8.4.0 | 7 | 92 | 192 |
+| 15.8.4.0 | 10 | 93 | 192 |
+| 15.8.4.0 | 12 | 70 | 192 |
+| 16.8.5.0 | 3 | 74 | 190 |
+| 16.8.5.0 | 6 | 90 | 190 |
 
-Representative active families:
+Representative active families in 15.8.4.0:
 
 | VID | Family |
 |----:|--------|
@@ -1224,8 +1327,16 @@ permission/visibility flag.
 permission_offset = g[18] + node_id * 2
 ```
 
-In the current APPL metadata, node ids run up to 141, so the logical table is
-the first 144 two-byte entries. Observed values in those entries:
+The permission vector is indexed by the node IDs declared in APPL metadata.
+The highest declared node ID varies by release:
+
+| Version | Highest node ID |
+|---------|----------------:|
+| 14.8.3.0 | `0x8b` (139) |
+| 15.8.4.0 | `0x8d` (141) |
+| 16.8.5.0 | `0x8e` (142) |
+
+Permission values are 16-bit records:
 
 | Value | Meaning |
 |-------|---------|
@@ -1256,39 +1367,48 @@ RPC metadata triples:
 
 ### Therapy profile node IDs
 
-| Node | 14.8.3.0 | 15.8.4.0 |
-|------|---------:|---------:|
-| ASVAutoProfile | `0x61` | `0x63` |
-| ASVProfile | `0x62` | `0x64` |
-| AutoSetForHerProfile | `0x63` | `0x65` |
-| AutoSetProfile | `0x64` | `0x66` |
-| CpapProfile | `0x65` | `0x67` |
-| PACProfile | `0x66` | `0x68` |
-| STProfile | `0x67` | `0x69` |
-| SpontProfile | `0x68` | `0x6a` |
-| TimedProfile | `0x69` | `0x6b` |
-| VAutoProfile | `0x6a` | `0x6c` |
-| iVAPSProfile | `0x6b` | `0x6d` |
+| Node | 14.8.3.0 | 15.8.4.0 | 16.8.5.0 |
+|------|---------:|---------:|---------:|
+| ASVAutoProfile | `0x61` | `0x63` | `0x64` |
+| ASVProfile | `0x62` | `0x64` | `0x65` |
+| AutoSetForHerProfile | `0x63` | `0x65` | `0x66` |
+| AutoSetProfile | `0x64` | `0x66` | `0x67` |
+| CpapProfile | `0x65` | `0x67` | `0x68` |
+| PACProfile | `0x66` | `0x68` | `0x69` |
+| STProfile | `0x67` | `0x69` | `0x6a` |
+| SpontProfile | `0x68` | `0x6a` | `0x6b` |
+| TimedProfile | `0x69` | `0x6b` | `0x6c` |
+| VAutoProfile | `0x6a` | `0x6c` | `0x6d` |
+| iVAPSProfile | `0x6b` | `0x6d` | `0x6e` |
 
 ### Feature profile node IDs
 
-| Node | 14.8.3.0 | 15.8.4.0 |
-|------|---------:|---------:|
-| ConfirmStopFeature | `0x4d` | `0x4f` |
-| HeightFeature | `0x51` | `0x53` |
-| RampDownFeature | `0x55` | `0x57` |
-| TherapyLEDFeature | `0x5d` | `0x5f` |
+| Node | 14.8.3.0 | 15.8.4.0 | 16.8.5.0 |
+|------|---------:|---------:|---------:|
+| ConfirmStopFeature | `0x4d` | `0x4f` | `0x50` |
+| HeightFeature | `0x51` | `0x53` | `0x54` |
+| RampDownFeature | `0x55` | `0x57` | `0x58` |
+| TherapyLEDFeature | `0x5d` | `0x5f` | `0x60` |
 
 ### Alarm profile nodes (kept disabled)
 
-| Node | 15.8.4.0 |
-|------|---------:|
-| AlarmProfiles | `0x42` |
-| AlarmVolume | `0x43` |
-| ApneaAlarm | `0x44` |
-| HighLeakAlarm | `0x45` |
-| LowMinuteVentAlarm | `0x46` |
-| NonVentedMaskAlarm | `0x47` |
+| Node | 14.8.3.0 | 15.8.4.0 | 16.8.5.0 |
+|------|---------:|---------:|---------:|
+| AlarmProfiles | `0x40` | `0x42` | `0x43` |
+| AlarmVolume | `0x41` | `0x43` | `0x44` |
+| ApneaAlarm | `0x42` | `0x44` | `0x45` |
+| HighLeakAlarm | `0x43` | `0x45` | `0x46` |
+| LowMinuteVentAlarm | `0x44` | `0x46` | `0x47` |
+| NonVentedMaskAlarm | `0x45` | `0x47` | `0x48` |
+
+Example -- `AutoSetProfile` in 16.8.5.0:
+
+| Step | Value |
+|------|-------|
+| APPL metadata value | `!103` |
+| node_id | `103` / `0x67` |
+| Permission offset | `g[18] + 0x67 * 2` = file offset `0x02b5de` |
+| Permission value | `0x0001` (visible) |
 
 ---
 
