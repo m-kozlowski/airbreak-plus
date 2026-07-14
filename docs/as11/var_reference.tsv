@@ -469,10 +469,10 @@ g2	ZLR				0x01B3	0x01C5	0x01D0	0..51 step 1
 g2	ZLA				0x01B4	0x01C6	0x01D1	0..31 step 0.1
 g2	ZIT				0x01B5	0x01C7	0x01D2	0..1200 step 1
 g2	ZS3				0x01B6	0x01C8	0x01D3	0..2147483647 step 1
-g2						0x01C9	0x01D4	0..2147483647 step 1
-g2						0x01CA	0x01D5	0..315360000 step 1
-g2						0x01CB	0x01D6	0..315360000 step 1
-g2						0x01CC	0x01D7	0..315360000 step 1
+g2					0x01B7	0x01C9	0x01D4	0..2147483647 step 1
+g2					0x01B8	0x01CA	0x01D5	0..315360000 step 1
+g2					0x01B9	0x01CB	0x01D6	0..315360000 step 1
+g2					0x01BA	0x01CC	0x01D7	0..315360000 step 1
 g2	LHM				0x01BB	0x01CD	0x01D8	0..315360000 step 1
 g2	LMA				0x01BC	0x01CE	0x01D9	0..10 step 1
 g2	LSD				0x01CE			0..1440 step 1
@@ -711,7 +711,7 @@ g2	PPD		Duration		0x029E	0x02B6	0x02C1	0..1440 step 1
 g2	SNC				0x029F	0x02B7	0x02C2	0..2147483647 step 1
 g2	SSV				0x02A0	0x02B8	0x02C3	-2147483647..2147483647 step 1
 g2	ZRE				0x02A1	0x02B9	0x02C4	0..2147483647 step 1
-g2	SCL				0x02A2	0x02BA	0x02C5	0..3750 step 1; 2625 for 65W, 3638 for 90W, minus 208 when TxLink2Connected is nonzero; forwarded to the lower controller
+g2	SCL				0x02A2	0x02BA	0x02C5	0..3750 step 1; 2625 for 65W, 3638 for 90W, minus 208 when TxLink2Connected is nonzero; passed through PsTransferLocal
 g2	SCM				0x02A3	0x02BB	0x02C6	0..5000 step 1
 g2	SCG				0x02A4	0x02BC	0x02C7	1000..3000 step 1
 g2	ZPM				0x02A5	0x02BD	0x02C8	0..2147483647 step 1
@@ -956,7 +956,7 @@ g5	FBP				0x0387	0x03A5	0x03B5	4 opts mask=0x0000000f
 g5	FIO				0x0388	0x03A6	0x03B6	2 opts mask=0x00000003
 g5	FSC				0x0389	0x03A7	0x03B7	2 opts mask=0x00000003
 g5	FIP				0x038A	0x03A8	0x03B8	2 opts mask=0x00000003
-g5	IRF	IsFileSystemReady			0x038B	0x03A9	0x03B9	3 opts mask=0x00000007; 14.8.3.0 cdx=n/a
+g5	IRF	IsFileSystemReady			0x038B	0x03A9	0x03B9	3 opts mask=0x00000007; 14.8.3.0 name=n/a
 g5	QFC	FlightMode		Airplane Mode	0x038C	0x03AA	0x03BA	2 opts mask=0x00000003; options: Off, On
 g5	ZLM				0x038D	0x03AB	0x03BB	active_vids=3; 2 opts mask=0x00000003
 g5	FON				0x038E	0x03AC	0x03BC	10 opts mask=0x0000000f

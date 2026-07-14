@@ -1,6 +1,6 @@
-# AirSense/AirCurve 11 CONF Block Format
+# Air11 CONF Block Format
 
-Reference for the S11 CONF block layout, globals[] master table, var-id
+Reference for the Air11 CONF block layout, globals[] master table, var-id
 dispatch, descriptor record shapes, and per-table semantics. Cross-checked
 against the official 14.8.3.0 vid03 dump, the official 15.8.4.0 variant
 dumps (vid03 AirSense, vid07 AirCurve VAuto, vid10 AirCurve S/ST/T, vid12
@@ -36,10 +36,6 @@ AirCurve ASV), and Ghidra decompilation.
 - [g[17] -- event label tables](#g17----event-label-tables)
 - [g[18] -- RPC JSON node permission table](#g18----rpc-json-node-permission-table)
 - [g[19] -- DDO/reporting source list](#g19----ddoreporting-source-list)
-- [Hidden mode clusters](#hidden-mode-clusters)
-- [Feature child settings](#feature-child-settings)
-- [Cross-variant patching rules](#cross-variant-patching-rules)
-- [Patcher implications](#patcher-implications)
 
 ---
 
@@ -65,7 +61,7 @@ AirCurve ASV), and Ghidra decompilation.
 | g[15] | `STR.edf` `SummaryRecord` schema header |
 | g[16] | EDF stream file schemas (`BRP`, `SA2`, `PLD`) |
 | g[17] | event label tables (`EVE`, `AEV`, `CSL`) |
-| g[18] | CDX/RPC JSON node permission table; later bytes are g[8] short-name bucket payloads |
+| g[18] | RPC JSON node permission table; later bytes are g[8] short-name bucket payloads |
 | g[19] | DDO/reporting snapshot source list, reporting tag/string/list pool, then erased tail |
 
 ---
@@ -79,11 +75,11 @@ AirCurve ASV), and Ghidra decompilation.
   file offset `0x020000`. Runtime flash addresses use the `0x080xxxxx` form.
 - Var IDs are firmware `DataItem` IDs, but they are **version-local**. They
   are assigned by descriptor array order and drift when records are inserted
-  or removed. The three-letter tag (`MOP`, `LAN`, etc.) and CDX long name are
-  better semantic anchors for cross-version work. RPC may expose long CDX
+  or removed. The three-letter tag (`MOP`, `LAN`, etc.) and RPC long name are
+  better semantic anchors for cross-version work. RPC may expose long
   names such as `ActiveTherapyProfile` and underscore aliases such as `_MOP`,
   but bare three-letter tags are internal names.
-- `docs/as11/var_reference.tsv` lists the same variables against the known
+- [Variable reference](var_reference.tsv) lists the same variables against the known
   14.8.3.0 and 15.8.4.0 var IDs. Treat the ID columns as lookup results for
   those specific releases, not as portable constants. Its `notes` column is
   based on the 15.8.4.0 variant superset unless a row is explicitly marked
@@ -317,7 +313,9 @@ into g[4].
 | +0x04 | owner_ref | named-list anchor or parent/source var reference; `0x7fff` means none |
 | +0x06 | factory_tag | DataItem factory/class tag; normally `0x0017` |
 
-### g[1]/g[2]/g[3] +0x02: ui_group_id
+### ui_group_id
+
+Stored at `+0x02` in g[1], g[2], and g[3] records.
 
 For g[1]/g[2]/g[3], non-zero `ui_group_id` values cluster settings that the
 GUI/config/RPC layer treats as a small family. The role is inferred from
@@ -1218,7 +1216,7 @@ CSL flags:
 
 ## g[18] -- RPC JSON node permission table
 
-Begins with the CDX/RPC JSON node permission table. Direct code at
+Begins with the RPC JSON node permission table. Direct code at
 `0x0814e814` loads `g[18] + node_id * 2` and reads the low byte as the
 permission/visibility flag.
 
@@ -1236,7 +1234,7 @@ the first 144 two-byte entries. Observed values in those entries:
 | `0x0100` | hidden, high byte set |
 | `0x0101` | visible, high byte set |
 
-Profile and feature CDX nodes such as `TherapyProfiles`, individual therapy
+Profile and feature RPC JSON nodes such as `TherapyProfiles`, individual therapy
 profiles, and feature nodes become visible when their low byte is set to `1`.
 This is a separate gate from descriptor ACT bits and enum option masks.
 
@@ -1247,8 +1245,8 @@ table.
 
 ### Discovering node IDs
 
-Node IDs are not stable across S11 firmware versions. They are discovered from
-CDX metadata triples:
+Node IDs are not stable across Air11 firmware versions. They are discovered from
+RPC metadata triples:
 
 | Offset | Size | Field |
 |--------|------|-------|

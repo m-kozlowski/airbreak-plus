@@ -1,11 +1,10 @@
-# AS11 RPC Event Reference
+# Air11 RPC Event Reference
 
 This document lists the live event-profile selectors accepted by
 `SubscribeEvent` and the payload labels each selector carries. Protocol
-mechanics (request fields, response shape, the `subscriptionId` cursor, the
-unsubscribe state) are described in
-[AS11 RPC Protocol](rpc_protocol.md#event-rpc). Historical event spools live
-in [AS11 RPC Spool Reference](rpc_spools.md).
+mechanics, request fields, response shape, and the returned `subscriptionId`
+are described in [Air11 RPC Protocol](rpc_protocol.md#event-rpc). Historical
+event spools live in [Air11 RPC Spool Reference](rpc_spools.md).
 
 ## Contents
 
@@ -193,9 +192,9 @@ cleared. Source filename and line are not included in the event.
 
 `ResettableErrors` contains a persisted resettable-error snapshot. Firmware
 stores the error code with date and time, then publishes the snapshot when a
-valid settings unit is loaded. Codes can come from a mapped lower-controller
-status or from direct internal producers; no complete symbolic code dictionary
-is available.
+valid settings unit is loaded. Codes can come from a mapped `PsTransferLocal`
+status word or from direct internal producers; no complete symbolic code
+dictionary is available.
 
 `AlarmAppErrors` contains the unmodified `EventCode` received from the alarm
 application. The selector is present in the checked 8.4.0 and 8.5.0 images but

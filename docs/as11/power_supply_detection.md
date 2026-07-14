@@ -1,6 +1,6 @@
-# AS11 Power Supply Detection
+# Air11 Power Supply Detection
 
-AS11 derives the connected supply capacity and source type from a 16-byte
+Air11 derives the connected supply capacity and source type from a 16-byte
 DatagramCan message received on CAN ID `0x259`.
 
 ## Contents
@@ -15,7 +15,7 @@ DatagramCan message received on CAN ID `0x259`.
 
 | Property | Value |
 |----------|-------|
-| CAN ID | `0x259`, supply-side accessory to AS11 |
+| CAN ID | `0x259`, supply-side accessory to Air11 |
 | Internal endpoint code | `0x0e` |
 | Payload size | 16 bytes |
 
@@ -95,7 +95,7 @@ The event names are also listed in [RPC events](rpc_events.md).
 | `_PSU` (`PowerSupplyType`) | Runtime source: `Unknown`, `AcMains`, or `DcMains` |
 | `_PSD` | Detection or fallback has completed |
 | `_P90` | Product configuration requires a 90 W supply |
-| `_SCL` | Lower-controller parameter derived from `_PSC` and `_TXC` |
+| `_SCL` | PSU-derived parameter selected from `_PSC` and adjusted by `_TXC` |
 
 The insufficient-supply warning requires all three conditions:
 
@@ -115,4 +115,5 @@ _P90 == Yes
 | `PowerSupply90W` | `3638` |
 
 The firmware subtracts `208` while `_TXC` (`TxLink2Connected`) is any value
-other than `No`, then forwards `_SCL` to the lower controller.
+other than `No`. `_SCL` is then included in the process data published through
+`PsTransferLocal`.

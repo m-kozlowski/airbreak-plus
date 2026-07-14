@@ -1,11 +1,38 @@
-# AirSense 11 EDF Signal Reference
+# Air11 EDF Signal Reference
 
 Live RPC stream names are documented separately in \
-[AS11 RPC Stream Reference](rpc_streams.md). \
+[Air11 RPC Stream Reference](rpc_streams.md). \
 EDF fixed headers and ResMed patient/recording fields are documented in \
-[AirSense 11 EDF Header Reference](edf_header.md). \
+[Air11 EDF Header Reference](edf_header.md). \
 Annotation-only `EVE.edf` and `CSL.edf` files are documented separately in \
-[AS11 EDF Annotation Files](edf_annotations.md).
+[Air11 EDF Annotation Files](edf_annotations.md).
+
+## Contents
+
+- [Scope](#scope)
+- [BRP.edf](#brpedf----breath-waveform-25-hz-60s-records)
+- [PLD.edf](#pldedf----two-second-therapy-signals-05-hz-60s-records)
+- [SA2.edf](#sa2edf----spo2pulse-1-hz-60s-records)
+- [STR.edf](#stredf----superset-session-statistics-1-record-per-86400s)
+  - [STR scaling](#str-scaling)
+  - [STR enum export maps](#str-enum-export-maps)
+  - [STR variant provenance](#str-variant-provenance)
+
+## Scope
+
+The BRP and SA2 tables match the checked stock schemas. The PLD table is the
+12-signal union installed by the `patch-edf-superset` patch and marks which
+rows occur in each checked stock product family.
+
+Use the [`edf-streams` command](../tools/as11_descriptors.md#edf-streams) to
+print the BRP, SA2, or PLD schema from any firmware dump.
+
+The numbered STR tables describe the 134-signal output installed by the same
+patch. Stock firmware carries a larger `SummaryRecord` inventory whose active
+rows and populated labels vary by product variant. Dormant inventory rows are
+not assigned an output signal number unless they are activated. The
+[variant provenance table](#str-variant-provenance) identifies which official
+15.8.4.0 variants supplied the active-row metadata used by the patch.
 
 
 ## BRP.edf -- Breath waveform (25 Hz, 60s records)
@@ -15,22 +42,25 @@ Annotation-only `EVE.edf` and `CSL.edf` files are documented separately in \
 | 0 | Flow.40ms | PatientFlow | RFL | 1500 | 25 Hz |
 | 1 | Press.40ms | MaskPressure | MKP | 1500 | 25 Hz |
 
-## PLD.edf -- Per-breath stats (0.5 Hz, 60s records)
+## PLD.edf -- Two-second therapy signals (0.5 Hz, 60s records)
 
-| # | Signal | name | short | samples/rec | rate |
-|---|--------|------|-------|-------------|------|
-| 0 | MaskPress.2s | MaskPressure-TwoSecond | MKF | 30 | 0.5 Hz |
-| 1 | Press.2s | InspiratoryPressure-TwoSecond | MKI | 30 | 0.5 Hz |
-| 2 | EprPress.2s | ExpiratoryPressure-TwoSecond | MKE | 30 | 0.5 Hz |
-| 3 | Leak.2s | Leak | LKF | 30 | 0.5 Hz |
-| 4 | RespRate.2s | n/a | RR2 | 30 | 0.5 Hz |
-| 5 | TidVol.2s | n/a | TD2 | 30 | 0.5 Hz |
-| 6 | MinVent.2s | n/a | MV2 | 30 | 0.5 Hz |
-| 7 | TgtVent.2s | n/a | TGT | 30 | 0.5 Hz |
-| 8 | IERatio.2s | n/a | IE2 | 30 | 0.5 Hz |
-| 9 | Snore.2s | SnoreIndex | SNI | 30 | 0.5 Hz |
-| 10 | FlowLim.2s | FlowLimitation | FFL | 30 | 0.5 Hz |
-| 11 | Ti.2s | InspiratoryDuration | INT | 30 | 0.5 Hz |
+The `#` column is the superset order. `x` means the signal is present in the
+stock schema for that family; `.` means it is added by the superset patch.
+
+| # | Signal | name | short | samples/rec | rate | AS | VA | ST | ASV |
+|---|--------|------|-------|-------------|------|----|----|----|-----|
+| 0 | MaskPress.2s | MaskPressure-TwoSecond | MKF | 30 | 0.5 Hz | x | x | x | x |
+| 1 | Press.2s | InspiratoryPressure-TwoSecond | MKI | 30 | 0.5 Hz | x | x | x | x |
+| 2 | EprPress.2s | ExpiratoryPressure-TwoSecond | MKE | 30 | 0.5 Hz | x | x | x | x |
+| 3 | Leak.2s | Leak | LKF | 30 | 0.5 Hz | x | x | x | x |
+| 4 | RespRate.2s | n/a | RR2 | 30 | 0.5 Hz | x | x | x | x |
+| 5 | TidVol.2s | n/a | TD2 | 30 | 0.5 Hz | x | x | x | x |
+| 6 | MinVent.2s | n/a | MV2 | 30 | 0.5 Hz | x | x | x | x |
+| 7 | TgtVent.2s | n/a | TGT | 30 | 0.5 Hz | . | . | . | x |
+| 8 | IERatio.2s | n/a | IE2 | 30 | 0.5 Hz | . | x | x | . |
+| 9 | Snore.2s | SnoreIndex | SNI | 30 | 0.5 Hz | x | x | x | x |
+| 10 | FlowLim.2s | FlowLimitation | FFL | 30 | 0.5 Hz | x | x | . | x |
+| 11 | Ti.2s | InspiratoryDuration | INT | 30 | 0.5 Hz | . | x | x | . |
 
 ## SA2.edf -- SpO2/pulse (1 Hz, 60s records)
 
@@ -39,7 +69,7 @@ Annotation-only `EVE.edf` and `CSL.edf` files are documented separately in \
 | 0 | Pulse.1s | HeartRate | HRT | 60 | 1 Hz |
 | 1 | SpO2.1s | SpO2 | SAO | 60 | 1 Hz |
 
-## STR.edf -- Session statistics (1 record per 86400s, 134 fields)
+## STR.edf -- Superset session statistics (1 record per 86400s)
 
 Rows marked <sup>[map](#str-enum-export-maps)</sup> are exported through
 an enum value map before being written to EDF.
@@ -274,26 +304,28 @@ Examples:
 
 ### STR enum export maps
 
-Some STR enum fields are not written as raw CONF option indexes. For
-these rows, firmware writes `edf_value = map[raw_option_index]`.
+Some STR enum fields are not written as raw CONF option indexes. For these
+rows, firmware writes `edf_value = map[raw_option_index]`. A dash in the
+superset-number column means that the mapped row exists in the stock schema
+inventory but is not activated by the current 134-signal superset patch.
 
-| Signal | name | short | map |
-|--------|------|-------|-----|
-| Mode | ActiveTherapyProfile | MOP | [3,1,2,4,10,16,8,6,7,5,9] |
-| S.VA.Trigger | VAuto-TriggerSensitivity | XE6 | [1,2,3,4,5,6,7] |
-| S.VA.Cycle | VAuto-CycleSensitivity | XE7 | [1,2,3,4,5,6,7] |
-| S.S.EasyBreathe | Spont-EasyBreatheEnable | ZZ4 | [1,2] |
-| S.S.RespRateEn | Spont-RespiratoryRateEnable | ZZ5 | [1,3] |
-| S.S.RiseEnable | Spont-RiseTimeEnable | ZZ9 | [1,2] |
-| S.S.Trigger | Spont-TriggerSensitivity | Z11 | [1,2,3,4,5,6,7] |
-| S.S.Cycle | Spont-CycleSensitivity | Z12 | [1,2,3,4,5,6,7] |
-| S.S.FallEnable | Spont-FallTimeEnable | Z16 | [1,2] |
-| S.ST.Trigger | ST-TriggerSensitivity | ZU1 | [1,2,3,4,5,6,7] |
-| S.ST.FallEnable | ST-FallTimeEnable | XAM | [1,2] |
-| S.T.RiseEnable | Timed-RiseTimeEnable | XB6 | [1,2] |
-| S.T.FallEnable | Timed-FallTimeEnable | XB9 | [1,2] |
-| HeatedTube | Summary-TubeConnected | ZHT | [3,4,1,5,2] |
-| Humidifier | Summary-HumidifierConnected | HUC | [1,2,3] |
+| Superset # | Signal | name | short | map |
+|-----------:|--------|------|-------|-----|
+| 5 | Mode | ActiveTherapyProfile | MOP | [3,1,2,4,10,16,8,6,7,5,9] |
+| 20 | S.VA.Trigger | VAuto-TriggerSensitivity | XE6 | [1,2,3,4,5,6,7] |
+| 21 | S.VA.Cycle | VAuto-CycleSensitivity | XE7 | [1,2,3,4,5,6,7] |
+| 25 | S.S.EasyBreathe | Spont-EasyBreatheEnable | ZZ4 | [1,2] |
+| 26 | S.S.RespRateEn | Spont-RespiratoryRateEnable | ZZ5 | [1,3] |
+| 29 | S.S.RiseEnable | Spont-RiseTimeEnable | ZZ9 | [1,2] |
+| 31 | S.S.Trigger | Spont-TriggerSensitivity | Z11 | [1,2,3,4,5,6,7] |
+| 32 | S.S.Cycle | Spont-CycleSensitivity | Z12 | [1,2,3,4,5,6,7] |
+| -- | S.S.FallEnable | Spont-FallTimeEnable | Z16 | [1,2] |
+| 41 | S.ST.Trigger | ST-TriggerSensitivity | ZU1 | [1,2,3,4,5,6,7] |
+| -- | S.ST.FallEnable | ST-FallTimeEnable | XAM | [1,2] |
+| 48 | S.T.RiseEnable | Timed-RiseTimeEnable | XB6 | [1,2] |
+| -- | S.T.FallEnable | Timed-FallTimeEnable | XB9 | [1,2] |
+| 76 | HeatedTube | Summary-TubeConnected | ZHT | [3,4,1,5,2] |
+| 77 | Humidifier | Summary-HumidifierConnected | HUC | [1,2,3] |
 
 ### STR variant provenance
 

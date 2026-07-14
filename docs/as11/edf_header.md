@@ -1,11 +1,11 @@
-# AirSense 11 EDF Header Reference
+# Air11 EDF Header Reference
 
-This document describes the fixed EDF header fields used by AS11 `BRP`,
+This document describes the fixed EDF header fields used by Air11 `BRP`,
 `PLD`, `SA2`, `STR`, `EVE`, and `CSL` files.
 Signal definitions are listed in \
-[AirSense 11 EDF Signal Reference](edf_signals.md). \
+[Air11 EDF Signal Reference](edf_signals.md). \
 EDF+ annotation payloads are described in \
-[AirSense 11 EDF Annotation Reference](edf_annotations.md).
+[Air11 EDF Annotation Reference](edf_annotations.md).
 
 ## Contents
 
@@ -13,14 +13,13 @@ EDF+ annotation payloads are described in \
 - [Patient ID](#patient-id)
 - [Recording ID](#recording-id)
 - [Signal header blocks](#signal-header-blocks)
-- [Reconstruction checklist](#reconstruction-checklist)
 
 ## Fixed header
 
-AS11 uses the normal 256-byte EDF fixed header. Text fields are ASCII,
+Air11 uses the normal 256-byte EDF fixed header. Text fields are ASCII,
 left-aligned, space-padded, and not NUL-terminated.
 
-| Offset | Size | Field | AS11 content |
+| Offset | Size | Field | Air11 content |
 |--------|------|-------|--------------|
 | `0x000` | 8 | version | `0` |
 | `0x008` | 80 | patient ID | see [Patient ID](#patient-id) |
@@ -33,7 +32,7 @@ left-aligned, space-padded, and not NUL-terminated.
 | `0x0f4` | 8 | data record duration | decimal seconds with two fractional digits |
 | `0x0fc` | 4 | signal count | decimal |
 
-Common AS11 values:
+Common Air11 values:
 
 | File | Reserved | Record duration | Notes |
 |------|----------|-----------------|-------|
@@ -61,7 +60,7 @@ signals      "3   "
 
 ## Patient ID
 
-AS11 patient ID has the form:
+Air11 patient ID has the form:
 
 ```text
 X X X X %04X %04X
@@ -79,7 +78,7 @@ Both use CRC16-CCITT-FALSE
 
 ## Recording ID
 
-AS11 recording ID has the form:
+Air11 recording ID has the form:
 
 ```text
 Startdate DD-MMM-YYYY X X X SRN=<serial> MID=<mid> VID=<vid>
@@ -91,7 +90,7 @@ Fields:
 |-------|---------|
 | `DD-MMM-YYYY` | file start date using uppercase English month names |
 | `SRN` | device serial number |
-| `MID` | platform/model identifier; known AS11 files use `46` |
+| `MID` | platform/model identifier; known Air11 files use `46` |
 | `VID` | variant identifier from the active firmware/device identity |
 
 ## Signal header blocks
@@ -131,6 +130,4 @@ Total header size is therefore:
 | samples per record | `1` |
 
 For `EVE.edf` and `CSL.edf`, signal 0 is `EDF Annotations` and signal 1 is
-`Crc16`; see [AirSense 11 EDF Annotation Reference](edf_annotations.md).
-
-
+`Crc16`; see [Air11 EDF Annotation Reference](edf_annotations.md).

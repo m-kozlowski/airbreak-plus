@@ -1,10 +1,10 @@
-# AS11 RPC Spool Reference
+# Air11 RPC Spool Reference
 
 This document lists every known `StartSpool` spool type, its payload
 family, and the inner record shapes for each family. Protocol
 mechanics, request fields, status codes, and the cursor-advance
 caveat are described in
-[AS11 RPC Protocol](rpc_protocol.md#spool-rpc).
+[Air11 RPC Protocol](rpc_protocol.md#spool-rpc).
 
 ## Contents
 
@@ -44,7 +44,7 @@ caveat are described in
 
 ### Full enumeration
 
-Known spool types accepted by `StartSpool`
+Known spool types accepted by `StartSpool`.
 
 | Spool type | Family | Gate | Group |
 |------------|--------|------|-------|
@@ -97,12 +97,11 @@ Known spool types accepted by `StartSpool`
 | `3` | therapy profile snapshots |
 | `4` | feature profile snapshots |
 
-The host decoder names the known therapy profile subrecords
-(`CpapProfile`, `AutoSetProfile`, `VAutoProfile`, `ASVProfile`, etc.) and
-feature profile subrecords (`EprFeature`, `AutoRampFeature`, `ClimateFeature`,
-`DisplayFeature`, etc.). Numeric pressure and time fields are scaled to human
-units. Enum-like fields are printed with `Raw` suffix until all option labels
-are verified.
+Known therapy-profile subrecords include `CpapProfile`, `AutoSetProfile`,
+`VAutoProfile`, and `ASVProfile`. Feature-profile subrecords include
+`EprFeature`, `AutoRampFeature`, `ClimateFeature`, and `DisplayFeature`.
+Numeric pressure and time fields use profile-specific scales. Enum fields are
+wire integers and require the corresponding firmware option mapping.
 
 `ConfigurationProfilesCollection` contains attributes plus
 `DataDeliveryControlV2`, whose fields map to spool families such as
@@ -177,6 +176,35 @@ Metric subrecords use percentile-like subfields:
 | `36` BlowerPressure | `1`=p5, `3`=p95 |
 | `37` RespiratoryFlow | `1`=p5, `3`=p95 |
 
+The protobuf stores summary measurements as fixed-point integers. Divide each
+encoded integer by the divisor below to obtain the physical value.
+
+Direct scalar fields use these scales:
+
+| Fields | Values | Divisor | Units |
+|--------|--------|--------:|-------|
+| `7..13` | AHI, apnea indexes, and RERA index | 100 | index |
+| `18`, `19` | Spontaneous trigger and cycle percentages | 100 | percent |
+
+Fields containing percentile metrics are nested messages. Apply the listed
+divisor separately to each populated percentile subfield (`p5`, `p50`, `p70`,
+`p95`, or `p100`):
+
+| Fields | Metrics | Divisor | Units |
+|--------|---------|--------:|-------|
+| `14`, `37`, `38` | Leak, RespiratoryFlow, BlowerFlow | 100 | L/s |
+| `15`, `20`, `21`, `36` | InspiratoryPressure, ExpiratoryPressure, MeanMaskPressure, BlowerPressure | 100 | cmH2O |
+| `22` | TidalVolume | 100 | L |
+| `23`, `24`, `42` | MinuteVentilation, TargetMinuteVentilation, AlveolarMinuteVentilation | 100 | L/min |
+| `25`, `41` | RespiratoryRate, HeartRate | 100 | bpm |
+| `26` | InspiratoryDuration | 1000 | seconds |
+| `27`, `28`, `32`, `33` | IeRatio, SpO2, HumidifierPower, HeatedTubePower | 100 | percent |
+| `29` | AmbientHumidity | 100 | mg/L |
+| `30`, `31` | HumidifierTemperature, HeatedTubeTemperature | 100 | Celsius |
+
+For example, an encoded `InspiratoryPressure.p50` value of `1040` represents
+`10.40 cmH2O`. Fields `34` and `35` contain enum indexes and are not scaled.
+
 ### Event records
 
 Most event spool records use the same inner record shape:
@@ -188,9 +216,8 @@ Most event spool records use the same inner record shape:
 | `3` | end timestamp, UTC milliseconds |
 | `4` | duration in milliseconds, when present |
 
-The wrapper depth varies by spool family, so the host tool unwraps event
-records conservatively and keeps unknown event codes numeric unless a label
-table has been verified.
+The wrapper depth varies by spool family. Unknown event codes remain numeric
+unless a selector-specific label table has been verified.
 
 ### TherapyOneMinutePeriodic records
 
@@ -222,7 +249,7 @@ Decoded fields:
 | `7` | IeRatio | `ie_ratio_pct` | `raw * 4` percent |
 | `8` | SpO2 | `spo2_pct` | `raw` percent |
 | `9` | HeartRate | `heart_rate_bpm` | `raw` bpm |
-| `21` | MIS | `mis` | `raw / 50`; exact meaning unresolved |
+| `21` | MIS | `mis` | `raw / 50` |
 
 The field mapping and scales are verified against `Summary` percentile
 records and observed oximetry samples.
@@ -283,10 +310,6 @@ Observed signal fields:
 | `4` | `CellularSignalQuality3G` |
 | `5` | `CellularSignalQualityLTE` |
 
-The archived data captured so far contains signal fields `2` and `5`.
-`atmosphericPressure10min` is accepted by the device but has not produced a
-populated payload on the test device yet.
-
 ### RC03 archived-signal records
 
 The RC03 signal records are protobuf wrappers around a compressed sample
@@ -309,9 +332,12 @@ delta2[n] = sample[n] - 2 * sample[n - 1] + sample[n - 2]
 sample[n] = 2 * sample[n - 1] - sample[n - 2] + delta2[n]
 ```
 
-On currently decoded archived signal blocks, parameter 4 is the Rice modulus
-and parameter 1 gives the scale exponent. The host tool uses
-`value = raw * (2 * 10 ** param1)`.
+On decoded archived signal blocks, parameter 4 is the Rice modulus and
+parameter 1 gives the scale exponent:
+
+```text
+value = raw * (2 * 10 ** param1)
+```
 
 ### SoundcheckVector records
 
@@ -322,17 +348,10 @@ and parameter 1 gives the scale exponent. The host tool uses
 | `1` | report timestamp, UTC milliseconds |
 | `2` | sample rate, observed `18750` Hz |
 | `3` | repeated vector/bin value |
-| `4` | repeated peak-pair wrapper |
-
-Each field-4 peak wrapper repeats field `1` messages. The inner peak
-message has subfield `1` and subfield `2`; observed values look like
-frequency/bin and amplitude/score pairs, but the exact units are not yet
-proven.
+| `4` | repeated two-value subrecord wrapper |
 
 ### Blob and audio records
 
-`AcousticSignatureV2` and `RecordedSound` have conservative decoders. Empty
-payloads are reported as empty. Populated payloads are summarized by byte
-length and leading hex bytes, with `--details` enabling a generic protobuf
-walk where the payload is protobuf-like. `RecordedSound` also reports
-`RIFF/WAVE` if that header is present.
+`AcousticSignatureV2` and `RecordedSound` carry byte payloads rather than one
+of the record families above. `RecordedSound` is gated by
+`SoundDownloadAllowed` and may contain a `RIFF/WAVE` stream.

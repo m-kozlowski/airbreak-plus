@@ -1,6 +1,6 @@
-# AS11 CAN Connection
+# Air11 CAN Connection
 
-This document covers the physical AS11 CAN connection, pass-through adapter
+This document covers the physical Air11 CAN connection, pass-through adapter
 wiring, and tested USB-CAN hardware. Datagram framing, VCIDs, RPC transport,
 and accessory traffic are documented separately in
 [can_protocol.md](can_protocol.md).
@@ -18,7 +18,7 @@ and accessory traffic are documented separately in
 
 ## Scope
 
-AS11 exposes a local CAN bus on the power connector area. The bus carries a
+Air11 exposes a local CAN bus on the power connector area. The bus carries a
 plaintext JSON-RPC service lane and a diagnostic log stream.
 
 The practical adapter is a pass-through cable: the original PSU continues to
@@ -61,7 +61,7 @@ practical source for both mating connectors is salvaging a Pilot-24 cable kit:
 
 The photo below shows both connectors removed from a cable set.
 
-![AS11 CAN connector pinout](../images/as11-can-connectors.png)
+![Air11 CAN connector pinout](../images/as11-can-connectors.png)
 
 With the connectors oriented as shown in the photo:
 
@@ -94,7 +94,7 @@ between the PSU and device:
 
 The USB-CAN adapter taps the CAN pair in parallel:
 
-| AS11 pin | Adapter pin |
+| Air11 pin | Adapter pin |
 |----------|-------------|
 | `CAN-H` | `CAN-H` |
 | `CAN-L` | `CAN-L` |
@@ -105,7 +105,7 @@ powered from USB. Their CAN ground still connects to device ground.
 
 An assembled adapter connected to the device:
 
-![AS11 CAN adapter connected](../images/as11-can-adapter-connected.png)
+![Air11 CAN adapter connected](../images/as11-can-adapter-connected.png)
 
 ## Tested adapters
 
@@ -126,8 +126,8 @@ pressure, which corrupts large RPC responses and makes flashing fragile.
 
 ## CAN-FD and STM32 adapter notes
 
-AS11 traffic observed so far is classic CAN, not CAN-FD. A true CAN-FD adapter
-is therefore not required for AS11 RPC or flashing.
+Air11 traffic observed so far is classic CAN, not CAN-FD. A true CAN-FD adapter
+is therefore not required for Air11 RPC or flashing.
 
 The adapter MCU still matters when choosing firmware:
 
@@ -136,10 +136,10 @@ The adapter MCU still matters when choosing firmware:
 | STM32G0B / STM32G0C FDCAN | native CAN-FD | Proper CAN-FD capable parts. Not every STM32G0 has FDCAN, so check the exact marking. |
 | STM32G4 FDCAN | native CAN-FD | Proper CAN-FD capable parts, common on newer USB-CAN-FD adapters. |
 | STM32H7 FDCAN | native CAN-FD | Proper CAN-FD capable parts, usually overkill for this use. |
-| STM32F0 / F1 / F3 / F4 / F7 with bxCAN | classic CAN only | Enough for AS11, but not a real CAN-FD adapter. Firmware support is partial if a project advertises CAN-FD features. |
+| STM32F0 / F1 / F3 / F4 / F7 with bxCAN | classic CAN only | Enough for Air11, but not a real CAN-FD adapter. Firmware support is partial if a project advertises CAN-FD features. |
 
 For this project, "partial" usually means the adapter can do classic CAN well
-enough for AS11, but it cannot send or receive CAN-FD data-phase frames because
+enough for Air11, but it cannot send or receive CAN-FD data-phase frames because
 the MCU does not have an FDCAN peripheral.
 
 ## Flashing WeAct USB2CANFDV1

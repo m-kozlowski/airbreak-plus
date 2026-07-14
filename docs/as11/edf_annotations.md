@@ -1,14 +1,14 @@
-# AirSense 11 EDF Annotation Reference
+# Air11 EDF Annotation Reference
 
-This document describes the EDF+ annotation files AS11 writes alongside
+This document describes the EDF+ annotation files Air11 writes alongside
 the sampled signal files: `EVE.edf` (respiratory events) and `CSL.edf`
 (Cheyne-Stokes interval boundaries). \
 Sampled signal files are documented in \
-[AirSense 11 EDF Signal Reference](edf_signals.md). \
+[Air11 EDF Signal Reference](edf_signals.md). \
 The matching live event vocabulary is documented in \
-[AS11 RPC Event Reference](rpc_events.md). \
+[Air11 RPC Event Reference](rpc_events.md). \
 EDF fixed headers and ResMed patient/recording fields are documented in \
-[AirSense 11 EDF Header Reference](edf_header.md).
+[Air11 EDF Header Reference](edf_header.md).
 
 ## Contents
 
@@ -43,7 +43,7 @@ Signal metadata:
 | 1 | `Crc16` | blank | `-32768.0` | `32767.00` | `-32768` | `32767` | `1` |
 
 Although the annotation signal declares `31` int16 samples per record,
-AS11 treats it as a 62-byte byte buffer. The trailing `Crc16` signal
+Air11 treats it as a 62-byte byte buffer. The trailing `Crc16` signal
 contributes one little-endian 16-bit sample. Per data record:
 
 ```text
@@ -85,7 +85,7 @@ The first data record in both `EVE.edf` and `CSL.edf` is a fixed
 +0<14><14><00>+0<15>0<14>Recording starts<14><00>...
 ```
 
-Records contain one event TAL each. AS11 does not pack multiple TALs
+Records contain one event TAL each. Air11 does not pack multiple TALs
 into a single record even though EDF+ allows it.
 
 ## CRC channel
@@ -117,4 +117,3 @@ interval-duration record:
 |----------------------|---------|
 | `CSR Start` | start of a CSR/Cheyne-Stokes interval |
 | `CSR End` | end of a CSR/Cheyne-Stokes interval |
-

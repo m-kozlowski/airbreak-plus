@@ -1,6 +1,6 @@
-# AS11 Bluetooth Protocol
+# Air11 Bluetooth Protocol
 
-AS11 Bluetooth uses a BLE GATT pipe carrying FIG packets. Normal local RPC
+Air11 Bluetooth uses a BLE GATT pipe carrying FIG packets. Normal local RPC
 traffic runs inside an SRP-derived AES session.
 
 The BLE radio is handled by a separate NCP. The STM32 firmware contains the
@@ -227,7 +227,8 @@ Rules:
 - Padding is zero bytes up to the next 16-byte AES block boundary.
 - Decryption reads the length field and ignores padding.
 
-The encrypted JSON is the RPC payload described in `rpc_protocol.md`.
+The encrypted JSON is the RPC payload described in the
+[RPC protocol](rpc_protocol.md).
 
 ## Local credential file
 

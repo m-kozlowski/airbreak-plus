@@ -1,6 +1,6 @@
-# AS11 OTA Protocol
+# Air11 OTA Protocol
 
-AS11 firmware upgrades are staged through RPC, verified by the running
+Air11 firmware upgrades are staged through RPC, verified by the running
 application, then applied after reboot by the lower updater path.
 
 The local BLE and CAN upload flows use the same RPC methods and OTA container
@@ -283,11 +283,11 @@ traced or a flash readback proves it applied correctly.
 
 Observed OTA errors:
 
-| Code | Message | Likely cause |
-|------|---------|--------------|
-| `-11001` | unknown | `InitiateUpgrade` pre-check |
-| `-11004` | unknown | `InitiateUpgrade` pre-check |
-| `-11305` | `UpgradeFileIntegrityFailure` | SHA-256, descriptor CRC, rest CRC, or region CRC mismatch |
-| `-11306` | `UpgradeFileAuthenticationFailure` | authenticated apply HMAC mismatch |
-| `-11308` | `UpgradeFileIncompatible` | format/component/target gate rejected |
-| `-11309` | `UpgradeFileInvalid` | malformed OTA container |
+| Code | Message | Confirmed stage or condition |
+|------|---------|------------------------------|
+| `-11001` | unknown | returned by an `InitiateUpgrade` pre-check; exact predicate not identified |
+| `-11004` | unknown | returned by an `InitiateUpgrade` pre-check; exact predicate not identified |
+| `-11305` | `UpgradeFileIntegrityFailure` | SHA-256, descriptor CRC, rest CRC, or region CRC verification failed |
+| `-11306` | `UpgradeFileAuthenticationFailure` | authenticated-apply HMAC verification failed |
+| `-11308` | `UpgradeFileIncompatible` | format, component, or target compatibility gate rejected the container |
+| `-11309` | `UpgradeFileInvalid` | OTA container structure was rejected as malformed |

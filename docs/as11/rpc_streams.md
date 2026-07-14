@@ -1,9 +1,9 @@
-# AS11 RPC Stream Reference
+# Air11 RPC Stream Reference
 
-This document lists known `StartStream` data IDs and the EDF-oriented
-aliases used by `python/as11_config.py`. Protocol mechanics, request
-fields, and interval limits are described in
-[AS11 RPC Protocol](rpc_protocol.md).
+This document is a compact map from EDF signals to useful `StartStream` data
+IDs and the EDF aliases used by `python/as11_config.py`. General stream
+mechanics, request fields, interval limits, and examples of other data IDs are
+described in [Air11 RPC Protocol](rpc_protocol.md).
 
 ## Contents
 
@@ -59,6 +59,9 @@ python3 python/as11_config.py -d can:can0 stream --edf BRP,PLD --sample-ms 40
 ## Notes
 
 - `STR.edf` is a session summary/settings file, not a live stream group.
+- One `sampleIntervalMs` applies to every data ID in a stream. Requesting the
+  `PLD` alias at 40 ms repeats or reports the underlying low-rate values more
+  often; it does not turn the native two-second signals into 40 ms data.
 - Oximetry stream IDs can be accepted by the parser even when no oximeter
   is connected; absence of data should not be treated as proof that the
   stream name is invalid.

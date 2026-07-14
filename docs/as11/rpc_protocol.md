@@ -1,11 +1,12 @@
-# AS11 RPC Protocol
+# Air11 RPC Protocol
 
-AirSense 11 and AirCurve 11 use a JSON-RPC-like command layer above the
-local transports. BLE, CAN, and the cellular/cloud path all converge on the
-same firmware RPC dispatcher.
+The Air11 platform uses a JSON-RPC-like command layer above the local
+transports. BLE, CAN, and the cellular/cloud path all converge on the same
+firmware RPC dispatcher.
 
 This document describes the application RPC payloads. Transport framing is
-covered separately in `bluetooth_protocol.md` and `can_protocol.md`.
+covered separately in the [Bluetooth protocol](bluetooth_protocol.md) and
+[CAN protocol](can_protocol.md).
 
 ## Contents
 
@@ -43,7 +44,7 @@ Errors use the usual JSON-RPC-style `error` object:
 {"jsonrpc":"1.0","id":1,"error":{"code":-11202,"message":"SettingApplicationFailure"}}
 ```
 
-The `jsonrpc` field is not a strict JSON-RPC protocol version in all AS11
+The `jsonrpc` field is not a strict JSON-RPC protocol version in all Air11
 paths. The local tools fill it from the method capability table, so
 `GetVersion` uses `"2.0"`, `SetDateTime` uses `"1.1"`, and most other methods
 use `"1.0"`.
@@ -141,12 +142,12 @@ identity blocks:
 
 ## Get and Set
 
-`Get` reads keys from the RPC/CDX naming layer. In practice the useful forms
+`Get` reads keys from the RPC naming layer. In practice the useful forms
 are:
 
 | Form | Example | Notes |
 |------|---------|-------|
-| Long RPC/CDX name | `Language`, `ActiveTherapyProfile` | preferred spelling when known |
+| Long RPC name | `Language`, `ActiveTherapyProfile` | preferred spelling when known |
 | Underscore alias | `_LAN`, `_MOP` | firmware alias for many CONF three-letter tags |
 | Aggregate/subtree name | `FeatureProfiles`, `TherapyProfiles` | returns a nested object when exposed |
 
@@ -199,9 +200,9 @@ Known notification-producing RPC families are:
 
 | RPC family | Notification method | Reference |
 |------------|---------------------|-----------|
-| `SubscribeEvent` | `EventNotification` | [AS11 RPC Event Reference](rpc_events.md) |
-| `StartStream` | `StreamData` | [AS11 RPC Stream Reference](rpc_streams.md) |
-| `PullSpoolFragments` | `SpoolFragment` | [AS11 RPC Spool Reference](rpc_spools.md) |
+| `SubscribeEvent` | `EventNotification` | [Air11 RPC Event Reference](rpc_events.md) |
+| `StartStream` | `StreamData` | [Air11 RPC Stream Reference](rpc_streams.md) |
+| `PullSpoolFragments` | `SpoolFragment` | [Air11 RPC Spool Reference](rpc_spools.md) |
 
 ## Event RPC
 
@@ -219,7 +220,7 @@ plus per-selector `valid` flags.
 ```
 
 Event profile selectors and payload event families are listed in
-[AS11 RPC Event Reference](rpc_events.md).
+[Air11 RPC Event Reference](rpc_events.md).
 
 ## Stream RPC
 
@@ -256,8 +257,8 @@ Stream payloads are returned as notifications, usually with method
 `PatientFlow-100hz`, `MaskPressure-TwoSecond`, `HeartRate`, and `SpO2`, plus
 summary/statistic names such as `Summary-Leak-50`.
 Known stream data IDs and EDF-oriented aliases are listed in
-[AS11 RPC Stream Reference](rpc_streams.md). The generated EDF file layout is
-documented separately in [AirSense 11 EDF Signal Reference](edf_signals.md).
+[Air11 RPC Stream Reference](rpc_streams.md). The generated EDF file layout is
+documented separately in [Air11 EDF Signal Reference](edf_signals.md).
 
 ## Spool RPC
 
@@ -352,7 +353,7 @@ not be blindly retried after a framing failure. Each `StartSpool` creates a
 fresh cursor keyed to the supplied `fromDateTime`.
 
 Known spool types, payload families, wire field numbers, and inner record
-shapes are listed in [AS11 RPC Spool Reference](rpc_spools.md).
+shapes are listed in [Air11 RPC Spool Reference](rpc_spools.md).
 
 ## Method sets
 
@@ -392,7 +393,8 @@ Known plaintext requests:
 
 `HeartBeat` notifications can also appear on the plaintext RX VCID. Normal
 application RPCs such as `GetVersion`, `Get`, `Set`, and OTA calls require
-the SRP/AES session described in `bluetooth_protocol.md`.
+the SRP/AES session described in the
+[Bluetooth protocol](bluetooth_protocol.md).
 
 Older notes and figlib-derived tooling names such as `GetPairKey` and
 `GetSessionKey` are host-side abstractions for the pairing/session sequence,
@@ -467,6 +469,8 @@ Observed errors:
 | Code | Message | Notes |
 |------|---------|-------|
 | `-32700` | `Parse Error` | JSON or wrong VCID/path |
+| `-32602` | `Invalid Params` | missing, malformed, or unsupported method parameters |
+| `-11201` | `InvalidObject` | requested object is unknown or unavailable in the current context |
 | `-11202` | `SettingApplicationFailure` | setting rejected or failed during apply |
 | `-11305` | `UpgradeFileIntegrityFailure` | OTA hash/CRC/descriptor mismatch |
 | `-11306` | `UpgradeFileAuthenticationFailure` | OTA HMAC/authentication mismatch |

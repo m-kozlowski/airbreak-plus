@@ -1,9 +1,9 @@
-# AS11 CAN Protocol
+# Air11 CAN Protocol
 
-AS11 exposes a local service RPC path on the hidden CAN lines in the power
+Air11 exposes a local service RPC path on the hidden CAN lines in the power
 connector area. The bus also carries diagnostic log traffic.
 
-This document describes the CAN bus and AS11 DatagramCan/RPC framing only. It
+This document describes the CAN bus and Air11 DatagramCan/RPC framing only. It
 does not describe any specific USB-CAN adapter protocol.
 
 ## Contents
@@ -44,7 +44,7 @@ Bus settings:
 
 ## DatagramCan frame format
 
-AS11 fragments one datagram across classic 8-byte CAN frames. The low two
+Air11 fragments one datagram across classic 8-byte CAN frames. The low two
 bits of byte 0 are the frame flag; the upper six bits are zero.
 
 ### Single-frame datagram
@@ -73,7 +73,8 @@ frames with the same arbitration ID.
 
 ## JSON RPC over CAN
 
-The RPC payload is a UTF-8 JSON object as described in `rpc_protocol.md`,
+The RPC payload is a UTF-8 JSON object as described in the
+[RPC protocol](rpc_protocol.md),
 wrapped in DatagramCan and sent on:
 
 | Direction | CAN ID |
@@ -111,7 +112,7 @@ TxLink 2 uses two independent CAN paths:
 | accessory presence | `0x25b` to device | reassembled DatagramCan payload `01 00` |
 | live data and control | `0x383` / `0x382` | JSON RPC |
 
-AS11 opens `0x25b` as an 8-byte receive-only endpoint. `_TXC` /
+Air11 opens `0x25b` as an 8-byte receive-only endpoint. `_TXC` /
 `TxLink2Connected` starts as `Unknown`, becomes `No` after 15 seconds without a
 valid presence packet, and becomes `Yes` after `01 00`. A transition to `Yes`
 emits the `TxLink2Connected` system activity event. A later valid packet can
