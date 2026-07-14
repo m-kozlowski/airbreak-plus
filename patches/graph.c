@@ -11,9 +11,15 @@ typedef struct {
 	int last_pos_x;
 } graph_state_t;
 
+typedef int (*graph_draw_t)(int *obj);
+typedef int (*graph_update_t)(int *obj, int new_position);
 typedef void (*graph_header_update_t)(void *obj);
 typedef void (*graph_numbers_update_t)(void *obj, int left_var, int right_var);
 
+extern int variable_get_by_id(int var_id);
+extern const unsigned short graph_enable_var_id;
+extern const uint32 graph_draw_original;
+extern const uint32 graph_update_original;
 extern const uint32 graph_header_update_original;
 extern const uint32 graph_numbers_update_original;
 extern void gui_invalidate_window(void *obj);
@@ -26,6 +32,12 @@ STATIC void init_graph_state(graph_state_t *state) {
 
 STATIC graph_state_t *get_graph_state(void) {
 	return GET_PTR(PTR_GRAPH_DATA, graph_state_t, init_graph_state);
+}
+
+STATIC bool graph_enabled(void) {
+	if (graph_enable_var_id == 0xffffu)
+		return true;
+	return variable_get_by_id(graph_enable_var_id) != 0;
 }
 
 STATIC float rescale(float value, float start, float end, float graph_height) {
@@ -184,7 +196,11 @@ STATIC int graph_draw_current_column(bool only_if_new) {
 }
 
 // Replaces the stock bar draw method.
-int MAIN start(void) {
+int MAIN start(int *obj) {
+	if (!graph_enabled()) {
+		get_graph_state()->last_pos_x = -1;
+		return ((graph_draw_t)graph_draw_original)(obj);
+	}
 	if (!graph_widget_is_invalidated()) return 0;
 	return graph_draw_current_column(false);
 }
@@ -192,6 +208,10 @@ int MAIN start(void) {
 // The stock update method only redraws when the quantized bar position changes.
 // Preserve its state, but drive the time-based graph directly on each new column.
 int MAIN graph_widget_update(int *obj, int new_position) {
+	if (!graph_enabled()) {
+		get_graph_state()->last_pos_x = -1;
+		return ((graph_update_t)graph_update_original)(obj, new_position);
+	}
 	obj[2] = new_position;
 	return graph_draw_current_column(true);
 }

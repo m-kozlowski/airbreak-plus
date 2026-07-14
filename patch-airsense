@@ -1765,32 +1765,39 @@ patch_code_graph() {
     local ver=${CDX_VER#SX567-}
     local BIN=build/graph_${ver}.bin
     local ELF=build/graph_${ver}.elf
-    local DRAW_FPTR UPDATE_FPTR HEADER_FPTR HEADER_EXPECTED NUMBERS_FPTR NUMBERS_EXPECTED
-    local start update header_wrapper numbers_wrapper header_slot numbers_slot
-    local header_original numbers_original
+    local DRAW_FPTR DRAW_EXPECTED UPDATE_FPTR UPDATE_EXPECTED
+    local HEADER_FPTR HEADER_EXPECTED NUMBERS_FPTR NUMBERS_EXPECTED
+    local start update header_wrapper numbers_wrapper
+    local draw_slot update_slot header_slot numbers_slot
+    local draw_original update_original header_original numbers_original
     case "$ver" in
         0302)
-            DRAW_FPTR=0xf92dc; UPDATE_FPTR=0xf92d8
+            DRAW_FPTR=0xf92dc; DRAW_EXPECTED=0x08067601
+            UPDATE_FPTR=0xf92d8; UPDATE_EXPECTED=0x080675d3
             HEADER_FPTR=0xf396c; HEADER_EXPECTED=0x080672f5
             NUMBERS_FPTR=0xfaa04; NUMBERS_EXPECTED=0x0806771d
             ;;
         0305)
-            DRAW_FPTR=0xf9a24; UPDATE_FPTR=0xf9a20
+            DRAW_FPTR=0xf9a24; DRAW_EXPECTED=0x08067d25
+            UPDATE_FPTR=0xf9a20; UPDATE_EXPECTED=0x08067cf7
             HEADER_FPTR=0xf4080; HEADER_EXPECTED=0x08067a19
             NUMBERS_FPTR=0xfb14c; NUMBERS_EXPECTED=0x08067e41
             ;;
         0306)
-            DRAW_FPTR=0xf9a28; UPDATE_FPTR=0xf9a24
+            DRAW_FPTR=0xf9a28; DRAW_EXPECTED=0x08067d2d
+            UPDATE_FPTR=0xf9a24; UPDATE_EXPECTED=0x08067cff
             HEADER_FPTR=0xf4084; HEADER_EXPECTED=0x08067a21
             NUMBERS_FPTR=0xfb150; NUMBERS_EXPECTED=0x08067e49
             ;;
         0401)
-            DRAW_FPTR=0xf9c88; UPDATE_FPTR=0xf9c84
+            DRAW_FPTR=0xf9c88; DRAW_EXPECTED=0x08067d2d
+            UPDATE_FPTR=0xf9c84; UPDATE_EXPECTED=0x08067cff
             HEADER_FPTR=0xf42e4; HEADER_EXPECTED=0x08067a21
             NUMBERS_FPTR=0xfb3b0; NUMBERS_EXPECTED=0x08067e49
             ;;
         0402)
-            DRAW_FPTR=0xf9f00; UPDATE_FPTR=0xf9efc
+            DRAW_FPTR=0xf9f00; DRAW_EXPECTED=0x08067d2d
+            UPDATE_FPTR=0xf9efc; UPDATE_EXPECTED=0x08067cff
             HEADER_FPTR=0xf455c; HEADER_EXPECTED=0x08067a21
             NUMBERS_FPTR=0xfb628; NUMBERS_EXPECTED=0x08067e49
             ;;
@@ -1802,29 +1809,46 @@ patch_code_graph() {
     update=$(elf_symbol_addr "$ELF" graph_widget_update)
     header_wrapper=$(elf_symbol_addr "$ELF" graph_header_update)
     numbers_wrapper=$(elf_symbol_addr "$ELF" graph_numbers_update)
+    draw_slot=$(elf_symbol_addr "$ELF" graph_draw_original)
+    update_slot=$(elf_symbol_addr "$ELF" graph_update_original)
     header_slot=$(elf_symbol_addr "$ELF" graph_header_update_original)
     numbers_slot=$(elf_symbol_addr "$ELF" graph_numbers_update_original)
 
+    draw_original=$(read_u32 "$DRAW_FPTR")
+    update_original=$(read_u32 "$UPDATE_FPTR")
     header_original=$(read_u32 "$HEADER_FPTR")
     numbers_original=$(read_u32 "$NUMBERS_FPTR")
+    if (( draw_original == (start | 1) )); then
+        draw_original=$(read_u32 $(( draw_slot - FLASH_BASE )))
+    fi
+    if (( update_original == (update | 1) )); then
+        update_original=$(read_u32 $(( update_slot - FLASH_BASE )))
+    fi
     if (( header_original == (header_wrapper | 1) )); then
         header_original=$(read_u32 $(( header_slot - FLASH_BASE )))
     fi
     if (( numbers_original == (numbers_wrapper | 1) )); then
         numbers_original=$(read_u32 $(( numbers_slot - FLASH_BASE )))
     fi
+    (( draw_original == DRAW_EXPECTED )) || \
+        die "patch_code_graph: unexpected graph draw pointer 0x$(printf '%08X' "$draw_original")"
+    (( update_original == UPDATE_EXPECTED )) || \
+        die "patch_code_graph: unexpected graph update pointer 0x$(printf '%08X' "$update_original")"
     (( header_original == HEADER_EXPECTED )) || \
         die "patch_code_graph: unexpected header update pointer 0x$(printf '%08X' "$header_original")"
     (( numbers_original == NUMBERS_EXPECTED )) || \
         die "patch_code_graph: unexpected pressure update pointer 0x$(printf '%08X' "$numbers_original")"
 
     payload_inject graph "$BIN"
+    write_u32 $(( draw_slot - FLASH_BASE )) "$draw_original" || die failed
+    write_u32 $(( update_slot - FLASH_BASE )) "$update_original" || die failed
     write_u32 $(( header_slot - FLASH_BASE )) "$header_original" || die failed
     write_u32 $(( numbers_slot - FLASH_BASE )) "$numbers_original" || die failed
     write_u32 "$DRAW_FPTR" "$(( start | 1 ))" || die failed
     write_u32 "$UPDATE_FPTR" "$(( update | 1 ))" || die failed
     write_u32 "$HEADER_FPTR" "$(( header_wrapper | 1 ))" || die failed
     write_u32 "$NUMBERS_FPTR" "$(( numbers_wrapper | 1 ))" || die failed
+    GRAPH_APPLIED=1
 }
 
 
@@ -2358,6 +2382,31 @@ custom_patch_settings_asv_task_wrapper() {
 }
 
 
+# Reuse a reclaimed Reminder switch to select the injected pressure/flow graph
+# or the stock pressure gauge, and expose it in clinical Options.
+custom_patch_settings_graph() {
+    local graph_var graph_label=$STR_ID_MONITORING graph_dep graph_vid
+    local ver elf enable_addr
+
+    custom_claim_g8_var graph_var RXH graph_enable
+    graph_dep=$(find_var_table_index 4 RGT)
+    #                           #flags #callback #dep_chain   #name_str_id #default #opt_count #param_0a #opt_mask  #options_str_base     #param_12
+    redefine_g8_var "$graph_var" 0x0007 0         "$graph_dep" "$graph_label" 1        2          0         0x00000003 "$STR_ID_OFF_ON_BASE" 0
+
+    graph_vid=$(resolve_var_id "$graph_var")
+    custom_menu_add options "$graph_var" 0xffffffff
+
+    ver=${CDX_VER#SX567-}
+    elf=build/graph_${ver}.elf
+    [[ -r "$elf" ]] || die "custom_patch_settings_graph: $elf not found"
+    enable_addr=$(elf_symbol_addr "$elf" graph_enable_var_id)
+    write_u16 $(( enable_addr - FLASH_BASE )) "$(( graph_vid ))" || die failed
+
+    printf "  graph toggle: %s var_id=0x%04X label_str=0x%04X at 0x%08X\n" \
+        "$graph_var" "$(( graph_vid ))" "$graph_label" "$enable_addr"
+}
+
+
 # Reuse a reclaimed Reminder switch to enable/disable the injected squarewave
 # pressure waveform while preserving the stock handler for the Off path.
 custom_patch_settings_squarewave() {
@@ -2476,6 +2525,9 @@ custom_patch_settings_collect_features() {
     fi
     if [[ $ASV_TASK_WRAPPER_APPLIED == 1 ]]; then
         CUSTOM_SETTINGS_FEATURES+=(custom_patch_settings_asv_task_wrapper)
+    fi
+    if [[ $GRAPH_APPLIED == 1 ]]; then
+        CUSTOM_SETTINGS_FEATURES+=(custom_patch_settings_graph)
     fi
     if [[ $PATCH_CODE == 1 && $PATCH_S == 1 ]]; then
         CUSTOM_SETTINGS_FEATURES+=(custom_patch_settings_squarewave)
@@ -2845,6 +2897,7 @@ FW_LANG_COUNT=
 FW_LANG_IDS=()
 STR_ID_EMPTY=
 STR_ID_OFF_ON_BASE=
+STR_ID_MONITORING=0x0008
 
 CUSTOM_SETTINGS_REGISTRY_ADDR=
 CUSTOM_SETTINGS_REGISTRY_SIZE=
@@ -2854,6 +2907,7 @@ PAYLOAD_OFF=
 PAYLOAD_SIZE=
 BACKLIGHT_ADAPT_APPLIED=0
 ASV_TASK_WRAPPER_APPLIED=0
+GRAPH_APPLIED=0
 declare -A PAYLOAD_LAYOUT_FLASH
 declare -A PAYLOAD_LAYOUT_SIZE
 declare -a CUSTOM_G8_POOL

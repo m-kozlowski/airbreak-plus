@@ -20,6 +20,7 @@ globals[16] persistence group used by the patched image.
 | [Custom VAuto](guide/features/custom_vauto.md) | ASV Sens | RXM | g[8] | CSG |
 | [Custom VAuto](guide/features/custom_vauto.md) | Custom T/C | RPH | g[8] | CSG |
 | [ASV backup-rate control](guide/features/asv_backup_rate.md) | Backup Rate | RPW | g[8] | CSG |
+| Therapy graph | Monitoring | RXH | g[8] | CSG |
 | [Square Wave](guide/features/squarewave.md) | Square Wave | RPF | g[8] | CSG |
 | [Backlight adaptation](guide/features/backlight.md) | Ambient Low | ATH | g[4] | NGL |
 | [Backlight adaptation](guide/features/backlight.md) | Ambient High | RCF | g[4] | CSG |

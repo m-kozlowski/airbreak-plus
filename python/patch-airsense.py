@@ -690,6 +690,7 @@ class ASFirmwarePatches(object):
     CUSTOM_MENU_FLAG_HEADING = 2
     CUSTOM_MENU_FLAG_PAGE = 4
     CUSTOM_MENU_PAGE_CONTAINER_BASE = 0x80
+    STR_ID_MONITORING = 0x0008
     CUSTOM_MENU_SECTIONS = {
         'therapy': 0,
         'comfort': 1,
@@ -714,6 +715,7 @@ class ASFirmwarePatches(object):
         
     def __init__(self, asf):
         self.asf = asf
+        self.graph_applied = False
         self.squarewave_applied = False
         self.asv_task_wrapper_applied = False
         self.wrapper_limit_max_pdiff_applied = False
@@ -1512,6 +1514,29 @@ class ASFirmwarePatches(object):
         print("  squarewave toggle var_id=0x%04X at 0x%08X" %
               (square_vid, enable_addr))
 
+    def custom_patch_settings_graph(self):
+        """Expose the graph/stock-gauge switch in clinical Options."""
+        graph_var = self.custom_claim_g8_var('RXH', 'graph_enable')
+        graph_dep = self.asf.find_var_table_index(4, 'RGT')
+
+        self.redefine_g8_var(
+            graph_var, 0x0007, 0, graph_dep, self.STR_ID_MONITORING, 1,
+            2, 0, 0x00000003, self.asf.str_id_off_on_base, 0)
+
+        graph_vid = self.asf.resolve_var_id(graph_var)
+        self.custom_menu_add('options', graph_var, 0xffffffff)
+
+        ver = self.asf.cdx_ver.replace('SX567-', '')
+        elf_path = self._versioned_artifact_path('graph', 'elf', ver)
+        if not os.path.exists(elf_path):
+            raise ValueError(
+                "custom_patch_settings_graph: build/graph_%s.elf not found" % ver)
+        enable_addr = self._elf_symbol_addr(elf_path, 'graph_enable_var_id')
+        self.asf.write_u16(enable_addr - self.asf.FLASH_BASE, graph_vid)
+
+        print("  graph toggle: %s var_id=0x%04X label_str=0x%04X at 0x%08X" %
+              (graph_var, graph_vid, self.STR_ID_MONITORING, enable_addr))
+
     def custom_patch_settings_asv_task_wrapper(self):
         """Expose the stock ASV/ASVAuto backup-rate runtime switch."""
         backup_var = self.custom_claim_g8_var('RPW', 'asv_backup_rate')
@@ -1617,6 +1642,8 @@ class ASFirmwarePatches(object):
             features.append(self.custom_patch_settings_myasv)
         if self.asv_task_wrapper_applied:
             features.append(self.custom_patch_settings_asv_task_wrapper)
+        if self.graph_applied:
+            features.append(self.custom_patch_settings_graph)
         if self.squarewave_applied:
             features.append(self.custom_patch_settings_squarewave)
         if self.backlight_adapt_applied:
@@ -2091,32 +2118,38 @@ class ASFirmwarePatches(object):
         if data is None:
             return
         SITES = {
-            '0302': ((0xf92dc, 0xf92d8),
+            '0302': ((0xf92dc, 0x08067601), (0xf92d8, 0x080675d3),
                      (0xf396c, 0x080672f5), (0xfaa04, 0x0806771d)),
-            '0305': ((0xf9a24, 0xf9a20),
+            '0305': ((0xf9a24, 0x08067d25), (0xf9a20, 0x08067cf7),
                      (0xf4080, 0x08067a19), (0xfb14c, 0x08067e41)),
-            '0306': ((0xf9a28, 0xf9a24),
+            '0306': ((0xf9a28, 0x08067d2d), (0xf9a24, 0x08067cff),
                      (0xf4084, 0x08067a21), (0xfb150, 0x08067e49)),
-            '0401': ((0xf9c88, 0xf9c84),
+            '0401': ((0xf9c88, 0x08067d2d), (0xf9c84, 0x08067cff),
                      (0xf42e4, 0x08067a21), (0xfb3b0, 0x08067e49)),
-            '0402': ((0xf9f00, 0xf9efc),
+            '0402': ((0xf9f00, 0x08067d2d), (0xf9efc, 0x08067cff),
                      (0xf455c, 0x08067a21), (0xfb628, 0x08067e49)),
         }
         sites = SITES.get(ver)
         if sites is None:
             print("  patch_graph: skipped (unsupported CDX version %s)" % self.asf.cdx_ver)
             return
-        (draw_fptr, update_fptr), header_site, numbers_site = sites
+        draw_site, update_site, header_site, numbers_site = sites
+        draw_fptr = draw_site[0]
+        update_fptr = update_site[0]
         elf_path = self._versioned_artifact_path('graph', 'elf', ver)
         start = self._elf_symbol_addr(elf_path, 'start')
         update = self._elf_symbol_addr(elf_path, 'graph_widget_update')
         header_wrapper = self._elf_symbol_addr(elf_path, 'graph_header_update')
         numbers_wrapper = self._elf_symbol_addr(elf_path, 'graph_numbers_update')
+        draw_slot = self._elf_symbol_addr(elf_path, 'graph_draw_original')
+        update_slot = self._elf_symbol_addr(elf_path, 'graph_update_original')
         header_slot = self._elf_symbol_addr(elf_path, 'graph_header_update_original')
         numbers_slot = self._elf_symbol_addr(elf_path, 'graph_numbers_update_original')
 
         originals = []
         for name, (site, expected), wrapper, slot in (
+                ('graph draw', draw_site, start, draw_slot),
+                ('graph update', update_site, update, update_slot),
                 ('header', header_site, header_wrapper, header_slot),
                 ('pressure', numbers_site, numbers_wrapper, numbers_slot)):
             original = self.asf.read_u32(site)
@@ -2129,12 +2162,15 @@ class ASFirmwarePatches(object):
             originals.append(original)
 
         flash, _ = self._inject_payload('graph', data)
-        self.asf.write_u32(header_slot - self.asf.FLASH_BASE, originals[0])
-        self.asf.write_u32(numbers_slot - self.asf.FLASH_BASE, originals[1])
+        self.asf.write_u32(draw_slot - self.asf.FLASH_BASE, originals[0])
+        self.asf.write_u32(update_slot - self.asf.FLASH_BASE, originals[1])
+        self.asf.write_u32(header_slot - self.asf.FLASH_BASE, originals[2])
+        self.asf.write_u32(numbers_slot - self.asf.FLASH_BASE, originals[3])
         self.asf.write_u32(draw_fptr, start | 1)
         self.asf.write_u32(update_fptr, update | 1)
         self.asf.write_u32(header_site[0], header_wrapper | 1)
         self.asf.write_u32(numbers_site[0], numbers_wrapper | 1)
+        self.graph_applied = True
         print("  graph: %dB at 0x%08X" % (len(data), flash))
 
     def patch_squarewave(self):

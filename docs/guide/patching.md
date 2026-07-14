@@ -93,6 +93,9 @@ environment variables.
 | `PATCH_ASV_TASK_WRAPPER=1` | Add [runtime control](features/asv_backup_rate.md) for stock ASV/ASVAuto backup rate (requires `PATCH_CODE=1`) |
 | `PATCH_VAUTO_WRAPPER=1` | Add [Custom VAuto](features/custom_vauto.md) pressure shaping and trigger/cycle assist (requires `PATCH_CODE=1`) |
 
+With custom settings, `Monitoring` in clinical Options enables or disables the
+flow and pressure graph. Without custom settings, the graph remains enabled.
+
 Example with custom VAuto:
 ```
 export PATCH_CODE=1
