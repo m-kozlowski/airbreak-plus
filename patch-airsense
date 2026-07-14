@@ -2019,37 +2019,26 @@ custom_patch_settings_reclaim_reminders() {
 
     # disable reminder periodic processing.
     # bx lr ;
-    if printf '\x38\xb5\x04\x46' | check_patch "$reminders_tick"; then
-        printf '\x70\x47' | patch "$reminders_tick" || die failed
-    elif ! printf '\x70\x47' | check_patch "$reminders_tick"; then
-        die "custom_patch_settings: unexpected reminder tick bytes"
-    fi
+    patch_or_verify "$reminders_tick" '\x38\xb5\x04\x46' '\x70\x47' \
+        "reminder tick" || true
 
     # movs r0,#0; bx lr ; prevent the stock manager from retaining hardcoded
     # references to variables reclaimed below.
-    if printf '\x1f\xb5\x1c\x20' | check_patch "$reminder_list_create"; then
-        printf '\x00\x20\x70\x47' | patch "$reminder_list_create" || die failed
-    elif ! printf '\x00\x20\x70\x47' | check_patch "$reminder_list_create"; then
-        die "custom_patch_settings: unexpected reminder list constructor bytes"
-    fi
+    patch_or_verify "$reminder_list_create" '\x1f\xb5\x1c\x20' '\x00\x20\x70\x47' \
+        "reminder list constructor" || true
 
     # bx lr ; disable the hardcoded RX* -> RC* editability updater.
-    if printf '\xf0\xb5\xa3\xb0' | check_patch "$reminder_state_update"; then
-        printf '\x70\x47' | patch "$reminder_state_update" || die failed
-    elif ! printf '\x70\x47' | check_patch "$reminder_state_update"; then
-        die "custom_patch_settings: unexpected reminder state updater bytes"
-    fi
+    patch_or_verify "$reminder_state_update" '\xf0\xb5\xa3\xb0' '\x70\x47' \
+        "reminder state updater" || true
 
     local item_reclaim=$(( reminder_menu_item + 2 ))
     local item_reclaim_size=$(( reminder_menu_item_end - item_reclaim ))
 
     # skip visible Reminders menu item between SmartStart and Configuration.
     # b after scrollbar_add_item ;
-    if printf '\x08\x20\x01\xf0' | check_patch "$reminder_menu_item"; then
-        printf '\x1c\xe0' | patch "$reminder_menu_item" || die failed
+    if patch_or_verify "$reminder_menu_item" '\x08\x20\x01\xf0' '\x1c\xe0' \
+            "reminder menu item"; then
         fill_ff "$item_reclaim" "$item_reclaim_size" || die failed
-    elif ! printf '\x1c\xe0' | check_patch "$reminder_menu_item"; then
-        die "custom_patch_settings: unexpected reminder menu item bytes"
     fi
     local str_id
     for str_id in $reclaimed_string_ids; do
@@ -2061,11 +2050,9 @@ custom_patch_settings_reclaim_reminders() {
 
     # clear Reminders page slot, then skip children.
     # movs r4,#0; str r4,[r5,#0x74]; b end ;
-    if printf '\x2c\x20\x00\xf0' | check_patch "$reminder_menu"; then
-        printf '\x00\x24\x6c\x67\x2a\xe1' | patch "$reminder_menu" || die failed
+    if patch_or_verify "$reminder_menu" '\x2c\x20\x00\xf0' \
+            '\x00\x24\x6c\x67\x2a\xe1' "reminder menu"; then
         fill_ff "$reclaim" "$reclaim_size" || die failed
-    elif ! printf '\x00\x24\x6c\x67\x2a\xe1' | check_patch "$reminder_menu"; then
-        die "custom_patch_settings: unexpected reminder menu bytes"
     fi
 
     CUSTOM_SETTINGS_REGISTRY_ADDR=$reclaim
