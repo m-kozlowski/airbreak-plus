@@ -2344,8 +2344,9 @@ custom_patch_settings_squarewave() {
 }
 
 
-# Expose persistent Backlight controls in clinical Configuration and pass the
-# high-threshold var_id to the payload. ATH remains in its stock NGL group.
+# Expose persistent Backlight controls on a generated LCD page in clinical
+# Configuration and pass the high-threshold var_id to the payload. ATH remains
+# in its stock NGL group.
 custom_patch_settings_backlight() {
     declare -A AMBIENT_LOW_LABEL=([0]="Ambient Low")
     declare -A AMBIENT_HIGH_LABEL=([0]="Ambient High")
@@ -2374,8 +2375,8 @@ custom_patch_settings_backlight() {
     redefine_g4_var "$low_var"   "$low_flags" "$low_callback" "$low_dep"  "$low_label"  590      4090  0    0         1      5     "$STR_ID_EMPTY"
     redefine_g4_var "$high_var"  0x0007        0              "$high_dep" "$high_label" 3070     4090  0    0         1      10    "$STR_ID_EMPTY"
 
-    # Static LCD/Buttons headings provide channel context, so both endpoint
-    # pairs can reuse the firmware's localized Low/High labels.
+    # The LCD page title and Buttons heading provide channel context, so both
+    # endpoint pairs can reuse the firmware's localized Low/High labels.
     level_base=$(read_u16 $(( $(find_var VCS) + G8_BASE_STR )))
     level_low_str=$(( level_base + 1 ))
     level_high_str=$(( level_base + 3 ))
@@ -2394,14 +2395,16 @@ custom_patch_settings_backlight() {
     done
 
     all_modes=$(MOP_BITMASK CPAP AutoSet APAP S ST T VAuto ASV ASVAuto iVAPS PAC AFH)
-    custom_menu_add configuration "$low_var"  "$all_modes"
-    custom_menu_add configuration "$high_var" "$all_modes"
-    custom_menu_add_heading configuration "$lcd_label"
-    custom_menu_add configuration LLL "$all_modes"
-    custom_menu_add configuration LLH "$all_modes"
-    custom_menu_add_heading configuration "$buttons_label"
-    custom_menu_add configuration LBL "$all_modes"
-    custom_menu_add configuration LBH "$all_modes"
+    custom_menu_add_page lcd configuration "$lcd_label"
+    custom_menu_add lcd "$low_var"  "$all_modes"
+    custom_menu_add lcd "$high_var" "$all_modes"
+    custom_menu_add lcd ASF "$all_modes"
+    custom_menu_add_heading lcd "$lcd_label"
+    custom_menu_add lcd LLL "$all_modes"
+    custom_menu_add lcd LLH "$all_modes"
+    custom_menu_add_heading lcd "$buttons_label"
+    custom_menu_add lcd LBL "$all_modes"
+    custom_menu_add lcd LBH "$all_modes"
 
     high_vid=$(resolve_var_id "$high_var")
     ver=${CDX_VER#SX567-}
@@ -2410,7 +2413,7 @@ custom_patch_settings_backlight() {
     high_addr=$(elf_symbol_addr "$elf" backlight_adapt_full_asf_var_id)
     write_u16 $(( high_addr - FLASH_BASE )) "$(( high_vid ))" || die failed
 
-    printf "  backlight headings: lcd_str=0x%04X buttons_str=0x%04X\n" \
+    printf "  backlight page: lcd_str=0x%04X buttons_str=0x%04X\n" \
         "$lcd_label" "$buttons_label"
     printf "  backlight ambient low: %s label_str=0x%04X\n" \
         "$low_var" "$low_label"

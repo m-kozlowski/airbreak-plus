@@ -34,14 +34,13 @@ the end of the stock transition cannot leave stale brightness values.
 
 | Setting | UART | Range | Default | Menu | Visible modes | Function | Without `custom_settings` |
 |---------|------|-------|---------|------|---------------|----------|---------------------------|
-| Ambient Low | `ATH` | 0 to 4090, step 5 | 590 | Configuration | All | Sets the ambient reading where brightness leaves its low endpoints | Uses ATH; patched default 590 |
-| Ambient High | `RCF` | 0 to 4090, step 10 | 3070 | Configuration | All | Sets the ambient reading where brightness reaches its high endpoints; zero restores stock handling | Fixed `0xC00` threshold |
-| LCD / Low | `LLL` | 0 to 100, step 1 | 60 | Configuration | All | Sets LCD brightness at and below Ambient Low | Uses LLL |
-| LCD / High | `LLH` | 0 to 100, step 1 | 100 | Configuration | All | Sets LCD brightness at and above Ambient High | Uses LLH |
-| Buttons / Low | `LBL` | 0 to 100, step 1 | 32 | Configuration | All | Sets button brightness at and below Ambient Low | Uses LBL; patched default 32 |
-| Buttons / High | `LBH` | 0 to 100, step 1 | 80 | Configuration | All | Sets button brightness at and above Ambient High | Uses LBH; patched default 80 |
+| Ambient Low | `ATH` | 0 to 4090, step 5 | 590 | Configuration / LCD | All | Sets the ambient reading where brightness leaves its low endpoints | Uses ATH; patched default 590 |
+| Ambient High | `RCF` | 0 to 4090, step 10 | 3070 | Configuration / LCD | All | Sets the ambient reading where brightness reaches its high endpoints; zero restores stock handling | Fixed `0xC00` threshold |
+| LCD / Low | `LLL` | 0 to 100, step 1 | 60 | Configuration / LCD | All | Sets LCD brightness at and below Ambient Low | Uses LLL |
+| LCD / High | `LLH` | 0 to 100, step 1 | 100 | Configuration / LCD | All | Sets LCD brightness at and above Ambient High | Uses LLH |
+| Buttons / Low | `LBL` | 0 to 100, step 1 | 32 | Configuration / LCD | All | Sets button brightness at and below Ambient Low | Uses LBL; patched default 32 |
+| Buttons / High | `LBH` | 0 to 100, step 1 | 80 | Configuration / LCD | All | Sets button brightness at and above Ambient High | Uses LBH; patched default 80 |
 
-LCD and Buttons are headings within the generated Configuration group.
 Firmware variable assignments and persistence are listed in the
 [custom settings registry](../../custom_settings.md#assignments).
 
