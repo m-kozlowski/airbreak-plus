@@ -1,7 +1,8 @@
 /*
- * vid_spoof.c - MOP-based Variant ID override
+ * vid_spoof.c - RID/MOP-based Variant ID override
  *
- * MOP callback dispatcher handler that updates VID whenever MOP changes.
+ * MOP selects the baseline VID. Firmware-confirmed RID/MOP pairs replace it
+ * with the corresponding regional variant.
  *
  */
 
@@ -10,26 +11,71 @@
 extern int variable_get_by_id(int var_id);
 extern void variable_set_by_id(int var_id, int raw_value);
 
-static const unsigned char vid_lut[12] = {
-    0x1A,   // CPAP
-    0x1A,   // AutoSet
-    0x1A,   // APAP
-    0x0B,   // S
-    0x07,   // ST
-    0x07,   // T
-    0x09,   // VAuto
-    0x13,   // ASV
-    0x13,   // ASVAuto
-    0x2E,   // iVAPS
-    0x07,   // PAC
-    0x19    // AutoSet For Her
+static const unsigned char vid_by_mop[12] = {
+    26,   // CPAP
+    26,   // AutoSet
+    26,   // APAP
+    11,   // S
+     7,   // ST
+     7,   // T
+     9,   // VAuto
+    19,   // ASV
+    19,   // ASVAuto
+    46,   // iVAPS
+    46,   // PAC
+    25,   // AutoSet For Her
+};
+
+enum {
+    MOP_AUTOSET = 1,
+    MOP_VAUTO = 6,
+    MOP_ASV = 7,
+    MOP_ASVAUTO = 8,
+    MOP_IVAPS = 9,
+    MOP_PAC = 10,
+    MOP_AUTOSET_FOR_HER = 11,
+};
+
+struct vid_mapping {
+    unsigned short rid;
+    unsigned char mop;
+    unsigned char vid;
+};
+
+static const struct vid_mapping regional_vid_map[] = {
+    {13, MOP_AUTOSET,         39},
+    {13, MOP_VAUTO,            9},
+    {13, MOP_ASV,             19},
+    {13, MOP_ASVAUTO,         19},
+    {15, MOP_AUTOSET,         26},
+    {15, MOP_ASV,             19},
+    {15, MOP_ASVAUTO,         19},
+    {15, MOP_IVAPS,           46},
+    {15, MOP_PAC,             46},
+    {16, MOP_AUTOSET,         26},
+    {17, MOP_AUTOSET,         26},
+    {32, MOP_AUTOSET,         34},
+    {32, MOP_AUTOSET_FOR_HER, 34},
+    {42, MOP_AUTOSET,         39},
+    {42, MOP_VAUTO,            9},
 };
 
 void start(void)
 {
+    unsigned int rid = (unsigned int)variable_get_by_id(VAR_ID_RID);
     unsigned int mop = (unsigned int)variable_get_by_id(VAR_ID_MOP);
-    if (mop <= 11) {
-        unsigned int v = vid_lut[mop];
-        variable_set_by_id(VAR_ID_VID, v);
+    unsigned int vid;
+
+    if (mop >= sizeof(vid_by_mop))
+        return;
+
+    vid = vid_by_mop[mop];
+    for (unsigned int i = 0;
+         i < sizeof(regional_vid_map) / sizeof(regional_vid_map[0]); ++i) {
+        if (regional_vid_map[i].rid == rid && regional_vid_map[i].mop == mop) {
+            vid = regional_vid_map[i].vid;
+            break;
+        }
     }
+    variable_set_by_id(VAR_ID_VID, vid);
 }

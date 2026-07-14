@@ -2291,7 +2291,7 @@ class ASFirmwarePatches(object):
 
 
     def patch_vid_spoof(self):
-        """Register MOP callback handler to dynamically set VID per therapy mode."""
+        """Set VID from therapy mode, using a regional variant where known."""
         ver = self.asf.cdx_ver.replace('SX567-', '')
         bin_path = self._versioned_artifact_path('vid_spoof', 'bin', ver)
         elf_path = self._versioned_artifact_path('vid_spoof', 'elf', ver)
@@ -2428,7 +2428,7 @@ if __name__ == "__main__":
         {'arg':"patch-fw-backlight",    'desc':"Improved backlight adaptation to ambient light.",       'default':True,  'function':'patch_backlight_adapt'},
         {'arg':"patch-custom-settings", 'desc':"Expose settings for injected custom patch features.",
                                                                                                         'default':True,  'function':'custom_patch_settings'},
-        {'arg':"patch-fw-vidspoof",     'desc':"Register MOP callback handler to dynamically set VID per therapy mode.", 'default':True, 'function':'patch_vid_spoof'},
+        {'arg':"patch-fw-vidspoof",     'desc':"Set VID from therapy mode, using a regional variant where known.",     'default':True, 'function':'patch_vid_spoof'},
         {'arg':"patch-custom-palette",  'desc':"Patch custom color palette.",
                                                                                                         'default':True,  'function':'custom_palette'},
         {'arg':"patch-fw-lcd",          'desc':"Universal ILI9325/ILI9328 LCD driver.",                 'default':False, 'function':'patch_lcd_ili9325'},
