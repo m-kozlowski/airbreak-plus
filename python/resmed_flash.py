@@ -29,10 +29,12 @@ import struct
 PLATFORMS = {
     'SX577': {'baud_method': 'bdd', 'default_baud': 57600,
               'baud_rates': {57600: '0000', 115200: '0001', 460800: '0002'},
-              'enter_cmd': 'P S #BLL 0001', 'reset_cmd': 'P S #RES 0001'},
+              'enter_cmd': 'P S #BLL 0001', 'reset_cmd': 'P S #RES 0001',
+              'flash_status': 'BLE'},
     'SX585': {'baud_method': 'bdd', 'default_baud': 57600,
               'baud_rates': {57600: '0000', 115200: '0001', 460800: '0002'},
-              'enter_cmd': 'P S #BLL 0001', 'reset_cmd': 'P S #RES 0001'},
+              'enter_cmd': 'P S #BLL 0001', 'reset_cmd': 'P S #RES 0001',
+              'flash_status': 'BLE'},
     'SX525': {'baud_method': 'fixed', 'default_baud': 57600,
               'baud_rates': {57600: 'E100'},
               'enter_cmd': 'P S #RES 0001', 'reset_cmd': None},
@@ -204,9 +206,10 @@ def query_bid(ser):
     _, resp = send_cmd(ser, "G S #BID", timeout=0.5, quiet=True)
     return _extract_bid(resp)
 
-def _extract_bls(responses):
+def _extract_hex_var(responses, name):
+    marker = name.encode()
     for r in responses:
-        if b'BLS' in r['payload']:
+        if marker in r['payload']:
             text = r['payload'].decode('ascii', errors='replace')
             if '= ' in text:
                 try:
@@ -215,10 +218,25 @@ def _extract_bls(responses):
                     pass
     return None
 
+def query_boot_var(ser, name, timeout=0.3):
+    _, resp = send_cmd(ser, f"G S #{name}", timeout=timeout, quiet=True)
+    return _extract_hex_var(resp, name)
+
 def query_bls(ser, timeout=0.3):
     """Query bootloader status. Returns 0=CDX, 1=bootloader, 2=bootloader(invalid fw), None=no response."""
-    _, resp = send_cmd(ser, "G S #BLS", timeout=timeout, quiet=True)
-    return _extract_bls(resp)
+    return query_boot_var(ser, 'BLS', timeout)
+
+def wait_for_application(ser, status_var, timeout=15.0):
+    deadline = time.time() + timeout
+    last_bls = None
+    while time.time() < deadline:
+        bls = query_bls(ser, timeout=0.3)
+        if bls == 0:
+            return True, bls, None
+        if bls is not None:
+            last_bls = bls
+        time.sleep(0.2)
+    return False, last_bls, query_boot_var(ser, status_var, timeout=0.5)
 
 def bid_from_image(image_data):
     """Extract BID from BLX region of a full image (version string near end of BLX)."""
@@ -359,7 +377,7 @@ def enter_bootloader(ser, max_retries=3, enter_cmd='P S #BLL 0001', flood=True):
             for _ in range(300):
                 ser.write(preamble + bls_frame)
                 _, responses = read_responses(ser, timeout=0.05)
-                bls = _extract_bls(responses)
+                bls = _extract_hex_var(responses, 'BLS')
                 if bls is not None and bls >= 1:
                     print(f"[+] Bootloader caught at t+{time.time()-t0:.2f}s (BLS={bls})")
                     time.sleep(0.2)
@@ -389,7 +407,7 @@ def enter_bootloader(ser, max_retries=3, enter_cmd='P S #BLL 0001', flood=True):
                 ser.write(bls_frame)
                 ser.flush()
                 _, responses = read_responses(ser, timeout=0.3)
-                bls = _extract_bls(responses)
+                bls = _extract_hex_var(responses, 'BLS')
                 if bls is not None and bls >= 1:
                     print(f"[+] Bootloader caught at t+{time.time()-t0:.2f}s (BLS={bls})")
                     time.sleep(0.2)
@@ -533,9 +551,21 @@ def detect_input(file_data: bytes, block_args: list, include_bootloader: bool, b
 
 
 CHUNK_SIZE = 250
+FLASH_COMPLETE_OK = 0x0000
+
+
+def check_flash_status(ser, status_var, expected, context):
+    status = query_boot_var(ser, status_var, timeout=1.0)
+    if status is None:
+        print(f"\n[!] No {status_var} response {context}")
+        return False
+    if status != expected:
+        print(f"\n[!] Flash failed {context}: {status_var}={status:04X}, expected {expected:04X}")
+        return False
+    return True
 
 def flash_block(ser, block_id, data, flash_start, blocks, dry_run=False,
-                skip_completion=False):
+                skip_completion=False, status_var=None, timing=False):
     """Erase and flash a single block. Returns True on success.
     skip_completion: don't send completion frame. Bootloader stays in state 1
     (FLASH_ACTIVE) until mode 5 timeout fires (~2s after last F-frame), then
@@ -598,7 +628,11 @@ def flash_block(ser, block_id, data, flash_start, blocks, dry_run=False,
     seq = 0
     offset = 0
     frame_count = 0
-    t0 = time.time()
+    t0 = time.monotonic()
+    previous_write_end = None
+    max_write = (0.0, 0)
+    max_flush = (0.0, 0)
+    max_gap = (0.0, 0)
 
     print(f"\n[*] Writing {data_end:,} bytes @ {ser.baudrate} baud...")
 
@@ -608,14 +642,33 @@ def flash_block(ser, block_id, data, flash_start, blocks, dry_run=False,
             break
         address = flash_start + offset
         f_frame = build_f_frame(block_name, seq, build_record_03(address, bytes(chunk)))
-        ser.write(f_frame)
+        frame_index = frame_count + 1
+        write_start = time.monotonic()
+        if previous_write_end is not None:
+            gap = write_start - previous_write_end
+            if gap > max_gap[0]:
+                max_gap = (gap, frame_index)
+        written = ser.write(f_frame)
+        write_end = time.monotonic()
+        if written != len(f_frame):
+            print(f"\n[!] Short serial write at frame {frame_index}: "
+                  f"{written}/{len(f_frame)} bytes")
+            return False
+        write_time = write_end - write_start
+        if write_time > max_write[0]:
+            max_write = (write_time, frame_index)
+        previous_write_end = write_end
         frame_count += 1
         offset += len(chunk)
         seq = (seq + 1) & 0xFF
 
         if frame_count % 20 == 0:
+            flush_start = time.monotonic()
             ser.flush()
-            elapsed = time.time() - t0
+            flush_time = time.monotonic() - flush_start
+            if flush_time > max_flush[0]:
+                max_flush = (flush_time, frame_count)
+            elapsed = time.monotonic() - t0
             pct = offset / data_end * 100
             rate = offset / elapsed if elapsed > 0 else 0
             eta = (data_end - offset) / rate if rate > 0 else 0
@@ -624,14 +677,18 @@ def flash_block(ser, block_id, data, flash_start, blocks, dry_run=False,
                 f"[{rate/1024:.1f} KB/s] ETA {eta:.0f}s"
             )
             sys.stdout.flush()
-            time.sleep(0.01)
-            _, responses = read_responses(ser, timeout=0.01)
-            for r in responses:
-                print(f"\n    [{r['type']}] {r['payload'].decode('ascii', errors='replace')}")
 
+    flush_start = time.monotonic()
     ser.flush()
-    elapsed = time.time() - t0
+    flush_time = time.monotonic() - flush_start
+    if flush_time > max_flush[0]:
+        max_flush = (flush_time, frame_count)
+    elapsed = time.monotonic() - t0
     print(f"\r    {offset:,}/{data_end:,} (100%) in {elapsed:.1f}s, {frame_count} frames          ")
+    if timing:
+        print(f"    Timing: max write {max_write[0]:.3f}s at frame {max_write[1]}, "
+              f"max flush {max_flush[0]:.3f}s after frame {max_flush[1]}, "
+              f"max host gap {max_gap[0]:.3f}s before frame {max_gap[1]}")
 
     # Completion frame
     if skip_completion:
@@ -643,10 +700,16 @@ def flash_block(ser, block_id, data, flash_start, blocks, dry_run=False,
         print("[*] Sending completion frame...")
         ser.write(build_completion_frame(block_name, seq))
         ser.flush()
-        time.sleep(0.5)
-        _, responses = read_responses(ser, timeout=1.0)
-        for r in responses:
-            print(f"    [{r['type']}] {r['payload'].decode('ascii', errors='replace')}")
+        if status_var:
+            if not check_flash_status(ser, status_var, FLASH_COMPLETE_OK,
+                                      "after completion"):
+                return False
+            print(f"[+] Completion confirmed: {status_var}=0000")
+        else:
+            time.sleep(0.5)
+            _, responses = read_responses(ser, timeout=1.0)
+            for r in responses:
+                print(f"    [{r['type']}] {r['payload'].decode('ascii', errors='replace')}")
 
     return True
 
@@ -707,6 +770,8 @@ Examples:
     parser.add_argument('--info', action='store_true', help='Show device info and exit')
     parser.add_argument('--raw', action='store_true', help='Flash raw image smaller than block size')
     parser.add_argument('--no-wait', action='store_true', help='Fail immediately if device not found')
+    parser.add_argument('--timing', action='store_true',
+                        help='Report serial write, flush, and inter-frame timing')
     parser.add_argument('--yolo', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args()
 
@@ -945,6 +1010,7 @@ Examples:
         reset_cmd = plat.get('reset_cmd', 'P S #RES 0001')
         default_baud = plat.get('default_baud', 57600)
         can_bdd = plat.get('baud_method', 'bdd') == 'bdd'
+        flash_status = plat.get('flash_status')
 
         if not args.no_enter:
             if ser.baudrate != default_baud:
@@ -965,6 +1031,7 @@ Examples:
                     blocks = bl_blocks
                     plat = _platform(bl_bid) or plat
                     can_bdd = plat.get('baud_method', 'bdd') == 'bdd'
+                    flash_status = plat.get('flash_status')
                     reset_cmd = plat.get('reset_cmd')
                     jobs = detect_input(file_data, args.block, args.include_bootloader,
                                         blocks, raw=args.raw)
@@ -1027,7 +1094,8 @@ Examples:
             # timeout (~2s) -> plain reset -> BL with infinite timeout.
             skip = (block_id == 'BLX' and not is_last)
             if not flash_block(ser, block_id, data, flash_start, blocks,
-                               skip_completion=skip):
+                               skip_completion=skip, status_var=flash_status,
+                               timing=args.timing):
                 print(f"\n[!] Failed to flash {block_id}")
                 return 1
 
@@ -1037,6 +1105,15 @@ Examples:
                     switch_baud(ser, default_baud)
                 print("\n[*] Resetting device...")
                 send_cmd(ser, reset_cmd, timeout=2.0)
+                if flash_status:
+                    print("[*] Waiting for application...")
+                    ok, bls, ble = wait_for_application(ser, flash_status)
+                    if not ok:
+                        state = "no BLS response" if bls is None else f"BLS={bls:04X}"
+                        error = "" if ble is None else f", BLE={ble:04X}"
+                        print(f"[!] Application did not start ({state}{error})")
+                        return 1
+                    print("[+] Application responding (BLS=0000)")
             else:
                 print("\n[*] Power cycle device to boot new firmware")
 
