@@ -41,6 +41,8 @@ G5_STRIDE = 16
 G10_STRIDE = 14
 G13_ROUTE_STRIDE = 6
 G14_COLLECTION_STRIDE = 0x34
+G17_EVENT_SCHEMA_SIZE = 28
+G17_LEGACY_EVENT_SCHEMA_SIZE = 20
 SUMMARY_STRIDE = 36
 
 MODE_NAMES = [
@@ -1233,40 +1235,81 @@ class AS11Firmware:
             })
         return out
 
+    def _event_label_schema(self, off, schema_bytes):
+        if schema_bytes == G17_EVENT_SCHEMA_SIZE:
+            event_record_bytes = self.u16(off)
+            label_count = self.u16(off + 2)
+            edf_record_bytes = self.u32(off + 4)
+            fifo_capacity = self.u32(off + 8)
+            flags_off = off + 0x0c
+            tag_ptr = self.u32(off + 0x10)
+            constant = self.u32(off + 0x14)
+            label_table = self.u32(off + 0x18)
+            if event_record_bytes == 0:
+                return None
+        else:
+            event_record_bytes = None
+            label_count = self.u16(off)
+            edf_record_bytes = self.u16(off + 2)
+            fifo_capacity = self.u32(off + 4)
+            flags_off = off + 8
+            tag_ptr = self.u32(off + 0x0c)
+            constant = None
+            label_table = self.u32(off + 0x10)
+
+        tag = self._string_at_ptr(tag_ptr)
+        table_off = self.ptr_to_off(label_table)
+        if (not tag or label_count == 0 or table_off is None or
+                not self._file_range_ok(table_off, label_count * 4) or
+                edf_record_bytes < 2 or edf_record_bytes > 66 or
+                edf_record_bytes & 1 or fifo_capacity == 0):
+            return None
+
+        labels = []
+        for index in range(label_count):
+            label = self._string_at_ptr(
+                self.u32(table_off + index * 4), allow_empty=True)
+            if label is None:
+                return None
+            labels.append(label)
+        flags = self.u32(flags_off)
+        return {
+            "schema_bytes": schema_bytes,
+            "event_record_bytes": event_record_bytes,
+            "label_count": label_count,
+            "edf_record_bytes": edf_record_bytes,
+            "fifo_capacity": fifo_capacity,
+            "writer_enabled": int(self.u8(flags_off) != 0),
+            "backdate_onset": int(self.u8(flags_off + 1) != 0),
+            "flags": flags,
+            "tag": tag,
+            "constant": constant,
+            "label_table": label_table,
+            "labels": labels,
+        }
+
     def event_labels(self):
         base = self.g.get(17)
         if not isinstance(base, int):
             return []
-        out = []
         end = self.section_end(17) or len(self.data)
-        i = 0
-        while True:
-            off = base + i * 28
-            if off + 28 > end:
+        for stride in (G17_EVENT_SCHEMA_SIZE, G17_LEGACY_EVENT_SCHEMA_SIZE):
+            if (base + stride <= end and
+                    self._event_label_schema(base, stride) is not None):
                 break
-            label_count = self.u16(off + 2)
-            tag = self._string_at_ptr(self.u32(off + 16))
-            table_off = self.ptr_to_off(self.u32(off + 24))
-            if not tag or table_off is None:
+        else:
+            return []
+
+        out = []
+        off = base
+        while off + stride <= end:
+            row = self._event_label_schema(off, stride)
+            if row is None:
                 break
-            labels = []
-            for j in range(label_count):
-                ptr = self.u32(table_off + j * 4)
-                labels.append(self._string_at_ptr(ptr, allow_empty=True) or "")
-            out.append({
-                "index": i,
-                "offset": off,
-                "tag": tag,
-                "event_bound": self.u16(off),
-                "label_count": label_count,
-                "record_size": self.u32(off + 4),
-                "label_ptr_stride": self.u32(off + 8),
-                "flags": self.u32(off + 12),
-                "enabled_constant": self.u32(off + 20),
-                "label_table": self.u32(off + 24),
-                "labels": labels,
-            })
-            i += 1
+            row["index"] = len(out)
+            row["offset"] = off
+            out.append(row)
+            off += stride
         return out
 
     def periodic_collections(self):
@@ -2050,9 +2093,14 @@ class AS11Firmware:
                 emit_line(
                     table=table["tag"],
                     table_idx=table["index"],
+                    schema_bytes=table["schema_bytes"],
                     label_idx=idx,
                     label=label,
-                    event_bound=table["event_bound"],
+                    event_record_bytes=table["event_record_bytes"],
+                    edf_record_bytes=table["edf_record_bytes"],
+                    fifo_capacity=table["fifo_capacity"],
+                    writer_enabled=table["writer_enabled"],
+                    backdate_onset=table["backdate_onset"],
                     flags="0x%08X" % table["flags"],
                 )
 

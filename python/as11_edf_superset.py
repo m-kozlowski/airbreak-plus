@@ -19,6 +19,8 @@ from pathlib import Path
 STREAM_HEADER_SIZE = 16
 STREAM_SIGNAL_SIZE = 16
 SUMMARY_RECORD_SIZE = 36
+EVENT_SCHEMA_SIZE = 28
+LEGACY_EVENT_SCHEMA_SIZE = 20
 STR_RECORD_SETTING = 0x00
 STR_RECORD_SUMMARY = 0x01
 
@@ -542,6 +544,57 @@ class S11EdfSupersetPatcher:
             changed += self.patch_stream_schema(tag, signals)
         return changed
 
+    def find_csl_event_schema(self):
+        base = self.asf.globals_offset(17)
+        end = min(len(self.asf.fw), self.asf.CONF_OFF + self.asf.CONF_SIZE)
+        for schema_bytes in (EVENT_SCHEMA_SIZE, LEGACY_EVENT_SCHEMA_SIZE):
+            off = base
+            while off + schema_bytes <= end:
+                if schema_bytes == EVENT_SCHEMA_SIZE:
+                    label_count = self.asf.u16(off + 2)
+                    flags_off = off + 0x0c
+                    tag_ptr = self.asf.u32(off + 0x10)
+                    label_table = self.asf.u32(off + 0x18)
+                else:
+                    label_count = self.asf.u16(off)
+                    flags_off = off + 8
+                    tag_ptr = self.asf.u32(off + 0x0c)
+                    label_table = self.asf.u32(off + 0x10)
+
+                tag = self.asf.string_at_ptr(tag_ptr)
+                if not tag:
+                    break
+                if tag == "CSL":
+                    table_off = self.asf.ptr_to_off(label_table)
+                    if (label_count == 0 or table_off is None or
+                            table_off + label_count * 4 > len(self.asf.fw)):
+                        raise ValueError("invalid CSL event label table")
+                    labels = []
+                    for index in range(label_count):
+                        label = self.asf.string_at_ptr(
+                            self.asf.u32(table_off + index * 4),
+                            allow_empty=True,
+                        )
+                        if label is None:
+                            raise ValueError("invalid CSL event label")
+                        labels.append(label)
+                    return flags_off, labels
+                off += schema_bytes
+        raise ValueError("CSL event schema not found")
+
+    def patch_csl_events(self):
+        flags_off, labels = self.find_csl_event_schema()
+        if labels != ["", "CSR Start", "CSR End"]:
+            raise ValueError("unexpected CSL event labels: %r" % labels)
+        if self.asf.u8(flags_off + 1) == 0:
+            raise ValueError("CSL event schema does not backdate boundary onsets")
+        if self.asf.u8(flags_off) != 0:
+            print("Patching EDF CSL events... already enabled")
+            return 0
+        self.asf.write_u8(flags_off, 1)
+        print("Patching EDF CSL events... enabled")
+        return 1
+
     def summary_key(self, off):
         kind = self.asf.u32(off + 4)
         var_a = self.asf.u16(off + 8)
@@ -632,6 +685,7 @@ class S11EdfSupersetPatcher:
 
     def patch(self):
         changed = self.patch_stream_schemas()
+        changed += self.patch_csl_events()
         changed += self.patch_str_summary()
         return changed
 

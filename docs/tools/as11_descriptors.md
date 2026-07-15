@@ -156,6 +156,9 @@ as11_descriptors.py firmware.bin event-routes SystemActivity
 as11_descriptors.py firmware.bin event-labels EVE CSL
 ```
 
+`event-labels` detects both supported g[17] schema layouts and reports the
+schema size, record sizes, FIFO capacity, writer/backdating flags, and labels.
+
 These tables are useful when mapping `SubscribeEvent` selectors and spool/event
 payload names used by `as11_config.py`.
 
