@@ -12,6 +12,7 @@
 # See LICENSE in main repository for distribution license and additional restrictions.
 
 import argparse
+import datetime
 import hashlib
 import io
 import crcmod
@@ -21,6 +22,73 @@ import subprocess
 import struct
 import re
 import sys
+
+
+FIRMWARE_BUILD_ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
+
+
+def _firmware_hash_char(commit):
+    value = int(commit[:8], 16) % len(FIRMWARE_BUILD_ALPHABET)
+    return FIRMWARE_BUILD_ALPHABET[value]
+
+
+def firmware_build_identity(repo_dir):
+    commit = None
+    epoch = None
+    marker = '!'
+    state = 'unversioned'
+
+    try:
+        git = ['git', '-C', repo_dir]
+        root = subprocess.check_output(
+            git + ['rev-parse', '--show-toplevel'], stderr=subprocess.DEVNULL).decode().strip()
+        if os.path.normcase(os.path.realpath(root)) == os.path.normcase(os.path.realpath(repo_dir)):
+            commit = subprocess.check_output(
+                git + ['rev-parse', 'HEAD'], stderr=subprocess.DEVNULL).decode().strip()
+            epoch = int(subprocess.check_output(
+                git + ['show', '-s', '--format=%ct', 'HEAD'], stderr=subprocess.DEVNULL).decode())
+            dirty_result = subprocess.call(
+                git + ['diff', '--quiet', 'HEAD', '--'],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if dirty_result not in (0, 1):
+                raise ValueError("firmware SID: cannot determine Git working-tree state")
+            if dirty_result == 0:
+                marker = '+'
+                state = 'clean'
+            else:
+                state = 'dirty'
+    except (OSError, subprocess.CalledProcessError):
+        pass
+
+    if commit is None:
+        archive_path = os.path.join(repo_dir, '.gitarchive')
+        try:
+            with open(archive_path, 'r', encoding='ascii') as archive:
+                values = dict(line.rstrip('\r\n').split(': ', 1) for line in archive)
+            archive_commit = values.get('commit', '')
+            archive_epoch = values.get('commit-date', '')
+            if re.fullmatch(r'[0-9a-fA-F]{40}', archive_commit) and archive_epoch.isdigit():
+                commit = archive_commit
+                epoch = int(archive_epoch)
+                marker = '+'
+                state = 'archive'
+        except (OSError, ValueError):
+            pass
+
+    source_commit = commit
+    if epoch is None:
+        epoch = int(datetime.datetime.now(datetime.timezone.utc).timestamp())
+        commit = '0' * 40
+
+    stamp = datetime.datetime.fromtimestamp(epoch, datetime.timezone.utc)
+    year = stamp.year - 2020
+    if year < 0 or year > 15:
+        raise ValueError("firmware SID: commit year outside supported 2020..2035 range")
+    day = str(stamp.day) if stamp.day < 10 else chr(ord('A') + stamp.day - 10)
+    hash_code = _firmware_hash_char(commit) if source_commit else ''
+    code = "%s%X%X%s%s" % (marker, year, stamp.month, day, hash_code)
+    return {'code': code, 'commit': source_commit, 'state': state}
+
 
 class ASFirmware(object):
     """Patch firmware from device with various changes"""
@@ -495,13 +563,34 @@ class ASFirmware(object):
         # Read version strings
         self.str_model_number = bytes(self.fw[self.ccx_off + 0x20:self.ccx_off + 0x27]).decode()
         self.str_model_name = bytes(self.fw[self.ccx_off + 0x30:self.ccx_off + 0x4F]).decode()
-        self.cdx_ver = bytes(self.fw[self.cdx_off:self.cdx_off + 0x0B]).split(b'\x00')[0].decode()
+        self.cdx_sid = bytes(self.fw[self.cdx_off:self.cdx_off + 0x20]).split(b'\x00', 1)[0].decode()
+        self.cdx_ver = self.cdx_sid[:10]
+        if not re.match(r'^SX[0-9]{3}-[0-9]{4}$', self.cdx_ver):
+            raise IOError("Unknown CDX software ID: '%s'" % self.cdx_sid)
         
         print("Firmware Info: ")
         print("  Loader Version   " + self.bid)
         print("  Catalog No.      " + self.str_model_number)
         print("  Model Name       " + self.str_model_name)
-        print("  Main SW Version  " + self.cdx_ver)
+        print("  Main SW Version  " + self.cdx_sid)
+
+    def patch_firmware_sid(self, build):
+        """Append the build identity to the stock CDX software ID."""
+        if self.cdx_sid != self.cdx_ver and not re.match(
+                r'^%s(?:[+!~][0-9A-Za-z]{3,4}|[0-9A-Za-z]{5})$' %
+                re.escape(self.cdx_ver), self.cdx_sid):
+            raise ValueError("firmware SID: unexpected input value '%s'" % self.cdx_sid)
+        sid = self.cdx_ver + build['code']
+        if len(sid) not in (14, 15):
+            raise ValueError("firmware SID: '%s' does not fit the 15-character limit" % sid)
+        sid_bytes = sid.encode('ascii')
+        self.fw[self.cdx_off:self.cdx_off + 16] = list(
+            sid_bytes + b'\x00' * (16 - len(sid_bytes)))
+        self.cdx_sid = sid
+        source = build['state']
+        if build['commit']:
+            source = "%s, %s" % (build['commit'][:12], source)
+        print("Firmware SID:   %s (%s)" % (sid, source))
         
     def fix_crcs(self):
         """Update CRCs in the file"""
@@ -2521,6 +2610,8 @@ if __name__ == "__main__":
 
     if args.OPERATION == "PATCH":
 
+        repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        build_identity = firmware_build_identity(repo_dir)
         patches = ASFirmwarePatches(asf)
         
         for patch in patch_list_yn:
@@ -2534,6 +2625,7 @@ if __name__ == "__main__":
                 getattr(patches, patch['function'])()
 
         patches.patch_mop_callback_dispatcher()
+        asf.patch_firmware_sid(build_identity)
         asf.fix_crcs()
         asf.write_output(args.OUTFILE, args.overwrite)
         patches.print_custom_resource_summary()

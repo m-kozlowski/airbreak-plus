@@ -17,6 +17,69 @@ DEBUG_PATCH=""
 # -----------------------------------------------------------------------------
 
 
+# Load Git or exported-archive metadata and encode the firmware SID suffix.
+load_firmware_build_id() {
+    local script_dir repo commit epoch archive year month day year_code month_code day_code
+    local hash_value hash_code marker='!' state=unversioned
+    local alphabet=0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz
+
+    script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+    repo=$(git -C "$script_dir" rev-parse --show-toplevel 2>/dev/null) || repo=
+    if [[ -n $repo && $(cd -- "$repo" && pwd -P) == "$script_dir" ]]; then
+        commit=$(git -C "$repo" rev-parse HEAD 2>/dev/null) || die "firmware SID: cannot read Git commit"
+        epoch=$(git -C "$repo" show -s --format=%ct HEAD 2>/dev/null) || \
+            die "firmware SID: cannot read Git commit date"
+        if git -C "$repo" diff --quiet HEAD --; then
+            marker=+
+            state=clean
+        else
+            state=dirty
+        fi
+    else
+        archive=$script_dir/.gitarchive
+        if [[ -r $archive ]]; then
+            commit=$(sed -n 's/^commit: //p' "$archive" | tr -d '\r')
+            epoch=$(sed -n 's/^commit-date: //p' "$archive" | tr -d '\r')
+            if [[ $commit =~ ^[0-9a-fA-F]{40}$ && $epoch =~ ^[0-9]+$ ]]; then
+                marker=+
+                state=archive
+            else
+                commit=
+                epoch=
+            fi
+        fi
+    fi
+
+    FW_BUILD_COMMIT=$commit
+    if [[ -z $epoch ]]; then
+        epoch=$(date -u +%s)
+    fi
+
+    read -r year month day <<< "$(date -u -d "@$epoch" '+%Y %m %d')"
+    year=$(( 10#$year - 2020 ))
+    month=$(( 10#$month ))
+    day=$(( 10#$day ))
+    (( year >= 0 && year <= 15 )) || \
+        die "firmware SID: commit year outside supported 2020..2035 range"
+
+    printf -v year_code '%X' "$year"
+    printf -v month_code '%X' "$month"
+    if (( day < 10 )); then
+        day_code=$day
+    else
+        day_code=${alphabet:day:1}
+    fi
+
+    hash_code=
+    if [[ -n $commit ]]; then
+        hash_value=$(( 16#${commit:0:8} % ${#alphabet} ))
+        hash_code=${alphabet:hash_value:1}
+    fi
+    FW_BUILD_CODE=${marker}${year_code}${month_code}${day_code}${hash_code}
+    FW_BUILD_STATE=$state
+}
+
+
 # Print raw bytes from the output image.
 # args: offset length
 read_bytes() {
@@ -49,10 +112,16 @@ detect_platform() {
     esac
 
     GLOBALS_ADDR=$(( CCX_OFF + GLOBALS_REL ))
-    CDX_VER=$(read_bytes "$CDX_OFF" 16 | tr -d '\0')
+    CDX_SID=$(read_bytes "$CDX_OFF" 16 | perl -0ne 's/\x00.*//s; print')
+    CDX_VER=${CDX_SID:0:10}
+    [[ $CDX_VER =~ ^SX[0-9]{3}-[0-9]{4}$ ]] || \
+        die "Unknown CDX software ID: '$CDX_SID'"
 
     echo "Bootloader ID:  $BID"
     echo "CDX Version:    $CDX_VER"
+    if [[ $CDX_SID != "$CDX_VER" ]]; then
+        echo "Firmware SID:   $CDX_SID"
+    fi
 }
 
 
@@ -794,6 +863,24 @@ load_firmware_string_metadata() {
     done
     (( ${#FW_LANG_IDS[@]} == FW_LANG_COUNT )) || \
         die "LAN language mask count ${#FW_LANG_IDS[@]} != globals[2] slots $FW_LANG_COUNT"
+}
+
+
+patch_firmware_sid() {
+    [[ $CDX_SID == "$CDX_VER" || $CDX_SID == "$CDX_VER"???? || \
+       $CDX_SID == "$CDX_VER"????? ]] || \
+        die "firmware SID: unexpected input value '$CDX_SID'"
+
+    local sid=${CDX_VER}${FW_BUILD_CODE}
+    (( ${#sid} == 14 || ${#sid} == 15 )) || \
+        die "firmware SID: '$sid' does not fit the 15-character limit"
+    fill_range "$CDX_OFF" 16 0 || die failed
+    printf '%s' "$sid" | patch "$CDX_OFF" || die failed
+    CDX_SID=$sid
+
+    local source=$FW_BUILD_STATE
+    [[ -z $FW_BUILD_COMMIT ]] || source="${FW_BUILD_COMMIT:0:12}, $source"
+    printf "Firmware SID:   %s (%s)\n" "$CDX_SID" "$source"
 }
 
 
@@ -2843,6 +2930,11 @@ if [ ! -r "$IN" ]; then
     die "$IN: can not open input file"
 fi
 
+FW_BUILD_CODE=
+FW_BUILD_COMMIT=
+FW_BUILD_STATE=
+load_firmware_build_id
+
 cp "$IN" "$OUT" || die "$OUT: copy failed"
 detect_platform
 
@@ -2981,6 +3073,7 @@ fi
 
 patch_mop_callback_dispatcher
 
+patch_firmware_sid
 patch_crc # ALWAYS keep it as last patch applied
 
 print_custom_resource_summary
