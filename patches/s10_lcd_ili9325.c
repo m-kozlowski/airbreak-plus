@@ -7,14 +7,14 @@
  */
 
 #define STATIC  static __attribute__((section(".text.x.nonmain")))
+#define LCD_DATA_REG  (*(volatile unsigned short *)0x64000002)
 
-typedef unsigned int      uint32;
 typedef unsigned short    uint16;
 typedef unsigned char     uint8;
 
 extern void lcd_write_cmd(uint16 index);
 extern void lcd_write_data(uint16 value);
-extern void iwdg_reload(void);
+extern void lcd_delay_ms(unsigned int ms);
 extern void original_board_init(void);
 extern void *lcd_get_device(int layer);
 
@@ -26,16 +26,7 @@ STATIC void ili_write_reg(uint16 reg, uint16 val)
 
 STATIC uint16 ili_read_data(void)
 {
-    return *(volatile uint16 *)0x64000002;
-}
-
-STATIC void delay_ms(int ms)
-{
-    volatile int i;
-    for (i = 0; i < ms * 42000; i++) {
-        if ((i & 0x3FFF) == 0)
-            iwdg_reload();
-    }
+    return LCD_DATA_REG;
 }
 
 // Read controller ID register (reg 0x00).
@@ -55,11 +46,8 @@ STATIC int is_ili932x(void)
         uint16 id = read_lcd_id();
         if (id == 0x9325 || id == 0x9328)
             return 1;
-        if (tries < 2) {
-            volatile int i;
-            for (i = 0; i < 42000; i++) // ~1ms settle
-                ;
-        }
+        if (tries < 2)
+            lcd_delay_ms(1);
     }
     return 0;
 }
@@ -122,7 +110,7 @@ STATIC void ili9325_read_setup(void *ctx, int x0, int y0, int x1, int y1)
 // ILI9325 power-on sequence
 STATIC void ili9325_power_on(void)
 {
-    ili_write_reg(0x01, 0x0000); // SS=0 (flip horizontal scan for 180°)
+    ili_write_reg(0x01, 0x0000); // SS=0 (flip horizontal scan for 180 degrees)
     ili_write_reg(0x02, 0x0700);
     ili_write_reg(0x03, 0x0030); // BGR=0 (emWin RGB565), ID1=1, ID0=1
     ili_write_reg(0x04, 0x0000);
@@ -137,17 +125,17 @@ STATIC void ili9325_power_on(void)
     ili_write_reg(0x11, 0x0007);
     ili_write_reg(0x12, 0x0000);
     ili_write_reg(0x13, 0x0000);
-    delay_ms(200);
+    lcd_delay_ms(50);
 
     ili_write_reg(0x10, 0x1490);
     ili_write_reg(0x11, 0x0227);
-    delay_ms(50);
+    lcd_delay_ms(80);
     ili_write_reg(0x12, 0x001C);
-    delay_ms(50);
+    lcd_delay_ms(50);
     ili_write_reg(0x13, 0x1A00);
     ili_write_reg(0x29, 0x0025);
     ili_write_reg(0x2B, 0x000C);
-    delay_ms(50);
+    lcd_delay_ms(50);
 
     ili_write_reg(0x50, 0x0000);
     ili_write_reg(0x51, 0x00EF);
@@ -184,16 +172,16 @@ STATIC void ili9325_power_on(void)
     ili_write_reg(0x3D, 0x1604);
 
     ili_write_reg(0x07, 0x0133);
-    delay_ms(50);
+    lcd_delay_ms(50);
 
-    // Clear GRAM — ILI9325 has random content on cold power-up
+    // Clear GRAM - ILI9325 has random content on cold power-up
     ili_write_reg(0x20, 0x0000);
     ili_write_reg(0x21, 0x0000);
     lcd_write_cmd(0x22);
     {
-        volatile int i;
+        int i;
         for (i = 0; i < 320 * 240; i++)
-            lcd_write_data(0x0000);
+            LCD_DATA_REG = 0x0000;
     }
 }
 

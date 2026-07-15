@@ -2766,9 +2766,6 @@ patch_lcd_ili9325() {
     local ver=${CDX_VER#SX567-}
     local BIN=build/s10_lcd_ili9325_${ver}.bin
     local BIN_ELF=build/s10_lcd_ili9325_${ver}.elf
-    if [ ! -r "$BIN" ]; then
-        die "LCD patch binary not found: $BIN (run make s10_lcd_ili9325)"
-    fi
 
     local BL_OFF EXPECTED_BL
     case "$CDX_VER" in
@@ -2789,26 +2786,26 @@ patch_lcd_ili9325() {
             EXPECTED_BL='\xFF\xF7\x7A\xFE'  # bl 0x0807BD28 (ILI9341 board init)
             ;;
         *)
-            echo "  ${FUNCNAME[0]}: skipped (unsupported CDX version $CDX_VER)"
-            return
+            die "${FUNCNAME[0]}: unsupported CDX version $CDX_VER"
             ;;
     esac
 
+    [[ -r "$BIN" ]] || die "${FUNCNAME[0]}: $BIN not found (run make s10_lcd_ili9325)"
+    [[ -r "$BIN_ELF" ]] || die "${FUNCNAME[0]}: $BIN_ELF not found (run make s10_lcd_ili9325)"
+
     if ! printf '%b' "$EXPECTED_BL" | check_patch "$BL_OFF"; then
-        echo "  ${FUNCNAME[0]}: unexpected bytes at BL 0x${BL_OFF}"
-        return 1
+        die "${FUNCNAME[0]}: unexpected LCD board init call bytes at 0x$(printf '%X' "$BL_OFF")"
     fi
+
+    local BOARD_INIT_ADDR
+    BOARD_INIT_ADDR=$(elf_symbol_addr "$BIN_ELF" lcd_board_init) || \
+        die "${FUNCNAME[0]}: cannot resolve lcd_board_init in $BIN_ELF"
 
     payload_inject s10_lcd_ili9325 "$BIN"
     echo "Patching LCD driver (ILI9325) at 0x$(printf '%08X' "$PAYLOAD_FLASH")"
 
-    local BOARD_INIT_ADDR
-    BOARD_INIT_ADDR=$(arm-none-eabi-nm "$BIN_ELF" 2>/dev/null | awk '/lcd_board_init/{printf "0x%s", $1}')
-    if [ -z "$BOARD_INIT_ADDR" ]; then
-        die "  Cannot find lcd_board_init in ${BIN_ELF}"
-    fi
-
-    encode_thumb_bl "$BL_OFF" "$BOARD_INIT_ADDR" | patch "$BL_OFF"
+    encode_thumb_bl "$BL_OFF" "$BOARD_INIT_ADDR" | patch "$BL_OFF" || \
+        die "${FUNCNAME[0]}: failed to patch LCD board init call"
     printf "  BL 0x%X -> 0x%08X (lcd_board_init)\n" "$BL_OFF" "$BOARD_INIT_ADDR"
 }
 
@@ -3068,7 +3065,7 @@ custom_palette
 patch_edf_merge
 
 if [[ $PATCH_S10_LCD == 1 ]] ; then
-    patch_lcd_ili9325
+    patch_lcd_ili9325 || die "patch_lcd_ili9325: failed"
 fi
 
 patch_mop_callback_dispatcher

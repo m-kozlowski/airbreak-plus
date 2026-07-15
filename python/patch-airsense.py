@@ -2166,13 +2166,16 @@ class ASFirmwarePatches(object):
         irq_location_packed = struct.pack("<I", 0x08000000 + irq_location + 1)
         self.asf.patch(irq_location_packed, 0x402dc, clobber=True)
         
-    def _load_versioned_bin(self, name):
-        """Load a per-version binary from build/. Returns (data, ver) or (None, ver)."""
+    def _load_versioned_bin(self, name, required=False):
+        """Load a per-version binary, optionally failing when it is unavailable."""
         ver = self.asf.cdx_ver.replace('SX567-', '')
         bin_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                 '..', 'build', '%s_%s.bin' % (name, ver))
         if not os.path.exists(bin_path):
-            print("  %s: build/%s_%s.bin not found (run make)" % (name, name, ver))
+            message = "%s: build/%s_%s.bin not found (run make)" % (name, name, ver)
+            if required:
+                raise ValueError(message)
+            print("  " + message)
             return None, ver
         with open(bin_path, 'rb') as f:
             return f.read(), ver
@@ -2352,15 +2355,11 @@ class ASFirmwarePatches(object):
         }
         bl_off = BL_OFF_MAP.get(ver)
         if bl_off is None:
-            print("  patch_lcd_ili9325: skipped (unsupported CDX version %s)" % self.asf.cdx_ver)
-            return
+            raise ValueError("patch_lcd_ili9325: unsupported CDX version %s" % self.asf.cdx_ver)
         expected_bl = b'\xFF\xF7\x7A\xFE'
         if bytes(self.asf.fw[bl_off:bl_off+4]) != expected_bl:
-            print("  patch_lcd_ili9325: unexpected bytes at BL 0x%X" % bl_off)
-            return
-        data, ver = self._load_versioned_bin('s10_lcd_ili9325')
-        if data is None:
-            return
+            raise ValueError("patch_lcd_ili9325: unexpected LCD board init call bytes at 0x%X" % bl_off)
+        data, ver = self._load_versioned_bin('s10_lcd_ili9325', required=True)
         elf_path = self._versioned_artifact_path('s10_lcd_ili9325', 'elf', ver)
         board_init = self._elf_symbol_addr(elf_path, 'lcd_board_init')
         flash, _ = self._inject_payload('s10_lcd_ili9325', data)

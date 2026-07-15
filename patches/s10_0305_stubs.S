@@ -50,6 +50,7 @@ NSTUB(0x0807A2A8, backlight_state_machine)
 // LCD driver
 NSTUB(0x08080EB7, lcd_write_cmd)
 NSTUB(0x08080EBF, lcd_write_data)
+NSTUB(0x08080FE3, lcd_delay_ms)
 NSTUB(0x08081563, flexcolor_ensure_init)
 NSTUB(0x080E2D75, flexcolor_set_interface)
 NSTUB(0x080E2D9B, original_controller_init)
