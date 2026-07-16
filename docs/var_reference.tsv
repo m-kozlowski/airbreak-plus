@@ -14,12 +14,12 @@ var_id	uart	edf_signal	resmed_name	notes
 0x000C	QCV		MODULE_INT_SERVICE	Module Service
 0x000D	LCT		LCD_TEXT	LCD Text
 0x000E	AVR			
-0x000F	FSN			
-0x0010	HID		HEIGHT_UNIT	
+0x000F	FSN			CAL 0002: 64-bit flow-sensor serial number formatted as 16 uppercase hex characters
+0x0010	HID			Humidifier-controller STM8 firmware identifier, 12-character string
 0x0011	MDB			
-0x0012	RSS			CAL 0012 serial request/reply buffer; Calibration Serial Request/Reply
-0x0013	DRX			CAL 0012 raw serial RX buffer; Calibration Serial RX
-0x0014	DTX			CAL 0012 raw serial TX buffer; Calibration Serial TX
+0x0012	RSS			CAL 000C raw framed request/reply buffer, maximum 10 bytes including 7E delimiters; Calibration Serial Request/Reply
+0x0013	DRX			CAL 0012 accumulated raw serial RX bytes encoded as uppercase hex; Calibration Serial RX
+0x0014	DTX			CAL 000D/0012 raw serial TX bytes supplied as hex pairs; Calibration Serial TX
 0x0015	EXW			
 0x0016	EXR			
 0x0017	CRX			
@@ -151,10 +151,10 @@ var_id	uart	edf_signal	resmed_name	notes
 0x0095	VT9	MinVent.95	MIN_VENT_95	Minute Vent P95
 0x0096	VTA	MinVent.Max	MIN_VENT_MAX	Minute Vent Max
 0x0097	VTM	MinVent.50	MIN_VENT_MED	Minute Vent Median
-0x0098	RCF		RECUR_PERIOD_FILTER	Recur [mths] (1 .. 24 step 1); Recurrence Filter
-0x0099	RCM		RECUR_PERIOD_MASK	Recur [mths] (1 .. 24 step 1); Recurrence Mask
-0x009A	RCH		RECUR_PERIOD_TUBE	Recur [mths] (1 .. 24 step 1); Recurrence Heated Tube
-0x009B	RCW		RECUR_PERIOD_WATERTUB	Recur [mths] (1 .. 24 step 1); Recurrence Water Tub
+0x0098	RCF		RECUR_PERIOD_FILTER	Reminder recurrence period: Filter (1 .. 24 months)
+0x0099	RCM		RECUR_PERIOD_MASK	Reminder recurrence period: Mask (1 .. 24 months)
+0x009A	RCH		RECUR_PERIOD_TUBE	Reminder recurrence period: Tube (1 .. 24 months)
+0x009B	RCW		RECUR_PERIOD_WATERTUB	Reminder recurrence period: Water Tub (1 .. 24 months)
 0x009C	RR1		ONBOARD_RR	RR [bpm] (0.0 .. 50.0 step 1.0); Resp Rate (realtime)
 0x009D	RR9	RespRate.95	RESPRATE95TH	Resp Rate P95
 0x009E	RRA	RespRate.Max	RESPRATE_MAX	Resp Rate Max
@@ -192,7 +192,7 @@ var_id	uart	edf_signal	resmed_name	notes
 0x00BE	FBD		FIRST_BREATH_DAY	First Breath Day
 0x00BF	FTD		FIRST_THERAPY_DAY	First Therapy Day
 0x00C0	BFL			Blower flow runtime value; /500 L/s
-0x00C1	FID			
+0x00C1	FID			CAL 0002 32-bit flow-sensor product identifier; set to 0 when the sensor ID read reports an error
 0x00C2	FLG			Flow Gain
 0x00C3	FLW			
 0x00C4	FLZ		FLOW_ZERO	Flow Zero
@@ -215,9 +215,9 @@ var_id	uart	edf_signal	resmed_name	notes
 0x00D5	CUR			
 0x00D6	FAT			
 0x00D7	FPW			
-0x00D8	KPD			
-0x00D9	KPT			
-0x00DA	LEF			
+0x00D8	KPD			CAL 0006 latched front-panel button event bitmap; 0002=Home, 0004=Start/Stop, 0008=dial press, 0010/0020=additional profile-1 inputs; reset when the service stops
+0x00D9	KPT			CAL 0006 current front-panel button state bitmap; 0001=Start/Stop, 0004=Home, 0008=dial press, 0010/0020=additional profile-1 inputs
+0x00DA	LEF			Registered by CAL 0008; the selected service has no enter, update, or stop behavior
 0x00DB	MHR		MOTOR_HOUR	Run Hrs [hrs] (0 .. 596523 step 1)
 0x00DC	MHS		MOTOR_HR_SRV	
 0x00DD	MHU		TOTAL_HOURS	Run Hrs (0 .. 596523 step 1)
@@ -225,9 +225,9 @@ var_id	uart	edf_signal	resmed_name	notes
 0x00DF	TEM			
 0x00E0	TEZ			
 0x00E1	UTT			
-0x00E2	VLT		VENTED_LEAK_ALARM_THRESHOLD	
+0x00E2	VLT			CAL 000D/0012 RTC backup-battery voltage sample; raw 12-bit PA0/ADC1_IN0 count from a switched divider; 0012 stops sampling after TX enables receive, while 000D continues between transmissions
 0x00E3	SDU			
-0x00E4	CAF		CONCAVE_AND_FLAT	
+0x00E4	CAF			DATALOG EDF capture-date filter (year << 16 | month << 8 | day); file creation proceeds only when it matches the current date
 0x00E5	UQD			Usage [hrs] (0.0 .. 1048575.0 step 0.1)
 0x00E6	URD			
 0x00E7	VRD			Days 4hrs+ (0 .. 65535 step 1)
@@ -250,13 +250,13 @@ var_id	uart	edf_signal	resmed_name	notes
 0x00F8	ARD			AHI (0.0 .. 240.0 step 0.1)
 0x00F9	TRD			Total AI (0.0 .. 240.0 step 0.1)
 0x00FA	CRD			Central AI (0.0 .. 240.0 step 0.1)
-0x00FB	ASR			
-0x00FC	ASF			
-0x00FD	ATH			
-0x00FE	LBL		BACK_LIGHT	
-0x00FF	LLL			
-0x0100	LBH			
-0x0101	LLH			
+0x00FB	ASR			Raw ambient-light sensor reading (0 .. 4095)
+0x00FC	ASF			Filtered ambient-light sensor reading (0 .. 4095)
+0x00FD	ATH			Ambient-light threshold (0 .. 4095); stored in NGL
+0x00FE	LBL			Button backlight low level (0 .. 100)
+0x00FF	LLL			LCD backlight low level (0 .. 100)
+0x0100	LBH			Button backlight high level (0 .. 100)
+0x0101	LLH			LCD backlight high level (0 .. 100)
 0x0102	CSG			
 0x0103	CSC			
 0x0104	CSE			
@@ -290,10 +290,10 @@ var_id	uart	edf_signal	resmed_name	notes
 0x0120	BPA			
 0x0121	CAC			
 0x0122	OAC			
-0x0123	SDT			
+0x0123	SDT			CAL 000A SD status bitmask: 0001=card present, 0002=write-protected
 0x0124	NBF			
 0x0125	CGT			
-0x0126	RGT			
+0x0126	RGT			RGL reminder persistence-group tracker
 0x0127	TEE		TE_ERROR_COUNT	
 0x0128	AMT			
 0x0129	ZEH			
@@ -363,8 +363,8 @@ var_id	uart	edf_signal	resmed_name	notes
 0x0169	D08			
 0x016A	D09			
 0x016B	ALL			
-0x016C	BGT		BG_TASK_TRIG	
-0x016D	NGT			
+0x016C	BGT			BGL board/identity/calibration persistence-group tracker
+0x016D	NGT			NGL backlight persistence-group tracker
 0x016E	UGT			
 0x016F	BTM		BREATH_TIME	
 0x0170	CBP			
@@ -396,7 +396,7 @@ var_id	uart	edf_signal	resmed_name	notes
 0x018A	PGT			
 0x018B	HBT			
 0x018C	PRP			
-0x018D	RDT		RAMPDOWN_TIME	
+0x018D	RDT		REMIND_DATES	Current date used by the reminder scheduler
 0x018E	RFR			
 0x018F	SCT			
 0x0190	SET		SETTLNG_TIME	
@@ -497,10 +497,10 @@ var_id	uart	edf_signal	resmed_name	notes
 0x01EF	RMT	S.RampTime	RAMP_TIME	Ramp Time
 0x01F0	ZLP			PS [cmH2O] (0.0 .. 28.0 step 0.2)
 0x01F1	ZDE			Min [cmH2O] (0.0 .. 28.0 step 0.2)
-0x01F2	RDF		REM_DATE_FILTER	Filter (0 .. 24836 step 7); Reminder Due: Filter
-0x01F3	RDM		REM_DATE_MASK	Mask (0 .. 24836 step 7); Reminder Due: Mask
-0x01F4	RDH		REM_DATE_TUBE	Tube (0 .. 24836 step 7); Reminder Due: Tube
-0x01F5	RDW		REM_DATE_WATERTUB	Water Tub (0 .. 24836 step 7); Reminder Due: Water Tub
+0x01F2	RDF		REM_DATE_FILTER	Reminder due date: Filter (0 .. 24836 step 7)
+0x01F3	RDM		REM_DATE_MASK	Reminder due date: Mask (0 .. 24836 step 7)
+0x01F4	RDH		REM_DATE_TUBE	Reminder due date: Tube (0 .. 24836 step 7)
+0x01F5	RDW		REM_DATE_WATERTUB	Reminder due date: Water Tub (0 .. 24836 step 7)
 0x01F6	UDT			Date (0 .. 24836 step 1)
 0x01F7	ZIC			Calculating… (0 .. 5120 step 1)
 0x01F8	ZIT			Learning… (0 .. 5120 step 1)
@@ -561,20 +561,20 @@ var_id	uart	edf_signal	resmed_name	notes
 0x022F	QFC		MODULE_FLIGHT_MODE_CONTROL	Airplane Mode
 0x0230	QNC		MODULE_NETWORK_CONNECTION	Network Connection
 0x0231	LCA		LCD_TXT_ACT	LCD Text Active
-0x0232	EPA	S.EPR.ClinEnable	EPR_ACCESS	EPR Clinical Enable
+0x0232	EPA	S.EPR.ClinEnable	EPR_ACCESS	EPR patient access: 0000=clinical menu only, 0001=patient menu as Pressure Relief
 0x0233	EPX	S.EPR.EPREnable	EPR_PATIENT	EPR Patient Enable
 0x0234	EPT	S.EPR.EPRType	EPR_TYPE	EPR Type
 0x0235	TLF		THERAPY_LED_ENABLE	Therapy LED
 0x0236	MFT		MASKFITTING	Mask Fitting Mode
-0x0237	RSA			
-0x0238	RPF		RECUR_PERIOD_ENABLE_FILTER	Recurrence Enable: Filter
-0x0239	RPO		RECUR_PERIOD_ENABLE_MASK	Recurrence Enable: Mask
-0x023A	RPH		RECUR_PERIOD_ENABLE_TUBE	Recurrence Enable: Tube
-0x023B	RPW		RECUR_PERIOD_ENABLE_WATERTUB	Recurrence Enable: Water Tub
-0x023C	RXF		REM_DATE_ENABLE_FILTER	Reminder Date Enable: Filter
-0x023D	RXM		REM_DATE_ENABLE_MASK	Reminder Date Enable: Mask
-0x023E	RXH		REM_DATE_ENABLE_TUBE	Reminder Date Enable: Tube
-0x023F	RXW		REM_DATE_ENABLE_WATERTUB	Reminder Date Enable: Water Tub
+0x0237	RSA			Reminder acknowledgement request; 0001 acknowledges and reschedules the currently due reminder
+0x0238	RPF		RECUR_PERIOD_ENABLE_FILTER	Reminder recurrence enable: Filter (0000=Off, 0001=On)
+0x0239	RPO		RECUR_PERIOD_ENABLE_MASK	Reminder recurrence enable: Mask (0000=Off, 0001=On)
+0x023A	RPH		RECUR_PERIOD_ENABLE_TUBE	Reminder recurrence enable: Tube (0000=Off, 0001=On)
+0x023B	RPW		RECUR_PERIOD_ENABLE_WATERTUB	Reminder recurrence enable: Water Tub (0000=Off, 0001=On)
+0x023C	RXF		REM_DATE_ENABLE_FILTER	Reminder date enable: Filter (0000=Off, 0001=On)
+0x023D	RXM		REM_DATE_ENABLE_MASK	Reminder date enable: Mask (0000=Off, 0001=On)
+0x023E	RXH		REM_DATE_ENABLE_TUBE	Reminder date enable: Tube (0000=Off, 0001=On)
+0x023F	RXW		REM_DATE_ENABLE_WATERTUB	Reminder date enable: Water Tub (0000=Off, 0001=On)
 0x0240	RMA	S.RampEnable	RAMP_CONTROL	Ramp Enable
 0x0241	ZRP		IS_RAMPING	Is Ramping
 0x0242	SCF		CONFIRM_STOP	Confirm Stop
@@ -587,14 +587,14 @@ var_id	uart	edf_signal	resmed_name	notes
 0x0249	HTC			
 0x024A	IMF			
 0x024B	BOL			
-0x024C	CAL		CALIBRATION	Calibration service selector; values: 0001=pressure controller, 0005=LCD/display test, 0006=pressure loop with unidentified KPD/KPT controls, 0007=pressure controller with ROT status, 000A=status bit collector into SDT, 000B=EEPROM/SD maintenance via ETR, 000C=RSS string/transport-ish test, 0010=SD card read/write self-test via CDS, 0012=serial/comm test via PBR/DTX/DRX/RSS; active when ZRM=0006; Calibration Service Select
+0x024C	CAL		CALIBRATION	Calibration service selector; values: 0000=idle, 0001=pressure controller, 0002=flow-sensor identity via FID/FSN, 0005=LCD test, 0006=pressure and front-panel test, 0007=pressure and rotary test, 0008=no-op placeholder, 000A=SD status via SDT, 000B=EEPROM/SD maintenance via ETR, 000C=short raw USART2 request/reply via RSS, 000D=raw USART2 TX and RTC backup-battery test, 0010=SD read/write test via CDS, 0012=raw USART2 TX/RX and RTC backup-battery test; active when ZRM=0006; Calibration Service Select
 0x024D	MDC			
-0x024E	LCD			
-0x024F	LET		AVG_EXP_TIME	
-0x0250	RES		RESISTANCE	
-0x0251	ROT			Rotary encoder value exported by CAL 0007; Rotary Encoder Position
-0x0252	PBR			CAL 0012 raw serial parameter/buffer; Calibration Serial Parameter
-0x0253	CDS			
+0x024E	LCD			CAL 0005 display pattern: 0000/0004=black, 0001=blue, 0002=green, 0003=red, 0005=white, 0006=5-pixel grid
+0x024F	LET			Registered by CAL 0008; the selected service has no enter, update, or stop behavior
+0x0250	RES			System reset request: 0000=no reset request; 0001=orderly task shutdown then watchdog reset; 0002=request task stop without waiting, then watchdog reset; 0003=orderly task shutdown then immediate SYSRESETREQ. All reset paths re-enter BLX; with valid CCX/CDX and clear boot state, BLX uses its BKP6R fast-boot reset to return to CDX
+0x0251	ROT			CAL 0007 rotary result: 0001=negative delta, 0002=positive delta, reset to 0000 when the service stops; Rotary Encoder Position
+0x0252	PBR			CAL 000D/0012 USART2 baud selector: 0000=9600, 0001=14400, 0002=19200, 0003=28800, 0004=38400, 0005=57600; Calibration Serial Baud Rate
+0x0253	CDS			CAL 0010 SD read/write test result: 0001=pass, 0002=failure or idle; test file is mmc:0:\TestReading.bin
 0x0254	SDC			
 0x0255	SCS			
 0x0256	TUD			
@@ -643,7 +643,7 @@ var_id	uart	edf_signal	resmed_name	notes
 0x0281	CYM			
 0x0282	ERC			
 0x0283	ERE			eep:0 formatting status/control variable
-0x0284	ETR			CAL=000B EEPROM/SD command; values: 0000=idle/reset, 0001=zero EEPROM logical pages, 0002=format/reinitialize eep:0 FAT filesystem, 0003=raw EEPROM to SD EEPROM.dat, 0004=SD EEPROM.dat to raw EEPROM, 0005=eep:0 tree to mmc:0:EEPROM, 0006=mmc:0:EEPROM fixed table to eep:0; EEPROM Transfer Request
+0x0284	ETR			CAL=000B EEPROM/SD command; values: 0000=idle/reset, 0001=zero raw pages 0..501, 0002=format/reinitialize eep:0 FAT, 0003=512-page raw backup to SD EEPROM.dat, 0004=restore complete 512-byte pages from EEPROM.dat, 0005=export eep:0 root and one directory level, 0006=import root/DATALOG/ERRORLOG/SETTINGS from SD; 0001 and 0003..0006 clear even when helper errors are not propagated; EEPROM Transfer Request
 0x0285	FON			
 0x0286	KPM			
 0x0287	CMS			
@@ -726,20 +726,20 @@ var_id	uart	edf_signal	resmed_name	notes
 0x02D4	ZRL			EEPROM stream: saved system errors (ZSE)
 0x02D5	NPD		NIGHT_PROFILE_PERIODIC	Night profile periodic signal group
 0x02D6	NPA		NIGHT_PROFILE_APNEA	Night profile apnea signal group
-0x02D7	AGL			AutoSet params
-0x02D8	CGL			CPAP params
-0x02D9	RGL			Reminders/replacement
-0x02DA	DGL			Bilevel timing
-0x02DB	IGL			Bilevel pressure
-0x02DC	EGL			EPR params
-0x02DD	QXH			ASVAuto params
-0x02DE	QXJ			iVAPS params
-0x02DF	VGL			VAuto params
-0x02E0	XGL			ASV fixed params
-0x02E1	BGL			Board/identity/calibration
-0x02E2	NGL			Backlight settings
-0x02E3	UGL			Usage data
-0x02E4	MGL			Machine settings
-0x02E5	PGL			Peripherals/accessories
-0x02E6	SGL			System settings
+0x02D7	AGL			AutoSet settings storage group
+0x02D8	CGL			CPAP settings storage group
+0x02D9	RGL			Reminder settings storage group
+0x02DA	DGL			Bilevel timing settings storage group
+0x02DB	IGL			Bilevel pressure settings storage group
+0x02DC	EGL			EPR settings storage group
+0x02DD	QXH			ASVAuto settings storage group
+0x02DE	QXJ			iVAPS settings storage group
+0x02DF	VGL			VAuto settings storage group
+0x02E0	XGL			ASV fixed-pressure settings storage group
+0x02E1	BGL			Board identity and calibration storage group
+0x02E2	NGL			Backlight settings storage group
+0x02E3	UGL			Usage data storage group
+0x02E4	MGL			Machine settings storage group
+0x02E5	PGL			Peripheral and accessory settings storage group
+0x02E6	SGL			System settings storage group
 0x02E7	PDL			Persistent device-state variable list

@@ -121,11 +121,11 @@ the selected `ETR` command, polls until `ETR=0000`, then restores the original
 
 | Action | `ETR` | Firmware behavior |
 |--------|-------|-------------------|
-| `sd-backup-raw` | `0003` | raw EEPROM to `mmc:0:EEPROM\EEPROM.dat` |
-| `sd-restore-raw` | `0004` | `mmc:0:EEPROM\EEPROM.dat` to raw EEPROM |
-| `sd-export-tree` | `0005` | copy `eep:0:` tree to `mmc:0:EEPROM` |
-| `sd-import-tree` | `0006` | copy fixed `mmc:0:EEPROM` paths back to `eep:0:` |
-| `erase-logical-pages` | `0001` | zero EEPROM logical pages; requires `--yes --really`; destroys unit-specific EEPROM data |
+| `sd-backup-raw` | `0003` | copy all 512 raw EEPROM pages to `mmc:0:EEPROM\EEPROM.dat` |
+| `sd-restore-raw` | `0004` | restore complete 512-byte pages from `mmc:0:EEPROM\EEPROM.dat` |
+| `sd-export-tree` | `0005` | copy `eep:0:` root files and one directory level to `mmc:0:EEPROM` |
+| `sd-import-tree` | `0006` | copy the root, `DATALOG`, `ERRORLOG`, and `SETTINGS` directories back to `eep:0:` |
+| `erase-logical-pages` | `0001` | zero raw EEPROM pages 0 through 501; requires `--yes --really`; destroys unit-specific EEPROM data |
 | `format-eep-fat` | `0002` | formats/reinitializes the `eep:0` FAT filesystem; requires `--yes --really`; destroys unit-specific EEPROM data |
 
 ## Variable groups
