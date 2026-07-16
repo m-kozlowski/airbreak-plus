@@ -15,6 +15,7 @@ caveat are described in
   - [Profile collection records](#profile-collection-records)
   - [Summary records](#summary-records)
   - [Event records](#event-records)
+    - [CellularActivityEvents](#cellularactivityevents)
   - [TherapyOneMinutePeriodic records](#therapyoneminuteperiodic-records)
   - [Metric snapshot records](#metric-snapshot-records)
   - [DiagnosticTenMinutePeriodic records](#diagnostictenminuteperiodic-records)
@@ -218,6 +219,52 @@ Most event spool records use the same inner record shape:
 
 The wrapper depth varies by spool family. Unknown event codes remain numeric
 unless a selector-specific label table has been verified.
+
+#### CellularActivityEvents
+
+`CellularActivityEvents` records use these confirmed event codes:
+
+| Code | Event | Additional fields |
+|-----:|-------|-------------------|
+| `2` | Cellular components starting | -- |
+| `3` | Cellular components stopping | -- |
+| `5` | Network generation | field `5`: `1` = 2G, `2` = 3G, `3` = 4G, `4` = LTE-M |
+| `6` | TCP connection started | -- |
+| `10` | TCP connected | -- |
+| `11` | TCP disconnected | -- |
+| `12` | TCP connection failed | -- |
+| `13` | HTTP response status | field `6`: HTTP status code |
+| `14` | Device registration succeeded | -- |
+| `15` | Device registration failed | -- |
+| `16` | Session response valid | -- |
+| `17` | Session response invalid | -- |
+| `22` | Session expired | -- |
+| `23` | Data spool read started | -- |
+| `24` | Data send succeeded | field `16`: result code |
+| `25` | Data send failed | field `16`: result code |
+| `27` | Data spool read failed | -- |
+| `33` | Cellular initializer started | -- |
+| `60` | Mobile network code (MNC) | field `8`: numeric MNC |
+| `61` | Mobile country code (MCC) | field `9`: numeric MCC |
+| `62` | HTTP response timeout | -- |
+| `87` | Network cell identifier | field `12`: cell identifier |
+| `88` | Data mode changed to `SILENT` | -- |
+| `89` | Data mode changed to `ACTIVE` | -- |
+| `91` | Cellular pre-initialization started | -- |
+| `92` | Cellular pre-initialization completed | -- |
+| `95` | Application log record | field `14`: packed error IDs; field `15`: report class |
+
+For event `95`, field `14` is packed as:
+
+```text
+packed = ((error_id & 0x0fff) << 12) | (detail_id & 0x0fff)
+```
+
+Error ID `32` is `RpcResponseInvalid`. Unmapped error IDs and report classes are
+reported numerically.
+
+Other event codes and their additional fields remain numeric. The
+`as11_config.py` decoder preserves their field numbers, wire types, and values.
 
 ### TherapyOneMinutePeriodic records
 

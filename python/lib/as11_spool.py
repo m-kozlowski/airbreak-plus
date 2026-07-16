@@ -237,6 +237,58 @@ SPOOL_LEGENDS: dict[str, dict] = {
             5: "Apnea", 6: "Arousal",
         },
     },
+    "CellularActivityEvents": {
+        "event_types": {
+            2: "CellularComponentsStarting",
+            3: "CellularComponentsStopping",
+            5: "NetworkGeneration",
+            6: "TcpConnectStarted",
+            10: "TcpConnected",
+            11: "TcpDisconnected",
+            12: "TcpConnectFailed",
+            13: "HttpResponseStatus",
+            14: "RegistrationSucceeded",
+            15: "RegistrationFailed",
+            16: "SessionResponseValid",
+            17: "SessionResponseInvalid",
+            22: "SessionExpired",
+            23: "DataSpoolReadStarted",
+            24: "DataSendSucceeded",
+            25: "DataSendFailed",
+            27: "DataSpoolReadFailed",
+            33: "CellularInitializerStarted",
+            60: "MobileNetworkCode",
+            61: "MobileCountryCode",
+            62: "HttpResponseTimeout",
+            87: "NetworkCellIdentifier",
+            88: "DataModeSilent",
+            89: "DataModeActive",
+            91: "PreInitializationStarted",
+            92: "PreInitializationCompleted",
+            95: "ApplicationLogRecord",
+        },
+        "extra_fields": {
+            (5, 5): "generation",
+            (13, 6): "http_status",
+            (24, 16): "result_code",
+            (25, 16): "result_code",
+            (60, 8): "mnc",
+            (61, 9): "mcc",
+            (87, 12): "cell_id",
+            (95, 15): "report_class",
+        },
+        "extra_enums": {
+            (5, 5): {
+                1: "2G",
+                2: "3G",
+                3: "4G",
+                4: "LTE-M",
+            },
+        },
+        "log_error_ids": {
+            32: "RpcResponseInvalid",
+        },
+    },
 }
 
 
@@ -1927,14 +1979,16 @@ def print_spool_legend(spool_type: str) -> None:
 def spool_walk_events(data: bytes, depth: int = 0) -> Iterator[bytes]:
     """Yield event records (field 1 innermost repeated) from spool payload."""
     try:
-        for field, wire, value in proto_decode(data):
-            if wire == 2:
-                if depth < 2:
-                    yield from spool_walk_events(value, depth + 1)
-                elif depth == 2 and field == 1:
-                    yield value
+        fields = proto_decode(data)
     except (ValueError, IndexError):
-        pass
+        return
+    for _field, wire, value in fields:
+        if wire != 2:
+            continue
+        if _event_record(value) is not None:
+            yield value
+        elif depth < 2:
+            yield from spool_walk_events(value, depth + 1)
 
 
 def _event_record(data: bytes) -> dict | None:
@@ -1965,6 +2019,35 @@ def _event_name(spool_type: str, event_type: int) -> str:
     return legend.get("event_types", {}).get(event_type, "")
 
 
+def _event_extra(spool_type: str, event_type: int, field: int,
+                 wire: int, value: object) -> str:
+    legend = SPOOL_LEGENDS.get(spool_type, {})
+    if (spool_type == "CellularActivityEvents" and event_type == 95
+            and field == 14 and wire == 0):
+        packed = int(value)
+        error_id = (packed >> 12) & 0xFFF
+        detail_id = packed & 0xFFF
+        error_name = legend.get("log_error_ids", {}).get(error_id)
+        error = f"{error_id}({error_name})" if error_name else str(error_id)
+        return f"error_id={error},detail_id={detail_id}"
+
+    name = legend.get("extra_fields", {}).get((event_type, field))
+    if name is None:
+        name = f"f{field}/{_PROTO_WIRE.get(wire, wire)}"
+    if wire == 0:
+        enum_name = legend.get("extra_enums", {}).get(
+            (event_type, field), {}
+        ).get(value)
+        if enum_name:
+            value = f"{value}({enum_name})"
+    elif wire == 2:
+        raw = bytes(value)
+        value = repr(raw.decode("ascii")) if (
+            raw and all(32 <= byte < 127 for byte in raw)
+        ) else "0x" + raw.hex()
+    return f"{name}={value}"
+
+
 def event_spool_pretty(spool_type: str, data: bytes, out=None) -> bool:
     """Print common AS11 event-spool records as a compact table."""
     if out is None:
@@ -1990,11 +2073,12 @@ def event_spool_pretty(spool_type: str, data: bytes, out=None) -> bool:
         if duration is None:
             duration = end - start
         extras = ",".join(
-            f"f{field}/{_PROTO_WIRE.get(wire, wire)}"
-            for field, wire, _value in record["extras"]
+            _event_extra(spool_type, event_type, field, wire, value)
+            for field, wire, value in record["extras"]
         )
+        name = _event_name(spool_type, event_type) or "unknown"
         print(
-            f"{idx}\t{event_type}\t{_event_name(spool_type, event_type)}\t"
+            f"{idx}\t{event_type}\t{name}\t"
             f"{start}\t{_fmt_utc_ms(start)}\t"
             f"{end}\t{_fmt_utc_ms(end)}\t{duration}\t{extras}",
             file=out,

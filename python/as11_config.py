@@ -674,7 +674,7 @@ def decode_spool_payload(spool_type: str, data: bytes, *,
                          samples: bool = False, details: bool = False,
                          raw_proto: bool = False) -> None:
     """Pretty-print a spool payload using the type-specific decoder."""
-    if not samples:
+    if not samples and not raw_proto:
         print_spool_legend(spool_type)
     event_table = False
     if raw_proto:
