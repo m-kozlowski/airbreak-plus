@@ -63,6 +63,7 @@ from as11_rpc_vars import (  # noqa: E402
     REGISTRIES,
     filter_vars, var_groups_summary, print_var_pairs,
 )
+from as11_diagnostic_errors import SELECTOR_BY_SPOOL  # noqa: E402
 from as11_spool import (  # noqa: E402
     SpoolError, spool_one_round,
     proto_pretty, summary_pretty,
@@ -672,7 +673,8 @@ def _wire_match_cell(name: str, data: bytes) -> str:
 
 def decode_spool_payload(spool_type: str, data: bytes, *,
                          samples: bool = False, details: bool = False,
-                         raw_proto: bool = False) -> None:
+                         raw_proto: bool = False,
+                         app_version: str | None = None) -> None:
     """Pretty-print a spool payload using the type-specific decoder."""
     if not samples and not raw_proto:
         print_spool_legend(spool_type)
@@ -702,7 +704,8 @@ def decode_spool_payload(spool_type: str, data: bytes, *,
         pass
     elif spool_type == "Summary":
         summary_pretty(data, details=details)
-    elif event_spool_pretty(spool_type, data):
+    elif event_spool_pretty(
+            spool_type, data, app_version=app_version, details=details):
         event_table = True
     else:
         proto_pretty(data)
@@ -715,9 +718,8 @@ def cmd_decode(args: argparse.Namespace) -> int:
 
     Without `--type`, the spool type is inferred from the outer
     protobuf field number using SPOOL_REGISTRY. When the wire field is
-    shared by multiple spool types (currently only ActivityEvents
-    Frequent vs Sporadic on f10), the first registry match is used and
-    other candidates are reported on stderr.
+    shared by multiple event spools, their event codes select the best
+    matching firmware map; other candidates are reported on stderr.
     """
     try:
         with open(args.file, "rb") as f:
@@ -731,7 +733,7 @@ def cmd_decode(args: argparse.Namespace) -> int:
         decode_spool_payload(
             spool_type, data,
             samples=args.samples, details=args.details,
-            raw_proto=args.raw_proto,
+            raw_proto=args.raw_proto, app_version=args.app_version,
         )
         return 0
 
@@ -746,8 +748,9 @@ def cmd_decode(args: argparse.Namespace) -> int:
             )
         spool_type = best
         if len(candidates) > 1:
+            alternatives = [item for item in candidates if item != spool_type]
             eprint(f"# autodetected: {spool_type} "
-                   f"(field shared with {', '.join(candidates[1:])})")
+                   f"(field shared with {', '.join(alternatives)})")
         else:
             eprint(f"# autodetected: {spool_type}")
     elif spool_type not in SPOOL_REGISTRY:
@@ -757,7 +760,7 @@ def cmd_decode(args: argparse.Namespace) -> int:
     decode_spool_payload(
         spool_type, data,
         samples=args.samples, details=args.details,
-        raw_proto=args.raw_proto,
+        raw_proto=args.raw_proto, app_version=args.app_version,
     )
     return 0
 
@@ -947,8 +950,26 @@ def cmd_spool(args: argparse.Namespace) -> int:
     round_num = 0
     final_status = ""
     last_next = None
+    app_version = args.app_version
 
     with connect_transport(args) as t:
+        if (args.decode and spool_type in SELECTOR_BY_SPOOL
+                and app_version is None):
+            try:
+                version_resp = call_rpc(
+                    t, args, "Get", ["ApplicationIdentifier"]
+                )
+                app_version = version_resp.get("result", {}).get(
+                    "ApplicationIdentifier"
+                )
+                if app_version:
+                    eprint(f"# diagnostic APPX: {app_version}")
+                else:
+                    eprint("# warning: ApplicationIdentifier unavailable; "
+                           "comparing all bundled diagnostic manifests")
+            except Exception as exc:
+                eprint("# warning: could not query ApplicationIdentifier; "
+                       f"comparing all bundled diagnostic manifests: {exc}")
         while True:
             round_num += 1
             if round_num > 1:
@@ -986,7 +1007,7 @@ def cmd_spool(args: argparse.Namespace) -> int:
         decode_spool_payload(
             spool_type, data,
             samples=args.samples, details=args.details,
-            raw_proto=args.raw_proto,
+            raw_proto=args.raw_proto, app_version=app_version,
         )
         if last_next and final_status == "SPOOL_COMPLETE_MORE_DATA_PENDING":
             eprint(f"\n# status={final_status}")
@@ -1469,6 +1490,9 @@ def build_parser() -> argparse.ArgumentParser:
                     help="with --decode, print detailed Summary fields")
     sp.add_argument("--samples", action="store_true",
                     help="with --decode, print decoded sample rows as CSV")
+    sp.add_argument("--app-version", default=None,
+                    help="APPX version for diagnostic error decoding; "
+                         "queried from the device when omitted")
     sp.add_argument("-o", "--output", default=None,
                     help="write raw binary to this file")
     sp.set_defaults(func=cmd_spool)
@@ -1494,6 +1518,9 @@ def build_parser() -> argparse.ArgumentParser:
                      help="print detailed Summary fields")
     dec.add_argument("--samples", action="store_true",
                      help="print decoded sample rows as CSV")
+    dec.add_argument("--app-version", default=None,
+                     help="APPX version or ApplicationIdentifier for "
+                          "diagnostic error decoding")
     dec.set_defaults(func=cmd_decode)
 
     kn = sub.add_parser(

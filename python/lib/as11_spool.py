@@ -12,6 +12,11 @@ import logging
 import sys
 from typing import Iterator
 
+from as11_diagnostic_errors import (
+    normalize_app_version, summarize_diagnostic_code,
+)
+from as11_rpc_vars import EVENT_FAMILIES, SPOOL_REGISTRY
+
 
 log = logging.getLogger("as11.spool")
 
@@ -130,13 +135,18 @@ _PROTO_WIRE = {0: "varint", 1: "64-bit", 2: "bytes", 5: "32-bit"}
 
 
 def _proto_read_varint(data, i):
-    v = 0; shift = 0
-    while True:
-        b = data[i]; i += 1
+    v = 0
+    shift = 0
+    while shift < 70:
+        if i >= len(data):
+            raise ValueError("truncated protobuf varint")
+        b = data[i]
+        i += 1
         v |= (b & 0x7F) << shift
         if (b & 0x80) == 0:
             return v, i
         shift += 7
+    raise ValueError("protobuf varint exceeds 10 bytes")
 
 
 def proto_decode(data: bytes) -> list[tuple[int, int, object]]:
@@ -147,14 +157,25 @@ def proto_decode(data: bytes) -> list[tuple[int, int, object]]:
         key, i = _proto_read_varint(data, i)
         field = key >> 3
         wire = key & 7
+        if field == 0:
+            raise ValueError(f"invalid protobuf field 0 at offset {i}")
         if wire == 0:
             v, i = _proto_read_varint(data, i); out.append((field, wire, v))
         elif wire == 1:
+            if i + 8 > len(data):
+                raise ValueError(f"truncated 64-bit field {field}")
             out.append((field, wire, int.from_bytes(data[i:i + 8], "little"))); i += 8
         elif wire == 2:
             ln, i = _proto_read_varint(data, i)
+            if i + ln > len(data):
+                raise ValueError(
+                    f"truncated bytes field {field}: need {ln}, "
+                    f"have {len(data) - i}"
+                )
             out.append((field, wire, bytes(data[i:i + ln]))); i += ln
         elif wire == 5:
+            if i + 4 > len(data):
+                raise ValueError(f"truncated 32-bit field {field}")
             out.append((field, wire, int.from_bytes(data[i:i + 4], "little"))); i += 4
         else:
             raise ValueError(f"unsupported wire type {wire} at offset {i}")
@@ -222,20 +243,117 @@ def spool_payload_shape(data: bytes) -> str:
 
 
 
+def _event_code_map(selector: str, codes: tuple[int, ...],
+                    *, labels_from: str | None = None) -> dict[int, str]:
+    labels = EVENT_FAMILIES[labels_from or selector]
+    if len(codes) != len(labels):
+        raise RuntimeError(
+            f"{selector}: {len(codes)} wire codes for {len(labels)} labels"
+        )
+    if len(set(codes)) != len(codes):
+        raise RuntimeError(f"{selector}: duplicate wire event code")
+    return dict(zip(codes, labels))
+
+
+_SYSTEM_ERROR_CODES = (
+    1, 2, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14, 15, 16, 17, 18,
+    21, 22, 19, 20, 23, 24, 25,
+)
+
 SPOOL_LEGENDS: dict[str, dict] = {
     "UsageEvents-TherapyStatusEvents": {
-        "event_types": {
-            1: "NoUsage", 2: "MaskOff", 3: "MaskOn", 4: "PowerOff",
-            5: "MaskFitStart", 6: "MaskFitStop",
-            7: "TherapyStart", 8: "TherapyStop",
-            9: "LearnTargetsStart", 10: "LearnTargetsStop",
-        },
+        "event_types": _event_code_map(
+            "UsageEvents-TherapyStatusEvents",
+            (1, 2, 3, 4, 5, 6, 7, 8, 10, 11),
+        ),
     },
     "TherapyEvents-RespiratoryEvents": {
+        "event_types": _event_code_map(
+            "TherapyEvents-RespiratoryEvents",
+            (1, 2, 3, 4, 5, 6, 8, 9),
+        ),
+    },
+    "SystemActivityEvents-FrequentActivityEvents": {
+        "event_types": _event_code_map(
+            "SystemActivityEvents-FrequentActivityEvents",
+            (
+                1, 2, 3, 4, 5, 7, 10, 11, 16, 17, 20, 76, 29, 31,
+                32, 80, 75, 77, 79, 78, 101, 103, 102, 106, 92, 62,
+                89, 90, 84, 85, 111, 112, 113, 120, 121, 122, 116,
+                117, 118, 119, 130, 129, 131, 134, 135, 137, 138,
+                148, 149, 150, 156, 157,
+            ),
+        ),
+    },
+    "SystemActivityEvents-SporadicActivityEvents": {
+        "event_types": _event_code_map(
+            "SystemActivityEvents-SporadicActivityEvents",
+            (
+                1, 107, 12, 13, 15, 91, 23, 24, 94, 95, 33, 108,
+                93, 97, 99, 98, 96, 110, 109, 39, 41, 42, 43, 44,
+                45, 46, 82, 49, 53, 54, 55, 57, 58, 81, 64, 63,
+                66, 67, 74, 87, 88, 34, 61, 104, 105, 100, 65, 52,
+                114, 115, 123, 124, 125, 126, 127, 128, 132, 133,
+                136, 139, 140, 141, 142, 143, 144, 145, 146, 147,
+                151, 152, 153, 154, 155, 158, 159, 160, 161, 162,
+            ),
+        ),
+    },
+    "SystemExceptionEvents-SystemErrors": {
+        "event_types": _event_code_map(
+            "SystemExceptionEvents-SystemErrors", _SYSTEM_ERROR_CODES
+        ),
+    },
+    "SystemExceptionEvents-RecoverableErrors": {
+        "event_types": _event_code_map(
+            "SystemExceptionEvents-RecoverableErrors", (1, 2, 3, 4)
+        ),
+    },
+    "SystemExceptionEvents-HumidifierErrors": {
+        "event_types": _event_code_map(
+            "SystemExceptionEvents-HumidifierErrors", (1, 2, 3, 4, 5, 6)
+        ),
+    },
+    "SystemExceptionEvents-HeatedTubeErrors": {
+        "event_types": _event_code_map(
+            "SystemExceptionEvents-HeatedTubeErrors",
+            (1, 2, 3, 4, 5, 6, 7, 8),
+        ),
+    },
+    "alarmEvents": {
+        "event_types": _event_code_map(
+            "alarmEvents", tuple(range(40))
+        ),
+    },
+    "alarmDiagnosticEvents": {
+        "event_types": _event_code_map(
+            "alarmDiagnosticEvents", tuple(range(22))
+        ),
+    },
+    "GUIActivityEvents": {
+        "record_kind": "gui",
         "event_types": {
-            2: "Hypopnea", 3: "CentralApnea", 4: "ObstructiveApnea",
-            5: "Apnea", 6: "Arousal",
+            1: "ActiveScreen",
+            2: "TouchItem",
+            3: "Swipe",
+            4: "Multitouch",
+            5: "ScreenState",
         },
+    },
+    "SurveyEvents": {
+        "record_kind": "survey",
+    },
+    "DiagnosticExceptionEvents-AppErrors": {
+        "record_kind": "diagnostic_error",
+    },
+    "DiagnosticExceptionEvents-FatalErrors": {
+        "record_kind": "diagnostic_error",
+    },
+    "DiagnosticExceptionEvents-ResettableErrors": {
+        "record_kind": "diagnostic_error",
+    },
+    "DiagnosticExceptionEvents-AlarmAppErrors": {
+        "record_kind": "diagnostic_error",
     },
     "CellularActivityEvents": {
         "event_types": {
@@ -263,6 +381,7 @@ SPOOL_LEGENDS: dict[str, dict] = {
             87: "NetworkCellIdentifier",
             88: "DataModeSilent",
             89: "DataModeActive",
+            90: "CALSystemError",
             91: "PreInitializationStarted",
             92: "PreInitializationCompleted",
             95: "ApplicationLogRecord",
@@ -275,6 +394,7 @@ SPOOL_LEGENDS: dict[str, dict] = {
             (60, 8): "mnc",
             (61, 9): "mcc",
             (87, 12): "cell_id",
+            (90, 13): "cal_system_error_code",
             (95, 15): "report_class",
         },
         "extra_enums": {
@@ -294,8 +414,6 @@ SPOOL_LEGENDS: dict[str, dict] = {
 
 # Family-derived sets pulled from the spool registry. The registry in
 # as11_rpc_vars.py is the single source of truth for spool metadata.
-from as11_rpc_vars import SPOOL_REGISTRY  # noqa: E402
-
 RC03_SPOOL_FIELDS: dict[str, int] = {
     name: info["wire_field"]
     for name, info in SPOOL_REGISTRY.items()
@@ -344,6 +462,47 @@ DATA_DELIVERY_FIELDS: dict[int, str] = {
     24: "alarmEvents",
     25: "alarmDiagnosticEvents",
     26: "atmosphericPressure10min",
+}
+
+# SettingProfiles.ActiveProfiles uses the same exported therapy-mode codes as
+# STR Mode, rather than the local ActiveTherapyProfile option indexes.
+ACTIVE_THERAPY_PROFILE_NAMES: dict[int, str] = {
+    1: "AutoSetProfile",
+    2: "AutoSetForHerProfile",
+    3: "CpapProfile",
+    4: "SpontProfile",
+    5: "iVAPSProfile",
+    6: "ASVProfile",
+    7: "ASVAutoProfile",
+    8: "VAutoProfile",
+    9: "PACProfile",
+    10: "STProfile",
+    16: "TimedProfile",
+}
+
+# Known _ActiveFeatureProfiles IDs. Firmware's JSON formatter has no named
+# entries for the reserved range 8..12, so those values remain numeric.
+ACTIVE_FEATURE_PROFILE_NAMES: dict[int, str] = {
+    1: "ComfortFeature",
+    2: "EprFeature",
+    3: "AutoRampFeature",
+    4: "RampDownFeature",
+    5: "SmartStartStopFeature",
+    6: "CircuitFeature",
+    7: "ClimateFeature",
+    13: "LanguageFeature",
+    14: "UserSolutionFeature",
+    15: "TemperatureFeature",
+    16: "PatientViewFeature",
+    17: "TimeZoneFeature",
+    18: "CareCheckFeature",
+    19: "DeviceHealthFeature",
+    20: "ReminderFeature",
+    21: "DisplayFeature",
+    22: "ConfirmStopFeature",
+    23: "TherapyLEDFeature",
+    24: "HeightFeature",
+    25: "MaskSenseFeature",
 }
 
 THERAPY_PROFILE_FIELDS: dict[int, tuple[str, tuple[tuple[int, str, str], ...]]] = {
@@ -574,11 +733,12 @@ METRIC_SPOOL_DEFS: dict[str, dict] = {
     },
 }
 
-MEMORY_METRIC_FIELDS: dict[int, str] = {
-    1: "MemoryPoolRaw",
-    2: "MetricA",
-    3: "MetricB",
-    4: "MetricC",
+MEMORY_METRIC_SOURCE_FIELDS: dict[int, tuple[str, str, str]] = {
+    # The firmware's local set IDs 0, 1, 2 are serialized as wire values
+    # 2, 3, 1 respectively. Each set reads these g[2] DataItems directly.
+    1: ("FWC", "FE2", "FM2"),
+    2: ("FW0", "FE0", "FM0"),
+    3: ("FW1", "FE1", "FM1"),
 }
 
 DIAG_10MIN_FIELDS: dict[int, dict] = {
@@ -793,23 +953,31 @@ def _delivery_status(value: int) -> str:
     return str(value)
 
 
-def _print_setting_delivery(data: bytes, out, *, details: bool) -> None:
-    status = None
-    enabled = []
+def _print_active_profiles(data: bytes, out, *, details: bool) -> None:
+    therapy_profile = None
+    feature_profiles = []
     extras = []
     for field, wire, value in proto_decode(data):
         if field == 1 and wire == 0:
-            status = value
+            therapy_profile = value
         elif field == 2 and wire == 0:
-            enabled.append(value)
+            feature_profiles.append(value)
         else:
-            extras.append(f"f{field}/{_PROTO_WIRE.get(wire, wire)}")
-    names = [
-        DATA_DELIVERY_FIELDS.get(item, f"id{item}") for item in enabled
-    ]
-    status_text = f" status={status}" if status is not None else ""
-    print(f"  StoredDataDeliveryControl:{status_text} "
-          f"enabled={','.join(names)}", file=out)
+            extras.append(
+                f"f{field}/{_PROTO_WIRE.get(wire, wire)}="
+                f"{_format_wire_value(wire, value)}"
+            )
+    if therapy_profile is None:
+        therapy_text = "n/a"
+    else:
+        name = ACTIVE_THERAPY_PROFILE_NAMES.get(
+            therapy_profile, f"id{therapy_profile}"
+        )
+        therapy_text = f"{name}({therapy_profile})"
+    names = [ACTIVE_FEATURE_PROFILE_NAMES.get(item, f"id{item}")
+             for item in feature_profiles]
+    print(f"  ActiveProfiles: therapy={therapy_text} "
+          f"features={','.join(names)}", file=out)
     if details and extras:
         print(f"    extras={','.join(extras)}", file=out)
 
@@ -902,7 +1070,7 @@ def setting_profiles_pretty(spool_type: str, data: bytes, out=None,
                 if details and extras:
                     print(f"    extras={','.join(extras)}", file=out)
             elif field == 2 and wire == 2:
-                _print_setting_delivery(value, out, details=details)
+                _print_active_profiles(value, out, details=details)
             elif field == 3 and wire == 2:
                 _print_therapy_profiles(value, out, details=details)
             elif field == 4 and wire == 2:
@@ -1015,11 +1183,21 @@ def _memory_metrics_pretty(record: bytes, out, *, details: bool) -> None:
             continue
         if field == 2 and wire == 2:
             values = _decode_varint_message(value)
-            parts = []
-            for subfield in sorted(values):
-                name = MEMORY_METRIC_FIELDS.get(subfield, f"f{subfield}")
-                raw = ",".join(str(item) for item in values[subfield])
-                parts.append(f"{name}={raw}")
+            set_id = values.get(1, [None])[0]
+            source_names = MEMORY_METRIC_SOURCE_FIELDS.get(set_id)
+            parts = [f"set={set_id}"]
+            used = {1}
+            if source_names is not None:
+                for subfield, name in enumerate(source_names, start=2):
+                    if subfield not in values:
+                        continue
+                    used.add(subfield)
+                    raw = ",".join(str(item) for item in values[subfield])
+                    parts.append(f"{name}={raw}")
+            if details or source_names is None:
+                for subfield in sorted(set(values) - used):
+                    raw = ",".join(str(item) for item in values[subfield])
+                    parts.append(f"f{subfield}={raw}")
             print("  MemoryMetric: " + " ".join(parts), file=out)
             continue
         if details:
@@ -1967,13 +2145,27 @@ def print_spool_legend(spool_type: str) -> None:
     legend = SPOOL_LEGENDS.get(spool_type)
     if not legend:
         return
+    record_kind = legend.get("record_kind", "event")
+    if record_kind == "gui":
+        print("# GUI record layout: field 1 = kind, field 2 = timestamp_ms, "
+              "field 3 = value")
+        return
+    if record_kind == "diagnostic_error":
+        print("# diagnostic record layout: field 1 = firmware error code, "
+              "field 2 = start_ms, field 3 = end_ms, "
+              "field 4 = duration_ms")
+        return
+    if record_kind == "survey":
+        print("# SurveyEvents records are preserved as protobuf fields; "
+              "their payload semantics are not yet named")
+        return
     et = legend.get("event_types")
     if et:
         print("# event record layout: field 1 = type, field 2 = start_ms, "
               "field 3 = end_ms, field 4 = duration_ms")
-        parts = ", ".join(f"{k}={v}" for k, v in sorted(et.items()))
-        print(f"# event types: {parts}")
-        print()
+        if len(et) <= 12:
+            parts = ", ".join(f"{k}={v}" for k, v in sorted(et.items()))
+            print(f"# event types: {parts}")
 
 
 def spool_walk_events(data: bytes, depth: int = 0) -> Iterator[bytes]:
@@ -1989,6 +2181,22 @@ def spool_walk_events(data: bytes, depth: int = 0) -> Iterator[bytes]:
             yield value
         elif depth < 2:
             yield from spool_walk_events(value, depth + 1)
+
+
+def _walk_records(data: bytes, decoder, depth: int = 0) -> Iterator[dict]:
+    """Yield nested length-delimited records accepted by `decoder`."""
+    try:
+        fields = proto_decode(data)
+    except (ValueError, IndexError):
+        return
+    for _field, wire, value in fields:
+        if wire != 2:
+            continue
+        record = decoder(value)
+        if record is not None:
+            yield record
+        elif depth < 2:
+            yield from _walk_records(value, decoder, depth + 1)
 
 
 def _event_record(data: bytes) -> dict | None:
@@ -2010,6 +2218,29 @@ def _event_record(data: bytes) -> dict | None:
         else:
             out["extras"].append((field, wire, value))
     if out["type"] is None or out["start"] is None or out["end"] is None:
+        return None
+    return out
+
+
+def _gui_event_record(data: bytes) -> dict | None:
+    try:
+        fields = proto_decode(data)
+    except (ValueError, IndexError):
+        return None
+    out = {"type": None, "timestamp": None, "value": None,
+           "value_wire": None, "extras": []}
+    for field, wire, value in fields:
+        if field == 1 and wire == 0:
+            out["type"] = value
+        elif field == 2 and wire == 0:
+            out["timestamp"] = value
+        elif field == 3:
+            out["value"] = value
+            out["value_wire"] = wire
+        else:
+            out["extras"].append((field, wire, value))
+    if (out["type"] is None or out["timestamp"] is None
+            or out["value"] is None):
         return None
     return out
 
@@ -2048,12 +2279,60 @@ def _event_extra(spool_type: str, event_type: int, field: int,
     return f"{name}={value}"
 
 
-def event_spool_pretty(spool_type: str, data: bytes, out=None) -> bool:
-    """Print common AS11 event-spool records as a compact table."""
+def _format_wire_value(wire: int, value: object) -> str:
+    if wire == 2:
+        raw = bytes(value)
+        if raw and all(32 <= byte < 127 for byte in raw):
+            return repr(raw.decode("ascii"))
+        return "0x" + raw.hex()
+    return str(value)
+
+
+def _gui_event_spool_pretty(spool_type: str, data: bytes, out) -> bool:
+    records = list(_walk_records(data, _gui_event_record))
+    if not records:
+        return False
+
+    print("# GUI event spool", file=out)
+    print("idx\tkind\tname\ttimestamp_ms\ttimestamp_utc\tvalue\textras",
+          file=out)
+    for idx, record in enumerate(records):
+        event_type = int(record["type"])
+        timestamp = int(record["timestamp"])
+        value = _format_wire_value(record["value_wire"], record["value"])
+        extras = ",".join(
+            _event_extra(spool_type, event_type, field, wire, extra)
+            for field, wire, extra in record["extras"]
+        )
+        name = _event_name(spool_type, event_type) or "unknown"
+        print(f"{idx}\t{event_type}\t{name}\t{timestamp}\t"
+              f"{_fmt_utc_ms(timestamp)}\t{value}\t{extras}", file=out)
+
+    counts = Counter(int(record["type"]) for record in records)
+    print("", file=out)
+    print(f"# summary: {len(records)} GUI events", file=out)
+    for event_type in sorted(counts):
+        name = _event_name(spool_type, event_type) or "unknown"
+        print(f"#   {event_type} {name:24s} {counts[event_type]:6d}",
+              file=out)
+    return True
+
+
+def event_spool_pretty(spool_type: str, data: bytes, out=None, *,
+                       app_version: str | None = None,
+                       details: bool = False) -> bool:
+    """Print an AS11 event spool according to its firmware wire schema."""
     if out is None:
         out = sys.stdout
     if spool_type not in EVENT_SPOOL_TYPES:
         return False
+    legend = SPOOL_LEGENDS.get(spool_type, {})
+    record_kind = legend.get("record_kind", "event")
+    if record_kind == "gui":
+        return _gui_event_spool_pretty(spool_type, data, out)
+    if record_kind == "survey":
+        return False
+
     records = []
     for ev in spool_walk_events(data):
         record = _event_record(ev)
@@ -2062,9 +2341,16 @@ def event_spool_pretty(spool_type: str, data: bytes, out=None) -> bool:
     if not records:
         return False
 
-    print("# event spool", file=out)
-    print("idx\ttype\tname\tstart_ms\tstart_utc\tend_ms\tend_utc\tduration_ms\textras",
+    diagnostic = record_kind == "diagnostic_error"
+    print("# diagnostic error spool" if diagnostic else "# event spool",
           file=out)
+    if diagnostic:
+        print("idx\tcode\tcode_hex\tstart_ms\tstart_utc\tend_ms\tend_utc\t"
+              "duration_ms\textras", file=out)
+    else:
+        print("idx\ttype\tname\tstart_ms\tstart_utc\tend_ms\tend_utc\t"
+              "duration_ms\textras", file=out)
+    interpretations = {}
     for idx, record in enumerate(records):
         event_type = int(record["type"])
         start = int(record["start"])
@@ -2076,20 +2362,37 @@ def event_spool_pretty(spool_type: str, data: bytes, out=None) -> bool:
             _event_extra(spool_type, event_type, field, wire, value)
             for field, wire, value in record["extras"]
         )
-        name = _event_name(spool_type, event_type) or "unknown"
-        print(
-            f"{idx}\t{event_type}\t{name}\t"
-            f"{start}\t{_fmt_utc_ms(start)}\t"
-            f"{end}\t{_fmt_utc_ms(end)}\t{duration}\t{extras}",
-            file=out,
-        )
+        if diagnostic:
+            if event_type not in interpretations:
+                interpretations[event_type] = summarize_diagnostic_code(
+                    spool_type, event_type, app_version, details=details
+                )
+            print(f"{idx}\t{event_type}\t0x{event_type:04X}\t"
+                  f"{start}\t{_fmt_utc_ms(start)}\t"
+                  f"{end}\t{_fmt_utc_ms(end)}\t{duration}\t{extras}",
+                  file=out)
+        else:
+            name = _event_name(spool_type, event_type) or "unknown"
+            print(f"{idx}\t{event_type}\t{name}\t"
+                  f"{start}\t{_fmt_utc_ms(start)}\t"
+                  f"{end}\t{_fmt_utc_ms(end)}\t{duration}\t{extras}",
+                  file=out)
 
     counts = Counter(int(record["type"]) for record in records)
     print("", file=out)
-    print(f"# summary: {len(records)} events", file=out)
+    if diagnostic:
+        version = normalize_app_version(app_version)
+        scope = version or "all bundled APPX manifests"
+        print(f"# code interpretations ({scope}):", file=out)
+        for event_type in sorted(interpretations):
+            print(f"#   {event_type:5d} 0x{event_type:04X}  "
+                  f"{interpretations[event_type]}", file=out)
+        print("", file=out)
+    noun = "error records" if diagnostic else "events"
+    print(f"# summary: {len(records)} {noun}", file=out)
     for event_type in sorted(counts):
         name = _event_name(spool_type, event_type)
-        label = f"{event_type}"
+        label = f"code={event_type}" if diagnostic else f"{event_type}"
         if name:
             label += f" {name}"
         print(f"#   {label:28s} {counts[event_type]:6d}", file=out)
@@ -2139,10 +2442,10 @@ def detect_spool_type(data: bytes) -> tuple[str | None, list[str]]:
     """Identify a captured payload by its outer protobuf field number.
 
     Returns (best_match, all_candidates). When the wire field is unique
-    in the registry, best_match is the only candidate. When two or more
-    spool types share the same wire field (e.g. ActivityEvents-Frequent
-    vs -Sporadic on f10), best_match is the first registry entry that
-    matches; the full list of candidates is available for display.
+    in the registry, best_match is the only candidate. When event spools
+    share a wire field, their observed event codes are scored against the
+    firmware maps. A tie retains registry order. The full candidate list
+    is always returned.
     Returns (None, []) when the payload could not be parsed or no
     registered spool uses that wire field.
     """
@@ -2150,10 +2453,25 @@ def detect_spool_type(data: bytes) -> tuple[str | None, list[str]]:
     field = spool_payload_first_field(data)
     if field is None:
         return None, []
-    candidates = SPOOL_FIELDS.get(field, [])
+    candidates = list(SPOOL_FIELDS.get(field, []))
     if not candidates:
         return None, []
-    return candidates[0], list(candidates)
+    if len(candidates) == 1:
+        return candidates[0], candidates
+
+    observed = []
+    for record_data in spool_walk_events(data):
+        record = _event_record(record_data)
+        if record is not None:
+            observed.append(int(record["type"]))
+    if observed:
+        scores = []
+        for index, candidate in enumerate(candidates):
+            known = SPOOL_LEGENDS.get(candidate, {}).get("event_types", {})
+            matched = sum(event_type in known for event_type in observed)
+            scores.append((matched, -index, candidate))
+        return max(scores)[2], candidates
+    return candidates[0], candidates
 
 
 __all__ = [

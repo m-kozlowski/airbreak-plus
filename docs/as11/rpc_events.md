@@ -25,18 +25,18 @@ Live selectors accepted by `SubscribeEvent.params.dataIds` on 15.8.4.0.
 | `UsageEvents-TherapyStatusEvents` | 10 | therapy on/off and mode/status lifecycle |
 | `TherapyEvents-RespiratoryEvents` | 8 | respiratory event reporting, including `NoEvent` sentinel |
 | `SystemActivityEvents-FrequentActivityEvents` | 52 | frequent system activity events |
-| `SystemActivityEvents-SporadicActivityEvents` | 76 | sporadic system activity events |
-| `SystemExceptionEvents-SystemErrors` | 22 | system errors |
+| `SystemActivityEvents-SporadicActivityEvents` | 78 | sporadic system activity events |
+| `SystemExceptionEvents-SystemErrors` | 23 | system errors |
 | `SystemExceptionEvents-RecoverableErrors` | 4 | recoverable errors |
-| `SystemExceptionEvents-HumidifierErrors` | 5 | humidifier errors |
-| `SystemExceptionEvents-HeatedTubeErrors` | 9 | heated tube errors |
+| `SystemExceptionEvents-HumidifierErrors` | 6 | humidifier errors |
+| `SystemExceptionEvents-HeatedTubeErrors` | 8 | heated tube errors |
 | `DiagnosticExceptionEvents-AppErrors` | n/a | application diagnostic errors |
 | `DiagnosticExceptionEvents-FatalErrors` | n/a | fatal diagnostic errors |
 | `DiagnosticExceptionEvents-ResettableErrors` | n/a | resettable diagnostic errors |
 | `DiagnosticExceptionEvents-AlarmAppErrors` | n/a | alarm application errors |
 | `DiagnosticExceptionEvents-ErrorLogInfos` | n/a | error-log info records |
-| `alarmEvents` | 9 | alarm event profile |
-| `alarmDiagnosticEvents` | 26 | alarm diagnostic event profile |
+| `alarmEvents` | 40 | alarm event profile |
+| `alarmDiagnosticEvents` | 22 | alarm diagnostic event profile |
 
 `SubscribeEvent` accepts unknown selector names and reports them as
 `valid: false` in the response. Clients should reject a subscription if every
@@ -71,7 +71,7 @@ The apnea, hypopnea, and RERA labels are completion events. Their
 
 `SystemActivityEvents-FrequentActivityEvents`:
 
-- Lifecycle: `PowerUp`, `PowerDown`, `StandbyStarted`, `TherapyStarted`,
+- Lifecycle: `NoActivity`, `PowerUp`, `PowerDown`, `StandbyStarted`, `TherapyStarted`,
   `MaskfitStarted`, `WarmupStarted`, `WarmupStopped`, `CooldownStarted`,
   `CooldownStopped`, `BackupStarted`, `MockdownStarted`,
   `MockdownInterrupted`, `MockdownFinished`, `RampDownStarted`,
@@ -89,7 +89,7 @@ The apnea, hypopnea, and RERA labels are completion events. Their
   `BluetoothOximeterDisconnected`
 - Hardware: `SDCardInserted`, `HeatedTubeConnected`,
   `HeatedTubeDisconnected`, `AmalfiTubeConnected`, `HeatedTubeFailed`,
-  `AlarmModuleComms`, `TxLink2Connected`
+  `TxLink2Connected`
 - Power supply: `PowerSupplyACMains90W`, `PowerSupplyDCMains90W`,
   `PowerSupply65W`
 - Audio/soundcheck: `MicrophoneStartedRecording`,
@@ -99,7 +99,7 @@ The apnea, hypopnea, and RERA labels are completion events. Their
 
 `SystemActivityEvents-SporadicActivityEvents`:
 
-- `DataResetStarted`, `CalibrationStarted`, `SystemErrorStarted`,
+- `NoActivity`, `DataResetStarted`, `CalibrationStarted`, `SystemErrorStarted`,
   `UpgradePrepStarted`, `TestDriveStarted`
 - `FlightModeOn`, `FlightModeOff`
 - RPC echoes: `RpcComplianceEraseRequest`,
@@ -123,7 +123,7 @@ The apnea, hypopnea, and RERA labels are completion events. Their
 - Upgrade/signature failures: `IncorrectUpgradeType`,
   `UpgradeFileIntegrityFailure`, `FgUpgradeFileFingerprintMismatch`,
   `FgUpgradeFileSignatureMismatch`, `AlarmUpgradeFileSignatureMismatch`,
-  `InvalidUpdaterSoftware`
+  `InvalidUpdaterSoftware`, `AlarmImageRestored`
 - Hardware/UI: `BlockedOutlet`, `BlockedInlet`, `EndcapConnected`,
   `EndcapDisconnected`, `LimpModeOn`, `LimpModeOff`,
   `TouchScreenI2CError`, `TubRemovedDuringSoundcheck`,
@@ -152,6 +152,7 @@ The apnea, hypopnea, and RERA labels are completion events. Their
 - Power/temp: `OverTemperature`, `OverVoltage`, `ImplausibleSupplyVoltage`,
   `FaultyHWFaultDetectionCircuitry`
 - Settings: `SettingsReset`, `CalibrationReset`
+- Alarm hardware: `AlarmModuleComms`
 
 `SystemExceptionEvents-RecoverableErrors`:
 
@@ -160,11 +161,11 @@ The apnea, hypopnea, and RERA labels are completion events. Their
 `SystemExceptionEvents-HumidifierErrors`:
 
 - `NoError`, `OverCurrent`, `ProtectionFETShortCircuit`,
-  `ControlFETShortCircuit`, `OpenCircuit`
+  `ControlFETShortCircuit`, `OpenCircuit`, `OverPower`
 
 `SystemExceptionEvents-HeatedTubeErrors`:
 
-- `NoError`, `OverPower`, `OverTemperature`, `ProtectionFETShortCircuit`,
+- `NoError`, `OverTemperature`, `ProtectionFETShortCircuit`,
   `ControlFETShortCircuit`, `HeatingOpenCircuit`, `HeatingNTCOpenCircuit`,
   `SensorFail`, `OverCurrent`
 
@@ -210,24 +211,44 @@ identify which of those five reset causes produced it.
 
 `alarmEvents`:
 
-- `HighLeakAlarm`, `NonVentedMaskAlarm`, `LowMinuteVentilationAlarm`,
-  `ApneaAlarm`
-- `RecoverableErrorHoseBlockedAlarm`,
+- Patient alarms (codes `0..3`): `HighLeakAlarm`, `NonVentedMaskAlarm`,
+  `LowMinuteVentilationAlarm`, `ApneaAlarm`
+- Recoverable alarms (codes `4..6`): `RecoverableErrorHoseBlockedAlarm`,
   `RecoverableErrorHoseDisconnectedAlarm`,
   `RecoverableErrorHumidifierTubRemovedAlarm`
-- `AlarmModuleCommunicationError`, `AlarmMute`
+- Alarm hardware: `AlarmModuleCommunicationError` (code `7`) and `AlarmMute`
+  (code `36`)
+- Mirrored system errors (codes `8..30`): `SystemErrorMotorStallHW`,
+  `SystemErrorSlowOverPressure`, `SystemErrorFastOverPressure`,
+  `SystemErrorOverTemperature`, `SystemErrorOverVoltage`,
+  `SystemErrorMotorStallSW`, `SystemErrorMotorHwFault`,
+  `SystemErrorMotorSticky`, `SystemErrorMotorFETs`, `SystemErrorMotorESD`,
+  `SystemErrorMotorHwMitigationIC`, `SystemErrorNoFlowData`,
+  `SystemErrorSettingsReset`, `SystemErrorCalibrationReset`,
+  `SystemErrorPressureStuckHigh`, `SystemErrorPressureStuckLow`,
+  `SystemErrorPressureStuckMid`, `SystemErrorFlowSensorStuckLow`,
+  `SystemErrorFlowSensorStuckHigh`, `SystemErrorPressureSensorDrift`,
+  `SystemErrorPressureSensorsPlausibility`,
+  `SystemErrorImplausibleSupplyVoltage`,
+  `SystemErrorFaultyHWFaultDetectionCircuitry`
+- Self-test (codes `31..35`): `SelfTestInitiated`, `IndicatorSelfTestPass`,
+  `SupercapacitorSelfTestPass`, `IndicatorSelfTestFail`,
+  `SupercapacitorSelfTestFail`
+- Alarm firmware upgrade result (codes `37..39`): `AlarmUpgradeInitiated`,
+  `AlarmUpgradeSuccessful`,
+  `AlarmUpgradeFailed`
 
 `alarmDiagnosticEvents`:
 
-- Self-test: `IndicatorSelfTestInitiated`, `IndicatorSelfTestPass`,
+- Self-test (codes `0..6`): `IndicatorSelfTestInitiated`, `IndicatorSelfTestPass`,
   `IndicatorSelfTestFail`, `PrimaryLEDFail`, `SecondaryLEDFail`,
-  `BuzzerFail`, `MuteButtonStuckOn`, `SelfTestInitiated`
-- Supercap: `SupercapacitorSelfTestInitiated`,
+  `BuzzerFail`, `MuteButtonStuckOn`
+- Supercap (codes `7..12`): `SupercapacitorSelfTestInitiated`,
   `SupercapacitorSelfTestPass`, `SupercapacitorSelfTestFail`,
   `SupercapacitorVoltage`, `SupercapacitorCapacitance`,
   `SupercapacitorESR`
-- Upgrade lifecycle: `AlarmUpgradeInitiated`, `AlarmUpgradeSuccessful`,
-  `AlarmUpgradeFailed`, `InitiateAlarmUpgradeRequested`,
+- Alarm upgrade operation phases (codes `13..21`):
+  `InitiateAlarmUpgradeRequested`,
   `InitiateAlarmUpgradeCompleted`, `InitiateAlarmUpgradeFailed`,
   `AlarmUpgradeFileTransferRequested`,
   `AlarmUpgradeFileTransferCompleted`,

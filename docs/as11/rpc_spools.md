@@ -15,6 +15,8 @@ caveat are described in
   - [Profile collection records](#profile-collection-records)
   - [Summary records](#summary-records)
   - [Event records](#event-records)
+    - [GUIActivityEvents](#guiactivityevents)
+    - [Diagnostic error events](#diagnostic-error-events)
     - [CellularActivityEvents](#cellularactivityevents)
   - [TherapyOneMinutePeriodic records](#therapyoneminuteperiodic-records)
   - [Metric snapshot records](#metric-snapshot-records)
@@ -34,7 +36,7 @@ caveat are described in
 | `summary` | `Summary` | Per-day/per-session summary records. |
 | `profile` | `SettingProfilesCollection` | Profile snapshot stream (repeated records). |
 | `config` | `ConfigurationProfilesCollection` | Configuration snapshot (single record). |
-| `event` | `UsageEvents-TherapyStatusEvents`, `TherapyEvents-RespiratoryEvents`, `SystemActivityEvents-FrequentActivityEvents`, `SystemActivityEvents-SporadicActivityEvents`, `SystemExceptionEvents-SystemErrors`, `SystemExceptionEvents-RecoverableErrors`, `SystemExceptionEvents-HumidifierErrors`, `SystemExceptionEvents-HeatedTubeErrors`, `DiagnosticExceptionEvents-AppErrors`, `DiagnosticExceptionEvents-FatalErrors`, `DiagnosticExceptionEvents-ResettableErrors`, `DiagnosticExceptionEvents-AlarmAppErrors`, `GUIActivityEvents`, `SurveyEvents`, `alarmEvents`, `alarmDiagnosticEvents`, `CellularActivityEvents` | Repeated event records: (type, start_ms, end_ms, duration_ms). |
+| `event` | `UsageEvents-TherapyStatusEvents`, `TherapyEvents-RespiratoryEvents`, `SystemActivityEvents-FrequentActivityEvents`, `SystemActivityEvents-SporadicActivityEvents`, `SystemExceptionEvents-SystemErrors`, `SystemExceptionEvents-RecoverableErrors`, `SystemExceptionEvents-HumidifierErrors`, `SystemExceptionEvents-HeatedTubeErrors`, `DiagnosticExceptionEvents-AppErrors`, `DiagnosticExceptionEvents-FatalErrors`, `DiagnosticExceptionEvents-ResettableErrors`, `DiagnosticExceptionEvents-AlarmAppErrors`, `GUIActivityEvents`, `SurveyEvents`, `alarmEvents`, `alarmDiagnosticEvents`, `CellularActivityEvents` | Repeated event records; most use type/start/end/duration, while GUI and survey records have dedicated layouts. |
 | `periodic` | `TherapyOneMinutePeriodic` | Periodic measurement protobuf. |
 | `periodic_compressed` | `DiagnosticTenMinutePeriodic`, `atmosphericPressure10min` | Two interleaved signal streams per record, each with its own compressed sample blob (not RC03). |
 | `metric` | `MachineMetrics`, `MemoryMetrics`, `CellularDataUsage` | Single-record metric snapshot. |
@@ -94,9 +96,13 @@ Known spool types accepted by `StartSpool`.
 | Field | Meaning |
 |-------|---------|
 | `1` | attributes: applied timestamp, source, transaction id |
-| `2` | stored-data-delivery selector list |
+| `2` | active therapy profile and active feature-profile IDs |
 | `3` | therapy profile snapshots |
 | `4` | feature profile snapshots |
+
+The active therapy profile uses the exported mode code, not the local
+`ActiveTherapyProfile` option index. Feature-profile IDs `8..12` have no named
+entries in the firmware formatter and remain numeric if encountered.
 
 Known therapy-profile subrecords include `CpapProfile`, `AutoSetProfile`,
 `VAutoProfile`, and `ASVProfile`. Feature-profile subrecords include
@@ -220,6 +226,38 @@ Most event spool records use the same inner record shape:
 The wrapper depth varies by spool family. Unknown event codes remain numeric
 unless a selector-specific label table has been verified.
 
+Field `1` stores the firmware enum value. Enum values may contain gaps:
+`UsageEvents-TherapyStatusEvents` uses `10` and `11` for `LearnTargetsStart`
+and `LearnTargetsStop`, while respiratory CSR boundaries use `8` and `9`.
+The decoder therefore uses an explicit code map for each event family.
+
+#### GUIActivityEvents
+
+GUI records use a different inner shape:
+
+| Field | Meaning |
+|-------|---------|
+| `1` | record kind: `1` ActiveScreen, `2` TouchItem, `3` Swipe, `4` Multitouch, `5` ScreenState |
+| `2` | timestamp, UTC milliseconds |
+| `3` | kind-specific value |
+
+#### Diagnostic error events
+
+`DiagnosticExceptionEvents-AppErrors`, `-FatalErrors`, `-ResettableErrors`,
+and `-AlarmAppErrors` store a firmware error code in field `1`; it is not a
+shared event enum. Its meaning is tied to the source-location error manifest
+of the firmware build.
+
+The decoder selects the matching manifest from the device
+`ApplicationIdentifier`. For offline captures, `--app-version` accepts either
+an APPX release such as `8.4.0` or a complete application identifier. Without
+a version, the decoder compares every bundled manifest and preserves
+version-specific differences.
+
+An application error code may identify several direct reporting sites, a
+mapped filesystem-backend status, or both. All matching candidates are shown;
+`[ambiguous]` means the stored record does not identify one producer.
+
 #### CellularActivityEvents
 
 `CellularActivityEvents` records use these confirmed event codes:
@@ -250,6 +288,7 @@ unless a selector-specific label table has been verified.
 | `87` | Network cell identifier | field `12`: cell identifier |
 | `88` | Data mode changed to `SILENT` | -- |
 | `89` | Data mode changed to `ACTIVE` | -- |
+| `90` | CAL system error | field `13`: CAL error code |
 | `91` | Cellular pre-initialization started | -- |
 | `92` | Cellular pre-initialization completed | -- |
 | `95` | Application log record | field `14`: packed error IDs; field `15`: report class |
@@ -327,15 +366,14 @@ records and observed oximetry samples.
 | `4` | `ApplicationTotalDownload`, bytes |
 
 `MemoryMetrics` field `1` is attributes with report timestamp. Field `2`
-repeats one memory metric record. The subrecord fields are fully decoded
-structurally, but only the first field is named semantically:
+repeats one metric set. Subfield `1` selects the source DataItem triplet used
+by subfields `2`, `3`, and `4`:
 
-| Subfield | Meaning |
-|----------|---------|
-| `1` | memory pool/type enum |
-| `2` | metric value A |
-| `3` | metric value B |
-| `4` | metric value C |
+| Set | Subfield 2 | Subfield 3 | Subfield 4 |
+|----:|------------|------------|------------|
+| `1` | `FWC` | `FE2` | `FM2` |
+| `2` | `FW0` | `FE0` | `FM0` |
+| `3` | `FW1` | `FE1` | `FM1` |
 
 ### DiagnosticTenMinutePeriodic records
 

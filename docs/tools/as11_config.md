@@ -177,6 +177,19 @@ For event spools, `--decode` prints a TSV table with event type, start/end
 timestamps, duration, and any extra fields. Event type names are shown only
 where the mapping is known; otherwise the numeric type is left as-is.
 
+Diagnostic exception spools use APPX-specific error manifests. Live `spool`
+decoding reads `ApplicationIdentifier` automatically. For an offline capture,
+pass `--app-version`, or omit it to compare all bundled firmware maps:
+
+```
+as11_config.py decode --type DiagnosticExceptionEvents-AppErrors \
+    --app-version 8.4.0 app-errors.bin
+```
+
+The output retains the numeric code and lists every matching direct producer
+and mapped backend status. Codes with more than one candidate are marked
+`[ambiguous]`.
+
 For `Summary`, `--decode` prints a compact record header plus scalar and
 percentile metric lines. The compact header includes the period range,
 `duration_min`, timezone offset, session count, and decoded session mode
