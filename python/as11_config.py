@@ -63,12 +63,12 @@ from as11_rpc_vars import (  # noqa: E402
     REGISTRIES,
     filter_vars, var_groups_summary, print_var_pairs,
 )
-from as11_diagnostic_errors import SELECTOR_BY_SPOOL  # noqa: E402
 from as11_spool import (  # noqa: E402
     SpoolError, spool_one_round,
     proto_pretty, summary_pretty,
     print_spool_legend, print_spool_summary,
     spool_payload_first_field, detect_spool_type,
+    SELECTOR_BY_SPOOL,
     setting_profiles_pretty, configuration_profiles_pretty,
     metric_spool_pretty, periodic_compressed_pretty,
     soundcheck_vector_pretty, diagnostic_blob_pretty, audio_spool_pretty,

@@ -12,10 +12,18 @@ import logging
 import sys
 from typing import Iterator
 
-from as11_diagnostic_errors import (
-    normalize_app_version, summarize_diagnostic_code,
-)
 from as11_rpc_vars import EVENT_FAMILIES, SPOOL_REGISTRY
+
+try:
+    from as11_diagnostic_errors import (
+        SELECTOR_BY_SPOOL, normalize_app_version, summarize_diagnostic_code,
+    )
+except ModuleNotFoundError as exc:
+    if exc.name != "as11_diagnostic_errors":
+        raise
+    SELECTOR_BY_SPOOL = {}
+    normalize_app_version = None
+    summarize_diagnostic_code = None
 
 
 log = logging.getLogger("as11.spool")
@@ -2363,7 +2371,8 @@ def event_spool_pretty(spool_type: str, data: bytes, out=None, *,
             for field, wire, value in record["extras"]
         )
         if diagnostic:
-            if event_type not in interpretations:
+            if (summarize_diagnostic_code is not None
+                    and event_type not in interpretations):
                 interpretations[event_type] = summarize_diagnostic_code(
                     spool_type, event_type, app_version, details=details
                 )
@@ -2380,7 +2389,7 @@ def event_spool_pretty(spool_type: str, data: bytes, out=None, *,
 
     counts = Counter(int(record["type"]) for record in records)
     print("", file=out)
-    if diagnostic:
+    if diagnostic and normalize_app_version is not None:
         version = normalize_app_version(app_version)
         scope = version or "all bundled APPX manifests"
         print(f"# code interpretations ({scope}):", file=out)
@@ -2485,6 +2494,6 @@ __all__ = [
     "metric_spool_pretty", "periodic_compressed_pretty",
     "soundcheck_vector_pretty", "diagnostic_blob_pretty",
     "audio_spool_pretty", "rc03_spool_pretty", "therapy_one_minute_pretty",
-    "event_spool_pretty",
+    "event_spool_pretty", "SELECTOR_BY_SPOOL",
     "print_spool_legend", "print_spool_summary", "spool_walk_events",
 ]
