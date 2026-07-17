@@ -188,7 +188,7 @@ as11_config.py decode --type DiagnosticExceptionEvents-AppErrors \
 
 The output retains the numeric code and lists every matching direct producer
 and mapped backend status. Codes with more than one candidate are marked
-`[ambiguous]`.
+`[ambiguous]`. Add `--details` to include producer call-site addresses.
 
 For `Summary`, `--decode` prints a compact record header plus scalar and
 percentile metric lines. The compact header includes the period range,
