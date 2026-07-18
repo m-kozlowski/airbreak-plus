@@ -56,6 +56,21 @@ def parse_u16(value):
     return out
 
 
+def parse_rpc_permission(value):
+    parts = [part.strip() for part in value.split(":")]
+    if len(parts) != 3 or not parts[0]:
+        raise argparse.ArgumentTypeError("expected METHOD:VCID:BOOL")
+    method, vcid_text, enabled_text = parts
+    try:
+        vcid = parse_u16(vcid_text)
+        enabled = str2bool(enabled_text)
+    except argparse.ArgumentTypeError as exc:
+        raise argparse.ArgumentTypeError(
+            "invalid RPC permission %r: %s" % (value, exc)
+        ) from None
+    return method, vcid, enabled
+
+
 def clean_ascii(data):
     return data.decode("ascii", errors="replace").split("\x00")[0]
 
@@ -103,20 +118,29 @@ UNLOCKED_ENUM_SETTING_NAMES = (
     "TSS",  # Treatment screen style: Dots, PressureBar, FlowWave
 )
 
-# RPC methods enabled by default when patch-rpc-permissions runs.
-DEFAULT_RPC_UNLOCK_METHODS = (
-    "SetDateTime",
-    "ApplyUpgrade",
-    # "GetLedStatus",
-    # "SetNextPowerUpDateTime",
-    # "ResetDevice",
-    # "StoreSecurityData",
-    # "VerifySecurityData",
-    # "ClearAutoConnectList",
-)
-
-# VCIDs to enable for patch-rpc-permissions by default
-DEFAULT_RPC_UNLOCK_VCIDS = (0x0396,)
+# RPC permissions set by patch-rpc-permissions. The outer key is the method,
+# and each nested map assigns the permission state for one or more VCIDs.
+DEFAULT_RPC_PERMISSIONS = {
+    "SetDateTime": {
+        0x0396: True,
+    },
+    "ApplyUpgrade": {
+        0x0396: True,
+        # 0x0780: False,
+        # 0x0788: False,
+    },
+    # "GetLedStatus": {0x0396: True},
+    # "SetNextPowerUpDateTime": {0x0396: True},
+    # "ResetDevice": {0x0396: True},
+    # "StoreSecurityData": {0x0396: True},
+    # "VerifySecurityData": {0x0396: True},
+    # "ClearAutoConnectList": {0x0396: True},
+    # Cellular upgrade blocking is opt-in.
+    # "InitiateUpgrade": {0x0780: False, 0x0788: False},
+    # "UpgradeDataBlock": {0x0780: False, 0x0788: False},
+    # "CheckUpgradeFile": {0x0780: False, 0x0788: False},
+    # "ApplyAuthenticatedUpgrade": {0x0780: False, 0x0788: False},
+}
 
 # Known RPC permission selector values
 KNOWN_RPC_PERMISSION_VCIDS = (
@@ -132,7 +156,7 @@ KNOWN_RPC_PERMISSION_VCIDS = (
 )
 
 # RPC method names known from AS11 firmware dispatch tables. Used only to
-# locate the moving method->command-id table; patch defaults live in DEFAULT_RPC_UNLOCK_METHODS
+# locate the moving method->command-id table; patch defaults live in DEFAULT_RPC_PERMISSIONS
 KNOWN_RPC_METHODS = (
     "GetVersion",
     "EnterTherapy",
@@ -764,14 +788,14 @@ class S11Firmware(object):
 class S11FirmwarePatches(object):
     """Patch methods for S11 firmware."""
 
-    def __init__(self, asf, rpc_unlock_methods=None, rpc_unlock_vcids=None):
+    def __init__(self, asf, rpc_permissions=None):
         self.asf = asf
-        if rpc_unlock_methods is None:
-            rpc_unlock_methods = DEFAULT_RPC_UNLOCK_METHODS
-        if rpc_unlock_vcids is None:
-            rpc_unlock_vcids = DEFAULT_RPC_UNLOCK_VCIDS
-        self.rpc_unlock_methods = list(rpc_unlock_methods or ())
-        self.rpc_unlock_vcids = list(rpc_unlock_vcids or ())
+        if rpc_permissions is None:
+            rpc_permissions = DEFAULT_RPC_PERMISSIONS
+        self.rpc_permission_rules = {
+            method: dict(vcid_permissions)
+            for method, vcid_permissions in rpc_permissions.items()
+        }
 
     def is_blacklisted_setting(self, row):
         long_name = row["long_name"] or ""
@@ -1265,50 +1289,61 @@ class S11FirmwarePatches(object):
         return out
 
     def rpc_permissions(self):
-        if not self.rpc_unlock_methods or not self.rpc_unlock_vcids:
+        if not self.rpc_permission_rules:
             return
 
         method_cmds = self.rpc_method_cmds()
-        unlock_items = []
-        for name in self.rpc_unlock_methods:
-            if name not in method_cmds:
-                raise ValueError("rpc_permissions: RPC method %r not found" % name)
-            unlock_items.append((name, method_cmds[name]))
-
         base, stride = self.find_rpc_permission_table()
         rows, scanned = self.rpc_permission_rows(base, stride)
         vcid_table_off, vcids = self.find_rpc_permission_vcid_table(stride - 1)
         vcid_columns = {vcid: idx + 1 for idx, vcid in enumerate(vcids)}
-        unlock_vcids = []
-        for vcid in self.rpc_unlock_vcids:
-            if vcid not in vcid_columns:
-                raise ValueError("rpc_permissions: VCID 0x%04X not present in permission table" % vcid)
-            unlock_vcids.append(vcid)
 
-        n = 0
+        for method, vcid_permissions in self.rpc_permission_rules.items():
+            if method not in method_cmds:
+                raise ValueError("rpc_permissions: RPC method %r not found" % method)
+            for vcid, allowed in vcid_permissions.items():
+                if vcid not in vcid_columns:
+                    raise ValueError("rpc_permissions: VCID 0x%04X not present in permission table" % vcid)
+                if not isinstance(allowed, bool):
+                    raise ValueError(
+                        "rpc_permissions: %s VCID 0x%04X permission must be bool" %
+                        (method, vcid)
+                    )
+
+        enabled = 0
+        blocked = 0
         missing = 0
         already = 0
         print("Patching RPC permissions... table 0x%05X, VCIDs %s" % (
             vcid_table_off,
             ", ".join("0x%04X" % vcid for vcid in vcids),
         ))
-        for label, cmd in unlock_items:
+        for label, vcid_permissions in self.rpc_permission_rules.items():
+            cmd = method_cmds[label]
             off = rows.get(cmd)
             if off is None:
                 print("  %s -> id %d: permission row missing" % (label, cmd))
                 missing += 1
                 continue
-            for vcid in unlock_vcids:
+            for vcid, allowed in vcid_permissions.items():
+                value = int(allowed)
+                action = "enabled" if allowed else "blocked"
                 flag_off = off + vcid_columns[vcid]
-                if self.asf.u8(flag_off) == 0:
-                    self.asf.write_u8(flag_off, 1)
-                    print("  %s -> id %d VCID 0x%04X: enabled" % (label, cmd, vcid))
-                    n += 1
+                if self.asf.u8(flag_off) != value:
+                    self.asf.write_u8(flag_off, value)
+                    print("  %s -> id %d VCID 0x%04X: %s" %
+                          (label, cmd, vcid, action))
+                    if allowed:
+                        enabled += 1
+                    else:
+                        blocked += 1
                 else:
-                    print("  %s -> id %d VCID 0x%04X: already enabled" % (label, cmd, vcid))
+                    print("  %s -> id %d VCID 0x%04X: already %s" %
+                          (label, cmd, vcid, action))
                     already += 1
-        print("Patching RPC permissions... %d enabled, %d already enabled, %d missing (%d entries scanned)" %
-              (n, already, missing, scanned))
+        print("Patching RPC permissions... %d enabled, %d blocked, %d already set, %d missing "
+              "(%d entries scanned)" %
+              (enabled, blocked, already, missing, scanned))
 
     def vid_spoof(self):
         """Install the runtime MOP-to-VID hook."""
@@ -1524,7 +1559,7 @@ PATCH_LIST = [
     },
     {
         "arg": "patch-rpc-permissions",
-        "desc": "Enable selected RPC commands on configured VCID permissions.",
+        "desc": "Enable or block selected RPC commands on configured VCID permissions.",
         "default": True,
         "function": "rpc_permissions",
     },
@@ -1549,8 +1584,6 @@ def add_patch_switch(parser, patch):
 
 def build_arg_parser():
     parser = argparse.ArgumentParser(description="Patch AirSense/AirCurve 11 firmware.")
-    default_rpc_methods = ", ".join(DEFAULT_RPC_UNLOCK_METHODS)
-    default_rpc_vcids = ", ".join("0x%04X" % vcid for vcid in DEFAULT_RPC_UNLOCK_VCIDS)
     parser.add_argument("INFILE", help="Input original binary file")
     parser.add_argument("OUTFILE", help="Output patched file")
     parser.add_argument("OPERATION", choices=["INFO", "PATCH"], help="Operation to perform")
@@ -1567,17 +1600,12 @@ def build_arg_parser():
     )
     parser.add_argument("--overwrite", action="store_true", help="Overwrite output file if it exists already.")
     parser.add_argument(
-        "--rpc-unlock-method",
+        "--rpc-permission",
         action="append",
+        type=parse_rpc_permission,
+        metavar="METHOD:VCID:BOOL",
         default=None,
-        help="RPC method name to unlock; repeatable. Default: %s." % default_rpc_methods,
-    )
-    parser.add_argument(
-        "--rpc-unlock-vcid",
-        action="append",
-        type=parse_u16,
-        default=None,
-        help="RPC permission VCID to unlock; repeatable. Default: %s." % default_rpc_vcids,
+        help="Set METHOD permission on VCID; repeatable. Overrides the built-in rule for the same pair.",
     )
     return parser
 
@@ -1592,11 +1620,14 @@ def main(argv=None):
     if args.OPERATION == "INFO":
         return 0
 
-    patches = S11FirmwarePatches(
-        asf,
-        rpc_unlock_methods=args.rpc_unlock_method,
-        rpc_unlock_vcids=args.rpc_unlock_vcid,
-    )
+    rpc_permissions = {
+        method: dict(vcid_permissions)
+        for method, vcid_permissions in DEFAULT_RPC_PERMISSIONS.items()
+    }
+    for method, vcid, allowed in args.rpc_permission or ():
+        rpc_permissions.setdefault(method, {})[vcid] = allowed
+
+    patches = S11FirmwarePatches(asf, rpc_permissions=rpc_permissions)
 
     for patch in PATCH_LIST:
         enabled = getattr(args, patch["arg"].replace("-", "_"))

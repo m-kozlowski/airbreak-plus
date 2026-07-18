@@ -35,21 +35,33 @@ PATCHES=(
     patch-rpc-permissions
 )
 
-# RPC method names to enable when patch-rpc-permissions is selected.
-RPC_UNLOCK=(
-    SetDateTime
-    ApplyUpgrade
-    # GetLedStatus
-    # SetNextPowerUpDateTime
-    # ResetDevice
-    # StoreSecurityData
-    # VerifySecurityData
-    # ClearAutoConnectList
-)
+# METHOD:VCID:BOOL permissions applied by patch-rpc-permissions.
+# Known method sets:
+#   docs/as11/rpc_protocol.md#method-sets
+# Known VCIDs and their transport roles:
+#   docs/as11/rpc_protocol.md#rpc-permission-selectors
+RPC_PERMISSIONS=(
+    SetDateTime:0x0396:1
+    ApplyUpgrade:0x0396:1
 
-# RPC permission VCIDs to enable for the selected methods.
-RPC_UNLOCK_VCID=(
-    0x0396
+    # GetLedStatus:0x0396:1
+    # SetNextPowerUpDateTime:0x0396:1
+    # ResetDevice:0x0396:1
+    # StoreSecurityData:0x0396:1
+    # VerifySecurityData:0x0396:1
+    # ClearAutoConnectList:0x0396:1
+
+    # uncomment the following to block OTA over cellular network
+    # InitiateUpgrade:0x0780:0
+    # InitiateUpgrade:0x0788:0
+    # UpgradeDataBlock:0x0780:0
+    # UpgradeDataBlock:0x0788:0
+    # CheckUpgradeFile:0x0780:0
+    # CheckUpgradeFile:0x0788:0
+    # ApplyUpgrade:0x0780:0
+    # ApplyUpgrade:0x0788:0
+    # ApplyAuthenticatedUpgrade:0x0780:0
+    # ApplyAuthenticatedUpgrade:0x0788:0
 )
 
 args=( "--all-patches" "n" )
@@ -57,11 +69,8 @@ for patch in "${PATCHES[@]}"; do
     args+=( "--$patch" "Y" )
 done
 
-for method in "${RPC_UNLOCK[@]}"; do
-    args+=( "--rpc-unlock-method" "$method" )
-done
-for vcid in "${RPC_UNLOCK_VCID[@]}"; do
-    args+=( "--rpc-unlock-vcid" "$vcid" )
+for permission in "${RPC_PERMISSIONS[@]}"; do
+    args+=( "--rpc-permission" "$permission" )
 done
 
 exec "$PYTHON" "$PATCHER" "$IN" "$OUT" PATCH --overwrite "${args[@]}"
