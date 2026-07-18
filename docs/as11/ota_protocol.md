@@ -114,8 +114,8 @@ Device dumps so far indicate the OTA key can vary per device.
 
 ## Retrieving the local OTA key
 
-For a locally owned device attached over SWD/OpenOCD, the repo includes a
-small read-only helper:
+For a device connected over SWD/OpenOCD, the repository includes a small
+read-only helper:
 
 ```text
 tcl/as11-keys.tcl
@@ -125,10 +125,9 @@ It resets and halts the target, configures the SPI5 NOR pins used by the
 device, reads one 32-byte provider key slot, prints it as 64 uppercase hex
 characters, then resets/runs the target again.
 
-OpenOCD usage after loading the normal target config:
+At the OpenOCD prompt:
 
 ```tcl
-source tcl/as11-keys.tcl
 as11_keys::key
 ```
 

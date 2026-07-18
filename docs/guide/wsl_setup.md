@@ -2,20 +2,19 @@
 
 Bootstrapping an Airbreak Plus build environment on Windows.
 
-After this guide you'll have WSL2 installed, the toolchain ready, the repo cloned, and (if you plan to use a SWD programmer) usbipd-win configured to forward your ST-Link into WSL2.
+After this guide you'll have WSL2 installed, the toolchain ready, the repo cloned, and (if you plan to use a SWD programmer) usbipd-win configured to forward it into WSL2.
 
-From there:
+From there, continue with the quickstart for the target platform:
 
-- Build the patched firmware -- [Patching](patching.md)
-- Dump and flash over SWD -- [OpenOCD](openocd.md)
-- Flash over UART without opening the device -- [Serial connection](serial_connection.md) + [Flashing](flashing.md)
+- [Air10 Quickstart](quickstart.md)
+- [Air11 Quickstart](as11/quickstart.md)
 
 ## Contents
 
 - [Install WSL2](#install-wsl2)
 - [Update Linux packages](#update-linux-packages)
 - [Install the toolchain](#install-the-toolchain)
-- [Forward ST-Link into WSL2 (optional)](#forward-st-link-into-wsl2-optional)
+- [Forward an SWD programmer into WSL2 (optional)](#forward-an-swd-programmer-into-wsl2-optional)
 - [Clone the repository](#clone-the-repository)
 - [Working between WSL and Windows](#working-between-wsl-and-windows)
 - [Next](#next)
@@ -54,34 +53,42 @@ Reopen the Ubuntu shell - the next launch brings up a fresh kernel and init.
 In Ubuntu:
 
 ```bash
-sudo apt install openocd python3-pip python3-crcmod gcc-arm-none-eabi telnet-ssl
+sudo apt install git make openocd python3-pip python3-crcmod \
+    gcc-arm-none-eabi binutils-arm-none-eabi telnet-ssl
 ```
 
-Same packages as the [patching prerequisites](patching.md#prerequisites).
+For an Air10 UART or Air11 serial SLCAN connection, also install:
 
-## Forward ST-Link into WSL2 (optional)
+```bash
+sudo apt install python3-serial
+```
 
-Skip this section if you'll only flash over UART.
+## Forward an SWD programmer into WSL2 (optional)
+
+Skip this section when using only an Air10 UART or Air11 CAN connection.
 
 WSL2 doesn't see USB devices natively - you forward them in with [usbipd-win](https://github.com/dorssel/usbipd-win).
 
 1. Install `usbipd-win` - either `winget install usbipd` from PowerShell, or download the MSI from the project page.
 
-2. Plug in the ST-Link. In an Administrative PowerShell:
+2. Plug in the programmer. In an Administrative PowerShell:
 
    ```powershell
-   usbipd list                          # find the BUSID of the ST-Link line
+   usbipd list                          # find the programmer BUSID
    usbipd bind --busid <busid>          # one-time, marks the device shareable
    usbipd attach --wsl --busid <busid>  # attach it to WSL
    ```
 
-3. Verify from inside WSL:
+3. Verify from inside WSL. For an ST-Link-compatible programmer:
 
    ```bash
    lsusb | grep -iE 'st-?link'
    ```
 
-The included `./run-ocd.sh` helper auto-attaches any already-bound devices at the start of each session, so you only need to repeat the `bind` step if the device changes ports or you reinstall usbipd. The rest of the OpenOCD workflow lives in [OpenOCD](openocd.md).
+The included `./run-ocd.sh` helper auto-attaches already-bound devices at the
+start of each session. Repeat the `bind` step only after changing USB ports or
+reinstalling usbipd. Continue with the OpenOCD instructions in the selected
+platform guide.
 
 ## Clone the repository
 
@@ -108,10 +115,11 @@ The fastest way to jump there is from inside WSL:
 explorer.exe .
 ```
 
-This opens Windows Explorer at the current WSL directory - handy for dropping in your `stm32.bin` firmware dump and pulling patched binaries back out of `build/` afterwards.
+This opens Windows Explorer at the current WSL directory - handy for moving a
+firmware dump into the repository and retrieving generated files from
+`build/`.
 
 ## Next
 
-- [Patching](patching.md) -- build the patched firmware
-- [OpenOCD](openocd.md) -- dump current firmware over SWD and flash
-- [Serial connection](serial_connection.md) / [Flashing](flashing.md) -- flash over UART without opening the device
+- [Air10 Quickstart](quickstart.md)
+- [Air11 Quickstart](as11/quickstart.md)
