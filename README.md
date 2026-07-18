@@ -15,6 +15,16 @@ Firmware modification toolkit for ResMed AirSense 10 / AirCurve 10, AirSense 11 
 - [Continuous LCD and button brightness adaptation](docs/guide/features/backlight.md)
 - [ILI9325/ILI9328 LCD driver](docs/guide/features/general.md#replacement-lcd-driver) (the most common replacement panel available for these devices)
 
+<p align="center">
+  <img src="docs/images/unlocked-therapy-modes-1.png" alt="Unlocked therapy modes" width="180">
+  <img src="docs/images/unlocked-therapy-modes-2.png" alt="Unlocked therapy modes" width="180">
+  <img src="docs/images/unlocked-pressure-ranges.png" alt="Unlocked pressure ranges" width="180">
+  <img src="docs/images/custom-vauto-settings.png" alt="Custom VAuto settings" width="180">
+  <img src="docs/images/asv-backup-rate-setting.png" alt="ASV Backup Rate settings" width="180">
+  <img src="docs/images/custom-square-wave.png" alt="Square Wave settings" width="180">
+  <img src="docs/images/backlight-settings.png" alt="Backlight settings" width="180">
+</p>
+
 Best support for SX567-0401 and SX567-0402 firmware. Other versions are handled with reduced feature coverage.
 
 ## Getting started

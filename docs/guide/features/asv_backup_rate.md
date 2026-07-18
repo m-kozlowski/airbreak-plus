@@ -3,6 +3,10 @@
 This payload controls the stock timed backup response in ASV and ASVAuto. It is
 separate from Custom VAuto and does not add a backup rate to VAuto.
 
+<p align="center">
+  <img src="../../images/asv-backup-rate-setting.png" alt="Backup Rate setting in ASVAuto" width="240">
+</p>
+
 ## Control
 
 | Setting | UART | Range | Default | Menu | Visible modes | Function | Without `custom_settings` |

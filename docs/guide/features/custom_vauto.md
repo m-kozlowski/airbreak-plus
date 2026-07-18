@@ -10,6 +10,10 @@ slot. This is separate from the stock ASV and ASVAuto modes.
 
 Stock ASV and ASVAuto settings do not control the custom VAuto algorithm.
 
+<p align="center">
+  <img src="../../images/custom-vauto-settings.png" alt="Custom VAuto settings in the clinical Therapy menu" width="240">
+</p>
+
 ## Controls
 
 | Setting | UART | Range | Default | Menu | Visible modes | Function | Without `custom_settings` |

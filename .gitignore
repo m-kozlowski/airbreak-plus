@@ -10,3 +10,4 @@ venv
 python/*private*
 patches/*private*
 __pycache__
+tmp/

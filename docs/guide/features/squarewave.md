@@ -3,6 +3,10 @@
 The Square Wave payload replaces the stock pressure-shaping handler used by S,
 ST, T, and PAC. It does not affect CPAP, AutoSet, VAuto, ASV, ASVAuto, or iVAPS.
 
+<p align="center">
+  <img src="../../images/custom-square-wave.png" alt="Square Wave setting in the clinical Therapy menu" width="240">
+</p>
+
 ## Control
 
 | Setting | UART | Range | Default | Menu | Visible modes | Function | Without `custom_settings` |

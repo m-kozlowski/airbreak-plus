@@ -13,6 +13,11 @@ normally limits the mode selector to the modes sold with a particular model.
 The patch removes that restriction, exposing CPAP, AutoSet, APAP, S, ST, T,
 VAuto, ASV, ASVAuto, iVAPS, PAC, and AutoSet for Her.
 
+<p align="center">
+  <img src="../../images/unlocked-therapy-modes-1.png" alt="Unlocked therapy modes, first page" width="220">
+  <img src="../../images/unlocked-therapy-modes-2.png" alt="Unlocked therapy modes, second page" width="220">
+</p>
+
 This patch changes only mode availability. It does not expose the related
 clinical settings; that is handled by the clinical settings patch below.
 It also leaves the model's original EDF signal selection unchanged. Full recording
@@ -27,6 +32,10 @@ The menu continues to show only settings relevant to the currently
 selected mode.
 
 Standard pressure controls are expanded to the full 1.0 to 30.0 cmH2O range.
+
+<p align="center">
+  <img src="../../images/unlocked-pressure-ranges.png" alt="Unlocked ASVAuto pressure ranges" width="240">
+</p>
 
 ## Motor Runtime Warning
 

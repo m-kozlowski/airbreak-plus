@@ -15,6 +15,10 @@ states.
 | LCD / Low and LCD / High | LCD brightness endpoints |
 | Buttons / Low and Buttons / High | button brightness endpoints |
 
+<p align="center">
+  <img src="../../images/backlight-settings.png" alt="LCD backlight and button brightness settings" width="240">
+</p>
+
 ## Brightness mapping
 
 | Ambient reading | LCD target | Button target |
