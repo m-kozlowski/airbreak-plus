@@ -49,15 +49,13 @@ configured in the `RPC_PERMISSIONS` array in `patch-airsense-s11`.
 
 ## EDF Recording
 
-The EDF superset patch:
+Stock Air11 variants and therapy modes record different subsets of the
+available EDF data. The patch enables a common recording superset so switching
+therapy mode does not remove data that the firmware is able to record.
 
-- installs the supported BRP, SA2, and PLD stream schemas
-- activates and hydrates supported STR summary rows
-- enables the CSL CSR boundary event schema
-
-The firmware still records only values produced by the active therapy
-implementation and connected hardware. A visible EDF channel does not create
-a missing signal producer.
+The files remain standard EDF files on the SD card. Signals not used or
+produced by the active therapy mode or connected hardware may remain empty or
+zero, and the additional channels can make the files slightly larger.
 
 Signal layouts are documented in the
 [Air11 EDF Signal Reference](../../as11/edf_signals.md).
@@ -82,4 +80,3 @@ stored runtime counter continues to track device usage.
 
 The current Air11 patch does not include the Air10 Custom VAuto, Square Wave,
 adaptive backlight, replacement LCD, custom menu, or ASV backup-rate payloads.
-Do not infer Air11 feature support from an Air10 guide or build target.

@@ -15,7 +15,7 @@ Firmware modification toolkit for ResMed AirSense and AirCurve devices.
 - [Unlocks all therapy modes](docs/guide/features/general.md#all-therapy-modes)
 - [Unlocks clinical settings menu with full pressure range](docs/guide/features/general.md#clinical-settings-and-pressure-range)
 - [Removes motor runtime hours nag screen](docs/guide/features/general.md#motor-runtime-warning)
-- [Full EDF signal recording in all therapy modes](docs/guide/features/general.md#edf-recording)
+- [Expands EDF recording across unlocked therapy modes](docs/guide/features/general.md#edf-recording)
 - [Maintains myAir cloud compatibility across therapy modes](docs/guide/features/general.md#myair-cloud-compatibility)
 - [Custom VAuto pressure support](docs/guide/features/custom_vauto.md) in the VAuto slot
 - [Runtime ASV and ASVAuto backup-rate control](docs/guide/features/asv_backup_rate.md)

@@ -48,15 +48,13 @@ and no therapy records, service information, or usage data are erased.
 
 ## EDF Recording
 
-Stock device variants and therapy modes record different subsets of the
-available EDF signals.
-The patch enables a common signal superset so switching
-therapy mode does not remove settings and summary channels that the firmware is
-able to record.
+Stock Air10 variants and therapy modes record different subsets of the
+available EDF data. The patch enables a common recording superset so switching
+therapy mode does not remove data that the firmware is able to record.
 
-The files remain standard EDF files on the SD card. Signals that are not used
-or produced by the active therapy mode may remain empty or zero, and recording
-the additional channels can make the files slightly larger.
+The files remain standard EDF files on the SD card. Signals not used or
+produced by the active therapy mode or connected hardware may remain empty or
+zero, and the additional channels can make the files slightly larger.
 
 ## myAir Cloud Compatibility
 

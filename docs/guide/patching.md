@@ -62,7 +62,7 @@ All patches below are **enabled by default** unless noted.
 
 | Patch | What it does | Bash function | Python switch |
 |-------|-------------|---------------|---------------|
-| EDF signal merge | Expands STR.edf to 116-channel superset so all signals are recorded regardless of therapy mode | `patch_edf_merge` | `--patch-edf-merge` |
+| EDF signal merge | Expands SD-card therapy data recording across unlocked modes | `patch_edf_merge` | `--patch-edf-merge` |
 | VID spoof | Sets variant ID for the active therapy mode and selects a regional variant where known | `patch_vid_spoof` | `--patch-fw-vidspoof` |
 
 ### Quality of life
