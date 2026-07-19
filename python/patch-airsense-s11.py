@@ -77,13 +77,6 @@ def clean_ascii(data):
     return data.decode("ascii", errors="replace").split("\x00")[0]
 
 
-def compiled_payload_path(filename):
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    repo_dir = os.path.dirname(script_dir)
-    return os.path.join(repo_dir, "build", filename)
-
-
-
 # Mode bit, APPL setting prefix, RPC profile node, supported-by-patcher flag.
 THERAPY_MODES = (
     (0, "Cpap", "CpapProfile", True),
@@ -230,22 +223,7 @@ MODE_SELECTOR_NAMES = (
     "TOM",
 )
 
-AS11_VID_SPOOF_ADDR = 0x081DBAD0
-AS11_VID_SPOOF_BINARY = "as11_vid_spoof.bin"
-AS11_VID_SPOOF_MAGIC = 0x56313141
-
-# Byte signatures from DataItem writeback routines:
-# g5 enum stores obj+0x16 to backing[index * 4 + 2]
-# g2 numeric stores obj+0x18 to backing[index * 8 + 4]
-# Literal loads in these routines expose the runtime SRAM backing-table bases.
-AS11_G5_ENUM_WRITEBACK_PATTERN = (
-    0xDF, 0xF8, None, None, 0xB0, 0xF9, 0x14, 0x20,
-    0x01, 0xEB, 0x82, 0x01, 0x80, 0x7D, 0x88, 0x70, 0x70, 0x47,
-)
-AS11_G2_NUMERIC_WRITEBACK_PATTERN = (
-    0xDF, 0xF8, None, None, 0xB0, 0xF9, 0x14, 0x20,
-    0x01, 0xEB, 0xC2, 0x01, 0x80, 0x69, 0x48, 0x60, 0x70, 0x47,
-)
+AS11_VID_SPOOF_PAYLOAD = "as11_vid_spoof"
 
 AS11_MOP_CALLBACK_DISPATCHER_PAYLOAD = "as11_mop_callback_dispatcher"
 
@@ -445,16 +423,6 @@ class S11Firmware(object):
                 out.append(off)
             start = off + 1
         return out
-
-    def read_thumb2_ldr_w_pc_literal_u32(self, off):
-        # Decode the literal value loaded by "ldr.w Rt, [pc, #imm12]".
-        addr = self.off_to_addr(off)
-        imm = self.u16(off + 2) & 0x0FFF
-        literal_addr = ((addr + 4) & ~3) + imm
-        literal_off = self.ptr_to_off(literal_addr)
-        if literal_off is None:
-            raise ValueError("literal 0x%08X is outside image" % literal_addr)
-        return self.u32(literal_off)
 
     def patch(self, patchdata, addr=None, dataseq=None, verbose=True, checkempty=False):
         patchdata = bytes(patchdata)
@@ -1482,161 +1450,18 @@ class S11FirmwarePatches(CompiledPayloadMixin):
               (enabled, blocked, already, missing, scanned))
 
     def vid_spoof(self):
-        """Install the runtime MOP-to-VID hook."""
-        path = compiled_payload_path(AS11_VID_SPOOF_BINARY)
-        if not os.path.exists(path):
-            print("Patching runtime VID spoof... skipped (%s not found; run 'make as11-vid-spoof')" % path)
+        """Set VID from MOP after the stock writeback completes."""
+        data, ver = self._load_versioned_bin(AS11_VID_SPOOF_PAYLOAD)
+        if data is None:
             return
-
-        vid_rows = self.asf.find_descriptors_by_name("VariantIdentifier", ("g2",))
-        mop_rows = self.asf.find_descriptors_by_name("ActiveTherapyProfile", ("g5",))
-        if len(vid_rows) != 1:
-            raise ValueError("vid_spoof: expected one VariantIdentifier descriptor, found %d" % len(vid_rows))
-        if len(mop_rows) != 1:
-            raise ValueError("vid_spoof: expected one ActiveTherapyProfile descriptor, found %d" % len(mop_rows))
-        vid_row = vid_rows[0]
-        mop_row = mop_rows[0]
-
-        try:
-            enum_off = self.asf.find_bytes(AS11_G5_ENUM_WRITEBACK_PATTERN, self.asf.APPL_OFF)
-        except ValueError as exc:
-            raise ValueError("vid_spoof: g5 enum writeback pattern not unique: %s" % exc)
-        enum_base = self.asf.read_thumb2_ldr_w_pc_literal_u32(enum_off)
-        orig = self.asf.off_to_addr(enum_off) | 1
-
-        numeric = []
-        start = self.asf.APPL_OFF
-        while True:
-            try:
-                off = self.asf.find_bytes(AS11_G2_NUMERIC_WRITEBACK_PATTERN, start, unique=False)
-            except ValueError as exc:
-                if "not found" not in str(exc):
-                    raise ValueError("vid_spoof: numeric writeback pattern scan failed from 0x%X: %s" % (start, exc))
-                break
-            base = self.asf.read_thumb2_ldr_w_pc_literal_u32(off)
-            if base < enum_base:
-                numeric.append((off, base))
-            start = off + 1
-        if len(numeric) != 1:
-            raise ValueError("vid_spoof: expected one g2 numeric writeback before g5 storage, found %d" % len(numeric))
-        _numeric_off, numeric_base = numeric[0]
-
-        with open(path, "rb") as f:
-            blob = f.read()
-        if not blob:
-            raise ValueError("vid_spoof: %s is empty" % path)
-
-        # The compiled hook has a tiny placeholder parameter block tagged by
-        # magic. The patcher rewrites it with firmware-specific function and
-        # SRAM table addresses before copying the hook into APPL slack.
-        magic = struct.pack("<I", AS11_VID_SPOOF_MAGIC)
-        param_off = blob.find(magic)
-        if param_off < 0 or blob.find(magic, param_off + 1) >= 0:
-            raise ValueError("vid_spoof: parameter block magic not unique")
-        if param_off + 20 > len(blob):
-            raise ValueError("vid_spoof: parameter block is truncated")
-
-        expected_start = AS11_VID_SPOOF_ADDR
-        expected_end = expected_start + len(blob)
-        flash_refs = []
-        bad_refs = []
-        for off in range(0, len(blob) - 3, 4):
-            value = struct.unpack_from("<I", blob, off)[0]
-            if self.asf.FLASH_BASE <= value < self.asf.FLASH_BASE + len(self.asf.fw):
-                flash_refs.append((off, value))
-                if not (expected_start <= value < expected_end):
-                    bad_refs.append((off, value))
-        if bad_refs:
-            refs = ", ".join("0x%02X->0x%08X" % item for item in bad_refs)
-            print(
-                "Patching runtime VID spoof... skipped (%s has absolute refs outside "
-                "0x%08X..0x%08X: %s; rebuild with 'make as11-vid-spoof')" %
-                (path, expected_start, expected_end - 1, refs)
-            )
-            return
-        if not flash_refs:
-            print(
-                "Patching runtime VID spoof... skipped (%s has no payload self refs; "
-                "rebuild with 'make as11-vid-spoof')" % path
-            )
-            return
-
-        preferred_off = self.asf.ptr_to_off(AS11_VID_SPOOF_ADDR)
-        if preferred_off is None:
-            raise ValueError("vid_spoof: preferred hook address outside firmware image")
-        preferred_has_hook = (
-            preferred_off + param_off + 4 <= len(self.asf.fw)
-            and bytes(self.asf.fw[preferred_off + param_off:preferred_off + param_off + 4]) == magic
+        flash, _off = self._inject_payload(AS11_VID_SPOOF_PAYLOAD, data)
+        elf_path = self._versioned_artifact_path(AS11_VID_SPOOF_PAYLOAD, "elf", ver)
+        handler = self._elf_symbol_addr(elf_path, "start")
+        print(
+            "Patching runtime VID spoof... build/%s_%s.bin (%dB) at 0x%08X" %
+            (AS11_VID_SPOOF_PAYLOAD, ver, len(data), flash)
         )
-
-        if preferred_has_hook:
-            code_off = preferred_off
-            hook_ptr = AS11_VID_SPOOF_ADDR | 1
-            refs = self.asf.find_u32_offsets(hook_ptr, (code_off, code_off + len(blob)))
-            if len(refs) != 1:
-                raise ValueError(
-                    "vid_spoof: expected one vtable reference to installed hook 0x%08X, found %d" %
-                    (hook_ptr, len(refs))
-                )
-            vt_off = refs[0]
-        else:
-            code_off = preferred_off
-            existing = bytes(self.asf.fw[code_off:code_off + len(blob)])
-            if any(byte != 0xFF for byte in existing):
-                print(
-                    "Patching runtime VID spoof... skipped (preferred address 0x%08X..0x%08X is occupied)" %
-                    (AS11_VID_SPOOF_ADDR, AS11_VID_SPOOF_ADDR + len(blob) - 1)
-                )
-                return
-            refs = [
-                off for off in self.asf.find_u32_offsets(orig, (code_off, code_off + len(blob)))
-                if not (off >= 4 and bytes(self.asf.fw[off - 4:off]) == magic)
-            ]
-            if len(refs) != 1:
-                raise ValueError(
-                    "vid_spoof: expected one vtable reference to 0x%08X, found %d" %
-                    (orig, len(refs))
-                )
-            vt_off = refs[0]
-
-        code_addr = self.asf.off_to_addr(code_off)
-        hook_ptr = code_addr | 1
-
-        blob = bytearray(blob)
-        struct.pack_into(
-            "<IIIII",
-            blob,
-            param_off,
-            AS11_VID_SPOOF_MAGIC,
-            orig,
-            numeric_base + vid_row["index"] * 8 + 4,
-            enum_base + mop_row["index"] * 4 + 2,
-            mop_row["index"],
-        )
-        blob = bytes(blob)
-
-        current_ptr = self.asf.u32(vt_off)
-        if current_ptr not in (orig, hook_ptr):
-            raise ValueError(
-                "vid_spoof: vtable entry 0x%08X is 0x%08X, expected 0x%08X" %
-                (self.asf.off_to_addr(vt_off), current_ptr, orig)
-            )
-
-        existing = bytes(self.asf.fw[code_off:code_off + len(blob)])
-        if existing != blob and current_ptr != hook_ptr and any(byte != 0xFF for byte in existing):
-            raise ValueError("vid_spoof: flash at 0x%08X is not empty" % code_addr)
-
-        changed = 0
-        if existing != blob:
-            self.asf.patch(blob, addr=code_off, verbose=False)
-            changed += 1
-        if current_ptr != hook_ptr:
-            self.asf.write_u32(vt_off, hook_ptr)
-            changed += 1
-
-        print("Patching runtime VID spoof... %s, %d bytes, %s" % (
-            self.asf.appl_ver, len(blob), "changed" if changed else "already installed"
-        ))
+        self.mop_callback_register_handler(handler, "vid_spoof")
 
     def patch_edf_superset(self):
         """Expose the official S11 EDF schema superset."""

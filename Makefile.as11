@@ -1,13 +1,8 @@
 AS11_FIRMWARE ?= as11.bin
 AS11_PATCHED ?= $(BUILD)/as11-patched.bin
 
-# free address across known 8.3/8.4/8.5 APPL images
-# patcher can still relocate the payload when it's occupied in a newer firmware
-AS11_VID_SPOOF_OFFSET := 0x081DBAD0
-AS11_VID_SPOOF_BIN := $(BUILD)/as11_vid_spoof.bin
-
 AS11_PAYLOAD_LAYOUT_VERSIONS := 8_0_1 8_3_0 8_4_0 8_5_0
-AS11_PAYLOADS_8_0_1 := as11_mop_callback_dispatcher
+AS11_PAYLOADS_8_0_1 := as11_mop_callback_dispatcher as11_vid_spoof
 AS11_PAYLOADS_8_3_0 := $(AS11_PAYLOADS_8_0_1)
 AS11_PAYLOADS_8_4_0 := $(AS11_PAYLOADS_8_0_1)
 AS11_PAYLOADS_8_5_0 := $(AS11_PAYLOADS_8_0_1)
@@ -19,7 +14,6 @@ AS11_PAYLOAD_NAMES := $(sort $(foreach v,$(AS11_PAYLOAD_LAYOUT_VERSIONS),$(AS11_
 AS11_PAYLOAD_STAMPS := $(foreach p,$(AS11_PAYLOAD_NAMES),$(BUILD)/payload_$(p).stamp)
 AS11_PAYLOAD_LAYOUT_MKS := $(foreach v,$(AS11_PAYLOAD_LAYOUT_VERSIONS),$(BUILD)/as11_payload_layout_$(v).mk)
 AS11_PAYLOAD_LAYOUT_TSVS := $(foreach v,$(AS11_PAYLOAD_LAYOUT_VERSIONS),$(BUILD)/as11_payload_layout_$(v).tsv)
-AS11_BINS := $(AS11_VID_SPOOF_BIN) $(AS11_PAYLOAD_STAMPS)
 
 AS11_CFLAGS := \
 	-g \
@@ -111,32 +105,21 @@ endef
 
 $(foreach p,$(AS11_PAYLOAD_NAMES),$(eval $(call AS11_PAYLOAD_STAMP_template,$(p))))
 
-$(BUILD)/as11_vid_spoof.o: $(SRC)/as11/vid_spoof.c | $(BUILD)
-	$(CC) $(AS11_CFLAGS) -c -o $@ $<
-
-$(BUILD)/as11_vid_spoof.elf: $(BUILD)/as11_vid_spoof.o | $(BUILD)
-	$(LD) --nostdlib --no-dynamic-linker \
-		--Ttext $(AS11_VID_SPOOF_OFFSET) --entry start --sort-section=name \
-		-o $@ $^
-
-$(BUILD)/as11_vid_spoof.bin: $(BUILD)/as11_vid_spoof.elf
-	$(OBJCOPY) -Obinary $< $@
-
 .PHONY: as11 as11-binaries as11-mop-callback-dispatcher as11-vid-spoof as11-patched
 
 as11:
 	$(MAKE) as11-binaries
 	$(MAKE) $(AS11_PATCHED)
 
-as11-binaries: $(AS11_BINS) $(AS11_PAYLOAD_LAYOUT_TSVS)
+as11-binaries: $(AS11_PAYLOAD_STAMPS) $(AS11_PAYLOAD_LAYOUT_TSVS)
 
 as11-mop-callback-dispatcher: $(call as11_payload_bins,as11_mop_callback_dispatcher)
 	@echo "AS11 MOP callback dispatcher patches built:"
 	@$(foreach v,$(call as11_payload_versions,as11_mop_callback_dispatcher),echo "  $(BUILD)/as11_mop_callback_dispatcher_$(v).bin";)
 
-as11-vid-spoof: $(AS11_VID_SPOOF_BIN)
-	@echo "AS11 VID spoof patch built:"
-	@echo "  $(AS11_VID_SPOOF_BIN)"
+as11-vid-spoof: $(call as11_payload_bins,as11_vid_spoof)
+	@echo "AS11 VID spoof patches built:"
+	@$(foreach v,$(call as11_payload_versions,as11_vid_spoof),echo "  $(BUILD)/as11_vid_spoof_$(v).bin";)
 
 as11-patched:
 	-$(MAKE) as11-binaries

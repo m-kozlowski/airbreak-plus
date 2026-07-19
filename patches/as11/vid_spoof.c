@@ -1,30 +1,13 @@
 /*
  * vid_spoof.c - MOP-based VariantIdentifier (VID) override
  *
- * Hooks the persistent writeback to update VID whenever MOP (therapy mode) is committed
- *
- * The Python patcher resolves firmware-specific addresses and patches the
- * parameter block before injecting this hook.
+ * Runs after the persistent MOP writeback and updates VID for the selected
+ * therapy mode. Native DataItem access and variable IDs are supplied by the
+ * selected per-version stubs and variable header.
  */
 
-#define AS11_VID_SPOOF_MAGIC 0x56313141u
-
-struct as11_vid_spoof_params {
-    unsigned int magic;
-    unsigned int orig_writeback;
-    unsigned int vid_addr;
-    unsigned int mop_addr;
-    unsigned int mop_index;
-};
-
-static volatile const struct as11_vid_spoof_params params
-    __attribute__((used, section(".rodata.params"))) = {
-        AS11_VID_SPOOF_MAGIC,
-        0x11111111u,
-        0x22222222u,
-        0x33333333u,
-        0x44444444u,
-    };
+#include "stubs.h"
+#include "vars.h"
 
 /*
  * AS11 dump-backed mode groups:
@@ -33,7 +16,7 @@ static volatile const struct as11_vid_spoof_params params
  *   VID 10: ST, Timed
  *   VID 12: ASV, ASVAuto
  *
- * iVAPS and PAC are not mapped for now;
+ * iVAPS and PAC are not mapped for now.
  */
 static const unsigned char vid_lut[11] = {
     3,   // CPAP
@@ -50,17 +33,12 @@ static const unsigned char vid_lut[11] = {
 };
 
 void __attribute__((section(".text.0.main")))
-start(void *obj)
+start(void)
 {
-    ((void (*)(void *))params.orig_writeback)(obj);
-
-    if (*(short *)((unsigned char *)obj + 0x14) == (short)params.mop_index) {
-        unsigned char mop = *(volatile unsigned char *)params.mop_addr;
-        if (mop < sizeof(vid_lut)) {
-            unsigned int vid = vid_lut[mop];
-            if (vid != 0) {
-                *(volatile unsigned int *)params.vid_addr = vid;
-            }
-        }
+    unsigned int mop = (unsigned int)DataItem_read_value_by_id(VAR_ID_MOP);
+    if (mop < sizeof(vid_lut)) {
+        unsigned int vid = vid_lut[mop];
+        if (vid != 0)
+            DataItem_write_value_by_id_commit(VAR_ID_VID, (int)vid);
     }
 }
