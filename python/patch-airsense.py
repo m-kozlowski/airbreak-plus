@@ -23,6 +23,8 @@ import struct
 import re
 import sys
 
+from lib.compiled_payload import CompiledPayloadMixin
+
 
 FIRMWARE_BUILD_ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
 
@@ -765,7 +767,7 @@ class ASFirmware(object):
         
         return addr_offset, bin
 
-class ASFirmwarePatches(object):
+class ASFirmwarePatches(CompiledPayloadMixin):
     """This class contains the actual patching scripts for specific items"""
 
     MOP_CALLBACK_TABLES = {
@@ -811,9 +813,14 @@ class ASFirmwarePatches(object):
         self.backlight_adapt_applied = False
         self.mop_callback_handlers = []
         self.mop_callback_handler_seen = set()
-        self.payload_layout = None
-        self.payload_layout_version = None
+        self._init_compiled_payloads()
         self.custom_patch_settings_init()
+
+    def _payload_version_key(self):
+        return self.asf.cdx_ver.replace('SX567-', '')
+
+    def _payload_flash_range(self):
+        return self.asf.FLASH_BASE, self.asf.FLASH_BASE + len(self.asf.fw)
 
     def custom_patch_settings_init(self):
         """Reset generated custom-settings state."""
@@ -1212,59 +1219,6 @@ class ASFirmwarePatches(object):
               (ver, len(data), flash))
         print("  MOP callback[%d]: 0x%08X -> 0x%08X" %
               (callback_id, original, start | 1))
-
-    def _versioned_artifact_path(self, name, ext, ver):
-        return os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                            '..', 'build', '%s_%s.%s' % (name, ver, ext))
-
-    def _load_payload_layout(self):
-        """Load generated payload addresses and measured sizes for this CDX."""
-        ver = self.asf.cdx_ver.replace('SX567-', '')
-        if self.payload_layout_version == ver:
-            return
-
-        path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                            '..', 'build', 'payload_layout_%s.tsv' % ver)
-        if not os.path.exists(path):
-            raise ValueError("payload layout not found: build/payload_layout_%s.tsv (run make binaries)" % ver)
-
-        layout = {}
-        with open(path, 'r') as f:
-            for lineno, line in enumerate(f, 1):
-                line = line.strip()
-                if not line or line.startswith('#'):
-                    continue
-                fields = line.split()
-                if len(fields) != 4:
-                    raise ValueError("payload layout: malformed row %d in %s" % (lineno, path))
-                name, flash_text, size_text, end_text = fields
-                if name in layout:
-                    raise ValueError("payload layout: duplicate payload %s" % name)
-                flash = int(flash_text, 0)
-                size = int(size_text, 0)
-                end = int(end_text, 0)
-                if flash % 4 or size <= 0 or flash + size != end:
-                    raise ValueError("payload layout: invalid range for %s" % name)
-                if flash < self.asf.FLASH_BASE or end > self.asf.FLASH_BASE + len(self.asf.fw):
-                    raise ValueError("payload layout: %s lies outside firmware" % name)
-                layout[name] = (flash, size)
-
-        self.payload_layout = layout
-        self.payload_layout_version = ver
-
-    def _inject_payload(self, name, data):
-        """Verify and inject one payload at its generated layout address."""
-        self._load_payload_layout()
-        if name not in self.payload_layout:
-            raise ValueError("payload layout: %s not allocated for %s" %
-                             (name, self.asf.cdx_ver))
-        flash, expected_size = self.payload_layout[name]
-        if len(data) != expected_size:
-            raise ValueError("%s: binary size %dB differs from layout %dB" %
-                             (name, len(data), expected_size))
-        off = flash - self.asf.FLASH_BASE
-        self.asf.patch(data, off, checkempty=True)
-        return flash, off
 
     def _patch_thumb_bl_checked(self, site, expected, target, name):
         """Retarget a Thumb BL after verifying its original instruction bytes."""
@@ -2166,36 +2120,6 @@ class ASFirmwarePatches(object):
         irq_location_packed = struct.pack("<I", 0x08000000 + irq_location + 1)
         self.asf.patch(irq_location_packed, 0x402dc, clobber=True)
         
-    def _load_versioned_bin(self, name, required=False):
-        """Load a per-version binary, optionally failing when it is unavailable."""
-        ver = self.asf.cdx_ver.replace('SX567-', '')
-        bin_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                '..', 'build', '%s_%s.bin' % (name, ver))
-        if not os.path.exists(bin_path):
-            message = "%s: build/%s_%s.bin not found (run make)" % (name, name, ver)
-            if required:
-                raise ValueError(message)
-            print("  " + message)
-            return None, ver
-        with open(bin_path, 'rb') as f:
-            return f.read(), ver
-
-    def _elf_symbol_addr(self, elf_path, symbol):
-        """Return linked flash address of symbol from an ELF file."""
-        try:
-            out = subprocess.check_output(
-                ['arm-none-eabi-nm', elf_path],
-                stderr=subprocess.DEVNULL,
-                universal_newlines=True)
-        except (OSError, subprocess.CalledProcessError) as exc:
-            raise ValueError("failed to read symbols from %s: %s" % (elf_path, exc))
-
-        for line in out.splitlines():
-            fields = line.split()
-            if len(fields) >= 3 and fields[2] == symbol:
-                return int(fields[0], 16)
-        raise ValueError("symbol %s not found in %s" % (symbol, elf_path))
-
     def patch_common_code(self):
         """Inject common_code shared library (required by graph, squarewave, etc.)"""
         data, ver = self._load_versioned_bin('common_code')

@@ -5,7 +5,21 @@ AS11_PATCHED ?= $(BUILD)/as11-patched.bin
 # patcher can still relocate the payload when it's occupied in a newer firmware
 AS11_VID_SPOOF_OFFSET := 0x081DBAD0
 AS11_VID_SPOOF_BIN := $(BUILD)/as11_vid_spoof.bin
-AS11_BINS := $(AS11_VID_SPOOF_BIN)
+
+AS11_PAYLOAD_LAYOUT_VERSIONS := 8_0_1 8_3_0 8_4_0 8_5_0
+AS11_PAYLOADS_8_0_1 :=
+AS11_PAYLOADS_8_3_0 :=
+AS11_PAYLOADS_8_4_0 :=
+AS11_PAYLOADS_8_5_0 :=
+
+as11_payload_versions = $(strip $(foreach v,$(AS11_PAYLOAD_LAYOUT_VERSIONS),$(if $(filter $(1),$(AS11_PAYLOADS_$(v))),$(v))))
+as11_payload_bins = $(foreach v,$(call as11_payload_versions,$(1)),$(BUILD)/$(1)_$(v).bin)
+
+AS11_PAYLOAD_NAMES := $(sort $(foreach v,$(AS11_PAYLOAD_LAYOUT_VERSIONS),$(AS11_PAYLOADS_$(v))))
+AS11_PAYLOAD_STAMPS := $(foreach p,$(AS11_PAYLOAD_NAMES),$(BUILD)/payload_$(p).stamp)
+AS11_PAYLOAD_LAYOUT_MKS := $(foreach v,$(AS11_PAYLOAD_LAYOUT_VERSIONS),$(BUILD)/as11_payload_layout_$(v).mk)
+AS11_PAYLOAD_LAYOUT_TSVS := $(foreach v,$(AS11_PAYLOAD_LAYOUT_VERSIONS),$(BUILD)/as11_payload_layout_$(v).tsv)
+AS11_BINS := $(AS11_VID_SPOOF_BIN) $(AS11_PAYLOAD_STAMPS)
 
 AS11_CFLAGS := \
 	-g \
@@ -22,6 +36,80 @@ AS11_CFLAGS := \
 	-nostdlib \
 	-nostdinc \
 	-ffreestanding
+
+ifneq ($(filter clean,$(MAKECMDGOALS)),clean)
+-include $(AS11_PAYLOAD_LAYOUT_MKS)
+endif
+
+define AS11_PAYLOAD_LAYOUT_template
+AS11_PAYLOAD_PROBE_BINS_$(1) := $$(foreach p,$$(AS11_PAYLOADS_$(1)),$$(BUILD)/$$(p)_$(1).probe.bin)
+
+$$(BUILD)/as11_payload_sizes_$(1).tsv: $$(AS11_PAYLOAD_PROBE_BINS_$(1)) Makefile Makefile.as11 | $$(BUILD)
+	@: > $$@.tmp
+	@for bin in $$(filter %.probe.bin,$$^); do \
+		base=$$$${bin##*/}; \
+		name=$$$${base%_$(1).probe.bin}; \
+		printf '%s\t%s\n' "$$$$name" "$$$$(stat -c %s "$$$$bin")" >> $$@.tmp; \
+	done
+	@mv $$@.tmp $$@
+
+$$(BUILD)/as11_payload_layout_$(1).tsv $$(BUILD)/as11_payload_layout_$(1).mk &: \
+		$$(BUILD)/as11_payload_sizes_$(1).tsv $$(SRC)/as11_code_caves.tsv \
+		$$(SRC)/generate_payload_layout.awk | $$(BUILD)
+	@awk -v version=$(1) \
+		-v mkfile=$$(BUILD)/as11_payload_layout_$(1).mk.tmp \
+		-f $$(SRC)/generate_payload_layout.awk \
+		$$(SRC)/as11_code_caves.tsv $$(BUILD)/as11_payload_sizes_$(1).tsv \
+		> $$(BUILD)/as11_payload_layout_$(1).tsv.tmp
+	@mv $$(BUILD)/as11_payload_layout_$(1).mk.tmp $$(BUILD)/as11_payload_layout_$(1).mk
+	@mv $$(BUILD)/as11_payload_layout_$(1).tsv.tmp $$(BUILD)/as11_payload_layout_$(1).tsv
+endef
+
+$(foreach v,$(AS11_PAYLOAD_LAYOUT_VERSIONS),$(eval $(call AS11_PAYLOAD_LAYOUT_template,$(v))))
+
+$(BUILD)/as11_stubs_%.o: $(SRC)/as11/stubs_%.S | $(BUILD)
+	$(AS) $(AS11_CFLAGS) -c -o $@ $<
+
+define AS11_VERSIONED_OBJECTS_template
+$$(BUILD)/as11_%_$(1).o: $$(SRC)/as11/%.c $$(SRC)/as11/stubs.h \
+		$$(SRC)/as11/vars.h $$(SRC)/as11/vars_$(1).h | $$(BUILD)
+	$$(CC) $$(AS11_CFLAGS) -DAPPX_VER_$(1) -c -o $$@ $$<
+endef
+
+$(foreach v,$(AS11_PAYLOAD_LAYOUT_VERSIONS),$(eval $(call AS11_VERSIONED_OBJECTS_template,$(v))))
+
+define AS11_PAYLOAD_template
+$$(BUILD)/$(1)_$(2).probe.elf: $$(BUILD)/$(1)_$(2).o $$(BUILD)/as11_stubs_$(2).o | $$(BUILD)
+	$$(LD) --nostdlib --no-dynamic-linker \
+		--Ttext $(PROBE_LINK_ADDR) --entry start --sort-section=name \
+		-o $$@ $$^
+
+$$(BUILD)/$(1)_$(2).elf: $$(BUILD)/$(1)_$(2).o $$(BUILD)/as11_stubs_$(2).o \
+		$$(BUILD)/as11_payload_layout_$(2).mk | $$(BUILD)
+	$$(LD) --nostdlib --no-dynamic-linker \
+		--Ttext $$(payload_addr_$(2)_$(1)) --entry start --sort-section=name \
+		-o $$@ $$(BUILD)/$(1)_$(2).o $$(BUILD)/as11_stubs_$(2).o
+
+$$(BUILD)/$(1)_$(2).bin: $$(BUILD)/$(1)_$(2).elf
+	$$(OBJCOPY) -Obinary $$< $$@
+	@actual=$$$$(stat -c %s $$@); expected=$$(payload_size_$(2)_$(1)); \
+		[ "$$$$actual" -eq "$$$$expected" ] || { \
+			echo "$$@: final size $$$$actual differs from layout size $$$$expected" >&2; \
+			exit 1; \
+		}
+endef
+
+$(foreach p,$(AS11_PAYLOAD_NAMES),\
+	$(foreach v,$(call as11_payload_versions,$(p)),\
+		$(eval $(call AS11_PAYLOAD_template,$(p),$(v)))))
+
+define AS11_PAYLOAD_STAMP_template
+$(BUILD)/payload_$(1).stamp: $(call as11_payload_bins,$(1)) Makefile Makefile.as11 | $(BUILD)
+	@printf '  %-8s %-30s [%s]\n' PAYLOAD $(1) '$(call as11_payload_versions,$(1))'
+	@touch $$@
+endef
+
+$(foreach p,$(AS11_PAYLOAD_NAMES),$(eval $(call AS11_PAYLOAD_STAMP_template,$(p))))
 
 $(BUILD)/as11_vid_spoof.o: $(SRC)/as11/vid_spoof.c | $(BUILD)
 	$(CC) $(AS11_CFLAGS) -c -o $@ $<
@@ -40,7 +128,7 @@ as11:
 	$(MAKE) as11-binaries
 	$(MAKE) $(AS11_PATCHED)
 
-as11-binaries: $(AS11_BINS)
+as11-binaries: $(AS11_BINS) $(AS11_PAYLOAD_LAYOUT_TSVS)
 
 as11-vid-spoof: $(AS11_VID_SPOOF_BIN)
 	@echo "AS11 VID spoof patch built:"

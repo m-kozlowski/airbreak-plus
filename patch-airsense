@@ -381,7 +381,7 @@ payload_layout_load() {
 # Resolve one built payload and verify that final-link size matches the layout.
 # args: payload name, binary path
 payload_resolve() {
-    local name=$1 bin=$2 actual
+    local name=$1 bin=$2 elf linked_text actual tmp
     payload_layout_load
     [[ -n "${PAYLOAD_LAYOUT_FLASH[$name]+x}" ]] || \
         die "payload layout: $name not allocated for $CDX_VER"
@@ -393,6 +393,25 @@ payload_resolve() {
     actual=$(stat -c %s "$bin")
     (( actual == PAYLOAD_SIZE )) || \
         die "$name: binary size ${actual}B differs from layout ${PAYLOAD_SIZE}B"
+
+    elf=${bin%.bin}.elf
+    [[ -r "$elf" ]] || die "$elf not found (run make binaries)"
+    linked_text=$(arm-none-eabi-objdump -h "$elf" 2>/dev/null | \
+        awk '$2 == ".text" { print "0x" $4; count++ } END { if (count != 1) exit 1 }') || \
+        die "$name: cannot resolve the linked .text address from $elf"
+    (( linked_text == PAYLOAD_FLASH )) || \
+        die "$name: ELF .text is linked at $(printf '0x%08X' "$linked_text"), layout assigns $(printf '0x%08X' "$PAYLOAD_FLASH") (run make binaries)"
+
+    tmp=$(mktemp) || die "$name: cannot create temporary binary"
+    if ! arm-none-eabi-objcopy -O binary "$elf" "$tmp"; then
+        rm -f "$tmp"
+        die "$name: cannot extract binary from $elf"
+    fi
+    if ! cmp -s "$bin" "$tmp"; then
+        rm -f "$tmp"
+        die "$name: $bin does not match $elf (run make binaries)"
+    fi
+    rm -f "$tmp"
 }
 
 

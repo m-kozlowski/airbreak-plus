@@ -19,6 +19,8 @@ import re
 import struct
 import sys
 
+from lib.compiled_payload import CompiledPayloadMixin
+
 try:
     import crcmod.predefined
 except ImportError:
@@ -353,6 +355,12 @@ class S11Firmware(object):
             last = match.group(1)
         return last
 
+    def appx_version_key(self):
+        match = re.match(r"^(\d+)\.(\d+)\.(\d+)(?:\.|$)", self.appl_ver)
+        if match is None:
+            raise ValueError("cannot derive APPX payload version from %r" % self.appl_ver)
+        return "_".join(match.groups())
+
     def read_str(self, off, length):
         return clean_ascii(bytes(self.fw[off:off + length]))
 
@@ -446,7 +454,7 @@ class S11Firmware(object):
             raise ValueError("literal 0x%08X is outside image" % literal_addr)
         return self.u32(literal_off)
 
-    def patch(self, patchdata, addr=None, dataseq=None, verbose=True):
+    def patch(self, patchdata, addr=None, dataseq=None, verbose=True, checkempty=False):
         patchdata = bytes(patchdata)
         if addr is None:
             if dataseq is None:
@@ -454,6 +462,8 @@ class S11Firmware(object):
             addr = self.find_bytes(dataseq)
         if verbose:
             print("Patching %d bytes at 0x%x" % (len(patchdata), addr))
+        if checkempty and bytes(self.fw[addr:addr + len(patchdata)]) != b"\xFF" * len(patchdata):
+            raise ValueError("Appears data in section you want me to patch! Bailing out...")
         self.fw[addr:addr + len(patchdata)] = patchdata
 
     def globals_addr(self):
@@ -785,17 +795,28 @@ class S11Firmware(object):
             f.write(bytes(self.fw))
 
 
-class S11FirmwarePatches(object):
+class S11FirmwarePatches(CompiledPayloadMixin):
     """Patch methods for S11 firmware."""
+
+    PAYLOAD_LAYOUT_TEMPLATE = "as11_payload_layout_%s.tsv"
+    PAYLOAD_BUILD_COMMAND = "make as11-binaries"
 
     def __init__(self, asf, rpc_permissions=None):
         self.asf = asf
+        self._init_compiled_payloads()
         if rpc_permissions is None:
             rpc_permissions = DEFAULT_RPC_PERMISSIONS
         self.rpc_permission_rules = {
             method: dict(vcid_permissions)
             for method, vcid_permissions in rpc_permissions.items()
         }
+
+    def _payload_version_key(self):
+        return self.asf.appx_version_key()
+
+    def _payload_flash_range(self):
+        start = self.asf.FLASH_BASE + self.asf.APPL_OFF
+        return start, start + self.asf.APPL_SIZE
 
     def is_blacklisted_setting(self, row):
         long_name = row["long_name"] or ""

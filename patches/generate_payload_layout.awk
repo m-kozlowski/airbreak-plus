@@ -1,6 +1,6 @@
-# Allocate measured payloads into the known code caves for one CDX version.
+# Allocate measured payloads into the known code caves for one firmware key.
 #
-# Input 1: s10_code_caves.tsv
+# Input 1: code-cave table
 # Input 2: payload_sizes_<version>.tsv
 # Output: payload_layout_<version>.tsv on stdout and Make variables in mkfile.
 
