@@ -3,9 +3,9 @@ AS11_PATCHED ?= $(BUILD)/as11-patched.bin
 
 AS11_PAYLOAD_LAYOUT_VERSIONS := 8_0_1 8_3_0 8_4_0 8_5_0
 AS11_PAYLOADS_8_0_1 := as11_mop_callback_dispatcher as11_vid_spoof
-AS11_PAYLOADS_8_3_0 := $(AS11_PAYLOADS_8_0_1)
-AS11_PAYLOADS_8_4_0 := $(AS11_PAYLOADS_8_0_1)
-AS11_PAYLOADS_8_5_0 := $(AS11_PAYLOADS_8_0_1)
+AS11_PAYLOADS_8_3_0 := $(AS11_PAYLOADS_8_0_1) as11_asv_backup_rate
+AS11_PAYLOADS_8_4_0 := $(AS11_PAYLOADS_8_3_0)
+AS11_PAYLOADS_8_5_0 := $(AS11_PAYLOADS_8_3_0)
 
 as11_payload_versions = $(strip $(foreach v,$(AS11_PAYLOAD_LAYOUT_VERSIONS),$(if $(filter $(1),$(AS11_PAYLOADS_$(v))),$(v))))
 as11_payload_bins = $(foreach v,$(call as11_payload_versions,$(1)),$(BUILD)/$(1)_$(v).bin)
@@ -105,7 +105,8 @@ endef
 
 $(foreach p,$(AS11_PAYLOAD_NAMES),$(eval $(call AS11_PAYLOAD_STAMP_template,$(p))))
 
-.PHONY: as11 as11-binaries as11-mop-callback-dispatcher as11-vid-spoof as11-patched
+.PHONY: as11 as11-binaries as11-mop-callback-dispatcher as11-vid-spoof \
+	as11-asv-backup-rate as11-patched
 
 as11:
 	$(MAKE) as11-binaries
@@ -120,6 +121,10 @@ as11-mop-callback-dispatcher: $(call as11_payload_bins,as11_mop_callback_dispatc
 as11-vid-spoof: $(call as11_payload_bins,as11_vid_spoof)
 	@echo "AS11 VID spoof patches built:"
 	@$(foreach v,$(call as11_payload_versions,as11_vid_spoof),echo "  $(BUILD)/as11_vid_spoof_$(v).bin";)
+
+as11-asv-backup-rate: $(call as11_payload_bins,as11_asv_backup_rate)
+	@echo "AS11 ASV backup-rate patches built:"
+	@$(foreach v,$(call as11_payload_versions,as11_asv_backup_rate),echo "  $(BUILD)/as11_asv_backup_rate_$(v).bin";)
 
 as11-patched:
 	-$(MAKE) as11-binaries

@@ -227,6 +227,8 @@ AS11_VID_SPOOF_PAYLOAD = "as11_vid_spoof"
 
 AS11_MOP_CALLBACK_DISPATCHER_PAYLOAD = "as11_mop_callback_dispatcher"
 
+AS11_ASV_BACKUP_RATE_PAYLOAD = "as11_asv_backup_rate"
+
 
 class S11Firmware(object):
 
@@ -423,6 +425,29 @@ class S11Firmware(object):
                 out.append(off)
             start = off + 1
         return out
+
+    def read_thumb2_bl_target(self, off):
+        # Decode the target of a Thumb-2 immediate BL instruction.
+        first = self.u16(off)
+        second = self.u16(off + 2)
+        if (first & 0xF800) != 0xF000 or (second & 0xD000) != 0xD000:
+            raise ValueError("instruction at 0x%08X is not Thumb-2 BL" % self.off_to_addr(off))
+
+        sign = (first >> 10) & 1
+        j1 = (second >> 13) & 1
+        j2 = (second >> 11) & 1
+        i1 = (~(j1 ^ sign)) & 1
+        i2 = (~(j2 ^ sign)) & 1
+        immediate = (
+            (sign << 24)
+            | (i1 << 23)
+            | (i2 << 22)
+            | ((first & 0x03FF) << 12)
+            | ((second & 0x07FF) << 1)
+        )
+        if immediate & (1 << 24):
+            immediate -= 1 << 25
+        return self.off_to_addr(off) + 4 + immediate
 
     def patch(self, patchdata, addr=None, dataseq=None, verbose=True, checkempty=False):
         patchdata = bytes(patchdata)
@@ -1270,6 +1295,166 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         print("Patching ASV pressure support range... %d max floors, %d static bounds, %d code constants" %
               (n_max_floor, n_static_bounds, n_code))
 
+    def asv_backup_rate(self):
+        """Install an ASV/ASVAuto update wrapper that inhibits backup breaths."""
+        data, ver = self._load_versioned_bin(AS11_ASV_BACKUP_RATE_PAYLOAD)
+        if data is None:
+            return
+
+        # Fallback patterns for addresses not known for this APPX version.
+        callback_pattern = (
+            0x10, 0xB5, 0x04, 0x46,
+            None, None, None, None,
+            0x00, 0x21, 0x04, 0xF1, 0x68, 0x00,
+            None, None, None, None,
+            0xA0, 0x6C, 0x00, 0x21, 0x90, 0xED, 0x00, 0x0A,
+            0x04, 0xF1, 0x4C, 0x00, 0xBD, 0xE8, 0x10, 0x40,
+            None, None, None, None,
+        )
+        no_breathing_pattern = (
+            0x4F, 0x21, None, 0xA8,
+            None, None, None, None,
+            0x51, 0x21, None, 0xA8,
+            None, None, None, None,
+            0x3C, 0x21, 0x68, 0x46,
+            None, None, None, None,
+            0x3B, 0x21, None, 0xA8,
+            None, None, None, None,
+        )
+        phase_pattern = (
+            0x6F, 0x21, 0x68, 0x46,
+            None, None, None, None,
+            0x70, 0x21, 0x01, 0xA8,
+            None, None, None, None,
+        )
+        feature_pattern = struct.pack("<II", 0x011A, 0x00003000)
+        known_anchors = {
+            "8_3_0": {
+                "callback": 0x0818A63A,
+                "no_breathing": 0x08120F06,
+                "phase": 0x081277E4,
+                "feature": 0x0819CD34,
+            },
+            "8_4_0": {
+                "callback": 0x0818EE9E,
+                "no_breathing": 0x08122FB6,
+                "phase": 0x08129894,
+                "feature": 0x081A1544,
+            },
+            "8_5_0": {
+                "callback": 0x08190FD2,
+                "no_breathing": 0x08123A96,
+                "phase": 0x0812A374,
+                "feature": 0x081A34F8,
+            },
+        }
+
+        def verify_anchor(address, pattern, label):
+            off = self.asf.ptr_to_off(address)
+            if off is None or off + len(pattern) > len(self.asf.fw):
+                raise ValueError(
+                    "asv_backup_rate: %s anchor 0x%08X is outside firmware" %
+                    (label, address)
+                )
+            for index, expected in enumerate(pattern):
+                if expected is not None and self.asf.u8(off + index) != expected:
+                    raise ValueError(
+                        "asv_backup_rate: %s anchor 0x%08X does not match %s" %
+                        (ver, address, label)
+                    )
+            return off
+
+        anchors = known_anchors.get(ver)
+        if anchors is not None:
+            callback_off = verify_anchor(
+                anchors["callback"], callback_pattern, "ASV update callback"
+            )
+            no_breathing_off = verify_anchor(
+                anchors["no_breathing"], no_breathing_pattern,
+                "EASV no-breathing feedback"
+            )
+            phase_off = verify_anchor(
+                anchors["phase"], phase_pattern, "EASV phase feedback"
+            )
+            verify_anchor(
+                anchors["feature"], feature_pattern, "ASV feature entry"
+            )
+        else:
+            try:
+                callback_off = self.asf.find_bytes(
+                    callback_pattern, self.asf.APPL_OFF
+                )
+                no_breathing_off = self.asf.find_bytes(
+                    no_breathing_pattern, self.asf.APPL_OFF
+                )
+                phase_off = self.asf.find_bytes(
+                    phase_pattern, self.asf.APPL_OFF
+                )
+                self.asf.find_bytes(feature_pattern, self.asf.APPL_OFF)
+            except ValueError as exc:
+                raise ValueError(
+                    "asv_backup_rate: required ASV structure not unique: %s" % exc
+                )
+
+        original_update = self.asf.off_to_addr(callback_off)
+        feedback_output_ref = self.asf.read_thumb2_bl_target(no_breathing_off + 4)
+        feedback_input_ref = self.asf.read_thumb2_bl_target(no_breathing_off + 20)
+        phase_output_ref = self.asf.read_thumb2_bl_target(phase_off + 4)
+        phase_delta_output_ref = self.asf.read_thumb2_bl_target(phase_off + 12)
+        if phase_output_ref != feedback_output_ref or phase_delta_output_ref != feedback_output_ref:
+            raise ValueError("asv_backup_rate: EASV feedback output accessors do not agree")
+
+        elf_path = self._versioned_artifact_path(
+            AS11_ASV_BACKUP_RATE_PAYLOAD, "elf", ver
+        )
+        start = self._elf_symbol_addr(elf_path, "start")
+        linked_update = self._elf_symbol_addr(elf_path, "AsvFeature_update")
+        linked_input = self._elf_symbol_addr(elf_path, "FeedbackInput_get_ref")
+        linked_output = self._elf_symbol_addr(elf_path, "FeedbackOutput_get_ref")
+        expected_symbols = (
+            ("ASV update", linked_update, original_update),
+            ("feedback input", linked_input, feedback_input_ref),
+            ("feedback output", linked_output, feedback_output_ref),
+        )
+        for label, linked, discovered in expected_symbols:
+            if linked != discovered:
+                raise ValueError(
+                    "asv_backup_rate: versioned %s stub is 0x%08X, "
+                    "firmware function is 0x%08X" %
+                    (label, linked, discovered)
+                )
+
+        original_ptr = original_update | 1
+        refs = [
+            off for off in self.asf.find_u32_offsets(original_ptr)
+            if self.asf.APPL_OFF <= off < self.asf.APPL_OFF + self.asf.APPL_SIZE
+        ]
+        if len(refs) != 1:
+            raise ValueError(
+                "asv_backup_rate: expected one ASV update vtable reference to "
+                "0x%08X, found %d" % (original_ptr, len(refs))
+            )
+        vtable_update_off = refs[0]
+
+        vtable_off = vtable_update_off - 0x38
+        if vtable_off < self.asf.APPL_OFF:
+            raise ValueError("asv_backup_rate: invalid ASV feature vtable address")
+        if self.asf.u32(vtable_off) != 0 or self.asf.u32(vtable_off + 4) != 0:
+            raise ValueError("asv_backup_rate: ASV feature vtable prefix does not match")
+        for neighbor_off in (vtable_update_off - 4, vtable_update_off + 4):
+            neighbor = self.asf.u32(neighbor_off)
+            appl_start, appl_end = self._payload_flash_range()
+            if not (appl_start <= (neighbor & ~1) < appl_end):
+                raise ValueError("asv_backup_rate: ASV feature vtable shape does not match")
+
+        flash, _off = self._inject_payload(AS11_ASV_BACKUP_RATE_PAYLOAD, data)
+        self.asf.write_u32(vtable_update_off, start | 1)
+
+        print(
+            "Patching ASV backup rate... build/%s_%s.bin (%dB) at 0x%08X" %
+            (AS11_ASV_BACKUP_RATE_PAYLOAD, ver, len(data), flash)
+        )
+
     def motor_nagscreen(self):
         try:
             offset = self.asf.find_bytes(bytes.fromhex("C000B304"))
@@ -1511,6 +1696,12 @@ PATCH_LIST = [
         "desc": "Unlock ASV/ASVAuto pressure support range.",
         "default": False,
         "function": "asv_pressure_support_range",
+    },
+    {
+        "arg": "patch-asv-backup-rate",
+        "desc": "Disable the ASV/ASVAuto backup rate.",
+        "default": False,
+        "function": "asv_backup_rate",
     },
     {
         "arg": "patch-motor-nagscreen",

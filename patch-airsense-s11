@@ -32,6 +32,7 @@ PATCHES=(
     patch-vid-spoof
     patch-motor-nagscreen
     patch-asv-ps-range
+    # patch-asv-backup-rate
     patch-rpc-permissions
 )
 
