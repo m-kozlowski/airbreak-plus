@@ -9,4 +9,4 @@
 
 NSTUB(0x0806E7DE, DataItem_get_var_id_virtual)
 NSTUB(0x08068118, DataItem_read_value_by_id)
-NSTUB(0x08067F8E, DataItem_write_value_by_id_commit)
+NSTUB(0x08067F8E, DataItem_write_raw_by_id)

@@ -39,6 +39,6 @@ start(void)
     if (mop < sizeof(vid_lut)) {
         unsigned int vid = vid_lut[mop];
         if (vid != 0)
-            DataItem_write_value_by_id_commit(VAR_ID_VID, (int)vid);
+            DataItem_write_raw_by_id(VAR_ID_VID, (int)vid);
     }
 }
