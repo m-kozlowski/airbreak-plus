@@ -85,6 +85,7 @@ Windows users can prepare the common build environment with the
 | [CONF block format](docs/as11/conf_block_format.md) | Descriptor and schema structures |
 | [Variable reference](docs/as11/var_reference.tsv) | Cross-version variable names and metadata |
 | [as11_descriptors](docs/tools/as11_descriptors.md) | Offline firmware and CONF inspection |
+| [Patching: Patch payloads](docs/as11/patch_payloads.md) | Versioned payload builds, code-cave allocation, native stubs, and callback integration |
 | [CAN connection](docs/as11/can_connection.md) | Connectors, wiring, and tested adapters |
 | [CAN protocol](docs/as11/can_protocol.md) | CAN datagrams, VCIDs, and service endpoints |
 | [Bluetooth protocol](docs/as11/bluetooth_protocol.md) | BLE pairing, session, and transport |
