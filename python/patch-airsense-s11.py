@@ -247,6 +247,8 @@ AS11_G2_NUMERIC_WRITEBACK_PATTERN = (
     0x01, 0xEB, 0xC2, 0x01, 0x80, 0x69, 0x48, 0x60, 0x70, 0x47,
 )
 
+AS11_MOP_CALLBACK_DISPATCHER_PAYLOAD = "as11_mop_callback_dispatcher"
+
 
 class S11Firmware(object):
 
@@ -804,6 +806,8 @@ class S11FirmwarePatches(CompiledPayloadMixin):
     def __init__(self, asf, rpc_permissions=None):
         self.asf = asf
         self._init_compiled_payloads()
+        self.mop_callback_handlers = []
+        self.mop_callback_handler_seen = set()
         if rpc_permissions is None:
             rpc_permissions = DEFAULT_RPC_PERMISSIONS
         self.rpc_permission_rules = {
@@ -817,6 +821,117 @@ class S11FirmwarePatches(CompiledPayloadMixin):
     def _payload_flash_range(self):
         start = self.asf.FLASH_BASE + self.asf.APPL_OFF
         return start, start + self.asf.APPL_SIZE
+
+    def mop_callback_register_handler(self, handler, name):
+        """Register one feature handler to run after a MOP writeback."""
+        handler = int(handler) | 1
+        if handler in self.mop_callback_handler_seen:
+            return
+        self.mop_callback_handler_seen.add(handler)
+        self.mop_callback_handlers.append(handler)
+        print("  MOP callback handler: %s at 0x%08X" % (name, handler))
+
+    def patch_mop_callback_dispatcher(self):
+        """Install the shared EnumDataItem writeback dispatcher."""
+        if not self.mop_callback_handlers:
+            return
+        if len(self.mop_callback_handlers) > 4:
+            raise ValueError(
+                "mop_callback_dispatcher: too many handlers (%d)" %
+                len(self.mop_callback_handlers)
+            )
+
+        data, ver = self._load_versioned_bin(
+            AS11_MOP_CALLBACK_DISPATCHER_PAYLOAD, required=True
+        )
+        elf_path = self._versioned_artifact_path(
+            AS11_MOP_CALLBACK_DISPATCHER_PAYLOAD, "elf", ver
+        )
+        start = self._elf_symbol_addr(elf_path, "start")
+        handler_table = self._elf_symbol_addr(
+            elf_path, "mop_callback_handler_table"
+        )
+
+        writeback_pattern = (
+            0xDF, 0xF8, None, None, 0xB0, 0xF9, 0x14, 0x20,
+            0x01, 0xEB, 0x82, 0x01, 0x80, 0x7D, 0x88, 0x70, 0x70, 0x47,
+        )
+        known_anchors = {
+            "8_0_1": (0x0806E070, 0x081925E8),
+            "8_3_0": (0x0806E928, 0x0819EA20),
+            "8_4_0": (0x08070998, 0x081A332C),
+            "8_5_0": (0x08070EFC, 0x081A52E0),
+        }
+
+        anchors = known_anchors.get(ver)
+        if anchors is not None:
+            writeback, slot_addr = anchors
+            writeback_off = self.asf.ptr_to_off(writeback)
+            slot = self.asf.ptr_to_off(slot_addr)
+            if writeback_off is None or writeback_off + len(writeback_pattern) > len(self.asf.fw):
+                raise ValueError(
+                    "mop_callback_dispatcher: %s writeback anchor is outside firmware" % ver
+                )
+            for index, expected in enumerate(writeback_pattern):
+                if expected is not None and self.asf.u8(writeback_off + index) != expected:
+                    raise ValueError(
+                        "mop_callback_dispatcher: %s writeback anchor does not match" % ver
+                    )
+            if slot is None:
+                raise ValueError(
+                    "mop_callback_dispatcher: %s vtable slot is outside firmware" % ver
+                )
+        else:
+            try:
+                writeback_off = self.asf.find_bytes(
+                    writeback_pattern, self.asf.APPL_OFF
+                )
+            except ValueError as exc:
+                raise ValueError(
+                    "mop_callback_dispatcher: enum writeback pattern not unique: %s" % exc
+                )
+            writeback = self.asf.off_to_addr(writeback_off)
+            original = writeback | 1
+            refs = [
+                off for off in self.asf.find_u32_offsets(original)
+                if self.asf.APPL_OFF <= off < self.asf.APPL_OFF + self.asf.APPL_SIZE
+            ]
+            if len(refs) != 1:
+                raise ValueError(
+                    "mop_callback_dispatcher: expected one vtable reference to "
+                    "0x%08X, found %d" % (original, len(refs))
+                )
+            slot = refs[0]
+
+        writeback = self.asf.off_to_addr(writeback_off)
+        original = writeback | 1
+        if self.asf.u32(slot) != original:
+            raise ValueError(
+                "mop_callback_dispatcher: vtable slot 0x%08X contains "
+                "0x%08X, expected 0x%08X" %
+                (self.asf.off_to_addr(slot), self.asf.u32(slot), original)
+            )
+
+        flash, _off = self._inject_payload(
+            AS11_MOP_CALLBACK_DISPATCHER_PAYLOAD, data
+        )
+        table_off = handler_table - self.asf.FLASH_BASE
+        self.asf.write_u32(table_off, original)
+        for index, handler in enumerate(self.mop_callback_handlers):
+            self.asf.write_u32(table_off + (index + 1) * 4, handler)
+        self.asf.write_u32(
+            table_off + (len(self.mop_callback_handlers) + 1) * 4, 0xFFFFFFFF
+        )
+        self.asf.write_u32(slot, start | 1)
+
+        print(
+            "  MOP callback dispatcher: build/%s_%s.bin (%dB) at 0x%08X" %
+            (AS11_MOP_CALLBACK_DISPATCHER_PAYLOAD, ver, len(data), flash)
+        )
+        print(
+            "  EnumDataItem writeback: 0x%08X -> 0x%08X" %
+            (original, start | 1)
+        )
 
     def is_blacklisted_setting(self, row):
         long_name = row["long_name"] or ""
@@ -1661,6 +1776,7 @@ def main(argv=None):
             print("PATCH: " + patch["desc"])
             getattr(patches, patch["function"])()
 
+    patches.patch_mop_callback_dispatcher()
     asf.fix_crcs()
     asf.write_output(args.OUTFILE, args.overwrite)
     print(hashlib.sha256(bytes(asf.fw)).hexdigest() + "  " + args.OUTFILE)

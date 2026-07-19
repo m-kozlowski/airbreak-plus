@@ -7,10 +7,10 @@ AS11_VID_SPOOF_OFFSET := 0x081DBAD0
 AS11_VID_SPOOF_BIN := $(BUILD)/as11_vid_spoof.bin
 
 AS11_PAYLOAD_LAYOUT_VERSIONS := 8_0_1 8_3_0 8_4_0 8_5_0
-AS11_PAYLOADS_8_0_1 :=
-AS11_PAYLOADS_8_3_0 :=
-AS11_PAYLOADS_8_4_0 :=
-AS11_PAYLOADS_8_5_0 :=
+AS11_PAYLOADS_8_0_1 := as11_mop_callback_dispatcher
+AS11_PAYLOADS_8_3_0 := $(AS11_PAYLOADS_8_0_1)
+AS11_PAYLOADS_8_4_0 := $(AS11_PAYLOADS_8_0_1)
+AS11_PAYLOADS_8_5_0 := $(AS11_PAYLOADS_8_0_1)
 
 as11_payload_versions = $(strip $(foreach v,$(AS11_PAYLOAD_LAYOUT_VERSIONS),$(if $(filter $(1),$(AS11_PAYLOADS_$(v))),$(v))))
 as11_payload_bins = $(foreach v,$(call as11_payload_versions,$(1)),$(BUILD)/$(1)_$(v).bin)
@@ -122,13 +122,17 @@ $(BUILD)/as11_vid_spoof.elf: $(BUILD)/as11_vid_spoof.o | $(BUILD)
 $(BUILD)/as11_vid_spoof.bin: $(BUILD)/as11_vid_spoof.elf
 	$(OBJCOPY) -Obinary $< $@
 
-.PHONY: as11 as11-binaries as11-vid-spoof as11-patched
+.PHONY: as11 as11-binaries as11-mop-callback-dispatcher as11-vid-spoof as11-patched
 
 as11:
 	$(MAKE) as11-binaries
 	$(MAKE) $(AS11_PATCHED)
 
 as11-binaries: $(AS11_BINS) $(AS11_PAYLOAD_LAYOUT_TSVS)
+
+as11-mop-callback-dispatcher: $(call as11_payload_bins,as11_mop_callback_dispatcher)
+	@echo "AS11 MOP callback dispatcher patches built:"
+	@$(foreach v,$(call as11_payload_versions,as11_mop_callback_dispatcher),echo "  $(BUILD)/as11_mop_callback_dispatcher_$(v).bin";)
 
 as11-vid-spoof: $(AS11_VID_SPOOF_BIN)
 	@echo "AS11 VID spoof patch built:"
