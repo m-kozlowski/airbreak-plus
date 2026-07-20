@@ -63,6 +63,8 @@ The compatibility wrapper selects:
 | `patch-vid-spoof` | correct product identification in SD-card and cloud data for unlocked modes |
 | `patch-motor-nagscreen` | removes the "device has reached its design life" warning triggered after ~20,000 hours of runtime |
 | `patch-asv-ps-range` | ASV/ASVAuto MinPS-MaxPS range restriction removal |
+| `patch-asv-backup-rate` | disables the ASV/ASVAuto backup rate; `patch-custom-settings` adds a persistent On/Off control |
+| `patch-custom-settings` | menu controls requested by selected compiled payloads |
 | `patch-rpc-permissions` | controls which device commands are available through each communication interface |
 
 See [Features](features.md) for the resulting behavior.

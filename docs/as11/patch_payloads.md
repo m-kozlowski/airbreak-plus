@@ -12,9 +12,9 @@ The current build matrix is defined by `AS11_PAYLOADS_<version>` in
 | APPX key | Payloads |
 |----------|----------|
 | `8_0_1` | `as11_mop_callback_dispatcher`, `as11_vid_spoof` |
-| `8_3_0` | `as11_mop_callback_dispatcher`, `as11_vid_spoof`, `as11_asv_backup_rate` |
-| `8_4_0` | `as11_mop_callback_dispatcher`, `as11_vid_spoof`, `as11_asv_backup_rate` |
-| `8_5_0` | `as11_mop_callback_dispatcher`, `as11_vid_spoof`, `as11_asv_backup_rate` |
+| `8_3_0` | `as11_mop_callback_dispatcher`, `as11_vid_spoof`, `as11_asv_backup_rate`, `as11_custom_settings` |
+| `8_4_0` | `as11_mop_callback_dispatcher`, `as11_vid_spoof`, `as11_asv_backup_rate`, `as11_custom_settings` |
+| `8_5_0` | `as11_mop_callback_dispatcher`, `as11_vid_spoof`, `as11_asv_backup_rate`, `as11_custom_settings` |
 
 The patcher derives the key from the first three components of the application
 version. For example, APPX `8.5.0.9cd562102` selects `8_5_0`.
@@ -59,7 +59,8 @@ Example generated 8.5.0 layout:
 payload                         address      size  end_exclusive
 as11_mop_callback_dispatcher    0x081DBAD0   72    0x081DBB18
 as11_vid_spoof                  0x081DBB18   51    0x081DBB4B
-as11_asv_backup_rate            0x081DBB4C   68    0x081DBB90
+as11_asv_backup_rate            0x081DBB4C   102   0x081DBBB2
+as11_custom_settings            0x081DBBB4   1136  0x081DC024
 ```
 
 Build all Air11 payloads and inspect a layout with:
@@ -75,6 +76,7 @@ Dedicated build targets are also available:
 make as11-mop-callback-dispatcher
 make as11-vid-spoof
 make as11-asv-backup-rate
+make as11-custom-settings
 ```
 
 ## Patcher checks
@@ -143,8 +145,9 @@ The patcher fills `mop_callback_handler_table` with:
 3. a `0xFFFFFFFF` sentinel
 
 The dispatcher always calls the stock writeback first. It invokes registered
-handlers only when the committed DataItem is `MOP`. The current registered
-handler is `as11_vid_spoof`.
+handlers only when the committed DataItem is `MOP`. `as11_vid_spoof` and the
+custom-settings visibility handler register here when their patches are
+installed.
 
 The dispatcher is injected only when at least one selected patch registers a
 handler. Its table reserves space for four feature handlers.
@@ -156,9 +159,11 @@ handler. Its table reserves space for four feature handlers.
 | `as11_mop_callback_dispatcher` | `8_0_1`, `8_3_0`, `8_4_0`, `8_5_0` | owns the shared enum-writeback vtable slot and calls registered MOP handlers |
 | `as11_vid_spoof` | `8_0_1`, `8_3_0`, `8_4_0`, `8_5_0` | MOP handler; reads `MOP` and writes `VID` through native DataItem functions |
 | `as11_asv_backup_rate` | `8_3_0`, `8_4_0`, `8_5_0` | wraps the ASV feature update callback through its own vtable slot |
+| `as11_custom_settings` | `8_3_0`, `8_4_0`, `8_5_0` | appends persistent controls to selected clinical menu sections and updates their runtime visibility after MOP changes |
 
-The ASV backup-rate payload is built by `make as11-binaries`, but its patch
-switch remains opt-in in the standard compatibility wrapper.
+With [custom settings](custom_settings.md), the ASV backup-rate payload exposes
+a `Backup Rate` control that defaults to stock behavior. Without custom
+settings, the payload suppresses backup breaths directly.
 
 ## Adding a payload
 

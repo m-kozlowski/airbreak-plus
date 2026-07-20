@@ -36,6 +36,21 @@ def elf_symbol_address(path, symbol):
     return matches[0]
 
 
+def elf_symbol_size(path, symbol):
+    """Return the linked size of one ELF symbol."""
+    matches = []
+    for line in _tool_output(["arm-none-eabi-nm", "-S", path]).splitlines():
+        fields = line.split()
+        if len(fields) >= 4 and fields[3] == symbol:
+            matches.append(int(fields[1], 16))
+    if len(matches) != 1:
+        raise CompiledPayloadError(
+            "expected one %s symbol in %s, found %d" %
+            (symbol, path, len(matches))
+        )
+    return matches[0]
+
+
 def elf_text_address(path):
     """Return the VMA of the ELF .text section."""
     matches = []
@@ -153,6 +168,9 @@ class CompiledPayloadMixin(object):
 
     def _elf_symbol_addr(self, elf_path, symbol):
         return elf_symbol_address(elf_path, symbol)
+
+    def _elf_symbol_size(self, elf_path, symbol):
+        return elf_symbol_size(elf_path, symbol)
 
     def _inject_payload(self, name, data):
         """Validate and inject one payload at its generated layout address."""

@@ -229,6 +229,8 @@ AS11_MOP_CALLBACK_DISPATCHER_PAYLOAD = "as11_mop_callback_dispatcher"
 
 AS11_ASV_BACKUP_RATE_PAYLOAD = "as11_asv_backup_rate"
 
+AS11_CUSTOM_SETTINGS_PAYLOAD = "as11_custom_settings"
+
 
 class S11Firmware(object):
 
@@ -249,6 +251,50 @@ class S11Firmware(object):
     G2_STRIDE = 32
     G3_STRIDE = 20
     G5_STRIDE = 16
+
+    DESCRIPTOR_FIELDS = {
+        "g1": {
+            "flags": (0x00, 2),
+            "ui_group_id": (0x02, 2),
+            "owner_ref": (0x04, 2),
+            "factory_tag": (0x06, 2),
+            "max_length": (0x08, 2),
+        },
+        "g2": {
+            "flags": (0x00, 2),
+            "ui_group_id": (0x02, 2),
+            "owner_ref": (0x04, 2),
+            "factory_tag": (0x06, 2),
+            "default": (0x08, 4),
+            "max": (0x0C, 4),
+            "min": (0x10, 4),
+            "format_selector": (0x14, 2),
+            "scale": (0x16, 2),
+            "step": (0x18, 2),
+            "bounds_slot": (0x1A, 1),
+            "sample_source_id": (0x1B, 1),
+            "quantity_class": (0x1C, 4),
+        },
+        "g3": {
+            "flags": (0x00, 2),
+            "ui_group_id": (0x02, 2),
+            "owner_ref": (0x04, 2),
+            "factory_tag": (0x06, 2),
+            "fixed_mask": (0x08, 4),
+            "editable_mask": (0x0C, 4),
+            "bit_count": (0x10, 1),
+            "g4_list_offset": (0x12, 2),
+        },
+        "g5": {
+            "flags": (0x00, 2),
+            "g4_options_offset": (0x02, 2),
+            "owner_ref": (0x04, 2),
+            "factory_tag": (0x06, 2),
+            "default": (0x08, 1),
+            "n_options": (0x09, 1),
+            "option_mask": (0x0C, 4),
+        },
+    }
 
     GLOBAL_NAMES = {
         0: "conf_header",
@@ -448,6 +494,30 @@ class S11Firmware(object):
         if immediate & (1 << 24):
             immediate -= 1 << 25
         return self.off_to_addr(off) + 4 + immediate
+
+    def write_thumb2_bl_target(self, off, target):
+        """Replace a Thumb-2 BL target while preserving the call site."""
+        source = self.off_to_addr(off)
+        immediate = (target & ~1) - (source + 4)
+        if immediate & 1 or not -(1 << 24) <= immediate < (1 << 24):
+            raise ValueError(
+                "Thumb-2 BL from 0x%08X cannot reach 0x%08X" %
+                (source, target)
+            )
+
+        encoded = immediate & ((1 << 25) - 1)
+        sign = (encoded >> 24) & 1
+        i1 = (encoded >> 23) & 1
+        i2 = (encoded >> 22) & 1
+        j1 = ((~i1) & 1) ^ sign
+        j2 = ((~i2) & 1) ^ sign
+        first = 0xF000 | (sign << 10) | ((encoded >> 12) & 0x03FF)
+        second = (
+            0xD000 | (j1 << 13) | (j2 << 11) |
+            ((encoded >> 1) & 0x07FF)
+        )
+        self.write_u16(off, first)
+        self.write_u16(off + 2, second)
 
     def patch(self, patchdata, addr=None, dataseq=None, verbose=True, checkempty=False):
         patchdata = bytes(patchdata)
@@ -699,6 +769,24 @@ class S11Firmware(object):
                     rows.append(row)
         return rows
 
+    def write_descriptor_fields(self, row, fields):
+        """Update named fields in an existing DataItem descriptor."""
+        layout = self.DESCRIPTOR_FIELDS[row["array"]]
+        unknown = set(fields) - set(layout)
+        if unknown:
+            raise ValueError(
+                "unknown %s descriptor field(s): %s" %
+                (row["array"], ", ".join(sorted(unknown)))
+            )
+        writers = {
+            1: self.write_u8,
+            2: self.write_u16,
+            4: self.write_u32,
+        }
+        for field, value in fields.items():
+            field_off, width = layout[field]
+            writers[width](row["offset"] + field_off, value)
+
     def find_rpc_nodes(self, names):
         names = set(names)
         found = {}
@@ -795,12 +883,36 @@ class S11FirmwarePatches(CompiledPayloadMixin):
 
     PAYLOAD_LAYOUT_TEMPLATE = "as11_payload_layout_%s.tsv"
     PAYLOAD_BUILD_COMMAND = "make as11-binaries"
+    CUSTOM_MENU_SECTIONS = {
+        "therapy": 0,
+        "comfort": 1,
+        "accessories": 2,
+        "options": 3,
+        "configuration": 4,
+    }
+    CUSTOM_SETTING_RECLAIM_POOLS = {
+        "reminders": {
+            "resources": (
+                "RIF", "RIM", "RIT", "RIC",
+                "RDF", "RDM", "RDT", "RDH",
+                "RTF", "RTM", "RTT", "RTH",
+            ),
+            "handler": "_custom_settings_reclaim_reminders",
+        },
+    }
+    CUSTOM_MENU_FACTORY_SYMBOLS = {
+        "text_value": "custom_menu_text_value_factory",
+    }
 
     def __init__(self, asf, rpc_permissions=None):
         self.asf = asf
         self._init_compiled_payloads()
         self.mop_callback_handlers = []
         self.mop_callback_handler_seen = set()
+        self.custom_settings_enabled = False
+        self.custom_setting_claims = {}
+        self.custom_menu_entries = []
+        self.custom_setting_bindings = []
         if rpc_permissions is None:
             rpc_permissions = DEFAULT_RPC_PERMISSIONS
         self.rpc_permission_rules = {
@@ -826,6 +938,29 @@ class S11FirmwarePatches(CompiledPayloadMixin):
 
     def patch_mop_callback_dispatcher(self):
         """Install the shared EnumDataItem writeback dispatcher."""
+        known_anchors = {
+            "8_0_1": {
+                "writeback": 0x0806E070,
+                "vtable_slot": 0x081925E8,
+            },
+            "8_3_0": {
+                "writeback": 0x0806E928,
+                "vtable_slot": 0x0819EA20,
+            },
+            "8_4_0": {
+                "writeback": 0x08070998,
+                "vtable_slot": 0x081A332C,
+            },
+            "8_5_0": {
+                "writeback": 0x08070EFC,
+                "vtable_slot": 0x081A52E0,
+            },
+        }
+        writeback_pattern = (
+            0xDF, 0xF8, None, None, 0xB0, 0xF9, 0x14, 0x20,
+            0x01, 0xEB, 0x82, 0x01, 0x80, 0x7D, 0x88, 0x70, 0x70, 0x47,
+        )
+
         if not self.mop_callback_handlers:
             return
         if len(self.mop_callback_handlers) > 4:
@@ -845,56 +980,28 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             elf_path, "mop_callback_handler_table"
         )
 
-        writeback_pattern = (
-            0xDF, 0xF8, None, None, 0xB0, 0xF9, 0x14, 0x20,
-            0x01, 0xEB, 0x82, 0x01, 0x80, 0x7D, 0x88, 0x70, 0x70, 0x47,
-        )
-        known_anchors = {
-            "8_0_1": (0x0806E070, 0x081925E8),
-            "8_3_0": (0x0806E928, 0x0819EA20),
-            "8_4_0": (0x08070998, 0x081A332C),
-            "8_5_0": (0x08070EFC, 0x081A52E0),
-        }
-
-        anchors = known_anchors.get(ver)
-        if anchors is not None:
-            writeback, slot_addr = anchors
-            writeback_off = self.asf.ptr_to_off(writeback)
-            slot = self.asf.ptr_to_off(slot_addr)
-            if writeback_off is None or writeback_off + len(writeback_pattern) > len(self.asf.fw):
+        if ver not in known_anchors:
+            raise ValueError(
+                "mop_callback_dispatcher: no anchors for APPX %s" % ver
+            )
+        anchors = known_anchors[ver]
+        writeback = anchors["writeback"]
+        writeback_off = self.asf.ptr_to_off(writeback)
+        slot = self.asf.ptr_to_off(anchors["vtable_slot"])
+        if (writeback_off is None or
+                writeback_off + len(writeback_pattern) > len(self.asf.fw)):
+            raise ValueError(
+                "mop_callback_dispatcher: %s writeback anchor is outside firmware" % ver
+            )
+        for index, expected in enumerate(writeback_pattern):
+            if expected is not None and self.asf.u8(writeback_off + index) != expected:
                 raise ValueError(
-                    "mop_callback_dispatcher: %s writeback anchor is outside firmware" % ver
+                    "mop_callback_dispatcher: %s writeback anchor does not match" % ver
                 )
-            for index, expected in enumerate(writeback_pattern):
-                if expected is not None and self.asf.u8(writeback_off + index) != expected:
-                    raise ValueError(
-                        "mop_callback_dispatcher: %s writeback anchor does not match" % ver
-                    )
-            if slot is None:
-                raise ValueError(
-                    "mop_callback_dispatcher: %s vtable slot is outside firmware" % ver
-                )
-        else:
-            try:
-                writeback_off = self.asf.find_bytes(
-                    writeback_pattern, self.asf.APPL_OFF
-                )
-            except ValueError as exc:
-                raise ValueError(
-                    "mop_callback_dispatcher: enum writeback pattern not unique: %s" % exc
-                )
-            writeback = self.asf.off_to_addr(writeback_off)
-            original = writeback | 1
-            refs = [
-                off for off in self.asf.find_u32_offsets(original)
-                if self.asf.APPL_OFF <= off < self.asf.APPL_OFF + self.asf.APPL_SIZE
-            ]
-            if len(refs) != 1:
-                raise ValueError(
-                    "mop_callback_dispatcher: expected one vtable reference to "
-                    "0x%08X, found %d" % (original, len(refs))
-                )
-            slot = refs[0]
+        if slot is None:
+            raise ValueError(
+                "mop_callback_dispatcher: %s vtable slot is outside firmware" % ver
+            )
 
         writeback = self.asf.off_to_addr(writeback_off)
         original = writeback | 1
@@ -925,6 +1032,428 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             "  EnumDataItem writeback: 0x%08X -> 0x%08X" %
             (original, start | 1)
         )
+
+    def enable_custom_settings(self):
+        """Enable custom settings requested by payload patches."""
+        self.custom_settings_enabled = True
+
+    def therapy_mode_mask(self, *names):
+        """Build the MOP bitset used to gate a custom menu row."""
+        wanted = set(names)
+        mask = 0
+        for bit, prefix, _profile, _supported in THERAPY_MODES:
+            if prefix in wanted:
+                mask |= 1 << bit
+                wanted.remove(prefix)
+        if wanted:
+            raise ValueError(
+                "unknown therapy mode(s): %s" % ", ".join(sorted(wanted))
+            )
+        return mask
+
+    @staticmethod
+    def _custom_setting_key(name):
+        short = name.lstrip("_")
+        return short.upper() if len(short) == 3 else name
+
+    def _custom_setting_reclaim_pool(self, setting):
+        for pool, definition in self.CUSTOM_SETTING_RECLAIM_POOLS.items():
+            if setting in definition["resources"]:
+                return pool
+        return None
+
+    def custom_setting_claim(self, name, owner):
+        """Reserve one reclaimed DataItem for a feature patch."""
+        name = self._custom_setting_key(name)
+        pool = self._custom_setting_reclaim_pool(name)
+        if pool is None:
+            raise ValueError(
+                "custom settings: %s is not a reclaimed resource" % name
+            )
+        if name in self.custom_setting_claims:
+            raise ValueError(
+                "custom settings: %s already claimed by %s" %
+                (name, self.custom_setting_claims[name]["owner"])
+            )
+        self.custom_setting_claims[name] = {
+            "owner": owner,
+            "pool": pool,
+            "definition": None,
+        }
+        return name
+
+    def custom_setting_define(self, setting, **fields):
+        """Define descriptor fields for a claimed DataItem."""
+        setting = self._custom_setting_key(setting)
+        if setting not in self.custom_setting_claims:
+            raise ValueError("custom settings: unclaimed setting %s" % setting)
+        claim = self.custom_setting_claims[setting]
+        if claim["definition"] is not None:
+            raise ValueError("custom settings: %s defined twice" % setting)
+        claim["definition"] = dict(fields)
+
+    def custom_menu_add(
+            self, section, setting, label_id, mode_mask,
+            factory):
+        """Append a DataItem to one clinical-menu section."""
+        section = section.lower()
+        if section not in self.CUSTOM_MENU_SECTIONS:
+            raise ValueError("custom settings: unknown section %s" % section)
+        setting = self._custom_setting_key(setting)
+        if not 0 <= label_id <= 0xFFFF:
+            raise ValueError(
+                "custom settings: invalid GUI text id 0x%X" % label_id
+            )
+        if not 0 <= mode_mask <= 0xFFFF:
+            raise ValueError(
+                "custom settings: invalid mode mask 0x%X" % mode_mask
+            )
+        self.custom_menu_entries.append({
+            "section": section,
+            "setting": setting,
+            "label_id": label_id,
+            "mode_mask": mode_mask,
+            "factory": factory,
+        })
+
+    def custom_setting_bind(self, setting, abi_slot):
+        """Write a DataItem's var_id into a payload ABI slot."""
+        setting = self._custom_setting_key(setting)
+        self.custom_setting_bindings.append((setting, abi_slot))
+
+    def custom_settings_layout(self, ver):
+        """Return stock clinical-menu anchors for one APPX version."""
+        layouts = {
+            "8_5_0": {
+                "menu": {
+                    # Final GuiScroller_ctor call in the clinical-settings
+                    # constructor; redirected through the menu bridge.
+                    "scroller_call": 0x0805E056,
+                },
+                "reclaim": {
+                    "reminders": {
+                        # Reminders navigation-row index in the stock item array.
+                        "row_index": 0x81,
+                        # Row-constructor callsite and expected target.
+                        "row_call": (0x0805DDC2, 0x08069AAE),
+                        # Address and bytes of the Reminders label load.
+                        "row_label": (0x0805DDBE, "40f23111"),
+                        # Address and bytes of the stock item-array store.
+                        "row_store": (0x0805DDCA, "cbf80402"),
+                        # Callsite and target of the reminder scheduler poll.
+                        "scheduler_call": (0x080924EE, 0x080A06B8),
+                    },
+                },
+            },
+            "8_4_0": {
+                "menu": {
+                    "scroller_call": 0x0805E014,
+                },
+                "reclaim": {
+                    "reminders": {
+                        "row_index": 0x82,
+                        "row_call": (0x0805DD88, 0x080698D6),
+                        "row_label": (0x0805DD84, "4ff49671"),
+                        "row_store": (0x0805DD90, "cbf80802"),
+                        "scheduler_call": (0x08091F7C, 0x080A0120),
+                    },
+                },
+            },
+            "8_3_0": {
+                "menu": {
+                    "scroller_call": 0x0805AC68,
+                },
+                "reclaim": {
+                    "reminders": {
+                        "row_index": 0x7E,
+                        "row_call": (0x0805A9E4, 0x08067672),
+                        "row_label": (0x0805A9E2, "bb21"),
+                        "row_store": (0x0805A9EC, "cbf8f801"),
+                        "scheduler_call": (0x0808E01C, 0x0809DBD4),
+                    },
+                },
+            },
+        }
+        if ver not in layouts:
+            raise ValueError(
+                "custom settings: no UI layout for APPX %s" % ver
+            )
+        return layouts[ver]
+
+    def _custom_settings_expect_bytes(self, address, expected_hex, label):
+        off = self.asf.ptr_to_off(address)
+        expected = bytes.fromhex(expected_hex)
+        if off is None:
+            raise ValueError("custom settings: invalid %s site" % label)
+        actual = bytes(self.asf.fw[off:off + len(expected)])
+        if actual != expected:
+            raise ValueError(
+                "custom settings: %s at 0x%08X contains %s, expected %s" %
+                (label, address, actual.hex(), expected.hex())
+            )
+        return off
+
+    def _custom_settings_reclaim_reminders(self, layout):
+        """Detach the stock Reminders consumers from its persistent fields."""
+        label_addr, label_hex = layout["row_label"]
+        self._custom_settings_expect_bytes(
+            label_addr, label_hex, "Reminders row label"
+        )
+        store_addr, store_hex = layout["row_store"]
+        self._custom_settings_expect_bytes(
+            store_addr, store_hex, "Reminders row slot"
+        )
+
+        row_call, row_ctor = layout["row_call"]
+        row_call_off = self.asf.ptr_to_off(row_call)
+        if (row_call_off is None or
+                self.asf.read_thumb2_bl_target(row_call_off) != row_ctor):
+            raise ValueError("custom settings: Reminders row does not match")
+
+        scheduler_call, scheduler_target = layout["scheduler_call"]
+        scheduler_off = self.asf.ptr_to_off(scheduler_call)
+        if (scheduler_off is None or
+                self.asf.read_thumb2_bl_target(scheduler_off) !=
+                scheduler_target):
+            raise ValueError(
+                "custom settings: reminder scheduler call does not match"
+            )
+
+        return {
+            "removed_rows": (layout["row_index"],),
+            "patches": ((scheduler_off, b"\x00\xBF\x00\xBF"),),
+        }
+
+    def finalize_custom_settings(self):
+        """Resolve queued feature requests and install their shared support."""
+        if not self.custom_settings_enabled:
+            return
+        if not (self.custom_setting_claims or self.custom_menu_entries or
+                self.custom_setting_bindings):
+            print("  custom settings: skipped (no active features)")
+            return
+
+        ver = self._payload_version_key()
+
+        # Resolve each requested DataItem once after all feature patches have
+        # declared their storage, menu, and ABI requirements.
+        setting_names = set(self.custom_setting_claims)
+        setting_names.update(
+            request["setting"] for request in self.custom_menu_entries
+        )
+        setting_names.update(
+            setting for setting, _abi_slot in self.custom_setting_bindings
+        )
+        setting_rows = {}
+        for setting in setting_names:
+            rows = self.asf.find_descriptors_by_name(setting)
+            if not rows:
+                raise ValueError(
+                    "custom settings: descriptor %s not found" % setting
+                )
+            setting_rows[setting] = rows[0]
+
+        # A reclaim provider detaches the stock consumers for its entire pool.
+        # Build each provider's patch plan once, regardless of how many of its
+        # DataItems were claimed.
+        removed_rows = []
+        stock_patches = []
+        pools = sorted({
+            claim["pool"] for claim in self.custom_setting_claims.values()
+        })
+        layout = (
+            self.custom_settings_layout(ver)
+            if pools or self.custom_menu_entries else None
+        )
+        for pool in pools:
+            handler_name = self.CUSTOM_SETTING_RECLAIM_POOLS[pool]["handler"]
+            handler = getattr(self, handler_name)
+            plan = handler(layout["reclaim"][pool])
+            removed_rows.extend(plan.get("removed_rows", ()))
+            stock_patches.extend(plan.get("patches", ()))
+
+        menu_entries = []
+        menu_factories = []
+        menu_factory_indexes = {}
+        menu_payload = None
+        menu_symbols = None
+        if self.custom_menu_entries or removed_rows:
+            # Menu rows and reclaimed stock rows share one bridge payload.
+            data, _payload_ver = self._load_versioned_bin(
+                AS11_CUSTOM_SETTINGS_PAYLOAD
+            )
+            if data is None:
+                return
+
+            elf_path = self._versioned_artifact_path(
+                AS11_CUSTOM_SETTINGS_PAYLOAD, "elf", ver
+            )
+            factory_symbols = {
+                name: self._elf_symbol_addr(elf_path, symbol)
+                for name, symbol in self.CUSTOM_MENU_FACTORY_SYMBOLS.items()
+            }
+
+            # Menu records store one-byte indexes into a deduplicated factory
+            # table instead of repeating Thumb function pointers.
+            for request in self.custom_menu_entries:
+                factory = request["factory"]
+                if isinstance(factory, str):
+                    if factory not in factory_symbols:
+                        raise ValueError(
+                            "custom settings: unknown menu factory %s" %
+                            factory
+                        )
+                    factory = factory_symbols[factory]
+                factory = int(factory) | 1
+                factory_index = menu_factory_indexes.get(factory)
+                if factory_index is None:
+                    factory_index = len(menu_factories)
+                    if factory_index > 0xFF:
+                        raise ValueError(
+                            "custom settings: too many menu factories"
+                        )
+                    menu_factory_indexes[factory] = factory_index
+                    menu_factories.append(factory)
+                row = setting_rows[request["setting"]]
+                menu_entries.append((
+                    row["var_id"],
+                    request["label_id"],
+                    request["mode_mask"],
+                    self.CUSTOM_MENU_SECTIONS[request["section"]],
+                    factory_index,
+                ))
+
+            # These final-link symbols locate the registries to populate after
+            # the bridge is copied into its allocated code cave.
+            menu_symbols = {
+                "start": self._elf_symbol_addr(elf_path, "start"),
+                "wrapper": self._elf_symbol_addr(
+                    elf_path, "custom_settings_clinical_scroller_ctor"
+                ),
+                "entries": self._elf_symbol_addr(
+                    elf_path, "custom_menu_entries"
+                ),
+                "entries_size": self._elf_symbol_size(
+                    elf_path, "custom_menu_entries"
+                ),
+                "factories": self._elf_symbol_addr(
+                    elf_path, "custom_menu_factories"
+                ),
+                "factories_size": self._elf_symbol_size(
+                    elf_path, "custom_menu_factories"
+                ),
+                "removed_rows": self._elf_symbol_addr(
+                    elf_path, "custom_menu_removed_rows"
+                ),
+                "removed_rows_size": self._elf_symbol_size(
+                    elf_path, "custom_menu_removed_rows"
+                ),
+            }
+
+            # Registry capacities and the stock scroller call must match before
+            # the bridge payload or any CONF descriptors are changed.
+            entry_size = struct.calcsize("<HHHBB")
+            if len(menu_entries) * entry_size > menu_symbols["entries_size"]:
+                raise ValueError("custom settings: menu registry is too small")
+            if len(menu_factories) * 4 > menu_symbols["factories_size"]:
+                raise ValueError("custom settings: factory registry is too small")
+            if len(removed_rows) * 2 > menu_symbols["removed_rows_size"]:
+                raise ValueError("custom settings: removal registry is too small")
+
+            call_off = self.asf.ptr_to_off(layout["menu"]["scroller_call"])
+            scroller_ctor = self._elf_symbol_addr(
+                elf_path, "GuiScroller_ctor"
+            )
+            if (call_off is None or
+                    self.asf.read_thumb2_bl_target(call_off) != scroller_ctor):
+                raise ValueError(
+                    "custom settings: clinical settings scroller does not match"
+                )
+            menu_symbols["call_off"] = call_off
+            menu_payload = data
+
+        # Apply the prepared payload, descriptor, ABI, and reclaim changes.
+        menu_flash = None
+        if menu_payload is not None:
+            menu_flash, _off = self._inject_payload(
+                AS11_CUSTOM_SETTINGS_PAYLOAD, menu_payload
+            )
+
+        # Recast claimed persistent DataItems for their new feature roles.
+        for setting, claim in self.custom_setting_claims.items():
+            if claim["definition"] is not None:
+                self.asf.write_descriptor_fields(
+                    setting_rows[setting], claim["definition"]
+                )
+
+        # Compiled feature payloads receive resolved var_ids through explicit
+        # 16-bit ABI slots, keeping descriptor indexes out of their code.
+        for setting, abi_slot in self.custom_setting_bindings:
+            abi_off = self.asf.ptr_to_off(abi_slot)
+            if (abi_off is None or abi_off + 2 > len(self.asf.fw) or
+                    self.asf.u16(abi_off) != 0xFFFF):
+                raise ValueError(
+                    "custom settings: ABI slot at 0x%08X is not empty" %
+                    abi_slot
+                )
+            self.asf.write_u16(abi_off, setting_rows[setting]["var_id"])
+
+        # Remove the original consumers only after their replacement resources
+        # and payload bindings have been installed.
+        for off, patch_data in stock_patches:
+            self.asf.patch(patch_data, addr=off, verbose=False)
+
+        if menu_symbols is not None:
+            # Populate payload-owned registries, then redirect the stock
+            # clinical scroller construction through the bridge.
+            if menu_entries:
+                menu_data = b"".join(
+                    struct.pack("<HHHBB", *entry)
+                    for entry in menu_entries
+                )
+                self.asf.patch(
+                    menu_data,
+                    addr=menu_symbols["entries"] - self.asf.FLASH_BASE,
+                    verbose=False,
+                )
+                self.asf.patch(
+                    struct.pack("<%dI" % len(menu_factories),
+                                *menu_factories),
+                    addr=(
+                        menu_symbols["factories"] - self.asf.FLASH_BASE
+                    ),
+                    verbose=False,
+                )
+            if removed_rows:
+                self.asf.patch(
+                    struct.pack("<%dH" % len(removed_rows), *removed_rows),
+                    addr=(
+                        menu_symbols["removed_rows"] - self.asf.FLASH_BASE
+                    ),
+                    verbose=False,
+                )
+            self.asf.write_thumb2_bl_target(
+                menu_symbols["call_off"], menu_symbols["wrapper"]
+            )
+            if menu_entries:
+                # Refresh custom row visibility whenever MOP is committed.
+                self.mop_callback_register_handler(
+                    menu_symbols["start"], "custom_settings"
+                )
+
+        for request in self.custom_menu_entries:
+            row = setting_rows[request["setting"]]
+            print(
+                "  custom setting %s/%s: label=0x%04X var_id=0x%04X" %
+                (request["section"], row["short_name"] or row["long_name"],
+                 request["label_id"], row["var_id"])
+            )
+        if menu_payload is not None:
+            print(
+                "  custom settings: build/%s_%s.bin (%dB) at 0x%08X" %
+                (AS11_CUSTOM_SETTINGS_PAYLOAD, ver,
+                 len(menu_payload), menu_flash)
+            )
 
     def is_blacklisted_setting(self, row):
         long_name = row["long_name"] or ""
@@ -1297,158 +1826,69 @@ class S11FirmwarePatches(CompiledPayloadMixin):
 
     def asv_backup_rate(self):
         """Install an ASV/ASVAuto update wrapper that inhibits backup breaths."""
-        data, ver = self._load_versioned_bin(AS11_ASV_BACKUP_RATE_PAYLOAD)
-        if data is None:
-            return
-
-        # Fallback patterns for addresses not known for this APPX version.
-        callback_pattern = (
-            0x10, 0xB5, 0x04, 0x46,
-            None, None, None, None,
-            0x00, 0x21, 0x04, 0xF1, 0x68, 0x00,
-            None, None, None, None,
-            0xA0, 0x6C, 0x00, 0x21, 0x90, 0xED, 0x00, 0x0A,
-            0x04, 0xF1, 0x4C, 0x00, 0xBD, 0xE8, 0x10, 0x40,
-            None, None, None, None,
-        )
-        no_breathing_pattern = (
-            0x4F, 0x21, None, 0xA8,
-            None, None, None, None,
-            0x51, 0x21, None, 0xA8,
-            None, None, None, None,
-            0x3C, 0x21, 0x68, 0x46,
-            None, None, None, None,
-            0x3B, 0x21, None, 0xA8,
-            None, None, None, None,
-        )
-        phase_pattern = (
-            0x6F, 0x21, 0x68, 0x46,
-            None, None, None, None,
-            0x70, 0x21, 0x01, 0xA8,
-            None, None, None, None,
-        )
-        feature_pattern = struct.pack("<II", 0x011A, 0x00003000)
-        known_anchors = {
+        known_versions = {
             "8_3_0": {
-                "callback": 0x0818A63A,
-                "no_breathing": 0x08120F06,
-                "phase": 0x081277E4,
-                "feature": 0x0819CD34,
+                "vtable_slot": 0x081A72D4,
+                "label_id": 0x0097,
             },
             "8_4_0": {
-                "callback": 0x0818EE9E,
-                "no_breathing": 0x08122FB6,
-                "phase": 0x08129894,
-                "feature": 0x081A1544,
+                "vtable_slot": 0x081AC1F4,
+                "label_id": 0x00EC,
             },
             "8_5_0": {
-                "callback": 0x08190FD2,
-                "no_breathing": 0x08123A96,
-                "phase": 0x0812A374,
-                "feature": 0x081A34F8,
+                "vtable_slot": 0x081AE044,
+                "label_id": 0x00F1,
             },
         }
 
-        def verify_anchor(address, pattern, label):
-            off = self.asf.ptr_to_off(address)
-            if off is None or off + len(pattern) > len(self.asf.fw):
-                raise ValueError(
-                    "asv_backup_rate: %s anchor 0x%08X is outside firmware" %
-                    (label, address)
-                )
-            for index, expected in enumerate(pattern):
-                if expected is not None and self.asf.u8(off + index) != expected:
-                    raise ValueError(
-                        "asv_backup_rate: %s anchor 0x%08X does not match %s" %
-                        (ver, address, label)
-                    )
-            return off
-
-        anchors = known_anchors.get(ver)
-        if anchors is not None:
-            callback_off = verify_anchor(
-                anchors["callback"], callback_pattern, "ASV update callback"
-            )
-            no_breathing_off = verify_anchor(
-                anchors["no_breathing"], no_breathing_pattern,
-                "EASV no-breathing feedback"
-            )
-            phase_off = verify_anchor(
-                anchors["phase"], phase_pattern, "EASV phase feedback"
-            )
-            verify_anchor(
-                anchors["feature"], feature_pattern, "ASV feature entry"
-            )
-        else:
-            try:
-                callback_off = self.asf.find_bytes(
-                    callback_pattern, self.asf.APPL_OFF
-                )
-                no_breathing_off = self.asf.find_bytes(
-                    no_breathing_pattern, self.asf.APPL_OFF
-                )
-                phase_off = self.asf.find_bytes(
-                    phase_pattern, self.asf.APPL_OFF
-                )
-                self.asf.find_bytes(feature_pattern, self.asf.APPL_OFF)
-            except ValueError as exc:
-                raise ValueError(
-                    "asv_backup_rate: required ASV structure not unique: %s" % exc
-                )
-
-        original_update = self.asf.off_to_addr(callback_off)
-        feedback_output_ref = self.asf.read_thumb2_bl_target(no_breathing_off + 4)
-        feedback_input_ref = self.asf.read_thumb2_bl_target(no_breathing_off + 20)
-        phase_output_ref = self.asf.read_thumb2_bl_target(phase_off + 4)
-        phase_delta_output_ref = self.asf.read_thumb2_bl_target(phase_off + 12)
-        if phase_output_ref != feedback_output_ref or phase_delta_output_ref != feedback_output_ref:
-            raise ValueError("asv_backup_rate: EASV feedback output accessors do not agree")
+        data, ver = self._load_versioned_bin(AS11_ASV_BACKUP_RATE_PAYLOAD)
+        if data is None:
+            return
 
         elf_path = self._versioned_artifact_path(
             AS11_ASV_BACKUP_RATE_PAYLOAD, "elf", ver
         )
         start = self._elf_symbol_addr(elf_path, "start")
-        linked_update = self._elf_symbol_addr(elf_path, "AsvFeature_update")
-        linked_input = self._elf_symbol_addr(elf_path, "FeedbackInput_get_ref")
-        linked_output = self._elf_symbol_addr(elf_path, "FeedbackOutput_get_ref")
-        expected_symbols = (
-            ("ASV update", linked_update, original_update),
-            ("feedback input", linked_input, feedback_input_ref),
-            ("feedback output", linked_output, feedback_output_ref),
+        backup_rate_var_slot = self._elf_symbol_addr(
+            elf_path, "as11_asv_backup_rate_var_id"
         )
-        for label, linked, discovered in expected_symbols:
-            if linked != discovered:
-                raise ValueError(
-                    "asv_backup_rate: versioned %s stub is 0x%08X, "
-                    "firmware function is 0x%08X" %
-                    (label, linked, discovered)
-                )
-
+        original_update = self._elf_symbol_addr(elf_path, "AsvFeature_update")
         original_ptr = original_update | 1
-        refs = [
-            off for off in self.asf.find_u32_offsets(original_ptr)
-            if self.asf.APPL_OFF <= off < self.asf.APPL_OFF + self.asf.APPL_SIZE
-        ]
-        if len(refs) != 1:
+        if ver not in known_versions:
             raise ValueError(
-                "asv_backup_rate: expected one ASV update vtable reference to "
-                "0x%08X, found %d" % (original_ptr, len(refs))
+                "asv_backup_rate: no version data for APPX %s" % ver
             )
-        vtable_update_off = refs[0]
-
-        vtable_off = vtable_update_off - 0x38
-        if vtable_off < self.asf.APPL_OFF:
-            raise ValueError("asv_backup_rate: invalid ASV feature vtable address")
-        if self.asf.u32(vtable_off) != 0 or self.asf.u32(vtable_off + 4) != 0:
-            raise ValueError("asv_backup_rate: ASV feature vtable prefix does not match")
-        for neighbor_off in (vtable_update_off - 4, vtable_update_off + 4):
-            neighbor = self.asf.u32(neighbor_off)
-            appl_start, appl_end = self._payload_flash_range()
-            if not (appl_start <= (neighbor & ~1) < appl_end):
-                raise ValueError("asv_backup_rate: ASV feature vtable shape does not match")
+        version = known_versions[ver]
+        vtable_update_off = self.asf.ptr_to_off(version["vtable_slot"])
+        if (vtable_update_off is None or
+                self.asf.u32(vtable_update_off) != original_ptr):
+            raise ValueError(
+                "asv_backup_rate: ASV update vtable slot does not match"
+            )
 
         flash, _off = self._inject_payload(AS11_ASV_BACKUP_RATE_PAYLOAD, data)
+        if not flash <= backup_rate_var_slot <= flash + len(data) - 2:
+            raise ValueError("asv_backup_rate: variable-ID slot lies outside payload")
+        # Replace the ASV update vtable entry; the payload calls the original
+        # implementation through its versioned stub after applying the gate.
         self.asf.write_u32(vtable_update_off, start | 1)
+        # Without custom-settings finalization, the untouched 0xFFFF slot keeps
+        # backup-rate suppression active unconditionally.
+        backup_rate_setting = self.custom_setting_claim(
+            "RIF", "asv_backup_rate"
+        )
+        self.custom_setting_define(
+            backup_rate_setting,
+            default=1,
+        )
+        self.custom_menu_add(
+            section="therapy",
+            setting=backup_rate_setting,
+            label_id=version["label_id"],
+            mode_mask=self.therapy_mode_mask("ASV", "ASVAuto"),
+            factory="text_value",
+        )
+        self.custom_setting_bind(backup_rate_setting, backup_rate_var_slot)
 
         print(
             "Patching ASV backup rate... build/%s_%s.bin (%dB) at 0x%08X" %
@@ -1699,9 +2139,15 @@ PATCH_LIST = [
     },
     {
         "arg": "patch-asv-backup-rate",
-        "desc": "Disable the ASV/ASVAuto backup rate.",
-        "default": False,
+        "desc": "Add ASV/ASVAuto backup-rate suppression and control.",
+        "default": True,
         "function": "asv_backup_rate",
+    },
+    {
+        "arg": "patch-custom-settings",
+        "desc": "Expose settings requested by active compiled payloads.",
+        "default": True,
+        "function": "enable_custom_settings",
     },
     {
         "arg": "patch-motor-nagscreen",
@@ -1792,6 +2238,9 @@ def main(argv=None):
             print("PATCH: " + patch["desc"])
             getattr(patches, patch["function"])()
 
+    # Feature patches queue controls; resolve them before building the shared
+    # mode-change dispatcher that refreshes their visibility.
+    patches.finalize_custom_settings()
     patches.patch_mop_callback_dispatcher()
     asf.fix_crcs()
     asf.write_output(args.OUTFILE, args.overwrite)

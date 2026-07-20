@@ -29,6 +29,15 @@ The ASV range patch removes the stock 5 cmH2O minimum separation between
 minimum and maximum pressure support in ASV and ASVAuto. Descriptor bounds and
 the paired range-selector calculation are patched together.
 
+## ASV Backup Rate
+
+The ASV backup-rate patch adds a persistent `Backup Rate` control to the
+clinical therapy settings in ASV and ASVAuto. `On` preserves stock behavior
+and `Off` suppresses backup breaths.
+
+See [Air11 Custom Settings](../../as11/custom_settings.md) for persistence and
+fallback behavior.
+
 ## Languages and Defaults
 
 The language patch enables the configured language set. The default patch
@@ -75,8 +84,3 @@ the problem and skips VID spoofing rather than installing an unsafe hook.
 The motor patch suppresses the "Your device has reached its design life"
 message shown when accumulated runtime reaches its firmware threshold. The
 stored runtime counter continues to track device usage.
-
-## Not Included
-
-The current Air11 patch does not include the Air10 Custom VAuto, Square Wave,
-adaptive backlight, replacement LCD, custom menu, or ASV backup-rate payloads.
