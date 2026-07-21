@@ -240,6 +240,7 @@ targets.
 | 14.8.3.0 | `0x2D89E58F` | `0xBEB37EE2` |
 | 15.8.4.0 | `0xD785ABA6` | `0xBEB37EE2` |
 | 16.8.5.0 | `0x7862CBA7` | `0xBEB37EE2` |
+| 17.8.6.0 | `0xBECBC5BC` | `0xBEB37EE2` |
 
 `FGCB` does not require these descriptor fields. `CONF`, `APPL`, `APCX`, and
 `FGBL` do.

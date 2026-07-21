@@ -14,6 +14,10 @@ AS11_OTA_DESCRIPTOR_PRESETS = {
         "desc2": 0x7862CBA7,
         "desc3": 0xBEB37EE2,
     },
+    "17.8.6.0": {
+        "desc2": 0xBECBC5BC,
+        "desc3": 0xBEB37EE2,
+    },
 }
 
 
@@ -97,6 +101,30 @@ AS11_PATCH_VERSIONS = {
         },
         "asv_backup_rate": {
             "vtable_slot": 0x081AE044,
+            "label_id": 0x00F1,
+        },
+    },
+    "8_6_0": {
+        "mop_callback_dispatcher": {
+            "writeback": 0x08071570,
+            "vtable_slot": 0x081A6190,
+        },
+        "custom_settings": {
+            "menu": {
+                "scroller_call": 0x0805E586,
+            },
+            "reclaim": {
+                "reminders": {
+                    "row_index": 0x81,
+                    "row_call": (0x0805E2F2, 0x0806A0EA),
+                    "row_label": (0x0805E2EE, "40f23111"),
+                    "row_store": (0x0805E2FA, "cbf80402"),
+                    "scheduler_call": (0x08092D3A, 0x080A0EF8),
+                },
+            },
+        },
+        "asv_backup_rate": {
+            "vtable_slot": 0x081AF034,
             "label_id": 0x00F1,
         },
     },
