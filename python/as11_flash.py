@@ -78,6 +78,9 @@ except ModuleNotFoundError as exc:  # pragma: no cover
 from as11_rpc import (  # noqa: E402
     Transport, TransportError, FramingError,
 )
+from lib.as11_patch_versions import (  # noqa: E402
+    AS11_OTA_DESCRIPTOR_PRESETS,
+)
 
 
 log = logging.getLogger("as11.flash")
@@ -192,23 +195,10 @@ BLOCK_ALIASES: dict[str, str] = {
     "all":             "FGCB",
 }
 
-# Per-firmware descriptor presets for 0005 containers. 
+# Per-firmware descriptor presets for 0005 containers.
 # Only CONF/APPL/APCX/FGBL targets need them. FGCB (and all of format 0006)
 # ignores these fields.
-DESC_PRESETS = {
-    "14.8.3.0": {
-        "desc2": 0x2D89E58F,
-        "desc3": 0xBEB37EE2,
-    },
-    "15.8.4.0": {
-        "desc2": 0xD785ABA6,
-        "desc3": 0xBEB37EE2,
-    },
-    "16.8.5.0": {
-        "desc2": 0x7862CBA7,
-        "desc3": 0xBEB37EE2,
-    },
-}
+DESC_PRESETS = AS11_OTA_DESCRIPTOR_PRESETS
 
 BLE_CRED_FILE = Path.home() / ".as11_ble.json"
 

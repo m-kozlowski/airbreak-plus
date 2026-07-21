@@ -19,6 +19,7 @@ import re
 import struct
 import sys
 
+from lib.as11_patch_versions import AS11_PATCH_VERSIONS
 from lib.compiled_payload import CompiledPayloadMixin
 
 try:
@@ -938,24 +939,6 @@ class S11FirmwarePatches(CompiledPayloadMixin):
 
     def patch_mop_callback_dispatcher(self):
         """Install the shared EnumDataItem writeback dispatcher."""
-        known_anchors = {
-            "8_0_1": {
-                "writeback": 0x0806E070,
-                "vtable_slot": 0x081925E8,
-            },
-            "8_3_0": {
-                "writeback": 0x0806E928,
-                "vtable_slot": 0x0819EA20,
-            },
-            "8_4_0": {
-                "writeback": 0x08070998,
-                "vtable_slot": 0x081A332C,
-            },
-            "8_5_0": {
-                "writeback": 0x08070EFC,
-                "vtable_slot": 0x081A52E0,
-            },
-        }
         writeback_pattern = (
             0xDF, 0xF8, None, None, 0xB0, 0xF9, 0x14, 0x20,
             0x01, 0xEB, 0x82, 0x01, 0x80, 0x7D, 0x88, 0x70, 0x70, 0x47,
@@ -980,11 +963,12 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             elf_path, "mop_callback_handler_table"
         )
 
-        if ver not in known_anchors:
+        version = AS11_PATCH_VERSIONS.get(ver, {})
+        anchors = version.get("mop_callback_dispatcher")
+        if anchors is None:
             raise ValueError(
                 "mop_callback_dispatcher: no anchors for APPX %s" % ver
             )
-        anchors = known_anchors[ver]
         writeback = anchors["writeback"]
         writeback_off = self.asf.ptr_to_off(writeback)
         slot = self.asf.ptr_to_off(anchors["vtable_slot"])
@@ -1123,62 +1107,12 @@ class S11FirmwarePatches(CompiledPayloadMixin):
 
     def custom_settings_layout(self, ver):
         """Return stock clinical-menu anchors for one APPX version."""
-        layouts = {
-            "8_5_0": {
-                "menu": {
-                    # Final GuiScroller_ctor call in the clinical-settings
-                    # constructor; redirected through the menu bridge.
-                    "scroller_call": 0x0805E056,
-                },
-                "reclaim": {
-                    "reminders": {
-                        # Reminders navigation-row index in the stock item array.
-                        "row_index": 0x81,
-                        # Row-constructor callsite and expected target.
-                        "row_call": (0x0805DDC2, 0x08069AAE),
-                        # Address and bytes of the Reminders label load.
-                        "row_label": (0x0805DDBE, "40f23111"),
-                        # Address and bytes of the stock item-array store.
-                        "row_store": (0x0805DDCA, "cbf80402"),
-                        # Callsite and target of the reminder scheduler poll.
-                        "scheduler_call": (0x080924EE, 0x080A06B8),
-                    },
-                },
-            },
-            "8_4_0": {
-                "menu": {
-                    "scroller_call": 0x0805E014,
-                },
-                "reclaim": {
-                    "reminders": {
-                        "row_index": 0x82,
-                        "row_call": (0x0805DD88, 0x080698D6),
-                        "row_label": (0x0805DD84, "4ff49671"),
-                        "row_store": (0x0805DD90, "cbf80802"),
-                        "scheduler_call": (0x08091F7C, 0x080A0120),
-                    },
-                },
-            },
-            "8_3_0": {
-                "menu": {
-                    "scroller_call": 0x0805AC68,
-                },
-                "reclaim": {
-                    "reminders": {
-                        "row_index": 0x7E,
-                        "row_call": (0x0805A9E4, 0x08067672),
-                        "row_label": (0x0805A9E2, "bb21"),
-                        "row_store": (0x0805A9EC, "cbf8f801"),
-                        "scheduler_call": (0x0808E01C, 0x0809DBD4),
-                    },
-                },
-            },
-        }
-        if ver not in layouts:
+        layout = AS11_PATCH_VERSIONS.get(ver, {}).get("custom_settings")
+        if layout is None:
             raise ValueError(
                 "custom settings: no UI layout for APPX %s" % ver
             )
-        return layouts[ver]
+        return layout
 
     def _custom_settings_expect_bytes(self, address, expected_hex, label):
         off = self.asf.ptr_to_off(address)
@@ -1826,21 +1760,6 @@ class S11FirmwarePatches(CompiledPayloadMixin):
 
     def asv_backup_rate(self):
         """Install an ASV/ASVAuto update wrapper that inhibits backup breaths."""
-        known_versions = {
-            "8_3_0": {
-                "vtable_slot": 0x081A72D4,
-                "label_id": 0x0097,
-            },
-            "8_4_0": {
-                "vtable_slot": 0x081AC1F4,
-                "label_id": 0x00EC,
-            },
-            "8_5_0": {
-                "vtable_slot": 0x081AE044,
-                "label_id": 0x00F1,
-            },
-        }
-
         data, ver = self._load_versioned_bin(AS11_ASV_BACKUP_RATE_PAYLOAD)
         if data is None:
             return
@@ -1854,11 +1773,11 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         )
         original_update = self._elf_symbol_addr(elf_path, "AsvFeature_update")
         original_ptr = original_update | 1
-        if ver not in known_versions:
+        version = AS11_PATCH_VERSIONS.get(ver, {}).get("asv_backup_rate")
+        if version is None:
             raise ValueError(
                 "asv_backup_rate: no version data for APPX %s" % ver
             )
-        version = known_versions[ver]
         vtable_update_off = self.asf.ptr_to_off(version["vtable_slot"])
         if (vtable_update_off is None or
                 self.asf.u32(vtable_update_off) != original_ptr):
