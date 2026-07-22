@@ -2053,7 +2053,7 @@ PATCH_LIST = [
     {
         "arg": "patch-asv-ps-range",
         "desc": "Unlock ASV/ASVAuto pressure support range.",
-        "default": False,
+        "default": True,
         "function": "asv_pressure_support_range",
     },
     {
