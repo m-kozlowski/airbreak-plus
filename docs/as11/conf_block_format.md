@@ -56,7 +56,7 @@ dispatch, descriptor record shapes, and per-table semantics.
 | g[13] | event route table root; the adjacent `DDO` var-id payload is pointed to by g[6] |
 | g[14] | periodic/session collections (`CSF`, `TIP`, `MLK`, `MPD`, `RFD`, `NRF`, `APD`) |
 | g[15] | `STR.edf` `SummaryRecord` schema header |
-| g[16] | EDF stream file schemas (`BRP`, `SA2`, `PLD`) |
+| g[16] | EDF stream file schemas (`BRP`, `SA2`, `PLD`, `TCV`) |
 | g[17] | event label tables (`EVE`, `AEV`, `CSL`) |
 | g[18] | RPC JSON node permission table; later bytes are g[8] short-name bucket payloads |
 | g[19] | DDO/reporting snapshot source list, reporting tag/string/list pool, then erased tail |
@@ -100,7 +100,7 @@ Use this document as both a map and a decoder:
 4. For UI/RPC availability, combine descriptor flags, enum option masks,
    g[10] mode registration, g[18] RPC node visibility, and g[15]
    SummaryRecord activation.
-5. For EDF/reporting work, use g[15] for `STR.edf`, g[16] for BRP/SA2/PLD,
+5. For EDF/reporting work, use g[15] for `STR.edf`, g[16] for BRP/SA2/PLD/TCV
    g[17] for event labels, and g[19] for DDO/reporting sources.
 6. For cross-version or cross-variant patching, resolve names and table bases
    from the target image rather than importing offsets from another build.
@@ -1222,11 +1222,9 @@ SpontTrig%  SpontCyc%
 
 ## g[16] -- EDF stream file schemas
 
-Three stream/file headers (BRP, SA2, PLD).
+Firmware through 8.5.0 contains three stream/file headers (`BRP`, `SA2`, and
+`PLD`). Firmware 8.6.0 adds `TCV` as a fourth header.
 
-Do not confuse `PLD` here with g[7] `PDL`. `PLD` is the 2-second EDF stream
-file schema containing pressure/leak/respiratory signals. `PDL` is the
-SettingsUnit persistent data list header.
 
 ### StreamFileHeader
 
@@ -1253,6 +1251,14 @@ SettingsUnit persistent data list header.
 |------|----------:|--------:|------:|---------|
 | BRP | 40 | 1500 | 2 | Flow.40ms (L/s, scale 500), Press.40ms (cmH2O, scale 50) |
 | SA2 | 1000 | 60 | 2 | Pulse.1s (bpm, scale 1), SpO2.1s (%, scale 1) |
+
+### TCV content
+
+`TCV` is present from firmware 8.6.0.
+
+| File | period_ms | samples | count | Signals |
+|------|----------:|--------:|------:|---------|
+| TCV | 40 | 1500 | 1 | TrigCycEvt.40ms (--, scale 1; source g[5] `BYV`) |
 
 ### Variable PLD content
 

@@ -1,7 +1,7 @@
 # Air11 EDF Header Reference
 
 This document describes the fixed EDF header fields used by Air11 `BRP`,
-`PLD`, `SA2`, `STR`, `EVE`, and `CSL` files.
+`TCV`, `PLD`, `SA2`, `STR`, `EVE`, and `CSL` files.
 Signal definitions are listed in \
 [Air11 EDF Signal Reference](edf_signals.md). \
 EDF+ annotation payloads are described in \
@@ -37,6 +37,7 @@ Common Air11 values:
 | File | Reserved | Record duration | Notes |
 |------|----------|-----------------|-------|
 | `BRP.edf` | `EDF` | `60.00` | sampled waveform records |
+| `TCV.edf` | `EDF` | `60.00` | sampled trigger/cycle records; present from firmware 8.6.0 |
 | `PLD.edf` | `EDF` | `60.00` | sampled low-rate records |
 | `SA2.edf` | `EDF` | `60.00` | sampled oximetry records |
 | `STR.edf` | `EDF` | `86400.00` | session summary records |

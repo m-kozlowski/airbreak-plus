@@ -11,6 +11,7 @@ Annotation-only `EVE.edf` and `CSL.edf` files are documented separately in \
 
 - [Scope](#scope)
 - [BRP.edf](#brpedf----breath-waveform-25-hz-60s-records)
+- [TCV.edf](#tcvedf----triggercycle-events-25-hz-60s-records)
 - [PLD.edf](#pldedf----two-second-therapy-signals-05-hz-60s-records)
 - [SA2.edf](#sa2edf----spo2pulse-1-hz-60s-records)
 - [STR.edf](#stredf----superset-session-statistics-1-record-per-86400s)
@@ -20,12 +21,14 @@ Annotation-only `EVE.edf` and `CSL.edf` files are documented separately in \
 
 ## Scope
 
-The BRP and SA2 tables match the checked stock schemas. The PLD table is the
-12-signal union installed by the `patch-edf-superset` patch and marks which
-rows occur in each checked stock product family.
+The BRP, TCV, and SA2 tables match the checked stock schemas. `TCV.edf` and
+its stream schema were introduced in firmware 8.6.0 and are absent from
+earlier firmware. The PLD table is the 12-signal union installed by the
+`patch-edf-superset` patch and marks which rows occur in each checked stock
+product family.
 
 Use the [`edf-streams` command](../tools/as11_descriptors.md#edf-streams) to
-print the BRP, SA2, or PLD schema from any firmware dump.
+print the BRP, TCV, SA2, or PLD schema from any firmware dump.
 
 The numbered STR tables describe the 134-signal output installed by the same
 patch. Stock firmware carries a larger `SummaryRecord` inventory whose active
@@ -41,6 +44,27 @@ not assigned an output signal number unless they are activated. The
 |---|--------|------|-------|-------------|------|
 | 0 | Flow.40ms | PatientFlow | RFL | 1500 | 25 Hz |
 | 1 | Press.40ms | MaskPressure | MKP | 1500 | 25 Hz |
+
+## TCV.edf -- Trigger/cycle events (25 Hz, 60s records)
+
+`TCV.edf` is a standalone sampled file present from firmware 8.6.0.
+
+| # | Signal | name | short | samples/rec | rate |
+|---|--------|------|-------|-------------|------|
+| 0 | TrigCycEvt.40ms | n/a | BYV | 1500 | 25 Hz |
+
+Firmware writes each trigger/cycle event code to both
+`TriggerCycleEvent` (`_BTE`) and `_BYV`. `_BYV` is the EDF source and returns
+to `NoEvent` 200 ms after the event.
+
+| Value | Meaning |
+|------:|---------|
+| 0 | `NoEvent` |
+| 1 | `SpontaneousTrigger` |
+| 2 | `TimedTrigger` |
+| 3 | `SpontaneousCycle` |
+| 4 | `SpontaneousTiMinCycle` |
+| 5 | `TimedCycle` |
 
 ## PLD.edf -- Two-second therapy signals (0.5 Hz, 60s records)
 
