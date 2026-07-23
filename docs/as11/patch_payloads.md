@@ -15,6 +15,7 @@ The current build matrix is defined by `AS11_PAYLOADS_<version>` in
 | `8_3_0` | `as11_mop_callback_dispatcher`, `as11_vid_spoof`, `as11_asv_backup_rate`, `as11_custom_settings` |
 | `8_4_0` | `as11_mop_callback_dispatcher`, `as11_vid_spoof`, `as11_asv_backup_rate`, `as11_custom_settings` |
 | `8_5_0` | `as11_mop_callback_dispatcher`, `as11_vid_spoof`, `as11_asv_backup_rate`, `as11_custom_settings` |
+| `8_6_0` | `as11_mop_callback_dispatcher`, `as11_vid_spoof`, `as11_asv_backup_rate`, `as11_custom_settings` |
 
 The patcher derives the key from the first three components of the application
 version. For example, APPX `8.5.0.9cd562102` selects `8_5_0`.
@@ -156,10 +157,10 @@ handler. Its table reserves space for four feature handlers.
 
 | Payload | APPX keys | Integration |
 |---------|-----------|-------------|
-| `as11_mop_callback_dispatcher` | `8_0_1`, `8_3_0`, `8_4_0`, `8_5_0` | owns the shared enum-writeback vtable slot and calls registered MOP handlers |
-| `as11_vid_spoof` | `8_0_1`, `8_3_0`, `8_4_0`, `8_5_0` | MOP handler; reads `MOP` and writes `VID` through native DataItem functions |
-| `as11_asv_backup_rate` | `8_3_0`, `8_4_0`, `8_5_0` | wraps the ASV feature update callback through its own vtable slot |
-| `as11_custom_settings` | `8_3_0`, `8_4_0`, `8_5_0` | appends persistent controls to selected clinical menu sections and updates their runtime visibility after MOP changes |
+| `as11_mop_callback_dispatcher` | `8_0_1`, `8_3_0`, `8_4_0`, `8_5_0`, `8_6_0` | owns the shared enum-writeback vtable slot and calls registered MOP handlers |
+| `as11_vid_spoof` | `8_0_1`, `8_3_0`, `8_4_0`, `8_5_0`, `8_6_0` | MOP handler; reads `MOP` and writes `VID` through native DataItem functions |
+| `as11_asv_backup_rate` | `8_3_0`, `8_4_0`, `8_5_0`, `8_6_0` | wraps the ASV feature update callback through its own vtable slot |
+| `as11_custom_settings` | `8_3_0`, `8_4_0`, `8_5_0`, `8_6_0` | appends persistent controls to selected clinical menu sections and updates their runtime visibility after MOP changes |
 
 With [custom settings](custom_settings.md), the ASV backup-rate payload exposes
 a `Backup Rate` control that defaults to stock behavior. Without custom
