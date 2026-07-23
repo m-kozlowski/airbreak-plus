@@ -628,8 +628,17 @@ def print_spool_types(pattern: str = "") -> None:
     key = pattern.lower()
     for title, group_items in SPOOL_GROUPS:
         group_match = bool(key and key in title.lower())
-        hits = [item for item in group_items
-                if not key or group_match or key in item.lower()]
+        hits = []
+        for item in group_items:
+            info = SPOOL_REGISTRY[item]
+            search_terms = (
+                item,
+                info.get("format", ""),
+                *info.get("sources", ()),
+            )
+            if (not key or group_match
+                    or any(key in term.lower() for term in search_terms)):
+                hits.append(item)
         if not hits:
             continue
         print(f"{title}:")
@@ -1041,8 +1050,8 @@ def cmd_known(args: argparse.Namespace) -> int:
     `known <reg> [pat]`   list one registry, optionally filtered
     `known vars groups`   summary of var groupings
     `known vars subtrees` aggregate-Get target list
-    `known vars <group>`  members of a CDX subtree group
-    `known vars <pat>`    filter VAR_NAMES by mode/topic/substring
+    `known vars <group>`  members of a firmware subtree group
+    `known vars <pat>`    filter known name/tag pairs by mode/topic/substring
     """
     action = args.known_action
     if not action:

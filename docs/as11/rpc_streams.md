@@ -8,7 +8,7 @@ described in [Air11 RPC Protocol](rpc_protocol.md).
 ## Contents
 
 - [EDF aliases](#edf-aliases)
-- [BRP/SA2 mapping](#brpsa2-mapping)
+- [BRP/TCV/SA2 mapping](#brptcvsa2-mapping)
 - [PLD mapping](#pld-mapping)
 - [Notes](#notes)
 
@@ -23,6 +23,7 @@ the on-card EDF schemas in CONF g[16].
 | `BRP` | `BRP.edf` | 40 ms | `_RFL` / `PatientFlow`, `_MKP` / `MaskPressure` |
 | `PLD` | `PLD.edf` | 2000 ms | short/name pairs listed below |
 | `SA2` | `SA2.edf` | 1000 ms | `_HRT` / `HeartRate`, `_SAO` / `SpO2` |
+| `TCV` | `TCV.edf` | 40 ms | `_BYV` |
 
 Example:
 
@@ -30,12 +31,13 @@ Example:
 python3 python/as11_config.py -d can:can0 stream --edf BRP,PLD --sample-ms 40
 ```
 
-## BRP/SA2 mapping
+## BRP/TCV/SA2 mapping
 
 | EDF signal | short | name |
 |------------|-------|------|
 | `Flow.40ms` | `_RFL` | `PatientFlow` |
 | `Press.40ms` | `_MKP` | `MaskPressure` |
+| `TrigCycEvt.40ms` | `_BYV` | n/a |
 | `Pulse.1s` | `_HRT` | `HeartRate` |
 | `SpO2.1s` | `_SAO` | `SpO2` |
 
@@ -59,6 +61,7 @@ python3 python/as11_config.py -d can:can0 stream --edf BRP,PLD --sample-ms 40
 ## Notes
 
 - `STR.edf` is a session summary/settings file, not a live stream group.
+- `TCV.edf` and its `_BYV` source are present from firmware 8.6.0.
 - One `sampleIntervalMs` applies to every data ID in a stream. Requesting the
   `PLD` alias at 40 ms repeats or reports the underlying low-rate values more
   often; it does not turn the native two-second signals into 40 ms data.

@@ -260,6 +260,11 @@ mapped filesystem-backend status, or both. All matching candidates are shown;
 
 #### CellularActivityEvents
 
+From firmware 8.6.0, this spool combines numeric records from
+`CellularActivityEvents` with string records from the internal
+`CellularActivityStringEvents` selector. `CellularActivityStringEvents` is not
+a separate `StartSpool` type. String records use field `17` for their text.
+
 `CellularActivityEvents` records use these confirmed event codes:
 
 | Code | Event | Additional fields |
@@ -292,6 +297,7 @@ mapped filesystem-backend status, or both. All matching candidates are shown;
 | `91` | Cellular pre-initialization started | -- |
 | `92` | Cellular pre-initialization completed | -- |
 | `95` | Application log record | field `14`: packed error IDs; field `15`: report class |
+| `108` | Network location | field `17`: `MCC-MNC-area-cell-id` |
 
 For event `95`, field `14` is packed as:
 

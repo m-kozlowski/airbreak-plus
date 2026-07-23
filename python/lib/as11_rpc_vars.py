@@ -14,7 +14,7 @@ Contents:
     SPOOL_FIELDS                 wire_field -> [spool_type, ...] autodetect (derived)
     STREAM_DATA_IDS              StartStream valid data_ids
     EVENT_IDS                    SubscribeEvent selector names
-    VAR_NAMES                    [(long_name, short_tag), ...] every known var
+    VAR_NAMES                    confirmed (long_name, short_tag) pairs
     VAR_SUBTREES                 names that Get accepts as aggregate-subtree targets
     VAR_MODE_PREFIXES            human-friendly therapy-mode prefix groupings
     VAR_TOPIC_KEYWORDS           human-friendly topic substring groupings
@@ -265,6 +265,8 @@ def expand_groups(group_names: list[str]) -> list[str]:
 #               a wire_field (event subfamilies do).
 #   gate_var    name of the firmware setting that must be enabled for
 #               the dispatcher to accept this spool. Optional.
+#   sources     internal selectors combined under this StartSpool type.
+#               Optional; used for discovery, not as additional spool names.
 #
 # Insertion order is preserved and drives both SPOOL_TYPES and the
 # grouped display in SPOOL_GROUPS, so keep entries clustered by group.
@@ -416,9 +418,13 @@ SPOOL_REGISTRY: dict[str, dict] = {
     },
     "CellularActivityEvents": {
         "group": "periodic metrics",
-        "format": "event protobuf",
+        "format": "event protobuf (includes string events from 8.6.0)",
         "family": "event",
         "wire_field": 12,
+        "sources": (
+            "CellularActivityEvents",
+            "CellularActivityStringEvents",
+        ),
     },
     "CellularDataUsage": {
         "group": "periodic metrics",
@@ -562,6 +568,7 @@ STREAM_DIRECT_GROUPS = [
         "InspiratoryDuration",
         "RespiratoryRate",
         "RespiratoryRate-50hz",
+        "_BYV",
         "TidalVolume",
         "TidalVolume-50hz",
         "SnoreIndex",
@@ -683,12 +690,16 @@ STREAM_EDF_ALIASES: dict[str, tuple[str, ...]] = {
         "_HRT",
         "_SAO",
     ),
+    "TCV": (
+        "_BYV",
+    ),
 }
 
 STREAM_EDF_SAMPLE_MS: dict[str, int] = {
     "BRP": 40,
     "PLD": 2000,
     "SA2": 1000,
+    "TCV": 40,
 }
 
 EVENT_FAMILIES: dict[str, tuple[str, ...]] = {
@@ -1347,7 +1358,6 @@ VAR_NAMES = [
     ("iVAPS-TargetRespiratoryRate", "IBR"),
     ("iVAPS-TriggerSensitivity", "VTS"),
 ]
-
 
 REGISTRIES = {
     "vars":     (VAR_NAMES,                   "variable names (for `get` / `set`)"),

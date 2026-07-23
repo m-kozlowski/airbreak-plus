@@ -364,6 +364,7 @@ SPOOL_LEGENDS: dict[str, dict] = {
         "record_kind": "diagnostic_error",
     },
     "CellularActivityEvents": {
+        "string_field": 17,
         "event_types": {
             2: "CellularComponentsStarting",
             3: "CellularComponentsStopping",
@@ -393,6 +394,7 @@ SPOOL_LEGENDS: dict[str, dict] = {
             91: "PreInitializationStarted",
             92: "PreInitializationCompleted",
             95: "ApplicationLogRecord",
+            108: "NetworkLocation",
         },
         "extra_fields": {
             (5, 5): "generation",
@@ -2171,6 +2173,9 @@ def print_spool_legend(spool_type: str) -> None:
     if et:
         print("# event record layout: field 1 = type, field 2 = start_ms, "
               "field 3 = end_ms, field 4 = duration_ms")
+        if legend.get("string_field") is not None:
+            print("# string event payload: field %d = text "
+                  "(from firmware 8.6.0)" % legend["string_field"])
         if len(et) <= 12:
             parts = ", ".join(f"{k}={v}" for k, v in sorted(et.items()))
             print(f"# event types: {parts}")
@@ -2270,7 +2275,10 @@ def _event_extra(spool_type: str, event_type: int, field: int,
         error = f"{error_id}({error_name})" if error_name else str(error_id)
         return f"error_id={error},detail_id={detail_id}"
 
-    name = legend.get("extra_fields", {}).get((event_type, field))
+    if wire == 2 and field == legend.get("string_field"):
+        name = "text"
+    else:
+        name = legend.get("extra_fields", {}).get((event_type, field))
     if name is None:
         name = f"f{field}/{_PROTO_WIRE.get(wire, wire)}"
     if wire == 0:

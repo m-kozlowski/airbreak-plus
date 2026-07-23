@@ -77,7 +77,7 @@ as11_config.py -d ble:as11 session
 Receive live NDJSON notifications from the device.
 
 Without `--data-ids` or `--edf`, `stream` requests all EDF alias data IDs
-(`BRP`, `PLD`, `SA2`) at the fastest accepted interval:
+(`BRP`, `PLD`, `SA2`, `TCV`) at the fastest accepted interval:
 `sampleIntervalMs=10`, `reportIntervalMs=50`.
 
 ```
@@ -91,8 +91,8 @@ as11_config.py -d ble:as11 subscribe UsageEvents-TherapyStatusEvents --duration 
 as11_config.py -d ble:as11 subscribe --events PressureStart --duration 60
 ```
 
-EDF stream aliases (`BRP`, `PLD`, `SA2`) and their raw data IDs are listed in
-[AS11 RPC Stream Reference](../as11/rpc_streams.md).
+EDF stream aliases (`BRP`, `PLD`, `SA2`, `TCV`) and their raw data IDs are
+listed in [AS11 RPC Stream Reference](../as11/rpc_streams.md).
 Event subscription selectors and payload event families are listed in
 [AS11 RPC Event Reference](../as11/rpc_events.md). Positional `subscribe`
 arguments are exact selectors. `subscribe --events` accepts payload event
