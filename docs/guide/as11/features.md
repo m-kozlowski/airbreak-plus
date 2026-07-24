@@ -16,12 +16,11 @@ The mode and clinical-setting patch exposes:
 - VAuto
 - ASV
 - ASVAuto
+- iVAPS
+- PAC
 
 Mode-specific pressure, timing, trigger, cycle, and comfort settings are made
 editable where the firmware provides a supported setting path.
-
-iVAPS and PAC remain hidden. Their Air11 implementations and related settings
-are excluded by the standard patch.
 
 ## ASV Pressure-Support Range
 

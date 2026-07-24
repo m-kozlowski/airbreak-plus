@@ -89,8 +89,9 @@ THERAPY_MODES = (
     (6, "VAuto", "VAutoProfile", True),
     (7, "ASV", "ASVProfile", True),
     (8, "ASVAuto", "ASVAutoProfile", True),
-    (9, "iVAPS", "iVAPSProfile", False),
-    (10, "PAC", "PACProfile", False),
+    # iVAPS requires HeightDisplayUnit, PHI, HeightFeature and PHT descriptor fix
+    (9, "iVAPS", "iVAPSProfile", True),
+    (10, "PAC", "PACProfile", True),
 )
 
 # Override built-in defaults for selected settings.
@@ -112,6 +113,7 @@ DEFAULT_SETTINGS = (
 # Standalone enum masks that are useful but not tied to therapy profiles.
 UNLOCKED_ENUM_SETTING_NAMES = (
     "TSS",  # Treatment screen style: Dots, PressureBar, FlowWave
+    "HeightDisplayUnit",
 )
 
 # RPC permissions set by patch-rpc-permissions. The outer key is the method,
@@ -202,18 +204,18 @@ KNOWN_RPC_METHODS = (
 
 # GUI/config descriptors that must stay hidden even when activating tables.
 BLACKLISTED_SETTING_PATTERNS = (
-    "HeightDisplayUnit",
-    "LearnTargets*",
+    # "HeightDisplayUnit",
+    # "LearnTargets*",
     "*RampDown*",
-    "PHI", # iVAPS-PatientHeight, inches
-    "iVAPS-*",
-    "PAC-*",
+    # "PHI",  # iVAPS-PatientHeight, inches
+    # "iVAPS-*",
+    # "PAC-*",
     "MaxRampTime",
 )
 
 # Non-mode APPL/RPC JSON profile nodes tied to hidden experimental features.
 BLACKLISTED_FEATURE_PROFILE_NODE_NAMES = (
-    "HeightFeature",
+    # "HeightFeature",
     "RampDownFeature",
 )
 
@@ -1555,8 +1557,63 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         ))
         return n_changed
 
+    def fix_ivaps_patient_height_range(self):
+        """Replace the stripped metric-height descriptor with usable bounds."""
+        pht_rows = self.asf.find_descriptors_by_name("PHT", ("g2",))
+        phi_rows = self.asf.find_descriptors_by_name("PHI", ("g2",))
+        if not pht_rows or not phi_rows:
+            raise ValueError("iVAPS height descriptors are missing")
+
+        pht = pht_rows[0]
+        phi = phi_rows[0]
+        if self.asf.u16(pht["offset"] + 0x16) != 1 or self.asf.u16(phi["offset"] + 0x16) != 1:
+            raise ValueError("iVAPS height descriptor scale does not match")
+
+        # Firmware synchronizes the centimeter and inch DataItems with an
+        # exact 2.5 conversion. PHI retains its complete range in stripped
+        # CONF images, while PHT carries unusable integer-sentinel bounds.
+        def inches_to_cm_raw(value):
+            scaled = value * 5
+            if scaled & 1:
+                raise ValueError("iVAPS inch height does not convert to an integer centimeter value")
+            return scaled // 2
+
+        phi_off = phi["offset"]
+        expected = (
+            inches_to_cm_raw(self.asf.u32(phi_off + 0x08)),
+            inches_to_cm_raw(self.asf.u32(phi_off + 0x0C)),
+            inches_to_cm_raw(self.asf.u32(phi_off + 0x10)),
+            inches_to_cm_raw(self.asf.u16(phi_off + 0x18)),
+        )
+        pht_off = pht["offset"]
+        current = (
+            self.asf.u32(pht_off + 0x08),
+            self.asf.u32(pht_off + 0x0C),
+            self.asf.u32(pht_off + 0x10),
+            self.asf.u16(pht_off + 0x18),
+        )
+        placeholder = (0, 0x7FFFFFFF, 0x80000001, expected[3])
+        if current == expected:
+            print("Patching iVAPS patient height... already hydrated")
+            return 0
+        if current != placeholder:
+            raise ValueError("iVAPS metric-height descriptor has unexpected bounds")
+
+        self.asf.write_u32(pht_off + 0x08, expected[0])
+        self.asf.write_u32(pht_off + 0x0C, expected[1])
+        self.asf.write_u32(pht_off + 0x10, expected[2])
+        print(
+            "Patching iVAPS patient height... default=%d range=%d..%d step=%d" %
+            (expected[0], expected[2], expected[1], expected[3])
+        )
+        return 1
+
     def unlock_features(self):
         """Unlock therapy modes and related GUI settings at descriptor level."""
+        if any(prefix == "iVAPS" and supported
+               for _bit, prefix, _profile, supported in THERAPY_MODES):
+            self.fix_ivaps_patient_height_range()
+
         feature_setting_offsets = set()
         for name in self.asf.find_rpc_feature_setting_names():
             for row in self.asf.find_descriptors_by_name(name, ("g5",)):
@@ -1640,7 +1697,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
 
         print("Patching GUI ACT flags... g1=%d g2=%d g3=%d g5=%d" % (n_g1, n_g2, n_g3, n_g5))
         if n_hidden_act or n_hidden_masks:
-            print("Hiding blacklisted iVAPS/PAC/RampDown settings... %d ACT flags, %d masks" % (
+            print("Hiding blacklisted settings... %d ACT flags, %d masks" % (
                 n_hidden_act, n_hidden_masks
             ))
         print("Patching GUI mode gates... %d selectors" % n_modes)
