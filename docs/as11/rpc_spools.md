@@ -371,15 +371,26 @@ records and observed oximetry samples.
 | `3` | `ApplicationTotalUpload`, bytes |
 | `4` | `ApplicationTotalDownload`, bytes |
 
-`MemoryMetrics` field `1` is attributes with report timestamp. Field `2`
-repeats one metric set. Subfield `1` selects the source DataItem triplet used
-by subfields `2`, `3`, and `4`:
+`MemoryMetrics` reports external NOR activity and FTL state; it does not
+describe MCU RAM. Field `1` is attributes with report timestamp. Field `2`
+repeats one metric set:
 
-| Set | Subfield 2 | Subfield 3 | Subfield 4 |
-|----:|------------|------------|------------|
-| `1` | `FWC` | `FE2` | `FM2` |
-| `2` | `FW0` | `FE0` | `FM0` |
-| `3` | `FW1` | `FE1` | `FM1` |
+| Set | Volume | Subfield 2 | Subfield 3 | Subfield 4 |
+|----:|--------|------------|------------|------------|
+| `1` | `UPGRADE` | `FWC`: write requests >= 2048 B | `FE2`: 64 KiB erases | `FM2`: maximum erase generation |
+| `2` | `SETTINGS` | `FW0`: write requests >= 2048 B | `FE0`: 64 KiB erases | `FM0`: maximum erase generation |
+| `3` | `DATALOG` | `FW1`: write requests >= 2048 B | `FE1`: 64 KiB erases | `FM1`: maximum erase generation |
+
+The write counter increments once per front-end write request whose original
+length is at least 2048 bytes, not once per 256-byte flash page. The erase
+counter covers 64 KiB erase operations; 4 KiB erases do not increment it. The
+maximum erase generation is read from the mounted NOR FTL once per second. All
+three values are raw integer counters, not byte counts or free-space values.
+
+RTOS stack high-water marks are exposed separately as `_S10`, `_S20`, `_S40`,
+`_S11`, `_SM0`, `_SM1`, `_SM2`, `_SEE`, `_SMC`, `_SPL`, and `_SCC`. Each value
+is the maximum observed stack use for its task, in percent. Firmware records
+AppError `0x2b2f` when a sample exceeds 80% and has less than 1000 bytes left.
 
 ### DiagnosticTenMinutePeriodic records
 

@@ -329,15 +329,15 @@ g2	MKF	MaskPressure-TwoSecond	MaskPress.2s		0x012F	0x013D	0x0146	0..40 step 0.2
 g2	FBD				0x0130	0x013E	0x0147	0..24836 step 1; TLP; current day stored once when therapy data first becomes active
 g2	FES				0x0131	0x013F	0x0148	-2147483647..2147483647 step 1
 g2	FTS				0x0132	0x0140	0x0149	0..24836 step 1; TLP; earliest day used as summary-reader lower bound
-g2	FE0				0x0133	0x0141	0x014A	0..2147483647 step 1
-g2	FM0				0x0134	0x0142	0x014B	0..2147483647 step 1
-g2	FW0				0x0135	0x0143	0x014C	0..2147483647 step 1
-g2	FE1				0x0136	0x0144	0x014D	0..2147483647 step 1
-g2	FM1				0x0137	0x0145	0x014E	0..2147483647 step 1
-g2	FW1				0x0138	0x0146	0x014F	0..2147483647 step 1
-g2	FE2				0x0139	0x0147	0x0150	0..2147483647 step 1
-g2	FM2				0x013A	0x0148	0x0151	0..2147483647 step 1
-g2	FWC				0x013B	0x0149	0x0152	0..2147483647 step 1
+g2	FE0				0x0133	0x0141	0x014A	0..2147483647 step 1; SETTINGS 64 KiB erase count
+g2	FM0				0x0134	0x0142	0x014B	0..2147483647 step 1; SETTINGS maximum FTL erase generation
+g2	FW0				0x0135	0x0143	0x014C	0..2147483647 step 1; SETTINGS write-request count for requests >=2048 B
+g2	FE1				0x0136	0x0144	0x014D	0..2147483647 step 1; DATALOG 64 KiB erase count
+g2	FM1				0x0137	0x0145	0x014E	0..2147483647 step 1; DATALOG maximum FTL erase generation
+g2	FW1				0x0138	0x0146	0x014F	0..2147483647 step 1; DATALOG write-request count for requests >=2048 B
+g2	FE2				0x0139	0x0147	0x0150	0..2147483647 step 1; UPGRADE 64 KiB erase count
+g2	FM2				0x013A	0x0148	0x0151	0..2147483647 step 1; UPGRADE maximum FTL erase generation
+g2	FWC				0x013B	0x0149	0x0152	0..2147483647 step 1; UPGRADE write-request count for requests >=2048 B
 g2	FLP				0x013C	0x014A	0x0153	0..20 step 0.2
 g2	FL5	FlowLimitationTreatmentPressure-50hz			0x013D	0x014B	0x0154	0..20 step 0.2
 g2	FLG	FlowGain			0x013E	0x014C	0x0155	0.499878..2 step 0.0002442
@@ -734,26 +734,26 @@ g2	VA9	Summary-TargetMinuteVentilation-95	TgtVent.95		0x02B4	0x02CD	0x02D8	activ
 g2	VAA	Summary-TargetMinuteVentilation-100	TgtVent.Max		0x02B5	0x02CE	0x02D9	active_vids=12; 0..30 step 0.125
 g2	VAM	Summary-TargetMinuteVentilation-50	TgtVent.50		0x02B6	0x02CF	0x02DA	active_vids=12; 0..30 step 0.125
 g2	ZT5				0x02B7	0x02D0	0x02DB	0..65535 step 1
-g2	S11				0x02B8	0x02D1	0x02DC	0..100 step 1
+g2	S11				0x02B8	0x02D1	0x02DC	maximum observed Task100Ms stack use (%); 0..100 step 0.1
 g2	L07				0x02B9	0x02D2	0x02DD	0..100 step 1
 g2	ZT2				0x02BA	0x02D3	0x02DE	0..65535 step 1
-g2	S10				0x02BB	0x02D4	0x02DF	0..100 step 1
+g2	S10				0x02BB	0x02D4	0x02DF	maximum observed Task10Ms stack use (%); 0..100 step 0.1
 g2	L04				0x02BC	0x02D5	0x02E0	0..100 step 1
 g2	ZMN				0x02BD	0x02D6	0x02E1	0..65535 step 1
 g2	ZT7				0x02BE	0x02D7	0x02E2	0..65535 step 1
 g2	ZT6				0x02BF	0x02D8	0x02E3	0..65535 step 1
 g2	ZT3				0x02C0	0x02D9	0x02E4	0..65535 step 1
-g2	S20				0x02C1	0x02DA	0x02E5	0..100 step 1
+g2	S20				0x02C1	0x02DA	0x02E5	maximum observed Task20Ms stack use (%); 0..100 step 0.1
 g2	L05				0x02C2	0x02DB	0x02E6	0..100 step 1
 g2	S44				0x02C3	0x02DC	0x02E7	0..100 step 1
 g2	ZT4				0x02C4	0x02DD	0x02E8	0..65535 step 1
-g2	S40				0x02C5	0x02DE	0x02E9	0..100 step 1
+g2	S40				0x02C5	0x02DE	0x02E9	maximum observed Task40Ms stack use (%); 0..100 step 0.1
 g2	L06				0x02C6	0x02DF	0x02EA	0..100 step 1
 g2	ZT1				0x02C7	0x02E0	0x02EB	0..65535 step 1
-g2	SCC				0x02C8	0x02E1	0x02EC	0..100 step 1
+g2	SCC				0x02C8	0x02E1	0x02EC	maximum observed TskCellular stack use (%); 0..100 step 0.1
 g2	L22				0x02C9	0x02E2	0x02ED	0..100 step 1
 g2	L16				0x02CA	0x02E3	0x02EE	0..100 step 1
-g2	SMC				0x02CB	0x02E4	0x02EF	0..100 step 1
+g2	SMC				0x02CB	0x02E4	0x02EF	maximum observed TskPolledL stack use (%); 0..100 step 0.1
 g2	ZTM				0x02CC	0x02E5	0x02F0	0..65535 step 1
 g2	L08				0x02CD	0x02E6	0x02F1	0..100 step 1
 g2	L15				0x02CE	0x02E7	0x02F2	0..100 step 1
@@ -765,11 +765,11 @@ g2	L23				0x02D3	0x02EC	0x02F7	0..100 step 1
 g2	L24				0x02D4	0x02ED	0x02F8	0..100 step 1
 g2	L14				0x02D5	0x02EE	0x02F9	0..100 step 1
 g2	SPS				0x02D6	0x02EF	0x02FA	0..100 step 1
-g2	SPL				0x02D7	0x02F0	0x02FB	0..100 step 1
-g2	SEE				0x02D8	0x02F1	0x02FC	0..100 step 1
-g2	SM0				0x02D9	0x02F2	0x02FD	0..100 step 1
-g2	SM1				0x02DA	0x02F3	0x02FE	0..100 step 1
-g2	SM2				0x02DB	0x02F4	0x02FF	0..100 step 1
+g2	SPL				0x02D7	0x02F0	0x02FB	maximum observed TskPolled stack use (%); 0..100 step 0.1
+g2	SEE				0x02D8	0x02F1	0x02FC	maximum observed TskPolledE stack use (%); 0..100 step 0.1
+g2	SM0				0x02D9	0x02F2	0x02FD	maximum observed TskPolledM0 stack use (%); 0..100 step 0.1
+g2	SM1				0x02DA	0x02F3	0x02FE	maximum observed TskPolledM1 stack use (%); 0..100 step 0.1
+g2	SM2				0x02DB	0x02F4	0x02FF	maximum observed TskPolledM2 stack use (%); 0..100 step 0.1
 g2	ZTS				0x02DC	0x02F5	0x0300	0..65535 step 1
 g2	TDP	TestDrivePressure			0x02DD	0x02F6	0x0301	4..10 step 0.2
 g2	TDM				0x02DE	0x02F7	0x0302	0..1440 step 1

@@ -743,12 +743,23 @@ METRIC_SPOOL_DEFS: dict[str, dict] = {
     },
 }
 
-MEMORY_METRIC_SOURCE_FIELDS: dict[int, tuple[str, str, str]] = {
-    # The firmware's local set IDs 0, 1, 2 are serialized as wire values
-    # 2, 3, 1 respectively. Each set reads these g[2] DataItems directly.
-    1: ("FWC", "FE2", "FM2"),
-    2: ("FW0", "FE0", "FM0"),
-    3: ("FW1", "FE1", "FM1"),
+MEMORY_METRIC_SETS: dict[int, tuple[str, tuple[tuple[str, str], ...]]] = {
+    # Local NOR regions 0, 1, 2 are serialized as wire sets 2, 3, 1.
+    1: ("UPGRADE", (
+        ("FWC", "write_requests_ge_2kib"),
+        ("FE2", "erase_64k_requests"),
+        ("FM2", "max_erase_generation"),
+    )),
+    2: ("SETTINGS", (
+        ("FW0", "write_requests_ge_2kib"),
+        ("FE0", "erase_64k_requests"),
+        ("FM0", "max_erase_generation"),
+    )),
+    3: ("DATALOG", (
+        ("FW1", "write_requests_ge_2kib"),
+        ("FE1", "erase_64k_requests"),
+        ("FM1", "max_erase_generation"),
+    )),
 }
 
 DIAG_10MIN_FIELDS: dict[int, dict] = {
@@ -1194,17 +1205,20 @@ def _memory_metrics_pretty(record: bytes, out, *, details: bool) -> None:
         if field == 2 and wire == 2:
             values = _decode_varint_message(value)
             set_id = values.get(1, [None])[0]
-            source_names = MEMORY_METRIC_SOURCE_FIELDS.get(set_id)
+            metric_set = MEMORY_METRIC_SETS.get(set_id)
             parts = [f"set={set_id}"]
             used = {1}
-            if source_names is not None:
-                for subfield, name in enumerate(source_names, start=2):
+            if metric_set is not None:
+                volume, source_fields = metric_set
+                parts.append(f"volume={volume}")
+                for subfield, (source_tag, name) in enumerate(
+                        source_fields, start=2):
                     if subfield not in values:
                         continue
                     used.add(subfield)
                     raw = ",".join(str(item) for item in values[subfield])
-                    parts.append(f"{name}={raw}")
-            if details or source_names is None:
+                    parts.append(f"{name}={raw}({source_tag})")
+            if details or metric_set is None:
                 for subfield in sorted(set(values) - used):
                     raw = ",".join(str(item) for item in values[subfield])
                     parts.append(f"f{subfield}={raw}")

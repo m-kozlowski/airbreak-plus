@@ -159,8 +159,8 @@ oximetry columns when oximetry is present.
 
 For metric snapshots (`MachineMetrics`, `MemoryMetrics`,
 `CellularDataUsage`), `--decode` prints named current snapshot fields where
-known. `MemoryMetrics` is decoded structurally; the memory pool and three
-metric values are shown without overclaiming their exact units.
+known. `MemoryMetrics` reports write, erase, and FTL generation counters for
+the `SETTINGS`, `DATALOG`, and `UPGRADE` volumes in external NOR flash.
 
 For `DiagnosticTenMinutePeriodic`, `--decode` prints ten-minute cellular
 diagnostic signal ranges. Add `--samples` to print CSV samples for signal
