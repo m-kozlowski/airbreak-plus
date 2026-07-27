@@ -475,6 +475,29 @@ class ASFirmware(object):
             raise ValueError("invalid raw string table")
         return raw
 
+    def _raw_string_target_counts(self, raw):
+        """Count locale entries that point at each raw string."""
+        g2 = self.globals_offset(2)
+        counts = {}
+        for str_id in range(2000):
+            rec = g2 + str_id * 8
+            if rec + 8 > len(self.fw):
+                break
+            locale_ptr = self.read_u32(rec + 4)
+            if locale_ptr == 0:
+                continue
+            locale_arr = self._flash_ptr_offset(locale_ptr)
+            if locale_arr is None:
+                break
+            for slot in range(self.fw_lang_count):
+                raw_idx = self.read_u16(locale_arr + slot * 2)
+                raw_ptr_off = raw + raw_idx * 4
+                if raw_ptr_off < 0 or raw_ptr_off + 4 > len(self.fw):
+                    raise ValueError("raw string entry out of range")
+                target = self.read_u32(raw_ptr_off)
+                counts[target] = counts.get(target, 0) + 1
+        return counts
+
     def redefine_fw_string(self, str_id, strings):
         """Rewrite one firmware string for all locales compiled into the image."""
         self.load_firmware_string_metadata()
@@ -482,6 +505,7 @@ class ASFirmware(object):
             raise ValueError("redefine_fw_string: missing English string at language id 0")
 
         raw = self._raw_string_table_offset()
+        target_counts = self._raw_string_target_counts(raw)
         g2 = self.globals_offset(2)
         rec = g2 + str_id * 8
         locale_arr = self.read_u32(rec + 4) - self.FLASH_BASE
@@ -510,9 +534,11 @@ class ASFirmware(object):
             if raw_ptr_off < 0 or raw_ptr_off + 4 > len(self.fw):
                 raise ValueError("raw string entry out of range")
 
-            old = self.read_u32(raw_ptr_off) - self.FLASH_BASE
+            old_ptr = self.read_u32(raw_ptr_off)
+            old = old_ptr - self.FLASH_BASE
             old_cap = self.c_string_len(old)
-            if old_cap is not None and len(data) <= old_cap:
+            if (old_cap is not None and len(data) <= old_cap and
+                    target_counts.get(old_ptr, 0) == 1):
                 self.fw[old:old+old_cap] = list(data + b'\x00' * (old_cap - len(data)))
                 new_off = old
             else:

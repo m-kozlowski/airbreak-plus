@@ -1220,9 +1220,9 @@ custom_alloc_string() {
 # the English fallback.
 # The locale array keeps pointing at raw string table entries; this helper only
 # changes those raw pointers and updates the descriptor max length.
-# Allocation prefers the existing raw string storage if the new text fits there.
-# Otherwise it scans backward through CCX for a contiguous erased 0xFF range,
-# writes the new NUL-terminated string there, and repoints the raw table entry.
+# Allocation reuses existing raw string storage only when it is large enough and
+# no other locale entry points there. Otherwise it scans backward through CCX
+# for erased space and repoints only the reclaimed raw-table entry.
 # args: output variable name, string id|-1, associative localized-string array name
 redefine_fw_string() {
     local __out=$1 str_id=$2 array_name=$3
@@ -1304,6 +1304,23 @@ redefine_fw_string() {
             return $end - $off + 1;
         };
 
+        my %target_refs;
+        for my $sid (0..1999) {
+            my $srec = $g2 + $sid * 8;
+            last if $srec + 8 > $len;
+            my $locale_ptr = $u32->($srec + 4);
+            next if !$locale_ptr;
+            my $locale = $locale_ptr - $flash_base;
+            last if $locale < 0 || $locale + $lang_count * 2 > $len;
+            for my $slot (0..$lang_count - 1) {
+                my $raw_idx = $u16->($locale + $slot * 2);
+                my $raw_ptr_off = $raw + $raw_idx * 4;
+                die "raw string entry out of range\n"
+                    if $raw_ptr_off < 0 || $raw_ptr_off + 4 > $len;
+                $target_refs{$u32->($raw_ptr_off)}++;
+            }
+        }
+
         my $rec = $g2 + $str_id * 8;
         my $locale_arr = $u32->($rec + 4) - $flash_base;
         die "invalid locale array for str_id $str_id\n" if $locale_arr < 0 || $locale_arr >= $len;
@@ -1325,11 +1342,13 @@ redefine_fw_string() {
             my $bytes = $s . "\0";
             $max_len = length($bytes) - 1 if length($bytes) - 1 > $max_len;
 
-            my $old = $u32->($raw_ptr_off) - $flash_base;
+            my $old_ptr = $u32->($raw_ptr_off);
+            my $old = $old_ptr - $flash_base;
             my $old_cap = $cstrlen->($old);
 
             my $new_off;
-            if (defined($old_cap) && length($bytes) <= $old_cap) {
+            if (defined($old_cap) && length($bytes) <= $old_cap &&
+                ($target_refs{$old_ptr} // 0) == 1) {
                 substr($data, $old, $old_cap) = $bytes . ("\0" x ($old_cap - length($bytes)));
                 $new_off = $old;
             } else {
