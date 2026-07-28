@@ -54,6 +54,11 @@ PLD_SUPERSET_SIGNALS = (
 )
 
 
+TCV_STREAM_SIGNALS = (
+    ("BYV", "TrigCycEvt.40ms", "", 1.0),
+)
+
+
 STREAM_SCHEMAS = (
     ("BRP", BRP_STREAM_SIGNALS),
     ("SA2", SA2_STREAM_SIGNALS),
@@ -345,7 +350,7 @@ class S11EdfSupersetPatcher:
     def __init__(self, asf):
         self.asf = asf
 
-    def stream_headers(self):
+    def stream_header_slots(self):
         base = self.asf.globals_offset(16)
         out = []
         for index in range(8):
@@ -357,8 +362,10 @@ class S11EdfSupersetPatcher:
             table_ptr = self.asf.u32(off + 12)
             tag = self.asf.string_at_ptr(tag_ptr)
             table_off = self.asf.ptr_to_off(table_ptr)
-            if not tag or table_off is None or count > 128 or period == 0:
+            if not tag or count > 128 or period == 0:
                 break
+            if table_off is None and (count != 0 or table_ptr != 0):
+                raise ValueError("EDF stream %s signal table is outside image" % tag)
             out.append({
                 "index": index,
                 "offset": off,
@@ -370,6 +377,12 @@ class S11EdfSupersetPatcher:
                 "signal_table_off": table_off,
             })
         return out
+
+    def stream_headers(self):
+        return [
+            stream for stream in self.stream_header_slots()
+            if stream["signal_count"] != 0
+        ]
 
     def stream_signals(self, stream):
         out = []
@@ -389,11 +402,17 @@ class S11EdfSupersetPatcher:
             })
         return out
 
-    def find_stream(self, tag):
-        for stream in self.stream_headers():
+    def find_stream(self, tag, include_disabled=False, required=True):
+        streams = (
+            self.stream_header_slots() if include_disabled
+            else self.stream_headers()
+        )
+        for stream in streams:
             if stream["tag"] == tag:
                 return stream
-        raise ValueError("EDF stream %s not found" % tag)
+        if required:
+            raise ValueError("EDF stream %s not found" % tag)
+        return None
 
     def resolve_stream_signals(self, wanted_signals):
         out = []
@@ -474,8 +493,8 @@ class S11EdfSupersetPatcher:
                 return False
         return True
 
-    def patch_stream_schema(self, tag, wanted_signals):
-        stream = self.find_stream(tag)
+    def patch_stream_schema(self, tag, wanted_signals, include_disabled=False):
+        stream = self.find_stream(tag, include_disabled=include_disabled)
         resolved_signals = self.resolve_stream_signals(wanted_signals)
         if self.stream_is_already_superset(stream, resolved_signals):
             print("Patching EDF %s stream... already superset" % tag)
@@ -489,7 +508,7 @@ class S11EdfSupersetPatcher:
 
         needed_strings = []
         needed_set = set()
-        ptrs = {}
+        ptrs = {"": 0}
         for _sig_id, name, unit, _scale in resolved_signals:
             for text in (name, unit):
                 if text in ptrs:
@@ -542,6 +561,40 @@ class S11EdfSupersetPatcher:
         changed = 0
         for tag, signals in STREAM_SCHEMAS:
             changed += self.patch_stream_schema(tag, signals)
+        return changed
+
+    def patch_tcv_stream(self):
+        stream = self.find_stream("TCV", include_disabled=True, required=False)
+        if stream is None:
+            return 0
+
+        rows = self.asf.find_descriptors_by_name("BYV", ("g5",))
+        if len(rows) != 1:
+            raise ValueError("EDF TCV source BYV is missing or ambiguous")
+        row = rows[0]
+        if row["n_options"] != 6:
+            raise ValueError(
+                "EDF TCV source BYV has %d options, expected 6" % row["n_options"]
+            )
+
+        changed = 0
+        wanted_flags = row["vid_type"] | 1
+        wanted_mask = (1 << row["n_options"]) - 1
+        if row["vid_type"] != wanted_flags or row["option_mask"] != wanted_mask:
+            self.asf.write_descriptor_fields(
+                row,
+                {"flags": wanted_flags, "option_mask": wanted_mask},
+            )
+            print("Patching EDF TCV source... BYV enabled")
+            changed += 1
+        else:
+            print("Patching EDF TCV source... already enabled")
+
+        changed += self.patch_stream_schema(
+            "TCV",
+            TCV_STREAM_SIGNALS,
+            include_disabled=True,
+        )
         return changed
 
     def find_csl_event_schema(self):
@@ -685,6 +738,7 @@ class S11EdfSupersetPatcher:
 
     def patch(self):
         changed = self.patch_stream_schemas()
+        changed += self.patch_tcv_stream()
         changed += self.patch_csl_events()
         changed += self.patch_str_summary()
         return changed

@@ -2103,7 +2103,7 @@ PATCH_LIST = [
     },
     {
         "arg": "patch-edf-superset",
-        "desc": "Expose the official S11 EDF PLD and STR superset.",
+        "desc": "Expose the official S11 EDF schema superset.",
         "default": True,
         "function": "patch_edf_superset",
     },
