@@ -3,6 +3,7 @@
 
 SRC=patches
 BUILD=build
+PATCH_STUBS=$(SRC)/stubs
 
 # Use all cores unless the caller selected -j, and keep output lines intact.
 JOBS ?= $(shell nproc)
@@ -279,12 +280,16 @@ $(BUILD)/%.bin: $(BUILD)/%.elf
 
 EEPROM_STUB_OFFSET ?= 0x08040000
 
-EEPROM_STUB_OBJS := $(patsubst $(SRC)/%.c,$(BUILD)/%.o,$(wildcard $(SRC)/eeprom_stub*.c))
+EEPROM_STUB_SRC := $(PATCH_STUBS)/eeprom_stub.c
+EEPROM_STUB_OBJS := $(BUILD)/eeprom_stub.o
+
+$(BUILD)/eeprom_stub.o: $(EEPROM_STUB_SRC) $(PATCH_STUBS)/eeprom_stub.h | $(BUILD)
+	$(CC) $(CFLAGS) -c -o $@ $<
 
 # The stub uses its own linker script
-$(BUILD)/eeprom_stub.elf: $(EEPROM_STUB_OBJS) | $(BUILD)
+$(BUILD)/eeprom_stub.elf: $(EEPROM_STUB_OBJS) $(PATCH_STUBS)/eeprom_stub.ld | $(BUILD)
 	$(LD) --nostdlib \
-		-T $(SRC)/eeprom_stub.ld \
+		-T $(PATCH_STUBS)/eeprom_stub.ld \
 		--defsym=STUB_FLASH_ORIGIN=$(EEPROM_STUB_OFFSET) \
 		-o $@ $(EEPROM_STUB_OBJS)
 
