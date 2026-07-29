@@ -36,6 +36,27 @@ ifneq ($(filter clean,$(MAKECMDGOALS)),clean)
 -include $(AS11_PAYLOAD_LAYOUT_MKS)
 endif
 
+AS11_NOR_READER_SRC := patches/stubs/as11-nor-sram-reader.c
+AS11_NOR_READER_ELF := $(BUILD)/as11-nor-sram-reader.elf
+AS11_NOR_READER_BIN := $(BUILD)/as11-nor-sram-reader.bin
+AS11_NOR_READER_CFLAGS := \
+	-g \
+	-Os \
+	-mcpu=cortex-m7 \
+	-mthumb \
+	-ffreestanding \
+	-fno-builtin \
+	-fno-toplevel-reorder \
+	-fno-unwind-tables \
+	-fno-asynchronous-unwind-tables \
+	-nostdlib \
+	-nostartfiles \
+	-W \
+	-Wall \
+	-Wno-unused-result \
+	-Wno-unused-parameter \
+	-Wno-unused-variable
+
 define AS11_PAYLOAD_LAYOUT_template
 AS11_PAYLOAD_PROBE_BINS_$(1) := $$(foreach p,$$(AS11_PAYLOADS_$(1)),$$(BUILD)/$$(p)_$(1).probe.bin)
 
@@ -107,7 +128,8 @@ endef
 $(foreach p,$(AS11_PAYLOAD_NAMES),$(eval $(call AS11_PAYLOAD_STAMP_template,$(p))))
 
 .PHONY: as11 as11-binaries as11-mop-callback-dispatcher as11-vid-spoof \
-	as11-asv-backup-rate as11-custom-settings as11-patched
+	as11-asv-backup-rate as11-custom-settings as11-patched \
+	as11-nor-sram-reader
 
 as11:
 	$(MAKE) as11-binaries
@@ -130,6 +152,20 @@ as11-asv-backup-rate: $(call as11_payload_bins,as11_asv_backup_rate)
 as11-custom-settings: $(call as11_payload_bins,as11_custom_settings)
 	@echo "AS11 custom-settings patches built:"
 	@$(foreach v,$(call as11_payload_versions,as11_custom_settings),echo "  $(BUILD)/as11_custom_settings_$(v).bin";)
+
+$(AS11_NOR_READER_ELF): $(AS11_NOR_READER_SRC) Makefile Makefile.as11 | $(BUILD)
+	$(CC) $(AS11_NOR_READER_CFLAGS) \
+		-Wl,-Ttext=0x24000000 \
+		-Wl,-e,_start \
+		-Wl,--build-id=none \
+		-o $@ $<
+
+$(AS11_NOR_READER_BIN): $(AS11_NOR_READER_ELF)
+	$(OBJCOPY) -O binary $< $@
+
+as11-nor-sram-reader: $(AS11_NOR_READER_BIN)
+	@echo "AS11 NOR SRAM reader built:"
+	@echo "  $(AS11_NOR_READER_BIN)"
 
 as11-patched:
 	-$(MAKE) as11-binaries
