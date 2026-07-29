@@ -200,7 +200,11 @@ namespace eval as11_keys {
         set addr [_key_offset $idx]
 
         set status [catch {
-            reset halt
+            # Prefer a reset-halt for a clean state; fall back to a plain halt
+            # if reset-halt does not land (observed on secure boot / some debuggers).
+            catch {reset halt}
+            set _t [target current]
+            if {[$_t curstate] ne "halted"} { halt }
             if {[llength [info commands freeze_iwdg]] != 0} {
                 catch {freeze_iwdg}
             }
@@ -221,7 +225,7 @@ namespace eval as11_keys {
 
         catch {reset run}
         if {$status != 0} {
-            return -options $opts $result
+            error $result
         }
         return ""
     }
