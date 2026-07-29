@@ -11,3 +11,6 @@ python/*private*
 patches/*private*
 __pycache__
 tmp/
+
+# prebuilt stub for tcl/nor-fast.tcl
+!nor_stub.bin

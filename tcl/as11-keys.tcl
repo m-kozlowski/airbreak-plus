@@ -200,7 +200,11 @@ namespace eval as11_keys {
         set addr [_key_offset $idx]
 
         set status [catch {
-            reset halt
+            # Prefer a reset-halt for a clean state; fall back to a plain halt
+            # if reset-halt does not land (observed on secure boot / some debuggers).
+            catch {reset halt}
+            set _t [target current]
+            if {[$_t curstate] ne "halted"} { halt }
             if {[llength [info commands freeze_iwdg]] != 0} {
                 catch {freeze_iwdg}
             }
@@ -219,11 +223,80 @@ namespace eval as11_keys {
             set hex
         } result opts]
 
-        catch {reset run}
+        catch {resume}
         if {$status != 0} {
-            return -options $opts $result
+            error $result
         }
         return ""
+    }
+
+    # ---- external SPI-NOR full read (read-only) ----
+
+    # read JEDEC ID (0x9F): returns {manuf type cap}
+    proc _jedec {} {
+        variable SPI5
+        set out {}
+        _cs_low
+        set status [catch {
+            mww [expr {$SPI5 + 0x00}] 0x00001000
+            mww [expr {$SPI5 + 0x18}] 0xFFFFFFFF
+            mww [expr {$SPI5 + 0x04}] 4
+            mww [expr {$SPI5 + 0x00}] 0x00001001
+            _wait 0x00000002 "TXP"
+            mww [expr {$SPI5 + 0x20}] 0x0000009F
+            mww [expr {$SPI5 + 0x00}] 0x00001201
+            _wait 0x00000001 "RXP"
+            set rx [_mrw [expr {$SPI5 + 0x30}]]
+            for {set j 1} {$j < 4} {incr j} {
+                lappend out [expr {($rx >> ($j * 8)) & 0xff}]
+            }
+            _wait 0x00000008 "EOT"
+            mww [expr {$SPI5 + 0x18}] 0xFFFFFFFF
+            mww [expr {$SPI5 + 0x00}] 0x00001000
+        } err]
+        _cs_high
+        if {$status != 0} { error $err }
+        return $out
+    }
+
+    # generic-length read (0x03; len is a multiple of 4; address auto-increments within a CS)
+    proc _readn {addr len} {
+        variable SPI5
+        set frames [expr {$len + 4}]
+        set words  [expr {$frames / 4}]
+        set cmd [expr {0x03 | ((($addr >> 16) & 0xff) << 8) | ((($addr >> 8) & 0xff) << 16) | (($addr & 0xff) << 24)}]
+        set out {}
+        _cs_low
+        set status [catch {
+            mww [expr {$SPI5 + 0x00}] 0x00001000
+            mww [expr {$SPI5 + 0x18}] 0xFFFFFFFF
+            mww [expr {$SPI5 + 0x04}] $frames
+            mww [expr {$SPI5 + 0x00}] 0x00001001
+            for {set wi 0} {$wi < $words} {incr wi} {
+                if {$wi == 0} { set tx $cmd } else { set tx 0 }
+                _wait 0x00000002 "TXP"
+                mww [expr {$SPI5 + 0x20}] $tx
+                if {$wi == 0} { mww [expr {$SPI5 + 0x00}] 0x00001201 }
+                _wait 0x00000001 "RXP"
+                set rx [_mrw [expr {$SPI5 + 0x30}]]
+                if {$wi != 0} {
+                    for {set j 0} {$j < 4} {incr j} {
+                        lappend out [expr {($rx >> ($j * 8)) & 0xff}]
+                    }
+                }
+            }
+            _wait 0x00000008 "EOT"
+            mww [expr {$SPI5 + 0x18}] 0xFFFFFFFF
+            mww [expr {$SPI5 + 0x00}] 0x00001000
+        } err]
+        _cs_high
+        if {$status != 0} { error $err }
+        return $out
+    }
+
+    proc _capacity {cap} {
+        if {$cap >= 0x10 && $cap <= 0x1b} { return [expr {1 << $cap}] }
+        return 0
     }
 
     proc help {} {
