@@ -13,7 +13,6 @@ as11_payload_bins = $(foreach v,$(call as11_payload_versions,$(1)),$(BUILD)/$(1)
 
 AS11_PAYLOAD_NAMES := $(sort $(foreach v,$(AS11_PAYLOAD_LAYOUT_VERSIONS),$(AS11_PAYLOADS_$(v))))
 AS11_PAYLOAD_STAMPS := $(foreach p,$(AS11_PAYLOAD_NAMES),$(BUILD)/payload_$(p).stamp)
-AS11_PAYLOAD_LAYOUT_MKS := $(foreach v,$(AS11_PAYLOAD_LAYOUT_VERSIONS),$(BUILD)/as11_payload_layout_$(v).mk)
 AS11_PAYLOAD_LAYOUT_TSVS := $(foreach v,$(AS11_PAYLOAD_LAYOUT_VERSIONS),$(BUILD)/as11_payload_layout_$(v).tsv)
 
 AS11_CFLAGS := \
@@ -31,10 +30,6 @@ AS11_CFLAGS := \
 	-nostdlib \
 	-nostdinc \
 	-ffreestanding
-
-ifneq ($(filter clean,$(MAKECMDGOALS)),clean)
--include $(AS11_PAYLOAD_LAYOUT_MKS)
-endif
 
 AS11_NOR_READER_SRC := patches/stubs/as11-nor-sram-reader.c
 AS11_NOR_READER_ELF := $(BUILD)/as11-nor-sram-reader.elf
@@ -69,15 +64,13 @@ $$(BUILD)/as11_payload_sizes_$(1).tsv: $$(AS11_PAYLOAD_PROBE_BINS_$(1)) Makefile
 	done
 	@mv $$@.tmp $$@
 
-$$(BUILD)/as11_payload_layout_$(1).tsv $$(BUILD)/as11_payload_layout_$(1).mk &: \
+$$(BUILD)/as11_payload_layout_$(1).tsv: \
 		$$(BUILD)/as11_payload_sizes_$(1).tsv $$(SRC)/as11_code_caves.tsv \
 		$$(SRC)/generate_payload_layout.awk | $$(BUILD)
 	@awk -v version=$(1) \
-		-v mkfile=$$(BUILD)/as11_payload_layout_$(1).mk.tmp \
 		-f $$(SRC)/generate_payload_layout.awk \
 		$$(SRC)/as11_code_caves.tsv $$(BUILD)/as11_payload_sizes_$(1).tsv \
 		> $$(BUILD)/as11_payload_layout_$(1).tsv.tmp
-	@mv $$(BUILD)/as11_payload_layout_$(1).mk.tmp $$(BUILD)/as11_payload_layout_$(1).mk
 	@mv $$(BUILD)/as11_payload_layout_$(1).tsv.tmp $$(BUILD)/as11_payload_layout_$(1).tsv
 endef
 
@@ -101,14 +94,16 @@ $$(BUILD)/$(1)_$(2).probe.elf: $$(BUILD)/$(1)_$(2).o $$(BUILD)/as11_stubs_$(2).o
 		-o $$@ $$^
 
 $$(BUILD)/$(1)_$(2).elf: $$(BUILD)/$(1)_$(2).o $$(BUILD)/as11_stubs_$(2).o \
-		$$(BUILD)/as11_payload_layout_$(2).mk | $$(BUILD)
+		$$(BUILD)/as11_payload_layout_$(2).tsv | $$(BUILD)
+	@set -e; addr=$$$$(awk -v name="$(1)" '$$$$1 == name { print $$$$2; found=1; exit } END { if (!found) exit 1 }' $(BUILD)/as11_payload_layout_$(2).tsv); \
 	$$(LD) --nostdlib --no-dynamic-linker \
-		--Ttext $$(payload_addr_$(2)_$(1)) --entry start --sort-section=name \
+		--Ttext $$$$addr --entry start --sort-section=name \
 		-o $$@ $$(BUILD)/$(1)_$(2).o $$(BUILD)/as11_stubs_$(2).o
 
 $$(BUILD)/$(1)_$(2).bin: $$(BUILD)/$(1)_$(2).elf
 	$$(OBJCOPY) -Obinary $$< $$@
-	@actual=$$$$(stat -c %s $$@); expected=$$(payload_size_$(2)_$(1)); \
+	@set -e; actual=$$$$(stat -c %s $$@); \
+		expected=$$$$(awk -v name="$(1)" '$$$$1 == name { print $$$$3; found=1; exit } END { if (!found) exit 1 }' $(BUILD)/as11_payload_layout_$(2).tsv); \
 		[ "$$$$actual" -eq "$$$$expected" ] || { \
 			echo "$$@: final size $$$$actual differs from layout size $$$$expected" >&2; \
 			exit 1; \
