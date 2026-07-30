@@ -291,8 +291,8 @@ PSTR_VARID_MASKS = {
 PSTR_NPD_COUNT_OFF = 0x44
 PSTR_NPD_SUPERSET_COUNT = 8
 
-# g[20] PDL stat computation records (16 bytes each)
-# Controls which EVE stats CDX computes.
+# g[21] history-summary rules, stored after the g[20] PDL header (16 bytes each).
+# Reduce source fields from EEPROM SESSION/STR history into destination variables.
 # AS=13, VA/CP=20, AV=17 records. Superset=21.
 # Var IDs drift across firmware versions, so resolve record endpoints by UART name.
 G20_SUPERSET_RECORD_SPECS = [
@@ -869,7 +869,7 @@ def build_merge_block(free_start, g12_block=None, source_data=None, g=None, var_
         
         layout['g28_block_end'] = cur_addr()
     
-    # g[21] computation enable table
+    # g[21] history-summary rules
     # AS=13, VA/CP=20, AV=17 records. Superset=21
     align4()
     layout['g21_records'] = cur_addr()

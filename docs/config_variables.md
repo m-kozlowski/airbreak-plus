@@ -769,15 +769,16 @@ FBD, FTD, DUS, ZD1, DUF, ZD2, HOU, MHR, MHU, MHS, ... ZSE, ZFE, CED
 ## g[21] -- derived-variable rules
 
 Count and pointer for the rule records stored after the PDL header. Each rule
-connects a destination variable to a source variable. The rule type and
-optional parameters select the calculation applied when updating the
-destination.
+uses historical values of one source variable from EEPROM `SESSION/STR` to
+calculate one destination variable. Firmware groups rules by source var_id,
+loads the source values for the period selected by `SEP`, and evaluates each
+rule over the available records. `SEP` provides 1-day, 1-week, 1-month,
+3-month, 6-month, and 1-year periods.
 
-Firmware creates one runtime processor for each applicable rule. These
-processors maintain derived statistics and status values from their source
-variables. For example, the `MQD <- LK7` rule derives the mask-fit result from
-the leak value. Firmware variants carry different rule sets according to the
-statistics required by their supported therapy modes.
+Destination variables are reset before the history is processed. A destination
+is unlocked when at least one valid source value was found and remains locked
+when no result is available. A source value of `-1` is invalid and is not
+included in the calculation.
 
 | Offset | Size | Field |
 |--------|------|-------|
@@ -789,19 +790,48 @@ Rule record:
 | Offset | Size | Field |
 |--------|------|-------|
 | +0x00 | 2 | destination/stat var_id |
-| +0x02 | 2 | source/input var_id |
-| +0x04 | 4 | flags/type (`type = (flags >> 8) & 0xff`) |
-| +0x08 | 4 | param_a (`0xffffffff` = unused) |
-| +0x0C | 4 | param_b (`0xffffffff` = unused) |
+| +0x02 | 2 | source var_id, read from `SESSION/STR` records |
+| +0x04 | 4 | operation (`type = (operation >> 8) & 0xff`) |
+| +0x08 | 4 | inclusive upper bound (`0xffffffff` = unbounded) |
+| +0x0C | 4 | inclusive lower bound (`0xffffffff` = unbounded) |
+
+Rule types:
+
+| Type | Result |
+|------|--------|
+| 0 | Arithmetic mean of all valid source values in the selected period, rounded to the nearest integer |
+| 1 | Number of valid source values inside the optional inclusive bounds |
+| 2 | Sum of valid source values inside the optional inclusive bounds |
+| 3 | Source value from the newest record, if valid; the selected period is not aggregated |
+
+Type 3 has two destination-specific boolean conversions:
+
+```text
+MQD = (newest LK7 < 0x14)
+ZRH = (newest SYC < 1)
+```
+
+With the checked `LK7` scale, `0x14` is `0.40 L/s` or `24 L/min`. Other type 3
+rules copy the source value from the newest record directly. If that record has
+no valid source value, the destination remains unavailable; firmware does not
+search older records for one.
 
 Stock variants carry different rule counts.
 
-Example (SX567 0402):
+Examples:
 
 ```text
-rule_count=13  rule_pointer=PDL+0x0C
-rule[10]: destination=0x0257:MQD  source=0x0092:LK7
-          type=3  param_a=unused  param_b=unused
+ZAE <- PE9  type=0
+    ZAE is the period mean of the per-record TgtEPAP.95 values in PE9.
+
+VRD <- OND  type=1  lower=0x000000F0
+    VRD counts records whose OND value is at least 240.
+
+XRD <- OND  type=2
+    XRD is the sum of all valid OND values in the selected period.
+
+AQD <- AHI  type=3
+    AQD receives AHI from the newest record when that value is valid.
 ```
 
 ---
