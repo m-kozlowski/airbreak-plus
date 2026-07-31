@@ -2856,9 +2856,16 @@ def _print_chain(db, ident):
 
 
 def _print_info(db):
+    loader_id, regions = db.fl.firmware_regions()
+    cdx_off, _ = regions["CDX"]
+    raw_sid = bytes(db.fl.data[cdx_off:cdx_off + 16])
+    main_sw_id = raw_sid.split(b"\x00", 1)[0].decode("ascii", errors="replace")
+
     print("  Air10 CCX block navigator")
     print(f"  image       {len(db.fl.data)} bytes  "
           f"0x{db.fl.base:08X}..0x{db.fl.end:08X}")
+    print(f"  loader      {loader_id}")
+    print(f"  main SW     {main_sw_id}")
     print(f"  languages   {db.num_languages} ({', '.join(db.lang_labels)})")
     if db.strtab:
         print(f"  strings     g2=0x{db.strtab.g2:08X} raw=0x{db.strtab.raw:08X}")
