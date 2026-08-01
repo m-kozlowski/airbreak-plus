@@ -2861,36 +2861,21 @@ def _print_info(db):
     raw_sid = bytes(db.fl.data[cdx_off:cdx_off + 16])
     main_sw_id = raw_sid.split(b"\x00", 1)[0].decode("ascii", errors="replace")
 
-    print("  Air10 CCX block navigator")
-    print(f"  image       {len(db.fl.data)} bytes  "
-          f"0x{db.fl.base:08X}..0x{db.fl.end:08X}")
-    print(f"  loader      {loader_id}")
-    print(f"  main SW     {main_sw_id}")
+    print(f"  BID         {loader_id}")
+    print(f"  SID         {main_sw_id}")
+    if db.device:
+        print(f"  CID         {db.device.cid}")
+        print(f"  PCD         {db.device.product_code}")
+        print(f"  PNA         {db.device.product}")
+    mop = db._entry_for_name("MOP")
+    if isinstance(mop, Entry8):
+        labels = _mode_labels(db)
+        available = [
+            labels[i] for i in range(min(mop.num_options, len(labels)))
+            if mop.perm_mask & (1 << i)
+        ]
+        print(f"  modes       {', '.join(available)}")
     print(f"  languages   {db.num_languages} ({', '.join(db.lang_labels)})")
-    if db.strtab:
-        print(f"  strings     g2=0x{db.strtab.g2:08X} raw=0x{db.strtab.raw:08X}")
-    for tnum in sorted(db.tables):
-        base = db.table_bases.get(tnum)
-        print(f"  globals[{tnum:<2}] {len(db.tables[tnum]):>4} entries @ 0x{base:08X}")
-    extras = []
-    for name, value in (
-        ("g0 device", db.device),
-        ("g1 timers", db.timers),
-        ("g14 NPD", db.npd),
-        ("g15 signal groups", db.g15_groups),
-        ("g16 groups", db.vargroups),
-        ("g19 streams", db.streams),
-        ("g20 PDL", db.pdl),
-        ("g22 metadata/name pool", db.nametab),
-        ("g23 UART names", db.names),
-        ("g24 modes", db.modes),
-    ):
-        if value:
-            extras.append(name)
-    if db.channels:
-        extras.append(f"{len(db.channels)} signal channels")
-    if extras:
-        print("  loaded      " + ", ".join(extras))
     print(f"  variables   {len(db.by_varid)}")
 
 
