@@ -2158,6 +2158,36 @@ extra_debug() {
 }
 
 
+# Enable every event type, its ANV history record, and runtime statistics.
+unlock_respiratory_event_reporting() {
+    local aet anv aet_types anv_types aet_mask anv_mask name rec flags
+    local event_stats=(
+        # Event counters
+        AHC HYC AIC CAC OAC UAC RDC
+        # Per-hour indexes derived from those counters
+        AHI HIS AIS CLI OPI UAI RIN
+    )
+
+    aet=$(find_var AET) || die failed
+    anv=$(find_var ANV) || die failed
+    aet_types=$(read_u8 $(( aet + G8_NUM_OPTIONS ))) || die failed
+    anv_types=$(read_u8 $(( anv + G9_EVENT_TYPES ))) || die failed
+    (( aet_types > 0 && aet_types <= 32 && anv_types > 0 && anv_types <= 32 )) || \
+        die "unlock_respiratory_event_reporting: AET/ANV event type counts do not fit u32 masks: $aet_types/$anv_types"
+    aet_mask=$(( (1 << aet_types) - 1 ))
+    anv_mask=$(( (1 << anv_types) - 1 ))
+
+    write_u32 $(( aet + G8_BITMASK )) "$aet_mask" || die failed
+    write_u32 $(( anv + G9_ALLOWED_TYPES )) "$anv_mask" || die failed
+
+    for name in "${event_stats[@]}"; do
+        rec=$(find_var "$name") || die failed
+        flags=$(read_u16 $(( rec + G4_FLAGS ))) || die failed
+        write_u16 $(( rec + G4_FLAGS )) "$(( flags | 1 ))" || die failed
+    done
+}
+
+
 extra_modes() {
     echo "Enabling all therapy modes"
     # add more mode entries, set config 0x0 mask to all bits high
@@ -2177,6 +2207,7 @@ extra_modes() {
     # 2048 = AutoSet for her?
 
     printf '\xff\xff' | patch $(( $(find_var MOP) + G8_BITMASK )) || die failed
+    unlock_respiratory_event_reporting
 }
 
 
@@ -3019,6 +3050,9 @@ G8_PARAM_0A=0x0A
 G8_BITMASK=0x0C
 G8_BASE_STR=0x10
 G8_PARAM_12=0x12
+
+G9_EVENT_TYPES=0x09
+G9_ALLOWED_TYPES=0x0C
 
 FW_LANG_COUNT=
 FW_LANG_IDS=()

@@ -158,6 +158,9 @@ class ASFirmware(object):
     G8_BASE_STR = 0x10
     G8_PARAM_12 = 0x12
 
+    G9_EVENT_TYPES = 0x09
+    G9_ALLOWED_TYPES = 0x0C
+
     def __init__(self, file, validate_crc=True):
         self.fw = file.read()
         self.fw = list(self.fw)
@@ -1978,11 +1981,40 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         # if you set it to \x0f it will enable four separate display pages of info in sleep report mode
         self.asf.patch(b'\x0e', self.asf.find_var('TSS') + self.asf.G6_DEFAULT, clobber=True)
 
+    def unlock_respiratory_event_reporting(self):
+        """Enable every event type, its ANV history record, and runtime statistics."""
+        event_stats = (
+            # Event counters
+            'AHC', 'HYC', 'AIC', 'CAC', 'OAC', 'UAC', 'RDC',
+            # Per-hour indexes derived from those counters
+            'AHI', 'HIS', 'AIS', 'CLI', 'OPI', 'UAI', 'RIN',
+        )
+        aet = self.asf.find_var('AET')
+        anv = self.asf.find_var('ANV')
+        aet_types = self.asf.read_u8(aet + self.asf.G8_NUM_OPTIONS)
+        anv_types = self.asf.read_u8(anv + self.asf.G9_EVENT_TYPES)
+        if not (0 < aet_types <= 32 and 0 < anv_types <= 32):
+            raise ValueError(
+                "unlock_respiratory_event_reporting: AET/ANV event type counts "
+                "do not fit u32 masks: %d/%d" %
+                (aet_types, anv_types))
+        self.asf.patch(struct.pack('<I', (1 << aet_types) - 1),
+                       aet + self.asf.G8_BITMASK, clobber=True)
+        self.asf.patch(struct.pack('<I', (1 << anv_types) - 1),
+                       anv + self.asf.G9_ALLOWED_TYPES, clobber=True)
+
+        for name in event_stats:
+            rec = self.asf.find_var(name)
+            flags = self.asf.read_u16(rec + self.asf.G4_FLAGS)
+            self.asf.patch(struct.pack('<H', flags | 1),
+                           rec + self.asf.G4_FLAGS, clobber=True)
+
     def extra_modes(self):
         # add more mode entries, set config 0x0 mask to all bits high
         # default is 0x3, which only enables mode 1 (CPAP) and 2 (AutoSet)
         # ---> This is the real magic <---
         self.asf.patch(b'\xff\xff', self.asf.find_var('MOP') + self.asf.G8_BITMASK, clobber=True)
+        self.unlock_respiratory_event_reporting()
 
     def unlock_option_masks(self):
         masks = {
