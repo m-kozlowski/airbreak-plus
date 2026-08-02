@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 
 import argparse
+import os
 import math
 import re
 import shlex
 import struct
 import sys
+import tempfile
+from decimal import Decimal, InvalidOperation
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -138,10 +141,200 @@ VERSION_BLOCK_ALIASES = {
 }
 
 
+def crc16_ccitt_false(data, crc=0xFFFF):
+    for byte in data:
+        crc ^= byte << 8
+        for _ in range(8):
+            if crc & 0x8000:
+                crc = ((crc << 1) ^ 0x1021) & 0xFFFF
+            else:
+                crc = (crc << 1) & 0xFFFF
+    return crc
+
+
+class DescriptorEditField:
+    def __init__(self, name, attr, offset, fmt=None, kind="int",
+                 aliases=()):
+        self.name = name
+        self.attr = attr
+        self.offset = offset
+        self.fmt = fmt
+        self.kind = kind
+        self.aliases = tuple(aliases)
+
+    @property
+    def size(self):
+        if self.kind == "modes":
+            return G10_STRIDE - 2
+        return struct.calcsize("<" + self.fmt)
+
+    @property
+    def signed(self):
+        return self.fmt in ("b", "h", "i")
+
+    def read_storage(self, fw, rec):
+        off = rec["offset"] + self.offset
+        if self.kind == "modes":
+            fw._check_range(off, self.size)
+            return bytes(fw.data[off:off + self.size])
+        if self.size == 1:
+            return fw.u8(off)
+        if self.fmt == "H":
+            return fw.u16(off)
+        if self.fmt == "I":
+            return fw.u32(off)
+        if self.fmt == "i":
+            return fw.i32(off)
+        raise ValueError("unsupported edit field format %r" % self.fmt)
+
+    def write_storage(self, fw, rec, value):
+        off = rec["offset"] + self.offset
+        if self.kind == "modes":
+            if len(value) != self.size:
+                raise ValueError("modes field requires %d bytes" % self.size)
+            fw.write_bytes(off, value)
+            return
+        fw.write_struct(off, self.fmt, value)
+
+    def normalize_int(self, value):
+        bits = self.size * 8
+        if self.signed:
+            minimum = -(1 << (bits - 1))
+            maximum = (1 << (bits - 1)) - 1
+            if maximum < value < (1 << bits):
+                value -= 1 << bits
+        else:
+            minimum = 0
+            maximum = (1 << bits) - 1
+        if not minimum <= value <= maximum:
+            raise ValueError(
+                "%s value %d does not fit %d-bit %s storage" %
+                (self.name, value, bits,
+                 "signed" if self.signed else "unsigned")
+            )
+        return value
+
+
+AS11_DESCRIPTOR_FIELDS = {
+    "g1": (
+        DescriptorEditField("vt", "vid_type", 0x00, "H", "hex16",
+                            aliases=("vid_type",)),
+        DescriptorEditField("active", "vid_type", 0x00, "H", "active"),
+        DescriptorEditField("subtype", "subtype", 0x02, "H", "hex16"),
+        DescriptorEditField("linked_var", "linked_var_id", 0x04, "H", "hex16",
+                            aliases=("linked_var_id",)),
+        DescriptorEditField("class_tag", "class_tag", 0x06, "H", "hex16"),
+        DescriptorEditField("max_len", "max_length", 0x08, "H",
+                            aliases=("max_length",)),
+    ),
+    "g2": (
+        DescriptorEditField("vt", "vid_type", 0x00, "H", "hex16",
+                            aliases=("vid_type",)),
+        DescriptorEditField("active", "vid_type", 0x00, "H", "active"),
+        DescriptorEditField("enum_ref", "enum_ref", 0x02, "H", "hex16"),
+        DescriptorEditField("source_index", "source_index", 0x04, "H", "hex16"),
+        DescriptorEditField("storage_class", "storage_class", 0x06, "H",
+                            "hex16"),
+        DescriptorEditField("default", "default", 0x08, "I", "scaled"),
+        DescriptorEditField("max", "max", 0x0C, "I", "scaled"),
+        DescriptorEditField("min", "min", 0x10, "i", "scaled"),
+        DescriptorEditField("format", "format", 0x14, "H", "hex16"),
+        DescriptorEditField("scale", "scale", 0x16, "H"),
+        DescriptorEditField("step", "step", 0x18, "H", "scaled"),
+        DescriptorEditField("bounds_slot", "bounds_slot", 0x1A, "B", "hex8"),
+        DescriptorEditField("sample_source", "sample_source_id", 0x1B, "B",
+                            aliases=("sample_source_id",)),
+        DescriptorEditField("quantity_class", "quantity_class", 0x1C, "I",
+                            "mask"),
+    ),
+    "g3": (
+        DescriptorEditField("vt", "vid_type", 0x00, "H", "hex16",
+                            aliases=("vid_type",)),
+        DescriptorEditField("active", "vid_type", 0x00, "H", "active"),
+        DescriptorEditField("subtype", "subtype", 0x02, "H", "hex16"),
+        DescriptorEditField("linked_var", "linked_var_id", 0x04, "H", "hex16",
+                            aliases=("linked_var_id",)),
+        DescriptorEditField("class_tag", "class_tag", 0x06, "H", "hex16"),
+        DescriptorEditField("fixed", "fixed_mask", 0x08, "I", "mask",
+                            aliases=("fixed_mask",)),
+        DescriptorEditField("editable", "editable_mask", 0x0C, "I", "mask",
+                            aliases=("editable_mask",)),
+        DescriptorEditField("bit_count", "bit_count", 0x10, "B"),
+        DescriptorEditField("g4_list", "g4_list_offset", 0x12, "H", "hex16",
+                            aliases=("g4_list_offset",)),
+    ),
+    "g5": (
+        DescriptorEditField("vt", "vid_type", 0x00, "H", "hex16",
+                            aliases=("vid_type",)),
+        DescriptorEditField("active", "vid_type", 0x00, "H", "active"),
+        DescriptorEditField("g4_opts", "g4_options_offset", 0x02, "H", "hex16",
+                            aliases=("g4_options_offset",)),
+        DescriptorEditField("owner_ref", "owner_ref", 0x04, "H", "hex16"),
+        DescriptorEditField("item_class", "item_class", 0x06, "H", "hex16"),
+        DescriptorEditField("default_opt", "default_option", 0x08, "B",
+                            aliases=("default_option",)),
+        DescriptorEditField("n_opts", "n_options", 0x09, "B",
+                            aliases=("n_options",)),
+        DescriptorEditField("zero", "zero", 0x0A, "H", "hex16"),
+        DescriptorEditField("mask", "option_mask", 0x0C, "I", "mask",
+                            aliases=("option_mask",)),
+    ),
+    "g10": (
+        DescriptorEditField("modes", "mode_bytes", 0x02, None, "modes"),
+    ),
+}
+
+
+def editable_fields(arr):
+    return AS11_DESCRIPTOR_FIELDS.get(arr, ())
+
+
+def editable_field_map(arr):
+    out = {}
+    for field in editable_fields(arr):
+        out[field.name.lower()] = field
+        for alias in field.aliases:
+            out[alias.lower()] = field
+        if field.kind == "scaled":
+            out[(field.name + "_raw").lower()] = field
+            for alias in field.aliases:
+                out[(alias + "_raw").lower()] = field
+    return out
+
+
+def edit_field_names(arr):
+    names = []
+    for field in editable_fields(arr):
+        names.append(field.name)
+        if field.kind == "scaled":
+            names.append(field.name + "_raw")
+    return names
+
+
+def edit_fields_help():
+    lines = [
+        "assignments use VAR.FIELD=VALUE; bare numbers are decimal and 0x is hex",
+        "",
+        "editable fields:",
+    ]
+    for arr in ("g1", "g2", "g3", "g5", "g10"):
+        lines.append("  %s  %s" % (arr, " ".join(edit_field_names(arr))))
+    lines.extend((
+        "",
+        "scaled g2 fields accept display values; *_raw writes stored integers",
+        "active accepts on/off, true/false, yes/no, 1/0",
+        "g10 modes accepts comma/pipe/plus separated mode names or indices",
+    ))
+    return "\n".join(lines)
+
+
 class AS11Firmware:
-    def __init__(self, path):
-        with open(path, "rb") as f:
-            self.data = f.read()
+    def __init__(self, path, data=None):
+        if data is None:
+            with open(path, "rb") as f:
+                self.data = bytearray(f.read())
+        else:
+            self.data = bytearray(data)
         self.path = path
         if len(self.data) < CONF_BASE + 0x108:
             raise ValueError("firmware image is too small for an AS11 CONF block")
@@ -234,6 +427,58 @@ class AS11Firmware:
     def u32(self, off):
         self._check_range(off, 4)
         return struct.unpack_from("<I", self.data, off)[0]
+
+    def write_struct(self, off, fmt, value):
+        self._check_range(off, struct.calcsize("<" + fmt))
+        struct.pack_into("<" + fmt, self.data, off, value)
+
+    def write_bytes(self, off, value):
+        self._check_range(off, len(value))
+        self.data[off:off + len(value)] = value
+
+    def conf_crc(self):
+        crc_off = CONF_BASE + CONF_SIZE - 2
+        stored = int.from_bytes(self.data[crc_off:crc_off + 2], "big")
+        computed = crc16_ccitt_false(self.data[CONF_BASE:crc_off])
+        return stored, computed, stored == computed
+
+    def validate_conf_crc(self):
+        stored, computed, ok = self.conf_crc()
+        if not ok:
+            raise ValueError(
+                "CONF CRC mismatch: stored=0x%04X computed=0x%04X" %
+                (stored, computed)
+            )
+
+    def fix_conf_crc(self):
+        crc_off = CONF_BASE + CONF_SIZE - 2
+        crc = crc16_ccitt_false(self.data[CONF_BASE:crc_off])
+        self.data[crc_off] = (crc >> 8) & 0xFF
+        self.data[crc_off + 1] = crc & 0xFF
+        return crc
+
+    def write_output(self, path, overwrite=False):
+        input_path = os.path.normcase(os.path.abspath(self.path))
+        output_path = os.path.normcase(os.path.abspath(path))
+        if input_path == output_path:
+            raise ValueError("output path must differ from the input image")
+        if os.path.exists(path) and not overwrite:
+            raise FileExistsError("output file already exists: %s" % path)
+
+        output_dir = os.path.dirname(os.path.abspath(path)) or "."
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                    mode="wb", dir=output_dir, prefix=".as11-edit-",
+                    delete=False) as tmp:
+                tmp_path = tmp.name
+                tmp.write(self.data)
+                tmp.flush()
+                os.fsync(tmp.fileno())
+            os.replace(tmp_path, path)
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                os.unlink(tmp_path)
 
     def f32(self, off):
         self._check_range(off, 4)
@@ -918,6 +1163,14 @@ class AS11Firmware:
             },
         }
 
+    def g10_index_for_var(self, vid):
+        spec = self.descriptor_specs()["g10"]
+        for idx in range(spec["count"]):
+            off = spec["base"] + idx * spec["stride"]
+            if self.u16(off) == vid:
+                return idx
+        return None
+
     def conf_layout(self):
         pointer_offsets = sorted(
             off for off in self.g.values()
@@ -1441,7 +1694,7 @@ class AS11Firmware:
         if start >= end:
             return None, None
 
-        appx = self.data[start:end]
+        appx = bytes(self.data[start:end])
         pattern = rb"(?<![0-9A-Za-z])(\d+\.\d+\.\d+\.[0-9a-f]{7,40})(?![0-9A-Za-z])"
 
         if git:
@@ -1732,6 +1985,9 @@ class AS11Firmware:
         for key, value in self.descriptor_line_fields(rec).items():
             print(f"  {key}: {line_value(value)}")
         print(f"  raw: {self.fmt_raw(rec['raw'])}")
+        if edit_field_names(rec["array"]):
+            print("  editable_fields: %s" %
+                  " ".join(edit_field_names(rec["array"])))
         print()
         self._print_related_g10(vid)
         if rec["array"] == "g5":
@@ -2168,6 +2424,386 @@ class AS11Firmware:
                     long=fmt_text(v["long_name"]),
                 )
 
+
+def _array_from_dispatch(dispatch):
+    return dispatch[0].replace("[", "").replace("]", "")
+
+
+def _parse_edit_int(value, what):
+    text = value.strip()
+    if not text:
+        raise ValueError("%s requires a value" % what)
+    signless = text[1:] if text[:1] in "+-" else text
+    base = 16 if signless.lower().startswith("0x") else 10
+    try:
+        return int(text, base)
+    except ValueError as exc:
+        raise ValueError(
+            "%s must be decimal or explicit hexadecimal" % what
+        ) from exc
+
+
+def _parse_edit_bool(value, what):
+    text = value.strip().lower()
+    if text in ("1", "true", "yes", "on", "act", "active"):
+        return True
+    if text in ("0", "false", "no", "off", "inact", "inactive"):
+        return False
+    raise ValueError("%s must be on/off, true/false, yes/no, or 1/0" % what)
+
+
+def _parse_edit_decimal(value, what):
+    text = value.strip()
+    signless = text[1:] if text[:1] in "+-" else text
+    if signless.lower().startswith("0x"):
+        return Decimal(_parse_edit_int(text, what))
+    try:
+        result = Decimal(text)
+    except InvalidOperation as exc:
+        raise ValueError("%s must be numeric" % what) from exc
+    if not result.is_finite():
+        raise ValueError("%s must be finite" % what)
+    return result
+
+
+def _parse_mode_list(value):
+    text = value.strip()
+    if text.lower() in ("none", "off", ""):
+        return bytearray(G10_STRIDE - 2)
+    if text.lower() == "all":
+        return bytearray([1] * (G10_STRIDE - 2))
+
+    out = bytearray(G10_STRIDE - 2)
+    parts = [part.strip() for part in re.split(r"[,|+]", text)]
+    if not parts or any(not part for part in parts):
+        raise ValueError("modes requires mode names/indices, none, or all")
+    mode_by_name = {name.lower(): idx for idx, name in enumerate(MODE_NAMES)}
+    for part in parts:
+        key = part.lower()
+        if key in mode_by_name:
+            idx = mode_by_name[key]
+        else:
+            idx = _parse_edit_int(part, "mode")
+        if not 0 <= idx < len(out):
+            raise ValueError("mode %d outside 0..%d" % (idx, len(out) - 1))
+        out[idx] = 1
+    return bytes(out)
+
+
+def _format_modes(mode_bytes):
+    names = [
+        MODE_NAMES[idx] if idx < len(MODE_NAMES) else str(idx)
+        for idx, enabled in enumerate(mode_bytes)
+        if enabled
+    ]
+    return ",".join(names) if names else "none"
+
+
+def _encode_scaled_edit(value, scale, field):
+    display = _parse_edit_decimal(value, field.name)
+    raw = display * scale if scale else display
+    integral = raw.to_integral_value()
+    if raw != integral:
+        raise ValueError(
+            "%s=%r is not exactly representable with scale %d; use %s_raw" %
+            (field.name, value, scale, field.name)
+        )
+    return field.normalize_int(int(integral))
+
+
+def _parse_edit_assignment(fw, text):
+    if "=" not in text:
+        raise ValueError("invalid assignment %r; expected VAR.FIELD=VALUE" % text)
+    target, value = text.split("=", 1)
+    if "." not in target:
+        raise ValueError(
+            "invalid assignment target %r; expected VAR.FIELD" % target)
+    ident, field_name = target.rsplit(".", 1)
+    ident = ident.strip()
+    field_key = field_name.strip().lower()
+    if not ident or not field_key:
+        raise ValueError(
+            "invalid assignment target %r; expected VAR.FIELD" % target)
+
+    raw = field_key.endswith("_raw")
+    base_field_key = field_key[:-4] if raw else field_key
+    vid = resolve_var_arg(fw, ident)
+    dispatch = fw.dispatch_var_id(vid)
+    if dispatch is None:
+        raise ValueError("var 0x%04X has no descriptor" % vid)
+
+    arr = _array_from_dispatch(dispatch)
+    fields = editable_field_map(arr)
+    field = fields.get(field_key)
+    if field is not None:
+        if raw and field.kind != "scaled":
+            field = None
+        else:
+            idx = dispatch[3]
+            return {
+                "text": text,
+                "vid": vid,
+                "array": arr,
+                "index": idx,
+                "rec": fw.read_descriptor(arr, idx),
+                "field": field,
+                "field_name": field_name.strip(),
+                "value_text": value.strip(),
+                "raw": raw,
+                "target_key": (arr, idx),
+            }
+
+    g10_fields = editable_field_map("g10")
+    field = g10_fields.get(base_field_key)
+    if field is not None and not raw:
+        idx = fw.g10_index_for_var(vid)
+        if idx is not None:
+            return {
+                "text": text,
+                "vid": vid,
+                "array": "g10",
+                "index": idx,
+                "rec": fw.read_descriptor("g10", idx),
+                "field": field,
+                "field_name": field_name.strip(),
+                "value_text": value.strip(),
+                "raw": False,
+                "target_key": ("g10", idx),
+            }
+
+    available = ", ".join(edit_field_names(arr))
+    g10_idx = fw.g10_index_for_var(vid)
+    if g10_idx is not None:
+        available += ", " + ", ".join(edit_field_names("g10"))
+    raise ValueError(
+        "field %s is not editable for 0x%04X; available fields: %s" %
+        (field_name.strip(), vid, available)
+    )
+
+
+def _initial_edit_state(fw, rec):
+    state = {}
+    for field in editable_fields(rec["array"]):
+        state[field.attr] = field.read_storage(fw, rec)
+    return state
+
+
+def _parse_edit_value(edit, state):
+    field = edit["field"]
+    value = edit["value_text"]
+    if field.kind == "active":
+        current = state[field.attr]
+        if _parse_edit_bool(value, field.name):
+            return current | 1
+        return current & ~1
+    if field.kind == "modes":
+        return _parse_mode_list(value)
+    if field.kind == "scaled" and not edit["raw"]:
+        return _encode_scaled_edit(value, state["scale"], field)
+    return field.normalize_int(_parse_edit_int(value, field.name))
+
+
+def _g4_pool_limit(fw):
+    base = fw.g.get(4)
+    end = fw.section_end(4)
+    if not isinstance(base, int) or not isinstance(end, int) or end < base:
+        return None
+    return end - base
+
+
+def _validate_edit_state(fw, target, state, touched):
+    warnings = []
+    arr = target["array"]
+    name = target["name"]
+    if arr == "g2" and touched & {"default", "min", "max", "scale"}:
+        if state["min"] > state["max"]:
+            raise ValueError("%s has min greater than max" % name)
+        if not state["min"] <= state["default"] <= state["max"]:
+            raise ValueError("%s default is outside min..max" % name)
+
+    if arr == "g3":
+        if state["bit_count"] > 32:
+            raise ValueError("%s bit_count exceeds 32" % name)
+        outside = (state["fixed_mask"] | state["editable_mask"]) & ~(
+            (1 << state["bit_count"]) - 1 if state["bit_count"] else 0
+        )
+        if outside:
+            warnings.append(
+                "%s fixed/editable masks contain bits outside bit_count: "
+                "0x%08X" % (name, outside)
+            )
+        limit = _g4_pool_limit(fw)
+        if limit is not None:
+            end = state["g4_list_offset"] + state["bit_count"]
+            if end > limit:
+                raise ValueError(
+                    "%s g4 list ends at +0x%X beyond globals[4] size 0x%X" %
+                    (name, end, limit)
+                )
+
+    if arr == "g5":
+        if state["n_options"] > 32:
+            raise ValueError("%s n_opts exceeds 32" % name)
+        if state["n_options"] and state["default_option"] >= state["n_options"]:
+            raise ValueError("%s default_opt is outside n_opts" % name)
+        if state["n_options"] == 0 and state["default_option"] != 0:
+            raise ValueError("%s has nonzero default_opt with no options" % name)
+        outside = (state["option_mask"] & ~((1 << state["n_options"]) - 1)
+                   if state["n_options"] else state["option_mask"])
+        if outside:
+            warnings.append(
+                "%s option mask contains bits outside n_opts: 0x%08X" %
+                (name, outside)
+            )
+        limit = _g4_pool_limit(fw)
+        if limit is not None:
+            end = state["g4_options_offset"] + state["n_options"]
+            if end > limit:
+                raise ValueError(
+                    "%s g4 options end at +0x%X beyond globals[4] size 0x%X" %
+                    (name, end, limit)
+                )
+    return warnings
+
+
+def prepare_edits(fw, assignments):
+    edits = [_parse_edit_assignment(fw, text) for text in assignments]
+    seen = {}
+    states = {}
+    targets = {}
+    touched = {}
+
+    for edit in edits:
+        field = edit["field"]
+        key = (edit["target_key"], field.attr)
+        if key in seen:
+            raise ValueError(
+                "duplicate assignment for %s.%s" %
+                (seen[key]["target_name"], field.name)
+            )
+        target_key = edit["target_key"]
+        if target_key not in states:
+            rec = edit["rec"]
+            name = fw.var_name(edit["vid"]) or "0x%04X" % edit["vid"]
+            target_name = "%s[%d] %s" % (rec["array"], rec["index"], name)
+            targets[target_key] = {
+                "array": edit["array"],
+                "index": edit["index"],
+                "rec": rec,
+                "name": target_name,
+            }
+            states[target_key] = _initial_edit_state(fw, rec)
+            touched[target_key] = set()
+        seen[key] = {**edit, "target_name": targets[target_key]["name"]}
+
+    # Structural assignments go first; display-scale edits then use final scale.
+    for edit in edits:
+        if edit["field"].kind == "scaled" and not edit["raw"]:
+            continue
+        state = states[edit["target_key"]]
+        edit["new_value"] = _parse_edit_value(edit, state)
+        state[edit["field"].attr] = edit["new_value"]
+        touched[edit["target_key"]].add(edit["field"].attr)
+    for edit in edits:
+        if "new_value" in edit:
+            continue
+        state = states[edit["target_key"]]
+        edit["new_value"] = _parse_edit_value(edit, state)
+        state[edit["field"].attr] = edit["new_value"]
+        touched[edit["target_key"]].add(edit["field"].attr)
+
+    warnings = []
+    for key, state in states.items():
+        warnings.extend(_validate_edit_state(fw, targets[key], state, touched[key]))
+    return edits, warnings
+
+
+def _format_edit_value(fw, rec, field, value):
+    if field.kind == "active":
+        return ("on" if value & 1 else "off") + " (vt=0x%04X)" % value
+    if field.kind == "modes":
+        return _format_modes(value)
+    if field.kind == "scaled":
+        scale = rec.get("scale") or 0
+        if scale:
+            return "%s (raw %d)" % (fmt_number(value / scale), value)
+        return str(value)
+    if field.kind == "hex8":
+        return "0x%02X" % value
+    if field.kind == "hex16":
+        return "0x%04X" % value
+    if field.kind == "mask":
+        return "0x%0*X" % (field.size * 2, value)
+    return str(value)
+
+
+def _run_edit(fw, args):
+    if not args.dry_run and not args.output:
+        raise ValueError("edit requires -o/--output unless --dry-run is used")
+    if not args.ignore_input_crc:
+        fw.validate_conf_crc()
+
+    edits, warnings = prepare_edits(fw, args.assignments)
+    conf_end = CONF_BASE + CONF_SIZE - 2
+    for edit in edits:
+        field = edit["field"]
+        start = edit["rec"]["offset"] + field.offset
+        if start < CONF_BASE or start + field.size > conf_end:
+            raise ValueError(
+                "%s.%s is outside editable CONF data" %
+                (fw.var_name(edit["vid"]) or "0x%04X" % edit["vid"],
+                 field.name)
+            )
+
+    work_fw = AS11Firmware(fw.path, data=fw.data)
+    for edit in edits:
+        rec = work_fw.read_descriptor(edit["array"], edit["index"])
+        edit["field"].write_storage(work_fw, rec, edit["new_value"])
+
+    crc = work_fw.fix_conf_crc()
+    new_fw = AS11Firmware(fw.path, data=work_fw.data)
+    for edit in edits:
+        rec = new_fw.read_descriptor(edit["array"], edit["index"])
+        actual = edit["field"].read_storage(new_fw, rec)
+        if actual != edit["new_value"]:
+            raise ValueError(
+                "failed to verify %s.%s: wrote %r, read %r" %
+                (new_fw.var_name(edit["vid"]) or "0x%04X" % edit["vid"],
+                 edit["field"].name, edit["new_value"], actual)
+            )
+        edit["new_rec"] = rec
+
+    if not args.dry_run:
+        work_fw.write_output(args.output, overwrite=args.overwrite)
+
+    for warning in warnings:
+        print("warning: %s" % warning, file=sys.stderr)
+    for edit in edits:
+        # edit["rec"] still identifies the old location, but the buffer has
+        # changed. Re-read the original value from the saved raw descriptor.
+        old_storage = edit["rec"]["raw"][
+            edit["field"].offset:edit["field"].offset + edit["field"].size]
+        if edit["field"].kind == "modes":
+            old_value = bytes(old_storage)
+        elif edit["field"].size == 1:
+            old_value = old_storage[0]
+        else:
+            old_value = struct.unpack_from(
+                "<" + edit["field"].fmt, bytes(old_storage), 0)[0]
+        old_text = _format_edit_value(
+            fw, edit["rec"], edit["field"], old_value)
+        new_text = _format_edit_value(
+            new_fw, edit["new_rec"], edit["field"], edit["new_value"])
+        name = new_fw.var_name(edit["vid"]) or "0x%04X" % edit["vid"]
+        print("  %s.%s: %s -> %s" %
+              (name, edit["field_name"], old_text, new_text))
+    print("  CONF CRC: 0x%04X" % crc)
+    if args.dry_run:
+        print("  Dry run; output not written")
+    else:
+        print("  Wrote %s" % args.output)
+
+
 def parse_numeric_arg(value, what="number"):
     text = value.strip()
     if re.fullmatch(r"[0-9]+", text):
@@ -2371,6 +3007,21 @@ def add_command_parsers(subparsers):
     p.add_argument("query", nargs="+")
     p.add_argument("--lang", type=parse_lang_arg, default=0, help="language index or code")
 
+    p = subparsers.add_parser(
+        "edit",
+        help="edit CONF descriptors in a new firmware image",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=edit_fields_help(),
+    )
+    p.add_argument("assignments", nargs="+", help="VAR.FIELD=VALUE")
+    p.add_argument("-o", "--output", help="output firmware image")
+    p.add_argument("--dry-run", action="store_true",
+                   help="validate and show changes without writing output")
+    p.add_argument("--overwrite", action="store_true",
+                   help="allow replacing an existing output file")
+    p.add_argument("--ignore-input-crc", action="store_true",
+                   help="allow editing an image with a bad CONF CRC")
+
 
 def build_command_parser(prog="as11"):
     parser = argparse.ArgumentParser(prog=prog)
@@ -2435,6 +3086,8 @@ def run_command(fw, args):
         fw.cmd_text(args.text_id, args.lang)
     elif command == "text-search":
         fw.cmd_text_search(" ".join(args.query), args.lang)
+    elif command == "edit":
+        _run_edit(fw, args)
     else:
         raise ValueError(f"unknown command: {command}")
 

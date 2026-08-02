@@ -5,7 +5,8 @@ images.
 
 Use this tool to inspect variable descriptors, option masks, therapy-mode
 gates, EDF metadata, event tables, persisted setting sets, and localized GUI
-text. It does not connect to a device and does not modify the input image.
+text. It does not connect to a device. Read commands do not modify firmware;
+`edit` writes a separate output image and never overwrites the input image.
 
 ## Output
 
@@ -86,6 +87,39 @@ when available.
 as11_descriptors.py firmware.bin var-options MOP
 as11_descriptors.py firmware.bin var-options VAuto-CycleSensitivity
 ```
+
+### edit
+
+Edit one or more CONF descriptor fields and write a new firmware image.
+
+```
+as11_descriptors.py firmware.bin edit -o edited.bin \
+    IVS.active=on RMA.mask=0x7 PA0.default=5.0
+```
+
+Assignments use `VAR.FIELD=VALUE`. `VAR` may be a numeric var id, long name,
+short tag, or underscored short tag. The command validates the input `CONF`
+CRC, applies all assignments in memory, updates the `CONF` CRC, reloads the
+modified image, and verifies the stored values before writing output.
+
+Use `--dry-run` to validate and display the result without writing a file. Use
+`--overwrite` to replace an existing output file. Use `--ignore-input-crc` for
+research on an image whose `CONF` CRC is already invalid.
+
+Editable descriptor arrays are `g1`, `g2`, `g3`, and `g5`. For variables that
+have a `globals[10]` row, `FIELD=modes` edits the therapy-mode visibility
+bytes. Run `edit --help` for the accepted fields.
+
+Numeric `g2` fields `default`, `min`, `max`, and `step` use descriptor display
+scaling:
+
+```
+PA0.default=5.0
+PA0.default_raw=250
+```
+
+If `scale` and a scaled field are changed in one command, the scaled field uses
+the new scale. Values that cannot be represented exactly are rejected.
 
 ### mode
 
