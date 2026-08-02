@@ -425,12 +425,12 @@ payload_inject() {
 }
 
 
-# Encode a Thumb BL instruction.
-# args: source file offset, destination flash address
-encode_thumb_bl() {
+# Encode a Thumb BL between two runtime addresses.
+# args: source address, destination address
+encode_thumb_bl_addr() {
     python3 -c "
 import struct, sys
-src = $1 + 0x08000004
+src = $1 + 4
 dst = $2
 offset = dst - src
 S = 1 if offset < 0 else 0
@@ -442,6 +442,13 @@ hw1 = 0xF000 | (S << 10) | imm10
 hw2 = 0xD000 | (J1 << 13) | (J2 << 11) | imm11
 sys.stdout.buffer.write(struct.pack('<HH', hw1, hw2))
 "
+}
+
+
+# Encode a Thumb BL from a firmware file offset.
+# args: source file offset, destination flash address
+encode_thumb_bl() {
+    encode_thumb_bl_addr "$(( FLASH_BASE + $1 ))" "$2"
 }
 
 
@@ -1864,6 +1871,41 @@ patch_tamper() {
 }
 
 
+patch_blx_dump() {
+    local bin=build/blx_dump.bin
+    local elf=build/blx_dump.elf
+    local cave_off=0x3de0
+    local cave_size=0x1a0
+    local hook_off=0x300e
+    local runtime hook_runtime size start
+
+    # SX577 BLX copies file offset 0x300 to SRAM 0x20000000 before execution.
+    runtime=$(( 0x20000000 + cave_off - 0x300 ))
+    hook_runtime=$(( 0x20000000 + hook_off - 0x300 ))
+
+    case "$BID" in
+        SX577-0200*) ;;
+        *)
+            echo "Patching bootloader firmware dump... skipped (unsupported bootloader version $BID)"
+            return
+            ;;
+    esac
+
+    [[ -r "$bin" && -r "$elf" ]] || die "patch_blx_dump: build/blx_dump artifacts not found (run make binaries)"
+    size=$(stat -c %s "$bin")
+    (( size <= cave_size )) || die "patch_blx_dump: payload is ${size}B, BLX cave is ${cave_size}B"
+    start=$(elf_symbol_addr "$elf" start)
+    (( start == runtime )) || die "patch_blx_dump: payload linked at $(printf '0x%08X' "$start"), expected $(printf '0x%08X' "$runtime")"
+    range_is_byte "$cave_off" "$cave_size" 0 || die "patch_blx_dump: BLX payload area is not empty"
+    printf '\xfd\xf7\x56\xfa' | check_patch "$hook_off" || die "patch_blx_dump: unexpected dispatcher call bytes at 0x300E"
+
+    echo "Patching bootloader firmware dump"
+    patch_direct "$bin" "$cave_off"
+    encode_thumb_bl_addr "$hook_runtime" "$runtime" | patch "$hook_off" || die failed
+    printf "  payload: %s (%dB) at BLX+0x%04X\n" "$bin" "$size" "$cave_off"
+}
+
+
 patch_psu_id() {
     echo -n "Patching Power Supply ID check... "
     case "$BID" in
@@ -3113,6 +3155,7 @@ load_firmware_string_metadata
 # -----------------------------------------------------------------------------
 
 patch_tamper
+patch_blx_dump
 patch_psu_id
 
 patch_code

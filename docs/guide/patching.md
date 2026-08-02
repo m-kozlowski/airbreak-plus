@@ -64,6 +64,7 @@ All patches below are **enabled by default** unless noted.
 |-------|-------------|---------------|---------------|
 | EDF signal merge | Expands SD-card therapy data recording across unlocked modes | `patch_edf_merge` | `--patch-edf-merge` |
 | VID spoof | Sets variant ID for the active therapy mode and selects a regional variant where known | `patch_vid_spoof` | `--patch-fw-vidspoof` |
+| UART firmware dump | Adds the SX577 bootloader command used by `resmed_flash.py --dump` | `patch_blx_dump` | `--patch-blx-dump` |
 
 ### Quality of life
 

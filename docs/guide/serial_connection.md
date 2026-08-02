@@ -56,7 +56,6 @@ If the device responds, you should see the bootloader ID, serial number, and pro
 | Tool | Purpose |
 |------|---------|
 | [`resmed_config.py`](../tools/resmed_config.md) | Read/write device variables, dump/restore configuration |
-| [`resmed_flash.py`](../tools/resmed_flash.md) | Flash firmware images |
+| [`resmed_flash.py`](../tools/resmed_flash.md) | Flash or dump firmware images |
 
 See [flashing](flashing.md) for firmware transfer, or [resmed_config docs](../resmed_config.md) for configuration management.
-

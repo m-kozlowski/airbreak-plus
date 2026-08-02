@@ -39,6 +39,7 @@ Two frame types are immediate and have no length, payload, or CRC:
 | `L` | host -> device | full | Oximetry adapter input |
 | `L` | device -> host | full | Live stream report |
 | `f` | host -> bootloader | full | Firmware transfer frame |
+| `O` | host <-> patched SX577 bootloader | full | Firmware dump extension |
 | `O` | host -> device | immediate | Parser reset; conditional `ZRO` marker |
 | `P` | host -> device | immediate | Parser reset |
 | `T` | -- | -- | Reserved; rejected with `0x6011` |
@@ -239,6 +240,30 @@ tooling sends chunks up to 250 data bytes and uses `0x00` as the trailing byte.
 After all data frames, the host sends an `f` frame with marker `F`. The
 bootloader finalizes the selected block and resets or remains in bootloader
 depending on the flashing sequence.
+
+## Patched Bootloader Dump Protocol
+
+The Airbreak SX577-0200 bootloader extension uses full `O` frames. Flash
+offsets are relative to the start of the 1 MB firmware image.
+
+Request payload:
+
+```
+'D' offset_le32 length_le16
+```
+
+`length` must be between 1 and 240 bytes and the requested range must remain
+inside the firmware image.
+
+Successful response payload:
+
+```
+'d' offset_le32 length_le16 data...
+```
+
+An invalid range returns `E`, the requested offset, and a zero length. The host
+checks the frame CRC, echoed offset, and echoed length before accepting a chunk.
+Timeouts and mismatched responses are retried at the same offset.
 
 ## Error Codes
 

@@ -2,8 +2,8 @@
 """
 ResMed AirSense UART Flash Tool
 
-Flashes firmware to ResMed AirSense devices via the UART bootloader protocol.
-Supports individual block or full image flashing with CRC validation.
+Transfers firmware through the ResMed AirSense UART bootloader protocol.
+Supports block flashing and full-image dumps with CRC validation.
 
 S10 flash memory map (SX577/SX585):
   0x08000000  BLX  16KB   Bootloader
@@ -20,6 +20,7 @@ S9 flash memory map (SX525):
 
 import serial
 import argparse
+import os
 import time
 import sys
 import struct
@@ -82,6 +83,8 @@ BLOCK_MAPS = {
 SUPPORTED_BIDS = {'SX577-0200', 'SX525-0300', 'SX525-0400'}
 
 FULL_IMAGE_SIZE = 0x100000
+DUMP_CHUNK_SIZE = 240
+DUMP_FRAME_TYPE = 'O'
 
 BLOCK_ALIASES = {
     'bootloader': 'BLX', 'boot': 'BLX', 'blx': 'BLX',
@@ -172,6 +175,92 @@ def read_responses(ser, timeout=1.0):
             break
     ser.timeout = old_timeout
     return data, parse_responses(data)
+
+
+def read_frame(ser, timeout=1.0):
+    """Read and CRC-check one complete ResMed frame."""
+    old_timeout = ser.timeout
+    ser.timeout = 0.02
+    data = bytearray()
+    deadline = time.time() + timeout
+    try:
+        while time.time() < deadline:
+            chunk = ser.read(512)
+            if chunk:
+                data.extend(chunk)
+
+            while True:
+                try:
+                    start = data.index(ord('U'))
+                except ValueError:
+                    data.clear()
+                    break
+                if start:
+                    del data[:start]
+                if len(data) < 5:
+                    break
+                if data[1] == ord('U'):
+                    del data[0]
+                    continue
+                try:
+                    length = int(bytes(data[2:5]), 16)
+                except ValueError:
+                    del data[0]
+                    continue
+                if length < 9 or length > 0x1ff:
+                    del data[0]
+                    continue
+                if len(data) < length:
+                    break
+
+                raw = bytes(data[:length])
+                try:
+                    stored_crc = int(raw[-4:], 16)
+                except ValueError:
+                    del data[0]
+                    continue
+                return {
+                    'type': chr(raw[1]),
+                    'payload': raw[5:-4].replace(b'UU', b'U'),
+                    'crc_ok': stored_crc == crc16_ccitt(raw[:-4]),
+                    'raw': raw,
+                }
+        return None
+    finally:
+        ser.timeout = old_timeout
+
+
+def request_dump_chunk(ser, offset, length, retries=3):
+    request = b'D' + struct.pack('<IH', offset, length)
+    last_error = "no response"
+    for _ in range(retries):
+        ser.reset_input_buffer()
+        ser.write(build_frame(DUMP_FRAME_TYPE, request))
+        ser.flush()
+        frame = read_frame(ser, timeout=1.0)
+        if frame is None:
+            last_error = "no response"
+            continue
+        if frame['type'] != DUMP_FRAME_TYPE:
+            last_error = "unexpected frame type %s" % frame['type']
+            continue
+        if not frame['crc_ok']:
+            last_error = "CRC mismatch"
+            continue
+        payload = frame['payload']
+        if len(payload) < 7:
+            last_error = "short response"
+            continue
+        response_offset, response_length = struct.unpack_from('<IH', payload, 1)
+        if payload[0:1] == b'E':
+            raise RuntimeError("bootloader rejected dump range 0x%05X+%d" %
+                               (offset, length))
+        if (payload[0:1] != b'd' or response_offset != offset or
+                response_length != length or len(payload) != 7 + length):
+            last_error = "response range mismatch"
+            continue
+        return payload[7:]
+    raise RuntimeError("dump failed at 0x%05X: %s" % (offset, last_error))
 
 def send_cmd(ser, cmd_str, timeout=2.0, quiet=False):
     ser.reset_input_buffer()
@@ -318,6 +407,38 @@ def negotiate_best_baud(ser):
         if switch_baud(ser, rate):
             return rate
     return ser.baudrate
+
+
+def connect_device(ser, baud_arg, wait=True):
+    if baud_arg == 'auto':
+        print("\n[*] Probing device...")
+        if wait:
+            baud, bid = wait_for_device(ser)
+            if baud:
+                print()
+        else:
+            baud, bid = probe_baud(ser)
+        if not baud:
+            print("[!] Device not responding at any known baud rate")
+            return None
+        ser.baudrate = baud
+    else:
+        baud = int(baud_arg)
+        ser.baudrate = baud
+        print("\n[*] Connecting at %d baud..." % baud)
+        if wait:
+            while True:
+                bid = query_bid(ser)
+                if bid:
+                    break
+                time.sleep(0.5)
+        else:
+            bid = query_bid(ser)
+        if not bid:
+            print("[!] No response at %d baud" % baud)
+            return None
+    print("[+] Device responding at %d baud (BID: %s)" % (ser.baudrate, bid))
+    return bid
 
 
 def enter_bootloader(ser, max_retries=3, enter_cmd='P S #BLL 0001', flood=True):
@@ -550,6 +671,87 @@ def detect_input(file_data: bytes, block_args: list, include_bootloader: bool, b
     return jobs
 
 
+def dump_firmware(ser, output_path, args):
+    part_path = output_path + '.part'
+
+    device_bid = connect_device(ser, args.baud, wait=not args.no_wait)
+    if not device_bid:
+        raise RuntimeError("device connection failed")
+    if device_bid != 'SX577-0200':
+        raise RuntimeError("firmware dump requires SX577-0200, got %s" % device_bid)
+    platform = _platform(device_bid)
+    default_baud = platform['default_baud']
+    if not args.no_enter:
+        if ser.baudrate != default_baud:
+            switch_baud(ser, default_baud)
+        boot_bid = enter_bootloader(ser, enter_cmd=platform['enter_cmd'], flood=True)
+        if boot_bid != device_bid:
+            raise RuntimeError("unexpected bootloader BID: %s" % boot_bid)
+    elif (query_bls(ser, timeout=0.5) or 0) < 1:
+        raise RuntimeError("--no-enter requires the device to be in bootloader mode")
+
+    if args.baud == 'auto':
+        print("\n[*] Negotiating baud rate...")
+        negotiate_best_baud(ser)
+    else:
+        target = int(args.baud)
+        if target != ser.baudrate and not switch_baud(ser, target):
+            raise RuntimeError("failed to switch to %d baud" % target)
+
+    print("\n[*] Dumping 1,048,576 bytes @ %d baud..." % ser.baudrate)
+    started = time.monotonic()
+    tty_progress = sys.stdout.isatty()
+    next_percent = 5
+    with open(part_path, 'wb') as output:
+        for offset in range(0, FULL_IMAGE_SIZE, DUMP_CHUNK_SIZE):
+            length = min(DUMP_CHUNK_SIZE, FULL_IMAGE_SIZE - offset)
+            output.write(request_dump_chunk(ser, offset, length))
+            done = offset + length
+            progress = ("    %s/%s (%3d%%)" %
+                        (f"{done:,}", f"{FULL_IMAGE_SIZE:,}",
+                         done * 100 // FULL_IMAGE_SIZE))
+            if tty_progress:
+                sys.stdout.write("\r" + progress)
+                sys.stdout.flush()
+            elif done == FULL_IMAGE_SIZE or done * 100 // FULL_IMAGE_SIZE >= next_percent:
+                print(progress)
+                next_percent += 5
+        output.flush()
+        os.fsync(output.fileno())
+    elapsed = time.monotonic() - started
+    if tty_progress:
+        print(" in %.1fs" % elapsed)
+    else:
+        print("[*] Dump completed in %.1fs" % elapsed)
+
+    with open(part_path, 'rb') as dumped:
+        image = dumped.read()
+    blocks = get_blocks(device_bid)
+    print("[*] CRC validation:")
+    crc_ok = True
+    for block_id in ('BLX', 'CCX', 'CDX'):
+        block = blocks[block_id]
+        data = image[block['file_offset']:block['file_offset'] + block['size']]
+        stored, computed, match = check_block_crc(data, block_id)
+        print("    [%s] %s: stored=0x%04X computed=0x%04X %s" %
+              ('+' if match else '!', block_id, stored, computed,
+               'OK' if match else 'MISMATCH'))
+        crc_ok = crc_ok and match
+    if not crc_ok:
+        raise RuntimeError("dumped image failed block CRC validation; partial file kept at %s" %
+                           part_path)
+
+    os.replace(part_path, output_path)
+    print("[+] Firmware saved: %s" % output_path)
+
+    if not args.no_reset:
+        if ser.baudrate != default_baud:
+            switch_baud(ser, default_baud)
+        print("[*] Resetting device...")
+        send_cmd(ser, platform['reset_cmd'], timeout=2.0)
+    return 0
+
+
 CHUNK_SIZE = 250
 FLASH_COMPLETE_OK = 0x0000
 
@@ -754,11 +956,13 @@ Examples:
   %(prog)s -p /dev/ttyACM0 -f dump.bin --dry-run              Validate without flashing
   %(prog)s -p /dev/ttyACM0 -f dump.bin --no-wait              Fail if device not found
   %(prog)s -p /dev/ttyACM0 --info                             Show device info
+  %(prog)s -p /dev/ttyACM0 --dump firmware.bin                Dump firmware with a patched BLX
 """)
     parser.add_argument('-p', '--port', required=True, help='Serial port or tcp:host[:port]')
     parser.add_argument('--tcp-mode', choices=['raw', 'transparent'], default='transparent',
                         help='TCP mode: transparent (AirBridge, default), raw (dumb proxy)')
     parser.add_argument('-f', '--file', help='Firmware file to flash')
+    parser.add_argument('--dump', metavar='FILE', help='Dump the full firmware image (patched SX577 BLX required)')
     parser.add_argument('--block', action='append', help='Target block (repeatable): config, firmware, all, bootloader')
     parser.add_argument('--baud', default='auto', help='Transfer baud: auto, 57600, 115200, 460800')
     parser.add_argument('--fix-crc', action='store_true', help='Recalculate and patch CRC')
@@ -775,6 +979,11 @@ Examples:
     parser.add_argument('--yolo', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args()
 
+    if args.dump and args.file:
+        parser.error("--dump and -f/--file are mutually exclusive")
+    if not args.info and not args.dump and not args.file:
+        parser.error("-f/--file is required (unless using --info or --dump)")
+
     if args.port.startswith('tcp:'):
         from tcp_serial import open_tcp
         ser = open_tcp(args.port, args.tcp_mode, timeout=1.0)
@@ -785,8 +994,12 @@ Examples:
         if args.info:
             return cmd_info(ser, wait=not args.no_wait)
 
-        if not args.file:
-            parser.error("-f/--file is required (unless using --info)")
+        if args.dump:
+            try:
+                return dump_firmware(ser, args.dump, args)
+            except (OSError, RuntimeError) as exc:
+                print("[!] %s" % exc)
+                return 1
 
         with open(args.file, 'rb') as f:
             file_data = f.read()
@@ -903,37 +1116,9 @@ Examples:
 
         # online phase (device contact required)
 
-        if args.baud == 'auto':
-            print(f"\n[*] Probing device...")
-            if not args.no_wait:
-                baud, device_bid = wait_for_device(ser)
-                if baud:
-                    print()
-            else:
-                baud, device_bid = probe_baud(ser)
-            if not baud:
-                print("[!] Device not responding at any known baud rate")
-                return 1
-            print(f"[+] Device responding at {baud} baud (BID: {device_bid})")
-            ser.baudrate = baud
-        else:
-            init_baud = int(args.baud)
-            ser.baudrate = init_baud
-            print(f"\n[*] Connecting at {init_baud} baud...")
-            if not args.no_wait:
-                while True:
-                    _, resp = send_cmd(ser, "G S #BID", timeout=0.5, quiet=True)
-                    device_bid = _extract_bid(resp)
-                    if device_bid:
-                        break
-                    time.sleep(0.5)
-            else:
-                _, resp = send_cmd(ser, "G S #BID", timeout=1.0, quiet=True)
-                device_bid = _extract_bid(resp)
-            if not device_bid:
-                print(f"[!] No response at {init_baud} baud")
-                return 1
-            print(f"[+] Device responding at {init_baud} baud (BID: {device_bid})")
+        device_bid = connect_device(ser, args.baud, wait=not args.no_wait)
+        if not device_bid:
+            return 1
 
         # if we couldn't resolve layout offline (standalone block file),
         # use device BID now
@@ -996,7 +1181,7 @@ Examples:
                 return 0
 
         # cross-flash check (needs both image and device BID)
-        if is_full_image and image_bid and image_bid != device_bid and not blx_only:
+        if is_full_image and image_bid and image_bid != device_bid:
             if not args.yolo:
                 print(f"[!] Cross-flash: image BID={image_bid}, device BID={device_bid}")
                 return 1

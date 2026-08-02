@@ -36,6 +36,10 @@ S10_CODE_VERSIONS := $(call payload_versions,common_code)
 S10_STANDALONE_PAYLOADS := asv_task_wrapper backlight_adapt vid_spoof
 PAYLOAD_LAYOUT_TSVS := $(foreach v,$(PAYLOAD_LAYOUT_VERSIONS),$(BUILD)/payload_layout_$(v).tsv)
 
+# SX577-0200 BLX is relocated to SRAM and has one fixed, zero-filled code cave.
+BLX_DUMP_RUNTIME := 0x20003AE0
+BLX_DUMP_BIN := $(BUILD)/blx_dump.bin
+
 BUILD_VARIANTS = \
 	$(BUILD)/stm32-patched.bin \
 	$(BUILD)/stm32-graph.bin \
@@ -53,26 +57,43 @@ $(BUILD):
 	mkdir -p $(BUILD)
 
 # unlocked stock-ish
-$(BUILD)/stm32-patched.bin: patch-airsense $(PAYLOAD_STAMPS) $(PAYLOAD_LAYOUT_TSVS)
+$(BUILD)/stm32-patched.bin: patch-airsense $(PAYLOAD_STAMPS) $(PAYLOAD_LAYOUT_TSVS) $(BLX_DUMP_BIN)
 	./patch-airsense stm32.bin $@
 
 # graph overlay injected
-$(BUILD)/stm32-graph.bin: patch-airsense $(PAYLOAD_STAMPS) $(PAYLOAD_LAYOUT_TSVS)
+$(BUILD)/stm32-graph.bin: patch-airsense $(PAYLOAD_STAMPS) $(PAYLOAD_LAYOUT_TSVS) $(BLX_DUMP_BIN)
 	PATCH_CODE=1 ./patch-airsense stm32.bin $@
 
 # Custom ASV algorithm in VAuto slot + ASV backup-rate suppression + squarewave mode
-$(BUILD)/stm32-asv-plus.bin: patch-airsense $(PAYLOAD_STAMPS) $(PAYLOAD_LAYOUT_TSVS)
+$(BUILD)/stm32-asv-plus.bin: patch-airsense $(PAYLOAD_STAMPS) $(PAYLOAD_LAYOUT_TSVS) $(BLX_DUMP_BIN)
 	PATCH_CODE=1 PATCH_ASV_TASK_WRAPPER=1 PATCH_VAUTO_WRAPPER=1 PATCH_S=1 ./patch-airsense stm32.bin $@
 
 # Custom ASV in VAuto slot + backup-rate suppression, no squarewave
-$(BUILD)/stm32-asv-plus_no-squarewave.bin: patch-airsense $(PAYLOAD_STAMPS) $(PAYLOAD_LAYOUT_TSVS)
+$(BUILD)/stm32-asv-plus_no-squarewave.bin: patch-airsense $(PAYLOAD_STAMPS) $(PAYLOAD_LAYOUT_TSVS) $(BLX_DUMP_BIN)
 	PATCH_CODE=1 PATCH_ASV_TASK_WRAPPER=1 PATCH_VAUTO_WRAPPER=1 ./patch-airsense stm32.bin $@
 
 # Custom ASV in VAuto slot + squarewave, stock ASV backup-rate preserved
-$(BUILD)/stm32-asv-plus_with-backup.bin: patch-airsense $(PAYLOAD_STAMPS) $(PAYLOAD_LAYOUT_TSVS)
+$(BUILD)/stm32-asv-plus_with-backup.bin: patch-airsense $(PAYLOAD_STAMPS) $(PAYLOAD_LAYOUT_TSVS) $(BLX_DUMP_BIN)
 	PATCH_CODE=1 PATCH_VAUTO_WRAPPER=1 PATCH_S=1 ./patch-airsense stm32.bin $@
 
-binaries: $(PAYLOAD_STAMPS) $(PAYLOAD_LAYOUT_TSVS)
+binaries: $(PAYLOAD_STAMPS) $(PAYLOAD_LAYOUT_TSVS) $(BLX_DUMP_BIN)
+
+$(BUILD)/blx_dump.o: $(SRC)/blx_dump.c | $(BUILD)
+	$(CC) $(CFLAGS) -mno-unaligned-access -c -o $@ $<
+
+$(BUILD)/blx_dump_stubs.o: $(SRC)/blx_dump_stubs.S | $(BUILD)
+	$(AS) $(ASFLAGS) -c -o $@ $<
+
+$(BUILD)/blx_dump.elf: $(BUILD)/blx_dump.o $(BUILD)/blx_dump_stubs.o | $(BUILD)
+	$(LD) --nostdlib --no-dynamic-linker \
+		--Ttext $(BLX_DUMP_RUNTIME) --entry start --sort-section=name \
+		-o $@ $^
+
+$(BUILD)/blx_dump.bin: $(BUILD)/blx_dump.elf
+	$(OBJCOPY) -Obinary $< $@
+	@size=$$(stat -c %s $@); [ $$size -le 416 ] || { \
+		echo "$@: payload is $${size}B, BLX cave is 416B" >&2; exit 1; }
+	@printf '  %-8s %-30s [%s]\n' PAYLOAD blx_dump SX577-0200
 
 define PAYLOAD_STAMP_template
 $(BUILD)/payload_$(1).stamp: $(call payload_bins,$(1)) Makefile | $(BUILD)

@@ -1925,6 +1925,43 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             raise IOError("Unknown bootloader version: '%s'" % bid)
         print("  BLX/CCX/CDX integrity checks bypassed")
 
+    def patch_blx_dump(self):
+        """Add the SX577 bootloader command used by resmed_flash.py --dump."""
+        if not self.asf.bid.startswith('SX577-0200'):
+            print("  patch_blx_dump: skipped (unsupported bootloader version %s)" % self.asf.bid)
+            return
+
+        cave_off = 0x3de0
+        cave_size = 0x1a0
+        hook_off = 0x300e
+        # SX577 BLX copies file offset 0x300 to SRAM 0x20000000 before execution.
+        runtime = 0x20000000 + cave_off - 0x300
+        hook_runtime = 0x20000000 + hook_off - 0x300
+        repo_dir = self._payload_repo_dir()
+        bin_path = os.path.join(repo_dir, 'build', 'blx_dump.bin')
+        elf_path = os.path.join(repo_dir, 'build', 'blx_dump.elf')
+        if not os.path.exists(bin_path) or not os.path.exists(elf_path):
+            raise ValueError("patch_blx_dump: build/blx_dump artifacts not found (run make binaries)")
+        with open(bin_path, 'rb') as f:
+            data = f.read()
+        if len(data) > cave_size:
+            raise ValueError("patch_blx_dump: payload is %dB, BLX cave is %dB" %
+                             (len(data), cave_size))
+        linked = self._elf_symbol_addr(elf_path, 'start')
+        if linked != runtime:
+            raise ValueError("patch_blx_dump: payload linked at 0x%08X, expected 0x%08X" %
+                             (linked, runtime))
+        if bytes(self.asf.fw[cave_off:cave_off+cave_size]) != b'\x00' * cave_size:
+            raise ValueError("patch_blx_dump: BLX payload area is not empty")
+        if bytes(self.asf.fw[hook_off:hook_off+4]) != b'\xfd\xf7\x56\xfa':
+            raise ValueError("patch_blx_dump: unexpected dispatcher call bytes at 0x300E")
+
+        self.asf.patch(data, cave_off, clobber=True)
+        self.asf.patch(self._encode_thumb_bl_addr(hook_runtime, runtime),
+                       hook_off, clobber=True)
+        print("  bootloader dump: build/blx_dump.bin (%dB) at BLX+0x%04X" %
+              (len(data), cave_off))
+
     def bypass_psucheck(self):
         # power supply ID (adc_and_object_2826_stuff)
         if self.asf.bid.startswith('SX577-0200'):
@@ -2351,7 +2388,12 @@ class ASFirmwarePatches(CompiledPayloadMixin):
 
     def _encode_thumb_bl(self, src_off, dst_addr):
         """Encode a Thumb BL instruction from file offset to absolute address."""
-        src = src_off + 0x08000004
+        return self._encode_thumb_bl_addr(self.asf.FLASH_BASE + src_off, dst_addr)
+
+    @staticmethod
+    def _encode_thumb_bl_addr(src_addr, dst_addr):
+        """Encode a Thumb BL instruction between two runtime addresses."""
+        src = src_addr + 4
         offset = dst_addr - src
         S = 1 if offset < 0 else 0
         if offset < 0:
@@ -2540,6 +2582,7 @@ if __name__ == "__main__":
     
     patch_list_yn = [
         {'arg':"patch-bypass-start",    'desc':"Bypass checks that block start-up.",                    'default':True,  'function':'bypass_startcheck'},
+        {'arg':"patch-blx-dump",        'desc':"Add bootloader support for firmware dumps over UART.",  'default':True,  'function':'patch_blx_dump'},
         {'arg':"patch-bypass-psuid",    'desc':"Bypass Power Supply check at start-up.",                'default':True,  'function':'bypass_psucheck'},
         {'arg':"patch-unlock-uilimits", 'desc':"Unlock higher UI limits.",                              'default':True,  'function':'unlock_ui_limits'},
         {'arg':"patch-unlock-languages",'desc':"Unlock all built-in languages",                         'default':True,  'function':'unlock_languages'},
