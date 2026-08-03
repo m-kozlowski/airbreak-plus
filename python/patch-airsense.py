@@ -2019,13 +2019,14 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self.asf.patch(b'\x0e', self.asf.find_var('TSS') + self.asf.G6_DEFAULT, clobber=True)
 
     def unlock_respiratory_event_reporting(self):
-        """Enable every event type, its ANV history record, and runtime statistics."""
+        """Enable airway classification, event history, and runtime statistics."""
         event_stats = (
             # Event counters
             'AHC', 'HYC', 'AIC', 'CAC', 'OAC', 'UAC', 'RDC',
             # Per-hour indexes derived from those counters
             'AHI', 'HIS', 'AIS', 'CLI', 'OPI', 'UAI', 'RIN',
         )
+        cen = self.asf.find_var('CEN')
         aet = self.asf.find_var('AET')
         anv = self.asf.find_var('ANV')
         aet_types = self.asf.read_u8(aet + self.asf.G8_NUM_OPTIONS)
@@ -2035,6 +2036,9 @@ class ASFirmwarePatches(CompiledPayloadMixin):
                 "unlock_respiratory_event_reporting: AET/ANV event type counts "
                 "do not fit u32 masks: %d/%d" %
                 (aet_types, anv_types))
+        # CEN: FOT classification enable
+        self.asf.write_u8(cen + self.asf.G8_DEFAULT, 1)
+        self.asf.write_u32(cen + self.asf.G8_BITMASK, 3)
         self.asf.patch(struct.pack('<I', (1 << aet_types) - 1),
                        aet + self.asf.G8_BITMASK, clobber=True)
         self.asf.patch(struct.pack('<I', (1 << anv_types) - 1),

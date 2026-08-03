@@ -2200,9 +2200,10 @@ extra_debug() {
 }
 
 
-# Enable every event type, its ANV history record, and runtime statistics.
+# Enable every event type, its ANV history record, runtime statistics
+# and Forced Oscillation detection
 unlock_respiratory_event_reporting() {
-    local aet anv aet_types anv_types aet_mask anv_mask name rec flags
+    local cen aet anv aet_types anv_types aet_mask anv_mask name rec flags
     local event_stats=(
         # Event counters
         AHC HYC AIC CAC OAC UAC RDC
@@ -2210,6 +2211,7 @@ unlock_respiratory_event_reporting() {
         AHI HIS AIS CLI OPI UAI RIN
     )
 
+    cen=$(find_var CEN) || die failed
     aet=$(find_var AET) || die failed
     anv=$(find_var ANV) || die failed
     aet_types=$(read_u8 $(( aet + G8_NUM_OPTIONS ))) || die failed
@@ -2219,6 +2221,9 @@ unlock_respiratory_event_reporting() {
     aet_mask=$(( (1 << aet_types) - 1 ))
     anv_mask=$(( (1 << anv_types) - 1 ))
 
+    # CEN: FOT classification enable
+    write_u8  $(( cen + G8_DEFAULT )) 1 || die failed
+    write_u32 $(( cen + G8_BITMASK )) 3 || die failed
     write_u32 $(( aet + G8_BITMASK )) "$aet_mask" || die failed
     write_u32 $(( anv + G9_ALLOWED_TYPES )) "$anv_mask" || die failed
 
