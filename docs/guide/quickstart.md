@@ -16,6 +16,11 @@ Copy original firmware to cloned directory as `stm32.bin` and jump to [step 4 (p
 
 Requires opening the device and connecting a SWD programmer to read the flash.
 
+**Alternative: serial dump (no SWD).** If you want to keep the device closed
+and have an untouched firmware file from another AirSense 10 or AirCurve 10
+device, see [serial firmware dump](serial_dump.md). Read its bootloader recovery
+warning before choosing that method.
+
 **Hardware:**
 - Torx T10 screwdriver
 - SWD programmer: genuine ST-Link, [WeAct MiniDebugger](https://github.com/WeActStudio/MiniDebugger) (recommended clone), or similar
@@ -101,5 +106,6 @@ UART:
 | [SWD wiring](wiring.md) | Programming header connections |
 | [Serial connection](serial_connection.md) | UART accessory port |
 | [OpenOCD](openocd.md) | Firmware dump and basic interaction |
+| [Serial firmware dump](serial_dump.md) | Optional closed-case dump using a patched bootloader |
 | [Patching](patching.md) | Building, patch options, customization |
 | [Flashing](flashing.md) | SWD and UART flashing |
