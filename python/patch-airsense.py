@@ -2019,11 +2019,13 @@ class ASFirmwarePatches(CompiledPayloadMixin):
 
     def unlock_respiratory_event_reporting(self):
         """Enable airway classification, event history, and runtime statistics."""
-        event_stats = (
+        runtime_sources = (
             # Event counters
             'AHC', 'HYC', 'AIC', 'CAC', 'OAC', 'UAC', 'RDC',
             # Per-hour indexes derived from those counters
             'AHI', 'HIS', 'AIS', 'CLI', 'OPI', 'UAI', 'RIN',
+            # Flow-limitation value and related treatment-pressure source
+            'FFL', 'FLP',
         )
         cen = self.asf.find_var('CEN')
         aet = self.asf.find_var('AET')
@@ -2043,7 +2045,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self.asf.patch(struct.pack('<I', (1 << anv_types) - 1),
                        anv + self.asf.G9_ALLOWED_TYPES, clobber=True)
 
-        for name in event_stats:
+        for name in runtime_sources:
             rec = self.asf.find_var(name)
             flags = self.asf.read_u16(rec + self.asf.G4_FLAGS)
             self.asf.patch(struct.pack('<H', flags | 1),

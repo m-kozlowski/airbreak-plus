@@ -367,9 +367,9 @@ G14_NPD_SUPERSET_COUNT = 8
 
 # g[4] variable descriptor activation flags.
 G4_ACT_PATCHES = [
-    "MPA", "IPP", "MTT", "TGT", "VA9", "VAA", "VAM", "RIN", "CLI", "OPI",
+    "MPA", "IPP", "MTT", "TGT", "ATP", "VA9", "VAA", "VAM", "RIN", "CLI", "OPI",
     "UAI", "EPR", "IE9", "IEA", "IEM", "IER", "AIE", "IN5", "EX5", "INT",
-    "EXT", "ISM", "IS9", "ISA", "MIS", "VCR", "CSD", "CSZ", "CET", "ZAE",
+    "EXT", "ISM", "IS9", "ISA", "MIS", "VCR", "CSD", "CSZ", "CET", "ZAI", "ZAE",
     "ZAT", "ZA1", "ZAM", "ZAR", "ZAZ", "ZA2", "ZAY", "CRD", "CSG", "CSC",
     "CSE", "CST", "CSS", "AGT", "PSP", "CAC", "OAC", "RCR", "SBD", "TBB",
     "TBC", "TCT", "DGT", "IGT", "EGT", "QXI", "RDC", "VGT", "XGT", "ZAV",

@@ -2204,11 +2204,13 @@ extra_debug() {
 # and Forced Oscillation detection
 unlock_respiratory_event_reporting() {
     local cen aet anv aet_types anv_types aet_mask anv_mask name rec flags
-    local event_stats=(
+    local runtime_sources=(
         # Event counters
         AHC HYC AIC CAC OAC UAC RDC
         # Per-hour indexes derived from those counters
         AHI HIS AIS CLI OPI UAI RIN
+        # Flow-limitation value and related treatment-pressure source
+        FFL FLP
     )
 
     cen=$(find_var CEN) || die failed
@@ -2227,7 +2229,7 @@ unlock_respiratory_event_reporting() {
     write_u32 $(( aet + G8_BITMASK )) "$aet_mask" || die failed
     write_u32 $(( anv + G9_ALLOWED_TYPES )) "$anv_mask" || die failed
 
-    for name in "${event_stats[@]}"; do
+    for name in "${runtime_sources[@]}"; do
         rec=$(find_var "$name") || die failed
         flags=$(read_u16 $(( rec + G4_FLAGS ))) || die failed
         write_u16 $(( rec + G4_FLAGS )) "$(( flags | 1 ))" || die failed
