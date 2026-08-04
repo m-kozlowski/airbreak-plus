@@ -12,11 +12,10 @@
 # See LICENSE in main repository for distribution license and additional restrictions.
 
 import argparse
+import binascii
 import datetime
 import hashlib
 import io
-import crcmod
-import crcmod.predefined
 import os
 import subprocess
 import struct
@@ -164,7 +163,7 @@ class ASFirmware(object):
     def __init__(self, file, validate_crc=True):
         self.fw = file.read()
         self.fw = list(self.fw)
-        self.crcfunc = crc_func = crcmod.predefined.mkCrcFun('crc-ccitt-false')
+        self.crcfunc = lambda data: binascii.crc_hqx(data, 0xFFFF)
         self.var_by_name = None
         self.var_tables = None
         self.fw_lang_count = None

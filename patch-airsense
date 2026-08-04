@@ -3003,7 +3003,7 @@ patch_backlight_adapt() {
 
 patch_edf_merge() {
     echo "Patching EDF signal superset"
-    python3 ./python/edf_ccx_merge.py "$OUT" -o "$OUT" --force --ignore-input-crc || die "EDF merge failed"
+    python3 ./python/edf_ccx_merge.py "$OUT" -o "$OUT" --force --ignore-input-crc --defer-crc || die "EDF merge failed"
 }
 
 

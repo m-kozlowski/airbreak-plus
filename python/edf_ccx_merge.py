@@ -1624,6 +1624,10 @@ def main():
         "--ignore-input-crc", action="store_true",
         help="Allow input whose firmware region CRCs are already dirty"
     )
+    parser.add_argument(
+        "--defer-crc", action="store_true",
+        help="Leave firmware region CRCs dirty for the calling patcher to finalize"
+    )
     args = parser.parse_args()
 
     input_path = Path(args.input)
@@ -1642,7 +1646,8 @@ def main():
         print("DRY RUN (no output written)")
         return
 
-    asf.fix_crcs()
+    if not args.defer_crc:
+        asf.fix_crcs()
     out_path = Path(args.output) if args.output else input_path.with_suffix('.merged.bin')
     out_path.write_bytes(bytes(asf.fw))
 
