@@ -69,6 +69,7 @@ ls -la stm32.bin
 | `dump filename.bin` | Dump to a specific file |
 | `verify stm32.bin` | Compare file against flash |
 | `flash_new patched.bin` | Write a firmware image to flash |
+| `flash_blx image.bin` | Flash only the bootloader from a full image or bootloader block |
 | `reset` | Reset the device |
 | `halt` | Halt the CPU |
 | `resume` | Resume execution |
