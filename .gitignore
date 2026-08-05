@@ -11,3 +11,4 @@ python/*private*
 patches/*private*
 __pycache__
 tmp/
+make.log

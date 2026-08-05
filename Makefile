@@ -4,6 +4,12 @@
 SRC=patches
 BUILD=build
 PATCH_STUBS=$(SRC)/stubs
+MAKE_LOG ?= make.log
+
+PATCHER_OUTPUT_ARGS := --log-file $(abspath $(MAKE_LOG))
+ifeq ($(V),1)
+PATCHER_OUTPUT_ARGS += --verbose
+endif
 
 # Use all cores unless the caller selected -j, and keep output lines intact.
 JOBS ?= $(shell nproc)
@@ -39,6 +45,7 @@ PAYLOAD_LAYOUT_TSVS := $(foreach v,$(PAYLOAD_LAYOUT_VERSIONS),$(BUILD)/payload_l
 # SX577-0200 BLX is relocated to SRAM and has one fixed, zero-filled code cave.
 BLX_DUMP_RUNTIME := 0x20003AE0
 BLX_DUMP_BIN := $(BUILD)/blx_dump.bin
+PAYLOAD_TARGETS := $(PAYLOAD_STAMPS) $(PAYLOAD_LAYOUT_TSVS) $(BLX_DUMP_BIN)
 
 BUILD_VARIANTS = \
 	$(BUILD)/stm32-patched.bin \
@@ -47,36 +54,68 @@ BUILD_VARIANTS = \
 	$(BUILD)/stm32-asv-plus_no-squarewave.bin \
 	$(BUILD)/stm32-asv-plus_with-backup.bin
 
+# Rebuild firmware when the patcher or its helpers change
+S10_PATCHER_DEPS := \
+	patch-airsense \
+	python/patch-airsense.py \
+	python/edf_ccx_merge.py \
+	python/lib/compiled_payload.py
+
 # Payloads build in parallel; firmware patchers run serially for streaming output.
-all: binaries
+.PHONY: all binaries
+all:
+	@: > '$(MAKE_LOG)'
+	@if $(MAKE) --no-print-directory -q $(PAYLOAD_TARGETS); then \
+		:; \
+	else \
+		status=$$?; \
+		[ "$$status" -eq 1 ] || exit "$$status"; \
+		printf 'Building payloads\n'; \
+		$(MAKE) --no-print-directory binaries; \
+	fi
 	set -e; for image in $(BUILD_VARIANTS); do \
 		$(MAKE) --no-print-directory "$$image"; \
 	done
+	@{ \
+		printf '\nFirmware images:\n'; \
+		for image in $(BUILD_VARIANTS); do printf '  %s\n' "$$image"; done; \
+	} | tee -a '$(MAKE_LOG)'
+
+define announce_image
+	@if [ '$(MAKELEVEL)' -eq 0 ]; then : > '$(MAKE_LOG)'; fi; \
+	printf '\nBuilding image: %s\n' '$@'; \
+	printf '\nBuilding image: %s\n' '$@' >> '$(MAKE_LOG)'
+endef
 
 $(BUILD):
 	mkdir -p $(BUILD)
 
 # unlocked stock-ish
-$(BUILD)/stm32-patched.bin: patch-airsense $(PAYLOAD_STAMPS) $(PAYLOAD_LAYOUT_TSVS) $(BLX_DUMP_BIN)
-	./patch-airsense stm32.bin $@
+$(BUILD)/stm32-patched.bin: $(S10_PATCHER_DEPS) $(PAYLOAD_STAMPS) $(PAYLOAD_LAYOUT_TSVS) $(BLX_DUMP_BIN)
+	$(announce_image)
+	./patch-airsense stm32.bin $@ $(PATCHER_OUTPUT_ARGS)
 
 # graph overlay injected
-$(BUILD)/stm32-graph.bin: patch-airsense $(PAYLOAD_STAMPS) $(PAYLOAD_LAYOUT_TSVS) $(BLX_DUMP_BIN)
-	PATCH_CODE=1 ./patch-airsense stm32.bin $@
+$(BUILD)/stm32-graph.bin: $(S10_PATCHER_DEPS) $(PAYLOAD_STAMPS) $(PAYLOAD_LAYOUT_TSVS) $(BLX_DUMP_BIN)
+	$(announce_image)
+	PATCH_CODE=1 ./patch-airsense stm32.bin $@ $(PATCHER_OUTPUT_ARGS)
 
 # Custom ASV algorithm in VAuto slot + ASV backup-rate suppression + squarewave mode
-$(BUILD)/stm32-asv-plus.bin: patch-airsense $(PAYLOAD_STAMPS) $(PAYLOAD_LAYOUT_TSVS) $(BLX_DUMP_BIN)
-	PATCH_CODE=1 PATCH_ASV_TASK_WRAPPER=1 PATCH_VAUTO_WRAPPER=1 PATCH_S=1 ./patch-airsense stm32.bin $@
+$(BUILD)/stm32-asv-plus.bin: $(S10_PATCHER_DEPS) $(PAYLOAD_STAMPS) $(PAYLOAD_LAYOUT_TSVS) $(BLX_DUMP_BIN)
+	$(announce_image)
+	PATCH_CODE=1 PATCH_ASV_TASK_WRAPPER=1 PATCH_VAUTO_WRAPPER=1 PATCH_S=1 ./patch-airsense stm32.bin $@ $(PATCHER_OUTPUT_ARGS)
 
 # Custom ASV in VAuto slot + backup-rate suppression, no squarewave
-$(BUILD)/stm32-asv-plus_no-squarewave.bin: patch-airsense $(PAYLOAD_STAMPS) $(PAYLOAD_LAYOUT_TSVS) $(BLX_DUMP_BIN)
-	PATCH_CODE=1 PATCH_ASV_TASK_WRAPPER=1 PATCH_VAUTO_WRAPPER=1 ./patch-airsense stm32.bin $@
+$(BUILD)/stm32-asv-plus_no-squarewave.bin: $(S10_PATCHER_DEPS) $(PAYLOAD_STAMPS) $(PAYLOAD_LAYOUT_TSVS) $(BLX_DUMP_BIN)
+	$(announce_image)
+	PATCH_CODE=1 PATCH_ASV_TASK_WRAPPER=1 PATCH_VAUTO_WRAPPER=1 ./patch-airsense stm32.bin $@ $(PATCHER_OUTPUT_ARGS)
 
 # Custom ASV in VAuto slot + squarewave, stock ASV backup-rate preserved
-$(BUILD)/stm32-asv-plus_with-backup.bin: patch-airsense $(PAYLOAD_STAMPS) $(PAYLOAD_LAYOUT_TSVS) $(BLX_DUMP_BIN)
-	PATCH_CODE=1 PATCH_VAUTO_WRAPPER=1 PATCH_S=1 ./patch-airsense stm32.bin $@
+$(BUILD)/stm32-asv-plus_with-backup.bin: $(S10_PATCHER_DEPS) $(PAYLOAD_STAMPS) $(PAYLOAD_LAYOUT_TSVS) $(BLX_DUMP_BIN)
+	$(announce_image)
+	PATCH_CODE=1 PATCH_VAUTO_WRAPPER=1 PATCH_S=1 ./patch-airsense stm32.bin $@ $(PATCHER_OUTPUT_ARGS)
 
-binaries: $(PAYLOAD_STAMPS) $(PAYLOAD_LAYOUT_TSVS) $(BLX_DUMP_BIN)
+binaries: $(PAYLOAD_TARGETS)
 
 $(BUILD)/blx_dump.o: $(SRC)/blx_dump.c | $(BUILD)
 	$(CC) $(CFLAGS) -mno-unaligned-access -c -o $@ $<

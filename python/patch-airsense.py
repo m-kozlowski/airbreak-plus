@@ -13,6 +13,8 @@
 
 import argparse
 import binascii
+from contextlib import redirect_stdout
+from dataclasses import dataclass
 import datetime
 import hashlib
 import io
@@ -182,6 +184,9 @@ class ASFirmware(object):
     def read_u32(self, off):
         return struct.unpack_from('<I', bytes(self.fw[off:off+4]))[0]
 
+    def read_bytes(self, off, size):
+        return bytes(self.fw[off:off+size])
+
     def write_u8(self, off, val):
         self.fw[off] = val & 0xFF
 
@@ -230,7 +235,7 @@ class ASFirmware(object):
 
         target = name.encode('ascii') + b'\x00'
         for off in range(base, end - 0x0f, 0x10):
-            raw_name = bytes(self.fw[off:off + 4])
+            raw_name = self.read_bytes(off, 4)
             if not re.match(br'^[A-Z0-9]{3}\x00$', raw_name):
                 break
             if raw_name == target:
@@ -239,13 +244,16 @@ class ASFirmware(object):
 
     def find_var_id(self, var_id):
         """Return descriptor file offset for numeric var_id."""
+        _, tbl = self._var_table_for_id(var_id)
+        return tbl['base'] + (var_id - tbl['id_base']) * tbl['stride']
+
+    def _var_table_for_id(self, var_id):
+        """Return the globals[] table number and metadata containing var_id."""
         self._load_var_tables()
-        for tbl in self.var_tables.values():
-            id_base = tbl['id_base']
-            count = tbl['count']
-            if id_base <= var_id < id_base + count:
-                return tbl['base'] + (var_id - id_base) * tbl['stride']
-        raise ValueError("find_var_id: var_id 0x%04X not in derived descriptor tables" % var_id)
+        for table_num, tbl in self.var_tables.items():
+            if tbl['id_base'] <= var_id < tbl['id_base'] + tbl['count']:
+                return table_num, tbl
+        raise ValueError("var_id 0x%04X not in derived descriptor tables" % var_id)
 
     def _flash_ptr_offset(self, ptr):
         off = ptr - self.FLASH_BASE
@@ -254,6 +262,7 @@ class ASFirmware(object):
         return off
 
     def _next_global_offset_after(self, base):
+        """Return the next higher globals[] target used as a table boundary."""
         candidates = []
         for idx in range(30):
             ptr = self.read_u32(self.globals_addr + idx * 4)
@@ -263,6 +272,7 @@ class ASFirmware(object):
         return min(candidates) if candidates else None
 
     def _table_count(self, table_num, base, stride):
+        """Derive a descriptor count from its globals[] boundary and stride."""
         end = self._next_global_offset_after(base)
         if end is None:
             raise ValueError("cannot infer globals[%d] count" % table_num)
@@ -286,6 +296,7 @@ class ASFirmware(object):
         return all(start + i in ids for i in range(count))
 
     def _infer_id_base(self, table_num, count, expected_base):
+        """Match one descriptor table to its var_id range in globals[23]."""
         ids = set(self.var_ids_by_name().values())
         if expected_base is not None:
             if self._has_id_range(ids, expected_base, count):
@@ -302,6 +313,7 @@ class ASFirmware(object):
         raise ValueError("cannot infer globals[%d] var_id base from globals[23]" % table_num)
 
     def _load_var_tables(self):
+        """Load descriptor addresses, counts, strides, and derived var_id bases."""
         if self.var_tables is not None:
             return
 
@@ -325,6 +337,7 @@ class ASFirmware(object):
             expected_base = id_base + count
 
     def _load_uart_names(self):
+        """Build the UART name to var_id map from globals[23]."""
         if self.var_by_name is not None:
             return
 
@@ -384,31 +397,17 @@ class ASFirmware(object):
 
     def find_var_table_index(self, table_num, var):
         """Return descriptor index for var within one globals[] table."""
-        self._load_var_tables()
-        tbl = self.var_tables.get(table_num)
-        if tbl is None:
-            raise ValueError("globals[%d] descriptor table not found" % table_num)
-
-        rec = self.find_var(var)
-        rel = rec - tbl['base']
-        if rel < 0 or rel % tbl['stride']:
+        vid = self.resolve_var_id(var)
+        actual_table, tbl = self._var_table_for_id(vid)
+        if actual_table != table_num:
             raise ValueError("%s is not in globals[%d]" % (var, table_num))
-
-        idx = rel // tbl['stride']
-        if idx >= tbl['count']:
-            raise ValueError("%s is not in globals[%d]" % (var, table_num))
-        return idx
+        return vid - tbl['id_base']
 
     def find_var_table_number(self, var):
         """Return globals[] descriptor table number for a UART name or var_id."""
         vid = self.resolve_var_id(var)
-        self._load_var_tables()
-        for table_num, tbl in self.var_tables.items():
-            id_base = tbl['id_base']
-            count = tbl['count']
-            if id_base <= vid < id_base + count:
-                return table_num
-        raise ValueError("find_var_table_number: var_id 0x%04X not in derived descriptor tables" % vid)
+        table_num, _ = self._var_table_for_id(vid)
+        return table_num
 
     def infer_g2_language_count(self):
         """Return the number of locale slots compiled into globals[2]."""
@@ -477,6 +476,26 @@ class ASFirmware(object):
             raise ValueError("invalid raw string table")
         return raw
 
+    def firmware_string(self, str_id, lang_slot=0):
+        """Return one localized globals[2] string."""
+        g2 = self.globals_offset(2)
+        locale_ptr = self.read_u32(g2 + str_id * 8 + 4)
+        locale_arr = self._flash_ptr_offset(locale_ptr)
+        if locale_arr is None:
+            raise ValueError("invalid locale array for str_id 0x%04X" % str_id)
+
+        raw = self._raw_string_table_offset()
+        raw_idx = self.read_u16(locale_arr + lang_slot * 2)
+        string_ptr = self.read_u32(raw + raw_idx * 4)
+        string_off = self._flash_ptr_offset(string_ptr)
+        if string_off is None:
+            raise ValueError("invalid raw string pointer for str_id 0x%04X" % str_id)
+
+        length = self.c_string_len(string_off)
+        if length is None:
+            raise ValueError("unterminated firmware string for str_id 0x%04X" % str_id)
+        return self.read_bytes(string_off, length - 1).decode('utf-8', errors='replace')
+
     def _raw_string_target_counts(self, raw):
         """Count locale entries that point at each raw string."""
         g2 = self.globals_offset(2)
@@ -501,7 +520,14 @@ class ASFirmware(object):
         return counts
 
     def redefine_fw_string(self, str_id, strings):
-        """Rewrite one firmware string for all locales compiled into the image."""
+        """Rewrite one g[2] string for every locale compiled into the image.
+
+        Each locale slot ultimately points through the raw string table. Missing
+        translations reuse the English pointer. Existing storage is overwritten
+        only when it is uniquely referenced and large enough; otherwise new bytes
+        are allocated from an erased range at the end of CCX and the pointer is
+        updated.
+        """
         self.load_firmware_string_metadata()
         if 0 not in strings:
             raise ValueError("redefine_fw_string: missing English string at language id 0")
@@ -560,7 +586,7 @@ class ASFirmware(object):
         self.hash = hashlib.sha256(bytes(self.fw)).hexdigest()
 
         # Detect platform from bootloader ID string
-        self.bid = bytes(self.fw[self.BID_OFFSET:self.BID_OFFSET + 16]).split(b'\x00')[0].decode()
+        self.bid = self.read_bytes(self.BID_OFFSET, 16).split(b'\x00')[0].decode()
         platform_key = None
         for key in self.PLATFORMS:
             if self.bid.startswith(key):
@@ -579,30 +605,33 @@ class ASFirmware(object):
         self.globals_addr = self.ccx_off + self.GLOBALS_REL
 
         if validate_crc:
-            blocks = [
-                ('BLX', self.blx_off, self.blx_size),
-                ('CCX', self.ccx_off, self.ccx_size),
-                ('CDX', self.cdx_off, self.cdx_size),
-            ]
-            for name, off, size in blocks:
-                crc = self.crcfunc(bytes(self.fw[off:off + size]))
+            for name, off, size in self.firmware_blocks():
+                crc = self.crcfunc(self.read_bytes(off, size))
                 if crc != 0:
                     print("%s CRC: 0x%04x (expected 0)" % (name, crc))
                     raise IOError("CRC mismatch in %s block" % name)
 
         # Read version strings
-        self.str_model_number = bytes(self.fw[self.ccx_off + 0x20:self.ccx_off + 0x27]).decode()
-        self.str_model_name = bytes(self.fw[self.ccx_off + 0x30:self.ccx_off + 0x4F]).decode()
-        self.cdx_sid = bytes(self.fw[self.cdx_off:self.cdx_off + 0x20]).split(b'\x00', 1)[0].decode()
+        self.pcd = self.read_bytes(self.ccx_off + 0x20, 7).split(b'\x00', 1)[0].decode()
+        self.pna = self.read_bytes(self.ccx_off + 0x30, 0x1f).split(b'\x00', 1)[0].decode()
+        self.cdx_sid = self.read_bytes(self.cdx_off, 0x20).split(b'\x00', 1)[0].decode()
         self.cdx_ver = self.cdx_sid[:10]
         if not re.match(r'^SX[0-9]{3}-[0-9]{4}$', self.cdx_ver):
             raise IOError("Unknown CDX software ID: '%s'" % self.cdx_sid)
         
-        print("Firmware Info: ")
-        print("  Loader Version   " + self.bid)
-        print("  Catalog No.      " + self.str_model_number)
-        print("  Model Name       " + self.str_model_name)
-        print("  Main SW Version  " + self.cdx_sid)
+        print("Firmware Info:")
+        print("  BID  " + self.bid)
+        print("  SID  " + self.cdx_sid)
+        print("  PCD  " + self.pcd)
+        print("  PNA  " + self.pna)
+
+    def firmware_blocks(self):
+        """Return the named firmware regions covered by block CRCs."""
+        return (
+            ('BLX', self.blx_off, self.blx_size),
+            ('CCX', self.ccx_off, self.ccx_size),
+            ('CDX', self.cdx_off, self.cdx_size),
+        )
 
     def patch_firmware_sid(self, build):
         """Append the build identity to the stock CDX software ID."""
@@ -614,8 +643,7 @@ class ASFirmware(object):
         if len(sid) not in (14, 15):
             raise ValueError("firmware SID: '%s' does not fit the 15-character limit" % sid)
         sid_bytes = sid.encode('ascii')
-        self.fw[self.cdx_off:self.cdx_off + 16] = list(
-            sid_bytes + b'\x00' * (16 - len(sid_bytes)))
+        self.fw[self.cdx_off:self.cdx_off + 16] = list(sid_bytes + b'\x00' * (16 - len(sid_bytes)))
         self.cdx_sid = sid
         source = build['state']
         if build['commit']:
@@ -624,22 +652,18 @@ class ASFirmware(object):
         
     def fix_crcs(self):
         """Update CRCs in the file"""
-        blocks = [
-            (self.blx_off, self.blx_size),
-            (self.ccx_off, self.ccx_size),
-            (self.cdx_off, self.cdx_size),
-        ]
-        for off, size in blocks:
+        for _, off, size in self.firmware_blocks():
             crc_off = off + size - 2
-            new_crc = self.crcfunc(bytes(self.fw[off:crc_off]))
+            new_crc = self.crcfunc(self.read_bytes(off, crc_off - off))
             self.write_u8(crc_off, new_crc >> 8)
             self.write_u8(crc_off + 1, new_crc)
         
     def find_bytes(self, dataseq):
         """Find location of byte sequence in FW"""
-        
-        i1 = bytes(self.fw).find(bytes(dataseq))
-        i2 = bytes(self.fw).rfind(bytes(dataseq))
+        fw = bytes(self.fw)
+        dataseq = bytes(dataseq)
+        i1 = fw.find(dataseq)
+        i2 = fw.rfind(dataseq)
         
         if i1 != i2:
             raise ValueError("Passed sequence is not unique! Found at 0x%x and 0x%x"%(i1, i2))
@@ -649,7 +673,8 @@ class ASFirmware(object):
 
         return i1
 
-    def patch(self, patchdata, addr=None, dataseq=None, hash=None, verbose=None, checkreserved=True, checkempty=False, clobber=False):
+    def patch(self, patchdata, addr=None, dataseq=None, verbose=None,
+              checkreserved=True, checkempty=False, clobber=False):
         """Updates firmware data with patchdata, based on address, sequence, or hash of sequence"""
 
         #I love Python3(TM)
@@ -658,20 +683,19 @@ class ASFirmware(object):
         patchlen = len(patchdata)
 
         #Use simple method - fixed address patch
-        if addr:
+        if addr is not None:
             pass
 
-        elif dataseq:
+        elif dataseq is not None:
             addr = self.find_bytes(dataseq)
-
-        elif hash:
-            raise NotImplementedError("Not yet done")
 
         else:
             raise ValueError("Need to specify one of the patch methods")
 
-        if verbose or (verbose is None and getattr(self, 'verbose', False)):
-            print("Patching %d bytes at 0x%x"%(patchlen, addr))
+        if verbose:
+            data_hex = ' '.join('%02X' % byte for byte in patchdata)
+            print("Patching %d bytes at 0x%08X: %s" %
+                  (patchlen, self.FLASH_BASE + addr, data_hex))
 
         #Reservered uses self.reserve_marker to indicate our usage (more obvious when inspecting...)
         if checkempty:
@@ -682,11 +706,11 @@ class ASFirmware(object):
             checkempty = False
         
         if checkreserved:
-            if self.fw[addr:(addr+patchlen)] != self.reserve_marker*len(patchdata):
+            if self.read_bytes(addr, patchlen) != bytes([self.reserve_marker]) * patchlen:
                 raise ValueError("Appears data in section you want me to patch! Bailing out...")
 
         if checkempty:
-            if self.fw[addr:(addr+patchlen)] != [0xFF]*len(patchdata):
+            if self.read_bytes(addr, patchlen) != b'\xFF' * patchlen:
                 #print(self.fw[addr:(addr+patchlen)])
                 raise ValueError("Appears data in section you want me to patch! Bailing out...")
 
@@ -714,7 +738,6 @@ class ASFirmware(object):
                 candidate += 1
             
             if self.fw[candidate:(candidate+length_needed)] != [0xFF]*length_needed:
-                print("Oops... try again")
                 start = candidate
             else:
                 address = candidate
@@ -723,68 +746,45 @@ class ASFirmware(object):
         if address < 0:
            raise ValueError("Failed to find space?")
         
-        print("Found space at " + str(hex(address)))
-        
         if reserve:
-            print("Reserving %d bytes"%length_needed)
             self.fw[candidate:(candidate+length_needed)] = [self.reserve_marker] * length_needed
         
         return address
         
     def patch_image(self, structaddr, palletaddr, pixeladdr, image):
-        #X size
-        self.fw[(structaddr + 0):(structaddr + 2)] = list(struct.pack('H', image.meta_xsize))
+        self.write_u16(structaddr, image.meta_xsize)
+        self.write_u16(structaddr + 2, image.meta_ysize)
+        self.write_u16(structaddr + 4, image.meta_bytesper)
 
-        #Y size
-        self.fw[(structaddr + 2):(structaddr + 4)] = list(struct.pack('H', image.meta_ysize))
-
-        #'BytesPerLine' size
-        self.fw[(structaddr + 4):(structaddr + 6)] = list(struct.pack('H', image.meta_bytesper))
-
-        
         # We leave bitsperpixel alone - should be '0'
-        #self.fw[structaddr + 6]
-        #self.fw[structaddr + 7]
-        
-        #Pointer to pixels
-        self.fw[(structaddr + 8):(structaddr + 12)] = list(struct.pack('I', pixeladdr + 0x08000000))
-        
-        #Pointer to pallete
-        self.fw[(structaddr + 12):(structaddr + 16)] = list(struct.pack('I', palletaddr + 0x08000000))
-        
+        self.write_u32(structaddr + 8, pixeladdr + self.FLASH_BASE)
+        self.write_u32(structaddr + 12, palletaddr + self.FLASH_BASE)
+
         #Pointer to function for drawing/decoding (not changed)
         #self.fw[(structaddr + 16):(structaddr + 24)]
-        
-        #Copy pixel data over as well
-        self.patch(image.pixels, pixeladdr)
-        
-        #Pallete needs a little support struct to feel better
-        self.fw[(palletaddr + 0):(palletaddr + 4)] = list(struct.pack('I', image.pallete_numberentries))
-        self.fw[(palletaddr + 4):(palletaddr + 8)] = list(struct.pack('I', image.pallete_numbertransp))
-        self.fw[(palletaddr + 8):(palletaddr + 12)] = list(struct.pack('I', palletaddr + 16 + 0x08000000))
 
-        #Copy pallete over where we expect it
-        for i in range(0, len(image.pallete)):
-            self.fw[(palletaddr + 16 + (i*4)):(palletaddr + 16 + (i*4 + 4))] = list(struct.pack('I', image.pallete[i]))
+        self.patch(image.pixels, pixeladdr)
+
+        self.write_u32(palletaddr, image.pallete_numberentries)
+        self.write_u32(palletaddr + 4, image.pallete_numbertransp)
+        self.write_u32(palletaddr + 8, palletaddr + 16 + self.FLASH_BASE)
+        for i, color in enumerate(image.pallete):
+            self.write_u32(palletaddr + 16 + i * 4, color)
 
     def write_output(self, filename, overwrite=False):
-        if os.path.exists(filename) and (overwrite == False):
-            raise IOError("File " + filename + "exists already.")
+        if os.path.exists(filename) and not overwrite:
+            raise IOError("File %s exists already." % filename)
     
-        f = open(filename, "wb")
-        f.write(bytes(self.fw))
-        f.close()
+        with open(filename, "wb") as f:
+            f.write(bytes(self.fw))
         
     def prepare_bin(self, filename):
         """Uses .lst file to find symbols - could use ELF too put requires additional dependancy"""
         
-        f = open(filename + ".lst", "rb")
-        lst = f.read()
-        f.close()
-        
-        f = open(filename + ".bin", "rb")
-        bin = f.read()
-        f.close()
+        with open(filename + ".lst", "rb") as f:
+            lst = f.read()
+        with open(filename + ".bin", "rb") as f:
+            data = f.read()
         
         #Find 'start' symbol we assume each file uses
         addr_offset = re.search(rb'\.text:[0-F]{8} start', lst, re.IGNORECASE).group(0)
@@ -793,11 +793,12 @@ class ASFirmware(object):
         addr_offset = addr_offset.split(b':')[1].split(b' ')[0]
         addr_offset = int(addr_offset, 16)
         
-        return addr_offset, bin
+        return addr_offset, data
 
 class ASFirmwarePatches(CompiledPayloadMixin):
     """This class contains the actual patching scripts for specific items"""
 
+    PAYLOAD_VERSIONS = frozenset(('0302', '0305', '0306', '0401', '0402'))
     MOP_CALLBACK_TABLES = {
         'SX567-0302': 0x757e0,
         'SX567-0305': 0x75f4c,
@@ -834,43 +835,97 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         
     def __init__(self, asf):
         self.asf = asf
-        self.graph_applied = False
-        self.squarewave_applied = False
-        self.asv_task_wrapper_applied = False
-        self.wrapper_limit_max_pdiff_applied = False
-        self.backlight_adapt_applied = False
-        self.mop_callback_handlers = []
-        self.mop_callback_handler_seen = set()
+        self.applied_payloads = set()
+        self.mop_callback_handlers = {}
         self._init_compiled_payloads()
         self.custom_patch_settings_init()
 
     def _payload_version_key(self):
-        return self.asf.cdx_ver.replace('SX567-', '')
+        return self.asf.cdx_ver.rsplit('-', 1)[-1]
 
     def _payload_flash_range(self):
         return self.asf.FLASH_BASE, self.asf.FLASH_BASE + len(self.asf.fw)
 
+    def _supports_compiled_payloads(self):
+        return self.asf.cdx_ver.startswith('SX567-') and self._payload_version_key() in self.PAYLOAD_VERSIONS
+
+    def _enum_option_labels(self, var):
+        rec = self.asf.find_var(var)
+        count = self.asf.read_u8(rec + self.asf.G8_NUM_OPTIONS)
+        base_str = self.asf.read_u16(rec + self.asf.G8_BASE_STR)
+        return [self.asf.firmware_string(base_str + idx) for idx in range(count)]
+
+    @staticmethod
+    def _payload_detail(name, size, address):
+        return "Injected payload: %s: %dB at 0x%08X" % (name, size, address)
+
+    @staticmethod
+    def _hook_detail(kind, site, target):
+        return "Installed hook: %s at 0x%08X -> 0x%08X" % (kind, site, target)
+
+    @staticmethod
+    def _mop_handler_detail(name, handler):
+        return "Registered MOP callback handler: %s at 0x%08X" % (name, handler)
+
+    def _write_payload_u16(self, payload, symbol, value):
+        """Write one u16 ABI value at a named symbol in a built payload."""
+        if payload not in self.applied_payloads:
+            raise ValueError("payload %s was not applied" % payload)
+        elf_path = self._require_versioned_artifact(payload, 'elf')
+        address = self._elf_symbol_addr(elf_path, symbol)
+        self.asf.write_u16(address - self.asf.FLASH_BASE, value)
+        return address
+
+    def _inject_function_pointer_payload(self, name, pointer_off, hook_name,
+                                         original_symbol=None):
+        """Inject a payload and redirect one stock function-table pointer."""
+        data, _, elf_path = self._load_versioned_payload(name)
+        start = self._elf_symbol_addr(elf_path, 'start')
+        target = start | 1
+
+        original_slot = None
+        original = None
+        if original_symbol is not None:
+            original_slot = self._elf_symbol_addr(elf_path, original_symbol)
+            original = self.asf.read_u32(pointer_off)
+            if original == target:
+                original = self.asf.read_u32(original_slot - self.asf.FLASH_BASE)
+
+        flash, _ = self._inject_payload(name, data)
+        if original_slot is not None:
+            self.asf.write_u32(original_slot - self.asf.FLASH_BASE, original)
+        self.asf.write_u32(pointer_off, target)
+        self.applied_payloads.add(name)
+        return (
+            self._payload_detail(name, len(data), flash),
+            self._hook_detail(hook_name, self.asf.FLASH_BASE + pointer_off, target),
+        )
+
     def custom_patch_settings_init(self):
         """Reset generated custom-settings state."""
-        self.custom_g8_pool = []
-        self.custom_g4_pool = []
+        # Reclaimers populate separate pools for g[4], g[8], and string IDs.
+        # Feature functions later claim named variables and consume strings while
+        # building one shared storage/member list and menu registry.
         self.custom_g8_reclaimed = {}
         self.custom_g4_reclaimed = {}
         self.custom_g8_claims = {}
         self.custom_g4_claims = {}
         self.custom_string_pool = []
-        self.custom_reclaimed_string_candidates = []
-        self.custom_reclaimed_string_seen = set()
+        self.custom_reclaimed_string_candidates = {}
         self.custom_menu_entries = []
         self.custom_menu_registered = set()
         self.custom_menu_pages = {}
         self.custom_menu_page_count = 0
         self.custom_menu_clinical_page_id = None
         self.custom_menu_back_str_id = None
-        self.custom_storage_members = []
-        self.custom_storage_member_seen = set()
+        self.custom_storage_members = {}
         self.custom_settings_registry_addr = None
         self.custom_settings_registry_size = None
+        self.custom_settings_details = []
+
+    def _custom_detail(self, text):
+        """Record one verbose detail for the custom-settings patch outcome."""
+        self.custom_settings_details.append(text)
 
     def custom_patch_settings_rename_storage_group(self):
         """Move reclaimed Reminder variables to an independent settings file."""
@@ -883,13 +938,13 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             raise ValueError("custom_patch_settings: both %s and %s variable groups exist" %
                              (old_name, new_name))
         if new_rec is not None:
-            print("  custom settings storage group already named %s" % new_name)
+            self._custom_detail("custom settings storage group already named %s" % new_name)
             return
         if old_rec is None:
             raise ValueError("custom_patch_settings: variable group %s not found" % old_name)
 
         self.asf.patch(new_name.encode('ascii') + b'\x00', old_rec, clobber=True)
-        print("  custom settings storage group: %s -> %s" % (old_name, new_name))
+        self._custom_detail("custom settings storage group: %s -> %s" % (old_name, new_name))
 
     def _custom_settings_reserve_tail(self, size, alignment):
         """Reserve aligned bytes from the end of the reclaimed registry range."""
@@ -905,12 +960,9 @@ class ASFirmwarePatches(CompiledPayloadMixin):
     def custom_storage_add(self, var):
         """Queue an existing firmware variable for addition to CSG."""
         vid = self.asf.resolve_var_id(var)
-        if vid in self.custom_storage_member_seen:
-            raise ValueError(
-                "custom_storage_add: duplicate variable %s (var_id 0x%04X)" %
-                (var, vid))
-        self.custom_storage_member_seen.add(vid)
-        self.custom_storage_members.append(var)
+        if vid in self.custom_storage_members:
+            raise ValueError("custom_storage_add: duplicate variable %s (var_id 0x%04X)" % (var, vid))
+        self.custom_storage_members[vid] = var
 
     def custom_emit_storage_members(self):
         """Rebuild CSG's member array and append queued variables."""
@@ -936,8 +988,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             seen.add(vid)
             self.asf.write_u16(new_off + i * 2, vid)
         write_index = old_count
-        for var in self.custom_storage_members:
-            vid = self.asf.resolve_var_id(var)
+        for vid, var in self.custom_storage_members.items():
             if vid in seen:
                 raise ValueError("custom_patch_settings: %s already belongs to CSG" % var)
             seen.add(vid)
@@ -946,16 +997,14 @@ class ASFirmwarePatches(CompiledPayloadMixin):
 
         self.asf.write_u32(rec + 8, self.asf.FLASH_BASE + new_off)
         self.asf.write_u32(rec + 0x0c, new_count)
-        print("  CSG members: %d -> %d, table at 0x%08X" %
-              (old_count, new_count, self.asf.FLASH_BASE + new_off))
+        self._custom_detail("CSG members: %d -> %d, table at 0x%08X" %
+                            (old_count, new_count, self.asf.FLASH_BASE + new_off))
 
     def _custom_note_reclaimed_string_id(self, str_id):
         self.asf.load_firmware_string_metadata()
         if str_id == self.asf.str_id_empty:
             return
-        if str_id not in self.custom_reclaimed_string_seen:
-            self.custom_reclaimed_string_seen.add(str_id)
-            self.custom_reclaimed_string_candidates.append(str_id)
+        self.custom_reclaimed_string_candidates.setdefault(str_id, None)
 
     def _referenced_reclaimed_string_ids(self):
         candidates = set(self.custom_reclaimed_string_candidates)
@@ -992,10 +1041,12 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         return referenced
 
     def custom_build_string_pool(self):
-        """Build reusable string pool from reclaimed, now-unreferenced strings."""
+        """Build a pool from reclaimed strings with no remaining references."""
         if not self.custom_reclaimed_string_candidates:
             raise ValueError("custom_patch_settings: no reclaimed string IDs available")
 
+        # Candidates come from descriptors and menu code removed by the reclaim
+        # pass. Keep only IDs no surviving descriptor or g[5] entry still names.
         referenced = self._referenced_reclaimed_string_ids()
         self.custom_string_pool = [
             str_id for str_id in self.custom_reclaimed_string_candidates
@@ -1017,73 +1068,71 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self.asf.redefine_fw_string(str_id, strings)
         return str_id
 
-    def custom_reclaim_g8_var(self, name):
-        """Scrub a g[8] enum descriptor and add it to the reclaimed pool."""
+    def _custom_reclaim_var(self, name, table_num, callback_off,
+                            string_offsets, reclaimed):
+        """Scrub common descriptor fields and register one reclaimed variable."""
         vid = self.asf.resolve_var_id(name)
-        if vid in self.custom_g8_reclaimed:
-            raise ValueError("custom_reclaim_g8_var: duplicate reclaim of %s (var_id 0x%04X)" % (name, vid))
+        if vid in reclaimed:
+            raise ValueError("custom_reclaim_g%d_var: duplicate reclaim of %s (var_id 0x%04X)" %
+                             (table_num, name, vid))
+        if self.asf.find_var_table_number(vid) != table_num:
+            raise ValueError("custom_reclaim_g%d_var: %s (var_id 0x%04X) is not in g[%d]" %
+                             (table_num, name, vid, table_num))
 
         self.asf.load_firmware_string_metadata()
         rec = self.asf.find_var(vid)
-        name_str = self.asf.read_u16(rec + self.asf.G8_NAME_STR)
-        base_str = self.asf.read_u16(rec + self.asf.G8_BASE_STR)
-        # Drop stock post-change behavior. Reminder callback 19 toggles the
-        # runtime state of the paired recurrence/date g[4] variables.
-        self.asf.write_u8(rec + self.asf.G8_CALLBACK, 0)
-        self.asf.write_u16(rec + self.asf.G8_NAME_STR, self.asf.str_id_empty)
-        self.asf.write_u16(rec + self.asf.G8_BASE_STR, self.asf.str_id_empty)
-        self._custom_note_reclaimed_string_id(name_str)
-        self._custom_note_reclaimed_string_id(base_str)
+        reclaimed_strings = [
+            self.asf.read_u16(rec + off) for off in string_offsets
+        ]
+        self.asf.write_u8(rec + callback_off, 0)
+        for off in string_offsets:
+            self.asf.write_u16(rec + off, self.asf.str_id_empty)
+        for str_id in reclaimed_strings:
+            self._custom_note_reclaimed_string_id(str_id)
 
         claim_name = name.upper() if isinstance(name, str) and not name.lower().startswith('0x') else "0x%04X" % vid
-        self.custom_g8_reclaimed[vid] = claim_name
-        self.custom_g8_pool.append(claim_name)
+        reclaimed[vid] = claim_name
+
+    def custom_reclaim_g8_var(self, name):
+        """Scrub a g[8] enum descriptor and add it to the reclaimed pool."""
+        # Reminder callback 19 toggles the runtime state of the paired
+        # recurrence/date g[4] variables, so reclaimed enums lose it.
+        self._custom_reclaim_var(
+            name, 8, self.asf.G8_CALLBACK,
+            (self.asf.G8_NAME_STR, self.asf.G8_BASE_STR),
+            self.custom_g8_reclaimed)
 
     def custom_reclaim_g4_var(self, name):
         """Scrub a g[4] numeric descriptor and add it to the reclaimed pool."""
-        vid = self.asf.resolve_var_id(name)
-        if vid in self.custom_g4_reclaimed:
-            raise ValueError("custom_reclaim_g4_var: duplicate reclaim of %s (var_id 0x%04X)" % (name, vid))
+        self._custom_reclaim_var(
+            name, 4, self.asf.G4_CALLBACK,
+            (self.asf.G4_NAME_STR, self.asf.G4_UNITS_STR),
+            self.custom_g4_reclaimed)
 
-        self.asf.load_firmware_string_metadata()
-        rec = self.asf.find_var(vid)
-        name_str = self.asf.read_u16(rec + self.asf.G4_NAME_STR)
-        units_str = self.asf.read_u16(rec + self.asf.G4_UNITS_STR)
-        self.asf.write_u8(rec + self.asf.G4_CALLBACK, 0)
-        self.asf.write_u16(rec + self.asf.G4_NAME_STR, self.asf.str_id_empty)
-        self.asf.write_u16(rec + self.asf.G4_UNITS_STR, self.asf.str_id_empty)
-        self._custom_note_reclaimed_string_id(name_str)
-        self._custom_note_reclaimed_string_id(units_str)
-
-        claim_name = name.upper() if isinstance(name, str) and not name.lower().startswith('0x') else "0x%04X" % vid
-        self.custom_g4_reclaimed[vid] = claim_name
-        self.custom_g4_pool.append(claim_name)
+    def _custom_claim_var(self, request, owner, reclaimed, claims, table_num):
+        """Claim one exact variable from a typed reclaimed pool."""
+        vid = self.asf.resolve_var_id(request)
+        owner = owner or request
+        if vid not in reclaimed:
+            raise ValueError("custom_claim_g%d_var: %s (var_id 0x%04X) is not reclaimed" %
+                             (table_num, request, vid))
+        if vid in claims:
+            raise ValueError("custom_claim_g%d_var: %s (var_id 0x%04X) already claimed by %s" %
+                             (table_num, request, vid, claims[vid]))
+        claims[vid] = owner
+        return reclaimed[vid]
 
     def custom_claim_g8_var(self, request, owner=None):
         """Claim one exact reclaimed g[8] variable and return its UART name."""
-        vid = self.asf.resolve_var_id(request)
-        owner = owner or request
-        if vid not in self.custom_g8_reclaimed:
-            raise ValueError("custom_claim_g8_var: %s (var_id 0x%04X) is not reclaimed" % (request, vid))
-        if vid in self.custom_g8_claims:
-            raise ValueError(
-                "custom_claim_g8_var: %s (var_id 0x%04X) already claimed by %s" %
-                (request, vid, self.custom_g8_claims[vid]))
-        self.custom_g8_claims[vid] = owner
-        return self.custom_g8_reclaimed[vid]
+        return self._custom_claim_var(
+            request, owner, self.custom_g8_reclaimed,
+            self.custom_g8_claims, 8)
 
     def custom_claim_g4_var(self, request, owner=None):
         """Claim one exact reclaimed g[4] variable and return its UART name."""
-        vid = self.asf.resolve_var_id(request)
-        owner = owner or request
-        if vid not in self.custom_g4_reclaimed:
-            raise ValueError("custom_claim_g4_var: %s (var_id 0x%04X) is not reclaimed" % (request, vid))
-        if vid in self.custom_g4_claims:
-            raise ValueError(
-                "custom_claim_g4_var: %s (var_id 0x%04X) already claimed by %s" %
-                (request, vid, self.custom_g4_claims[vid]))
-        self.custom_g4_claims[vid] = owner
-        return self.custom_g4_reclaimed[vid]
+        return self._custom_claim_var(
+            request, owner, self.custom_g4_reclaimed,
+            self.custom_g4_claims, 4)
 
     def redefine_g8_var(self, var, flags, callback, dep_head, name_str, default,
                         num_options, param_0a, perm_mask, base_str, param_12):
@@ -1136,8 +1185,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             raise ValueError("custom_menu_add_page: page limit exceeded")
         self.custom_menu_pages[key] = self.CUSTOM_MENU_PAGE_CONTAINER_BASE + ordinal
         self.custom_menu_page_count += 1
-        self.custom_menu_entries.append(
-            (parent, self.CUSTOM_MENU_FLAG_PAGE, int(title_str_id), 0xffffffff))
+        self.custom_menu_entries.append((parent, self.CUSTOM_MENU_FLAG_PAGE, int(title_str_id), 0xffffffff))
 
     def custom_menu_add(self, container_name, var, mode_mask=0xffffffff):
         """Register one variable in a clinical section or custom page."""
@@ -1161,8 +1209,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
     def custom_menu_add_heading(self, container_name, str_id):
         """Register a localized heading in a clinical section or custom page."""
         container = self._custom_menu_container_id(container_name)
-        self.custom_menu_entries.append(
-            (container, self.CUSTOM_MENU_FLAG_HEADING, int(str_id), 0xffffffff))
+        self.custom_menu_entries.append((container, self.CUSTOM_MENU_FLAG_HEADING, int(str_id), 0xffffffff))
 
     def mop_bitmask(self, *modes):
         """Build a g[24]/MOP visibility mask from MOP names or numeric indexes."""
@@ -1199,43 +1246,36 @@ class ASFirmwarePatches(CompiledPayloadMixin):
     def mop_callback_register_handler(self, handler, name):
         """Register one feature handler to run after the stock MOP callback."""
         handler = int(handler) | 1
-        if handler in self.mop_callback_handler_seen:
-            return
-        self.mop_callback_handler_seen.add(handler)
-        self.mop_callback_handlers.append(handler)
-        print("  MOP callback handler: %s at 0x%08X" % (name, handler))
+        self.mop_callback_handlers.setdefault(handler, name)
+        return handler
 
     def patch_mop_callback_dispatcher(self):
-        """Install callback_table[MOP.callback_id] dispatcher if handlers exist."""
+        """Chain feature handlers after the stock MOP post-change callback.
+
+        The dispatcher replaces only MOP's callback-table slot. Its first entry
+        preserves the displaced stock callback, followed by feature handlers and
+        an all-ones sentinel.
+        """
         if not self.mop_callback_handlers:
-            return
+            return PatchOutcome.skip("no MOP callback handlers registered")
         if len(self.mop_callback_handlers) > 4:
             raise ValueError("mop_callback_dispatcher: too many handlers (%d)" %
                              len(self.mop_callback_handlers))
 
-        ver = self.asf.cdx_ver.replace('SX567-', '')
-        bin_path = self._versioned_artifact_path('mop_callback_dispatcher', 'bin', ver)
-        elf_path = self._versioned_artifact_path('mop_callback_dispatcher', 'elf', ver)
-        if not os.path.exists(bin_path):
-            raise ValueError("mop_callback_dispatcher: build/mop_callback_dispatcher_%s.bin not found (run make)" % ver)
-        if not os.path.exists(elf_path):
-            raise ValueError("mop_callback_dispatcher: build/mop_callback_dispatcher_%s.elf not found" % ver)
-
-        with open(bin_path, 'rb') as f:
-            data = f.read()
-
-        start = self._elf_symbol_addr(elf_path, 'start')
-        handler_table = self._elf_symbol_addr(elf_path, 'mop_callback_handler_table')
         callback_table = self.MOP_CALLBACK_TABLES.get(self.asf.cdx_ver)
         if callback_table is None:
             raise ValueError("mop_callback_dispatcher: unsupported CDX version %s" % self.asf.cdx_ver)
+
+        data, _, elf_path = self._load_versioned_payload('mop_callback_dispatcher')
+        start = self._elf_symbol_addr(elf_path, 'start')
+        handler_table = self._elf_symbol_addr(elf_path, 'mop_callback_handler_table')
 
         mop_rec = self.asf.find_var('MOP')
         callback_id = self.asf.read_u8(mop_rec + self.asf.G8_CALLBACK)
         slot = callback_table + callback_id * 4
         original = self.asf.read_u32(slot)
 
-        flash, off = self._inject_payload('mop_callback_dispatcher', data)
+        flash, _ = self._inject_payload('mop_callback_dispatcher', data)
         table_off = handler_table - self.asf.FLASH_BASE
         self.asf.write_u32(table_off, original)
         for i, handler in enumerate(self.mop_callback_handlers):
@@ -1243,22 +1283,27 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self.asf.write_u32(table_off + (len(self.mop_callback_handlers) + 1) * 4, 0xffffffff)
         self.asf.write_u32(slot, start | 1)
 
-        print("  MOP callback dispatcher: build/mop_callback_dispatcher_%s.bin (%dB) at 0x%08X" %
-              (ver, len(data), flash))
-        print("  MOP callback[%d]: 0x%08X -> 0x%08X" %
-              (callback_id, original, start | 1))
+        return PatchOutcome.ok(
+            None,
+            self._payload_detail('mop_callback_dispatcher', len(data), flash),
+            self._hook_detail('MOP callback[%d]' % callback_id,
+                              self.asf.FLASH_BASE + slot, start | 1))
+
+    def _replace_bytes_checked(self, site, expected, replacement, name,
+                               accept_existing=False):
+        """Replace verified bytes, optionally accepting an already-patched site."""
+        if self.asf.read_bytes(site, len(expected)) == expected:
+            self.asf.patch(replacement, site, clobber=True)
+            return True
+        if (accept_existing and
+                self.asf.read_bytes(site, len(replacement)) == replacement):
+            return False
+        raise ValueError("unexpected %s bytes at 0x%X" % (name, site))
 
     def _patch_thumb_bl_checked(self, site, expected, target, name):
         """Retarget a Thumb BL after verifying its original instruction bytes."""
-        if bytes(self.asf.fw[site:site+len(expected)]) != expected:
-            raise ValueError("unexpected %s call bytes at 0x%X" % (name, site))
-        self.asf.patch(self._encode_thumb_bl(site, target), site, clobber=True)
-
-    def _patch_bytes_checked(self, site, expected, replacement, name):
-        """Replace a fixed instruction sequence after verifying its bytes."""
-        if bytes(self.asf.fw[site:site+len(expected)]) != expected:
-            raise ValueError("unexpected %s bytes at 0x%X" % (name, site))
-        self.asf.patch(replacement, site, clobber=True)
+        self._replace_bytes_checked(site, expected, self._encode_thumb_bl(site, target), name)
+        return self._hook_detail(name, self.asf.FLASH_BASE + site, target)
 
     def _patch_clinical_menu_capacity(self, imm_off, stock_capacity):
         """Grow the clinical settings scrollbar capacity for generated entries."""
@@ -1272,7 +1317,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         if new_capacity > 0xff:
             raise ValueError("custom_patch_settings: clinical menu capacity exceeds Thumb imm8")
         self.asf.write_u8(imm_off, new_capacity)
-        print("  clinical menu capacity: %d -> %d" % (stock_capacity, new_capacity))
+        self._custom_detail("clinical menu capacity: %d -> %d" % (stock_capacity, new_capacity))
 
     def custom_patch_menu_hooks(self):
         """Inject the generic clinical-menu hook payload and patch its ABI slots."""
@@ -1382,20 +1427,13 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         }
         sites = sites_by_version.get(self.asf.cdx_ver)
         if sites is None:
-            print("  custom_patch_menu_hooks: skipped (unsupported CDX version %s)" % self.asf.cdx_ver)
-            return
+            raise ValueError(
+                "custom_patch_menu_hooks: unsupported CDX version %s" %
+                self.asf.cdx_ver)
 
-        ver = self.asf.cdx_ver.replace('SX567-', '')
-        bin_path = self._versioned_artifact_path('custom_menu_hooks', 'bin', ver)
-        elf_path = self._versioned_artifact_path('custom_menu_hooks', 'elf', ver)
-        if not os.path.exists(bin_path):
-            raise ValueError("custom_patch_settings: build/custom_menu_hooks_%s.bin not found (run make)" % ver)
-        if not os.path.exists(elf_path):
-            raise ValueError("custom_patch_settings: build/custom_menu_hooks_%s.elf not found" % ver)
-
-        with open(bin_path, 'rb') as f:
-            data = f.read()
+        data, _, elf_path = self._load_versioned_payload('custom_menu_hooks')
         flash, _ = self._inject_payload('custom_menu_hooks', data)
+        self._custom_detail(self._payload_detail('custom_menu_hooks', len(data), flash))
         registry_flash = self.asf.FLASH_BASE + self.custom_settings_registry_addr
 
         hook_therapy = self._elf_symbol_addr(elf_path, 'custom_menu_hook_therapy')
@@ -1408,10 +1446,8 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         error_size_hook = self._elf_symbol_addr(elf_path, 'custom_settings_error_file_size')
         group_index_addr = self._elf_symbol_addr(elf_path, 'custom_settings_group_index')
         page_wrapper = self._elf_symbol_addr(elf_path, 'custom_menu_create_pages')
-        stock_page_count_addr = self._elf_symbol_addr(
-            elf_path, 'custom_menu_stock_page_count')
-        clinical_page_addr = self._elf_symbol_addr(
-            elf_path, 'custom_menu_clinical_page_id')
+        stock_page_count_addr = self._elf_symbol_addr(elf_path, 'custom_menu_stock_page_count')
+        clinical_page_addr = self._elf_symbol_addr(elf_path, 'custom_menu_clinical_page_id')
         back_str_addr = self._elf_symbol_addr(elf_path, 'custom_menu_back_str_id')
 
         group_base = self.asf.globals_offset(16)
@@ -1432,13 +1468,11 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         if (self.custom_menu_clinical_page_id is None or
                 self.custom_menu_back_str_id is None):
             raise ValueError("custom_patch_settings: stock page metadata not captured")
-        self.asf.write_u8(
-            stock_page_count_addr - self.asf.FLASH_BASE, stock_page_count)
+        self.asf.write_u8(stock_page_count_addr - self.asf.FLASH_BASE, stock_page_count)
         self.asf.write_u8(
             clinical_page_addr - self.asf.FLASH_BASE,
             self.custom_menu_clinical_page_id)
-        self.asf.write_u16(
-            back_str_addr - self.asf.FLASH_BASE, self.custom_menu_back_str_id)
+        self.asf.write_u16(back_str_addr - self.asf.FLASH_BASE, self.custom_menu_back_str_id)
 
         self._patch_clinical_menu_capacity(sites['clinical_capacity_site'], sites['clinical_capacity'])
 
@@ -1446,66 +1480,67 @@ class ASFirmwarePatches(CompiledPayloadMixin):
 
         # Replace the final stock append in each clinical menu section. Each payload
         # hook appends that displaced item first, then its registered custom entries.
-        self._patch_thumb_bl_checked(
-            sites['therapy'], menu_expected[0], hook_therapy, 'therapy menu append')
-        self._patch_thumb_bl_checked(
-            sites['comfort'], menu_expected[1], hook_comfort, 'comfort menu append')
-        self._patch_thumb_bl_checked(
-            sites['accessories'], menu_expected[2], hook_accessories,
-            'accessories menu append')
-        self._patch_thumb_bl_checked(
-            sites['options'], menu_expected[3], hook_options, 'options menu append')
-        self._patch_thumb_bl_checked(
-            sites['configuration'], menu_expected[4], hook_configuration,
-            'configuration menu append')
+        menu_hooks = (
+            ('therapy', hook_therapy, 'therapy menu append'),
+            ('comfort', hook_comfort, 'comfort menu append'),
+            ('accessories', hook_accessories, 'accessories menu append'),
+            ('options', hook_options, 'options menu append'),
+            ('configuration', hook_configuration, 'configuration menu append'),
+        )
+        for index, (section, target, name) in enumerate(menu_hooks):
+            detail = self._patch_thumb_bl_checked(sites[section], menu_expected[index], target, name)
+            self._custom_detail(detail)
 
         # Replace the size query reached after config validation fails. The payload
         # reports CSG as empty, suppressing the fault before stock code rewrites it.
-        self._patch_thumb_bl_checked(
+        detail = self._patch_thumb_bl_checked(
             sites['config_error_size_site'], sites['config_error_size_expected'],
             error_size_hook, 'CSG recovery')
+        self._custom_detail(detail)
 
         if self.custom_menu_page_count:
             total_page_count = stock_page_count + self.custom_menu_page_count
             if total_page_count > 0xff:
                 raise ValueError("custom_patch_settings: page count exceeds ZML range")
 
-            self._patch_thumb_bl_checked(
+            detail = self._patch_thumb_bl_checked(
                 sites['page_create_site'], sites['page_create_expected'],
                 page_wrapper, 'menu page constructor')
-            self._patch_bytes_checked(
+            self._custom_detail(detail)
+            self._replace_bytes_checked(
                 sites['page_direct_site'],
                 b'\x20\x78\x04\xeb\x80\x00\x29\x46\xc0\x6b',
                 b'\xe0\x6b\x22\x78\x50\xf8\x22\x00\x29\x46',
                 'direct current-page lookup')
-            self._patch_bytes_checked(
+            self._replace_bytes_checked(
                 sites['page_zero_site'],
                 b'\x20\x78\x04\xeb\x80\x00\x00\x21\xc0\x6b\x70\x47',
                 b'\xe0\x6b\x22\x78\x50\xf8\x22\x00\x00\x21\x70\x47',
                 'zero-argument page resolver')
-            self._patch_bytes_checked(
+            self._replace_bytes_checked(
                 sites['page_get_site'],
                 b'\x20\x78\x04\xeb\x80\x00\xc0\x6b\x70\x47',
                 b'\xe0\x6b\x22\x78\x50\xf8\x22\x00\x70\x47',
                 'current-page resolver')
-            self._patch_bytes_checked(
+            self._replace_bytes_checked(
                 sites['page_activate_site'],
                 b'\x20\x78\x04\xeb\x80\x00\xc0\x6b\x01\x68\xc9\x6a\x08\x47',
                 b'\xe0\x6b\x21\x78\x50\xf8\x21\x00\x01\x68\xc9\x6a\x08\x47',
                 'current-page activation')
             self.asf.write_u8(page_limit_site, total_page_count)
-            print("  custom pages: %d, page range %d..%d" %
-                  (self.custom_menu_page_count, stock_page_count,
-                   total_page_count - 1))
-        self.mop_callback_register_handler(visibility_handler, 'custom_menu_visibility')
+            self._custom_detail(
+                "custom pages: %d, page range %d..%d" %
+                (self.custom_menu_page_count, stock_page_count,
+                 total_page_count - 1))
+        visibility_handler = self.mop_callback_register_handler(visibility_handler, 'custom_menu_visibility')
+        self._custom_detail(self._mop_handler_detail('custom_menu_visibility', visibility_handler))
 
-        print("  custom menu hooks: build/custom_menu_hooks_%s.bin (%dB) at 0x%08X" %
-              (ver, len(data), flash))
-        print("  CSG recovery: group index %d, invalid files reset without system fault" %
-              group_index)
+        self._custom_detail("CSG recovery: group index %d, invalid files reset without system fault" % group_index)
 
     def custom_patch_settings_myasv(self):
         """Expose reclaimed custom VAuto settings and pass their var_ids to the wrapper."""
+        # Claim stable storage-backed variables and allocate reclaimed localized
+        # string IDs for their new menu labels.
         myasv_var = self.custom_claim_g8_var('RPO', 'my_asv_enable')
         tc_var = self.custom_claim_g8_var('RPH', 'my_asv_triggercycle')
         max_var = self.custom_claim_g4_var('RCM', 'my_asv_max')
@@ -1514,6 +1549,9 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         tc_label = self.redefine_fw_string(-1, {0: 'Custom T/C'}, 'my_asv_triggercycle_label')
         max_label = self.redefine_fw_string(-1, {0: 'ASV Max'}, 'my_asv_max_label')
         sens_label = self.redefine_fw_string(-1, {0: 'ASV Sens'}, 'my_asv_sens_label')
+
+        # Keep the Reminder group chain root (RGT). These variables still live in
+        # the renamed persistent group and edits must continue to dirty/save it.
         myasv_dep = self.asf.find_var_table_index(4, 'RGT')
         cmh2o_units = self.asf.read_u16(self.asf.find_var('IPC') + self.asf.G4_UNITS_STR)
         sens_base = self.asf.read_u16(self.asf.find_var('VCS') + self.asf.G8_BASE_STR)
@@ -1526,6 +1564,9 @@ class ASFirmwarePatches(CompiledPayloadMixin):
                              5, 0, 0x0000001F, sens_base, 0)
         self.redefine_g4_var(max_var, 0x0007, 0, myasv_dep, max_label, 150,
                              500, 0, 1, 50, 10, cmh2o_units)
+
+        # Firmware descriptors and menu registration can use UART names. Injected
+        # code receives compact numeric var_ids through explicit ABI slots.
         myasv_vid = self.asf.resolve_var_id(myasv_var)
         tc_vid = self.asf.resolve_var_id(tc_var)
         max_vid = self.asf.resolve_var_id(max_var)
@@ -1535,31 +1576,26 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self.custom_menu_add('therapy', sens_var, self.mop_bitmask('VAuto'))
         self.custom_menu_add('therapy', tc_var, self.mop_bitmask('S', 'ST', 'T', 'VAuto', 'PAC'))
 
-        ver = self.asf.cdx_ver.replace('SX567-', '')
-        elf_path = self._versioned_artifact_path('wrapper_limit_max_pdiff', 'elf', ver)
-        if not os.path.exists(elf_path):
-            raise ValueError("custom_patch_settings_myasv: build/wrapper_limit_max_pdiff_%s.elf not found" % ver)
-        addr = self._elf_symbol_addr(elf_path, 'wrapper_limit_max_pdiff_toggle_var_id')
-        self.asf.write_u16(addr - self.asf.FLASH_BASE, myasv_vid)
-        tc_addr = self._elf_symbol_addr(elf_path, 'wrapper_limit_max_pdiff_triggercycle_var_id')
-        self.asf.write_u16(tc_addr - self.asf.FLASH_BASE, tc_vid)
-        max_addr = self._elf_symbol_addr(elf_path, 'wrapper_limit_max_pdiff_asv_max_var_id')
-        self.asf.write_u16(max_addr - self.asf.FLASH_BASE, max_vid)
-        sens_addr = self._elf_symbol_addr(elf_path, 'wrapper_limit_max_pdiff_asv_sens_var_id')
-        self.asf.write_u16(sens_addr - self.asf.FLASH_BASE, sens_vid)
+        # Patch the prebuilt wrapper's ABI slots instead of coupling its source to
+        # custom-menu internals or firmware-version-specific numeric IDs.
+        payload = 'wrapper_limit_max_pdiff'
+        addr = self._write_payload_u16(payload, 'wrapper_limit_max_pdiff_toggle_var_id', myasv_vid)
+        tc_addr = self._write_payload_u16(payload, 'wrapper_limit_max_pdiff_triggercycle_var_id', tc_vid)
+        max_addr = self._write_payload_u16(payload, 'wrapper_limit_max_pdiff_asv_max_var_id', max_vid)
+        sens_addr = self._write_payload_u16(payload, 'wrapper_limit_max_pdiff_asv_sens_var_id', sens_vid)
 
-        print("  custom VAuto enable: %s var_id=0x%04X label_str=0x%04X" %
-              (myasv_var, myasv_vid, myasv_label))
-        print("  my_asv max: %s var_id=0x%04X label_str=0x%04X" %
-              (max_var, max_vid, max_label))
-        print("  my_asv sens: %s var_id=0x%04X label_str=0x%04X" %
-              (sens_var, sens_vid, sens_label))
-        print("  my_asv trigger/cycle: %s var_id=0x%04X label_str=0x%04X" %
-              (tc_var, tc_vid, tc_label))
-        print("  VAuto wrapper toggle var_id=0x%04X at 0x%08X" % (myasv_vid, addr))
-        print("  ASV Max var_id=0x%04X at 0x%08X" % (max_vid, max_addr))
-        print("  ASV Sens var_id=0x%04X at 0x%08X" % (sens_vid, sens_addr))
-        print("  trigger/cycle toggle var_id=0x%04X at 0x%08X" % (tc_vid, tc_addr))
+        self._custom_detail("custom VAuto enable: %s var_id=0x%04X label_str=0x%04X" %
+                            (myasv_var, myasv_vid, myasv_label))
+        self._custom_detail("my_asv max: %s var_id=0x%04X label_str=0x%04X" %
+                            (max_var, max_vid, max_label))
+        self._custom_detail("my_asv sens: %s var_id=0x%04X label_str=0x%04X" %
+                            (sens_var, sens_vid, sens_label))
+        self._custom_detail("my_asv trigger/cycle: %s var_id=0x%04X label_str=0x%04X" %
+                            (tc_var, tc_vid, tc_label))
+        self._custom_detail("VAuto wrapper toggle var_id=0x%04X at 0x%08X" % (myasv_vid, addr))
+        self._custom_detail("ASV Max var_id=0x%04X at 0x%08X" % (max_vid, max_addr))
+        self._custom_detail("ASV Sens var_id=0x%04X at 0x%08X" % (sens_vid, sens_addr))
+        self._custom_detail("trigger/cycle toggle var_id=0x%04X at 0x%08X" % (tc_vid, tc_addr))
 
     def custom_patch_settings_squarewave(self):
         """Expose the squarewave runtime switch and pass its var_id to the payload."""
@@ -1573,17 +1609,11 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         square_vid = self.asf.resolve_var_id(square_var)
         self.custom_menu_add('therapy', square_var, self.mop_bitmask('S', 'ST', 'T', 'PAC'))
 
-        ver = self.asf.cdx_ver.replace('SX567-', '')
-        elf_path = self._versioned_artifact_path('squarewave', 'elf', ver)
-        if not os.path.exists(elf_path):
-            raise ValueError("custom_patch_settings_squarewave: build/squarewave_%s.elf not found" % ver)
-        enable_addr = self._elf_symbol_addr(elf_path, 'squarewave_enable_var_id')
-        self.asf.write_u16(enable_addr - self.asf.FLASH_BASE, square_vid)
+        enable_addr = self._write_payload_u16('squarewave', 'squarewave_enable_var_id', square_vid)
 
-        print("  squarewave enable: %s var_id=0x%04X label_str=0x%04X" %
-              (square_var, square_vid, square_label))
-        print("  squarewave toggle var_id=0x%04X at 0x%08X" %
-              (square_vid, enable_addr))
+        self._custom_detail("squarewave enable: %s var_id=0x%04X label_str=0x%04X" %
+                            (square_var, square_vid, square_label))
+        self._custom_detail("squarewave toggle var_id=0x%04X at 0x%08X" % (square_vid, enable_addr))
 
     def custom_patch_settings_graph(self):
         """Expose the graph/stock-gauge switch in clinical Options."""
@@ -1597,22 +1627,15 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         graph_vid = self.asf.resolve_var_id(graph_var)
         self.custom_menu_add('options', graph_var, 0xffffffff)
 
-        ver = self.asf.cdx_ver.replace('SX567-', '')
-        elf_path = self._versioned_artifact_path('graph', 'elf', ver)
-        if not os.path.exists(elf_path):
-            raise ValueError(
-                "custom_patch_settings_graph: build/graph_%s.elf not found" % ver)
-        enable_addr = self._elf_symbol_addr(elf_path, 'graph_enable_var_id')
-        self.asf.write_u16(enable_addr - self.asf.FLASH_BASE, graph_vid)
+        enable_addr = self._write_payload_u16('graph', 'graph_enable_var_id', graph_vid)
 
-        print("  graph toggle: %s var_id=0x%04X label_str=0x%04X at 0x%08X" %
-              (graph_var, graph_vid, self.STR_ID_MONITORING, enable_addr))
+        self._custom_detail("graph toggle: %s var_id=0x%04X label_str=0x%04X at 0x%08X" %
+                            (graph_var, graph_vid, self.STR_ID_MONITORING, enable_addr))
 
     def custom_patch_settings_asv_task_wrapper(self):
         """Expose the stock ASV/ASVAuto backup-rate runtime switch."""
         backup_var = self.custom_claim_g8_var('RPW', 'asv_backup_rate')
-        backup_label = self.asf.read_u16(
-            self.asf.find_var('BRE') + self.asf.G8_NAME_STR)
+        backup_label = self.asf.read_u16(self.asf.find_var('BRE') + self.asf.G8_NAME_STR)
         backup_dep = self.asf.find_var_table_index(4, 'RGT')
 
         # BRE supplies the localized label, but its stock options are Off/10.
@@ -1621,33 +1644,23 @@ class ASFirmwarePatches(CompiledPayloadMixin):
                              2, 0, 0x00000003, self.asf.str_id_off_on_base, 0)
 
         backup_vid = self.asf.resolve_var_id(backup_var)
-        self.custom_menu_add('therapy', backup_var,
-                             self.mop_bitmask('ASV', 'ASVAuto'))
+        self.custom_menu_add('therapy', backup_var, self.mop_bitmask('ASV', 'ASVAuto'))
 
-        ver = self.asf.cdx_ver.replace('SX567-', '')
-        elf_path = self._versioned_artifact_path('asv_task_wrapper', 'elf', ver)
-        if not os.path.exists(elf_path):
-            raise ValueError(
-                "custom_patch_settings_asv_task_wrapper: "
-                "build/asv_task_wrapper_%s.elf not found" % ver)
-        backup_addr = self._elf_symbol_addr(
-            elf_path, 'asv_task_wrapper_backup_rate_var_id')
-        self.asf.write_u16(backup_addr - self.asf.FLASH_BASE, backup_vid)
+        backup_addr = self._write_payload_u16(
+            'asv_task_wrapper', 'asv_task_wrapper_backup_rate_var_id',
+            backup_vid)
 
-        print("  ASV backup rate: %s var_id=0x%04X label_str=0x%04X at 0x%08X" %
-              (backup_var, backup_vid, backup_label, backup_addr))
+        self._custom_detail("ASV backup rate: %s var_id=0x%04X label_str=0x%04X at 0x%08X" %
+                            (backup_var, backup_vid, backup_label, backup_addr))
 
     def custom_patch_settings_backlight(self):
         """Expose persistent Backlight controls on a generated LCD page."""
         low_var = 'ATH'
         high_var = self.custom_claim_g4_var('RCF', 'backlight_ambient_high')
-        low_label = self.redefine_fw_string(-1, {0: 'Ambient Low'},
-                                            'backlight_ambient_low_label')
-        high_label = self.redefine_fw_string(-1, {0: 'Ambient High'},
-                                             'backlight_ambient_high_label')
+        low_label = self.redefine_fw_string(-1, {0: 'Ambient Low'}, 'backlight_ambient_low_label')
+        high_label = self.redefine_fw_string(-1, {0: 'Ambient High'}, 'backlight_ambient_high_label')
         lcd_label = self.redefine_fw_string(-1, {0: 'LCD'}, 'backlight_lcd_label')
-        buttons_label = self.redefine_fw_string(
-            -1, {0: 'Buttons'}, 'backlight_buttons_label')
+        buttons_label = self.redefine_fw_string(-1, {0: 'Buttons'}, 'backlight_buttons_label')
 
         # ATH remains in NGL; retain its stock linkage so edits keep dirtying
         # and saving the same storage group through the existing chain.
@@ -1662,8 +1675,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self.redefine_g4_var(high_var, 0x0007, 0, high_dep, high_label,
                              3070, 4090, 0, 0, 1, 10, self.asf.str_id_empty)
 
-        level_base = self.asf.read_u16(
-            self.asf.find_var('VCS') + self.asf.G8_BASE_STR)
+        level_base = self.asf.read_u16(self.asf.find_var('VCS') + self.asf.G8_BASE_STR)
         level_low_str = level_base + 1
         level_high_str = level_base + 3
         for var in ('LLL', 'LBL'):
@@ -1677,9 +1689,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         for var in ('LLL', 'LLH', 'LBL', 'LBH'):
             self.custom_storage_add(var)
 
-        all_modes = self.mop_bitmask(
-            'CPAP', 'AutoSet', 'APAP', 'S', 'ST', 'T', 'VAuto', 'ASV',
-            'ASVAuto', 'iVAPS', 'PAC', 'AFH')
+        all_modes = self.mop_bitmask(*self.MOP_INDEX)
         self.custom_menu_add_page('lcd', 'configuration', lcd_label)
         self.custom_menu_add('lcd', low_var, all_modes)
         self.custom_menu_add('lcd', high_var, all_modes)
@@ -1692,46 +1702,37 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self.custom_menu_add('lcd', 'LBH', all_modes)
 
         high_vid = self.asf.resolve_var_id(high_var)
-        ver = self.asf.cdx_ver.replace('SX567-', '')
-        elf_path = self._versioned_artifact_path('backlight_adapt', 'elf', ver)
-        if not os.path.exists(elf_path):
-            raise ValueError("custom_patch_settings_backlight: build/backlight_adapt_%s.elf not found" % ver)
-        high_addr = self._elf_symbol_addr(elf_path, 'backlight_adapt_full_asf_var_id')
-        self.asf.write_u16(high_addr - self.asf.FLASH_BASE, high_vid)
+        high_addr = self._write_payload_u16('backlight_adapt', 'backlight_adapt_full_asf_var_id', high_vid)
 
-        print("  backlight page: lcd_str=0x%04X buttons_str=0x%04X" %
-              (lcd_label, buttons_label))
-        print("  backlight ambient low: %s label_str=0x%04X" %
-              (low_var, low_label))
-        print("  backlight ambient high: %s var_id=0x%04X label_str=0x%04X at 0x%08X" %
-              (high_var, high_vid, high_label, high_addr))
+        self._custom_detail("backlight page: lcd_str=0x%04X buttons_str=0x%04X" %
+                            (lcd_label, buttons_label))
+        self._custom_detail("backlight ambient low: %s label_str=0x%04X" % (low_var, low_label))
+        self._custom_detail(
+            "backlight ambient high: %s var_id=0x%04X label_str=0x%04X "
+            "at 0x%08X" %
+            (high_var, high_vid, high_label, high_addr))
 
     def custom_patch_settings_collect_features(self):
         """Return active custom-settings feature functions."""
-        features = []
-        if self.wrapper_limit_max_pdiff_applied:
-            features.append(self.custom_patch_settings_myasv)
-        if self.asv_task_wrapper_applied:
-            features.append(self.custom_patch_settings_asv_task_wrapper)
-        if self.graph_applied:
-            features.append(self.custom_patch_settings_graph)
-        if self.squarewave_applied:
-            features.append(self.custom_patch_settings_squarewave)
-        if self.backlight_adapt_applied:
-            features.append(self.custom_patch_settings_backlight)
-        return features
+        feature_patches = (
+            ('wrapper_limit_max_pdiff', self.custom_patch_settings_myasv),
+            ('asv_task_wrapper', self.custom_patch_settings_asv_task_wrapper),
+            ('graph', self.custom_patch_settings_graph),
+            ('squarewave', self.custom_patch_settings_squarewave),
+            ('backlight_adapt', self.custom_patch_settings_backlight),
+        )
+        return [feature for payload, feature in feature_patches
+                if payload in self.applied_payloads]
 
     def custom_patch_settings(self):
         """Orchestrate reclaim, feature registration, registry emit, and hook injection."""
         features = self.custom_patch_settings_collect_features()
         if not features:
-            print("  custom_patch_settings: skipped (no active features)")
-            return
+            return PatchOutcome.skip("no active custom-setting features")
 
-        print("  Preparing custom patch settings")
         self.custom_patch_settings_init()
         if not self.custom_patch_settings_reclaim_reminders():
-            return
+            return PatchOutcome.skip("unsupported CDX version %s" % self.asf.cdx_ver)
         self.custom_patch_settings_rename_storage_group()
         self.custom_build_string_pool()
 
@@ -1741,6 +1742,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self.custom_emit_storage_members()
         self.custom_emit_registry()
         self.custom_patch_menu_hooks()
+        return PatchOutcome.ok(None, *self.custom_settings_details)
 
     @staticmethod
     def _print_resource_summary_line(label, items):
@@ -1759,17 +1761,14 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         if not touched:
             return
 
-        unused_g8 = []
-        for name in self.custom_g8_pool:
-            vid = self.asf.resolve_var_id(name)
-            if vid not in self.custom_g8_claims:
-                unused_g8.append(name)
-
-        unused_g4 = []
-        for name in self.custom_g4_pool:
-            vid = self.asf.resolve_var_id(name)
-            if vid not in self.custom_g4_claims:
-                unused_g4.append(name)
+        unused_g8 = [
+            name for vid, name in self.custom_g8_reclaimed.items()
+            if vid not in self.custom_g8_claims
+        ]
+        unused_g4 = [
+            name for vid, name in self.custom_g4_reclaimed.items()
+            if vid not in self.custom_g4_claims
+        ]
 
         free_str_ids = ["0x%04X" % str_id for str_id in self.custom_string_pool]
 
@@ -1778,20 +1777,13 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self._print_resource_summary_line("unused reclaimed g[4] vars", unused_g4)
         self._print_resource_summary_line("free reclaimed str_id", free_str_ids)
 
-    def _patch_or_verify(self, addr, expected, replacement, label):
-        current_expected = bytes(self.asf.fw[addr:addr + len(expected)])
-        if current_expected == expected:
-            self.asf.patch(replacement, addr, clobber=True)
-            return True
-
-        current_replacement = bytes(self.asf.fw[addr:addr + len(replacement)])
-        if current_replacement == replacement:
-            return False
-
-        raise ValueError("custom_patch_settings: unexpected %s bytes at 0x%X" % (label, addr))
-
     def custom_patch_settings_reclaim_reminders(self):
-        """Disable stock Reminders behavior and reclaim its storage-backed vars."""
+        """Disable stock Reminders behavior and reclaim its storage-backed vars.
+
+        g[8] RPF/RPO/RPH/RPW are recurrence enables for Filter/Mask/Tube/Water Tub.
+        g[8] RXF/RXM/RXH/RXW are their reminder-date enables. g[4] RCF/RCM/RCH/RCW
+        hold recurrence periods, while RDF/RDM/RDH/RDW hold due dates.
+        """
         sites_by_version = {
             'SX567-0302': {
                 'reminders_tick': 0xebace,
@@ -1846,7 +1838,6 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         }
         sites = sites_by_version.get(self.asf.cdx_ver)
         if sites is None:
-            print("  custom_patch_settings: skipped (unsupported CDX version %s)" % self.asf.cdx_ver)
             return False
 
         reminders_tick = sites['reminders_tick']
@@ -1859,29 +1850,40 @@ class ASFirmwarePatches(CompiledPayloadMixin):
 
         if (self.asf.read_u8(reminder_menu + 0x2d) != 0x21 or
                 self.asf.read_u8(reminder_menu + 0x4b) != 0x21):
-            raise ValueError(
-                "custom_patch_settings: unexpected Reminders navigation metadata")
+            raise ValueError("custom_patch_settings: unexpected Reminders navigation metadata")
         self.custom_menu_clinical_page_id = self.asf.read_u8(reminder_menu + 0x2c)
         self.custom_menu_back_str_id = self.asf.read_u8(reminder_menu + 0x4a)
 
-        self._patch_or_verify(reminders_tick, b'\x38\xb5\x04\x46', b'\x70\x47', 'reminder tick')
-        self._patch_or_verify(
+        # Disable periodic processing and both hardcoded variable users before
+        # their descriptors are assigned new meanings.
+        self._replace_bytes_checked(
+            reminders_tick, b'\x38\xb5\x04\x46', b'\x70\x47',
+            'reminder tick', accept_existing=True)
+        self._replace_bytes_checked(
             reminder_list_create, b'\x1f\xb5\x1c\x20', b'\x00\x20\x70\x47',
-            'reminder list constructor')
-        self._patch_or_verify(
+            'reminder list constructor', accept_existing=True)
+        self._replace_bytes_checked(
             reminder_state_update, b'\xf0\xb5\xa3\xb0', b'\x70\x47',
-            'reminder state updater')
+            'reminder state updater', accept_existing=True)
 
         item_reclaim = reminder_menu_item + 2
         item_reclaim_size = reminder_menu_item_end - item_reclaim
-        if self._patch_or_verify(reminder_menu_item, b'\x08\x20\x01\xf0', b'\x1c\xe0', 'reminder menu item'):
+        # Skip the visible Reminders row between SmartStart and Configuration.
+        if self._replace_bytes_checked(
+                reminder_menu_item, b'\x08\x20\x01\xf0', b'\x1c\xe0',
+                'reminder menu item', accept_existing=True):
             self.asf.fill_range(item_reclaim, item_reclaim_size, 0xff)
         for str_id in sites['reclaimed_string_ids']:
             self._custom_note_reclaimed_string_id(str_id)
 
         reclaim = reminder_menu + 6
         reclaim_size = reminder_menu_end - reclaim
-        if self._patch_or_verify(reminder_menu, b'\x2c\x20\x00\xf0', b'\x00\x24\x6c\x67\x2a\xe1', 'reminder menu'):
+        # Clear the Reminders page slot, skip its children, and reuse the dead
+        # constructor body as the generated custom-menu registry.
+        if self._replace_bytes_checked(
+                reminder_menu, b'\x2c\x20\x00\xf0',
+                b'\x00\x24\x6c\x67\x2a\xe1', 'reminder menu',
+                accept_existing=True):
             self.asf.fill_range(reclaim, reclaim_size, 0xff)
 
         self.custom_settings_registry_addr = reclaim
@@ -1892,22 +1894,24 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         for var in ('RDF', 'RDM', 'RDH', 'RDW', 'RCF', 'RCM', 'RCH', 'RCW'):
             self.custom_reclaim_g4_var(var)
 
-        print("  disabled stock Reminders menu item at 0x%08X" %
-              (self.asf.FLASH_BASE + reminder_menu_item))
-        print("  reclaimed 0x%08X..0x%08X (%d bytes) padded with FF" %
-              (self.asf.FLASH_BASE + item_reclaim,
-               self.asf.FLASH_BASE + reminder_menu_item_end - 1,
-               item_reclaim_size))
-        print("  disabled stock Reminders page slot at 0x%08X" %
-              (self.asf.FLASH_BASE + reminder_menu))
-        print("  reclaimed 0x%08X..0x%08X (%d bytes) padded with FF" %
-              (self.asf.FLASH_BASE + reclaim,
-               self.asf.FLASH_BASE + reminder_menu_end - 1,
-               reclaim_size))
+        self._custom_detail("disabled stock Reminders menu item at 0x%08X" %
+                            (self.asf.FLASH_BASE + reminder_menu_item))
+        self._custom_detail(
+            "reclaimed 0x%08X..0x%08X (%d bytes) padded with FF" %
+            (self.asf.FLASH_BASE + item_reclaim,
+             self.asf.FLASH_BASE + reminder_menu_item_end - 1,
+             item_reclaim_size))
+        self._custom_detail("disabled stock Reminders page slot at 0x%08X" %
+                            (self.asf.FLASH_BASE + reminder_menu))
+        self._custom_detail(
+            "reclaimed 0x%08X..0x%08X (%d bytes) padded with FF" %
+            (self.asf.FLASH_BASE + reclaim,
+             self.asf.FLASH_BASE + reminder_menu_end - 1,
+             reclaim_size))
         return True
 
-    def bypass_startcheck(self):
-        #Start-up check for CRC etc, bypass it to avoid (might not be needed)
+    def patch_integrity_check(self):
+        # Bypass the BLX checks that reject modified BLX, CCX, and CDX blocks.
         bid = self.asf.bid
 
         if bid.startswith('SX577-0200'):
@@ -1922,13 +1926,12 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             self.asf.patch(b'\x00\x20\xc0\x46', 0x3190, clobber=True) # CDX
         else:
             raise IOError("Unknown bootloader version: '%s'" % bid)
-        print("  BLX/CCX/CDX integrity checks bypassed")
+        return PatchOutcome.ok()
 
     def patch_blx_dump(self):
         """Add the SX577 bootloader command used by resmed_flash.py --dump."""
         if not self.asf.bid.startswith('SX577-0200'):
-            print("  patch_blx_dump: skipped (unsupported bootloader version %s)" % self.asf.bid)
-            return
+            return PatchOutcome.skip("unsupported bootloader version %s" % self.asf.bid)
 
         cave_off = 0x3de0
         cave_size = 0x1a0
@@ -1950,23 +1953,25 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         if linked != runtime:
             raise ValueError("patch_blx_dump: payload linked at 0x%08X, expected 0x%08X" %
                              (linked, runtime))
-        if bytes(self.asf.fw[cave_off:cave_off+cave_size]) != b'\x00' * cave_size:
+        if self.asf.read_bytes(cave_off, cave_size) != b'\x00' * cave_size:
             raise ValueError("patch_blx_dump: BLX payload area is not empty")
-        if bytes(self.asf.fw[hook_off:hook_off+4]) != b'\xfd\xf7\x56\xfa':
+        if self.asf.read_bytes(hook_off, 4) != b'\xfd\xf7\x56\xfa':
             raise ValueError("patch_blx_dump: unexpected dispatcher call bytes at 0x300E")
 
         self.asf.patch(data, cave_off, clobber=True)
         self.asf.patch(self._encode_thumb_bl_addr(hook_runtime, runtime),
                        hook_off, clobber=True)
-        print("  bootloader dump: build/blx_dump.bin (%dB) at BLX+0x%04X" %
-              (len(data), cave_off))
+        return PatchOutcome.ok(
+            None,
+            self._payload_detail('blx_dump', len(data), self.asf.FLASH_BASE + cave_off),
+            self._hook_detail('bootloader command dispatcher call', hook_runtime, runtime))
 
     def bypass_psucheck(self):
         # power supply ID (adc_and_object_2826_stuff)
         if self.asf.bid.startswith('SX577-0200'):
             self.asf.patch(b'\x00\x20\x70\x47', 0x2882, clobber=True)
-        else:
-            print("  bypass_psucheck: skipped (unsupported bootloader version %s)" % self.asf.bid)
+            return PatchOutcome.ok()
+        return PatchOutcome.skip("unsupported bootloader version %s" % self.asf.bid)
             
     def unlock_ui_limits(self):
         # patch min/max pressure limits to allow full range
@@ -1994,28 +1999,35 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         ]
 
         for var in vars:
-            addr = self.asf.find_var(var) + self.asf.G4_MAX
             # max=0x000005DC (1500) min=0x00000032 (50) scale=1/50
-            self.asf.patch(b'\xdc\x05\x00\x00\x32\x00\x00\x00', addr, clobber=True)
-        print("  %d pressure variables set to 1.0-30.0 cmH2O" % len(vars))
+            rec = self.asf.find_var(var)
+            self.asf.write_u32(rec + self.asf.G4_MAX, 1500)
+            self.asf.write_u32(rec + self.asf.G4_MIN, 50)
+        return PatchOutcome.ok("%d pressure variables set to 1.0-30.0 cmH2O" % len(vars))
 
     def unlock_languages(self):
-        """
-            it would be best to read 7th pointer from globals table (global_var_0x6) and go to 7th var descriptor, like
-            var_bitmask_addr = ((void **)0x08004108)[6] + 6*0x1c
-            var_value_addr = $var_bitmask_addr + 8
-            but hardcoded offset works for almost all firmwares...
-        """
+        """Enable every compiled-in language that has firmware font support."""
+        self.asf.load_firmware_string_metadata()
+        lan = self.asf.find_var('LAN')
+        base_str = self.asf.read_u16(lan + self.asf.G8_BASE_STR)
+        languages = [self.asf.firmware_string(base_str + lang_id)
+                     for lang_id in self.asf.fw_lang_ids]
         addr = self.asf.find_var('LNC')
         # make variable read only to prevent overwriting with eeprom data
-        self.asf.patch(b'\x06', addr, clobber=True)
+        self.asf.write_u8(addr, 0x06)
         # 0x007fffff, except font-reserved bits jp (13,19) and cn (16,17).
-        self.asf.patch(b'\xff\xdf\x74\x00', addr + 0x08, clobber=True)
+        self.asf.write_u32(addr + 0x08, 0x0074dfff)
+        return PatchOutcome.ok("Languages: " + ", ".join(languages))
 
-    def extra_debug(self):
-        # set config variable 0xc value to 4 == enable more debugging data on display
-        # if you set it to \x0f it will enable four separate display pages of info in sleep report mode
-        self.asf.patch(b'\x0e', self.asf.find_var('TSS') + self.asf.G6_DEFAULT, clobber=True)
+    def patch_therapy_screen(self):
+        # Default in VAuto is \x0e, all enabled is \x0f
+        # 1000 - ti min, ti max, ti, I:E, spont cyc (doesn't fit graph)
+        # 0100 - leak MV, RR, tv (default in this script)
+        # 0010 - pressure bar
+        # 0001 - fancy round display
+        mask = 0x0e
+        self.asf.write_u8(self.asf.find_var('TSS') + self.asf.G6_DEFAULT, mask)
+        return PatchOutcome.ok("TSS mask set to 0x%02X" % mask)
 
     def unlock_respiratory_event_reporting(self):
         """Enable airway classification, event history, and runtime statistics."""
@@ -2040,23 +2052,22 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         # CEN: FOT classification enable
         self.asf.write_u8(cen + self.asf.G8_DEFAULT, 1)
         self.asf.write_u32(cen + self.asf.G8_BITMASK, 3)
-        self.asf.patch(struct.pack('<I', (1 << aet_types) - 1),
-                       aet + self.asf.G8_BITMASK, clobber=True)
-        self.asf.patch(struct.pack('<I', (1 << anv_types) - 1),
-                       anv + self.asf.G9_ALLOWED_TYPES, clobber=True)
+        self.asf.write_u32(aet + self.asf.G8_BITMASK, (1 << aet_types) - 1)
+        self.asf.write_u32(anv + self.asf.G9_ALLOWED_TYPES, (1 << anv_types) - 1)
 
         for name in runtime_sources:
             rec = self.asf.find_var(name)
             flags = self.asf.read_u16(rec + self.asf.G4_FLAGS)
-            self.asf.patch(struct.pack('<H', flags | 1),
-                           rec + self.asf.G4_FLAGS, clobber=True)
+            self.asf.write_u16(rec + self.asf.G4_FLAGS, flags | 1)
 
     def extra_modes(self):
-        # add more mode entries, set config 0x0 mask to all bits high
-        # default is 0x3, which only enables mode 1 (CPAP) and 2 (AutoSet)
-        # ---> This is the real magic <---
-        self.asf.patch(b'\xff\xff', self.asf.find_var('MOP') + self.asf.G8_BITMASK, clobber=True)
+        # Enable every option declared by MOP instead of the stock variant mask.
+        modes = self._enum_option_labels('MOP')
+        self.asf.write_u16(self.asf.find_var('MOP') + self.asf.G8_BITMASK, 0xffff)
         self.unlock_respiratory_event_reporting()
+        return PatchOutcome.ok(
+            "Modes: " + ", ".join(modes),
+            "Respiratory event classification and statistics enabled")
 
     def unlock_option_masks(self):
         masks = {
@@ -2064,9 +2075,8 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             'RMA': 0x00000007,  # Ramp: Off, On, Auto
         }
         for name, mask in masks.items():
-            self.asf.patch(struct.pack('<I', mask),
-                           self.asf.find_var(name) + self.asf.G8_BITMASK,
-                           clobber=True)
+            self.asf.write_u32(self.asf.find_var(name) + self.asf.G8_BITMASK, mask)
+        return PatchOutcome.ok("Unlocked options for %d vars: %s" % (len(masks), ", ".join(masks)))
 
     def asv_unlock_ps_range(self):
         # Disable the ASV and ASVAuto PS range check to allow Max PS < (Min PS + 5)
@@ -2109,15 +2119,19 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         if patches:
             for addr, data in patches:
                 self.asf.patch(data, addr, clobber=True)
-        else:
-            print("  asv_unlock_ps_range: CDX code patches skipped (unknown CDX version %s)" % self.asf.cdx_ver)
 
         # Pressure support vars use scale=1/50: 1250 = 25.0 cmH2O.
         for var in ('MNS', 'MXS', 'ANS', 'AXS'):
-            self.asf.patch(b'\x00\x00\x00\x00', self.asf.find_var(var) + self.asf.G4_MIN, clobber=True)
-            self.asf.patch(b'\xe2\x04\x00\x00', self.asf.find_var(var) + self.asf.G4_MAX, clobber=True)
+            rec = self.asf.find_var(var)
+            self.asf.write_u32(rec + self.asf.G4_MIN, 0)
+            self.asf.write_u32(rec + self.asf.G4_MAX, 1250)
+        if patches:
+            return PatchOutcome.ok()
+        return PatchOutcome.warn(
+            "descriptor ranges updated, but CDX constraints are unknown for %s" %
+            self.asf.cdx_ver)
 
-    def gui_config (self):
+    def gui_config(self):
         # enable editable options in clinical settings menu
         # by setting bit 0 (ACT) of the flags field at record +0x00
 
@@ -2145,19 +2159,19 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             if not (flags & 1):
                 self.asf.write_u8(addr, flags | 1)
                 count += 1
-        print("  %d/%d menu ACT flags set" % (count, len(vars)))
+        return PatchOutcome.ok("%d/%d menu ACT flags set" % (count, len(vars)))
 
     def patch_defaults(self):
-        # language (eng)
-        self.asf.patch(b'\x00', self.asf.find_var('LAN') + self.asf.G8_DEFAULT, clobber=True)
-        # press. units: 0=cmH2O 1=hPa
-        self.asf.patch(b'\x00', self.asf.find_var('PRD') + self.asf.G8_DEFAULT, clobber=True)
-        # mask: 0=Pillows 1=Full 2=Nasal 3=Pediatric
-        self.asf.patch(b'\x00', self.asf.find_var('MSK') + self.asf.G8_DEFAULT, clobber=True)
-        # tube: SlimLine, Standard, 3m
-        self.asf.patch(b'\x00', self.asf.find_var('TBT') + self.asf.G8_DEFAULT, clobber=True)
-        # Essentials: Plus, On
-        self.asf.patch(b'\x00', self.asf.find_var('ACC') + self.asf.G8_DEFAULT, clobber=True)
+        defaults = (
+            ('LAN', 0),  # English
+            ('PRD', 0),  # cmH2O
+            ('MSK', 0),  # Pillows
+            ('TBT', 0),  # SlimLine
+            ('ACC', 0),  # Essentials Plus
+        )
+        for name, value in defaults:
+            self.asf.write_u8(self.asf.find_var(name) + self.asf.G8_DEFAULT, value)
+        return PatchOutcome.ok("Updated defaults for %d vars" % len(defaults))
 
     def patch_logos(self):
 
@@ -2176,7 +2190,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         # Find the location of the original wave
         setting_loc = self.asf.find_bytes([0xb8, 0x00, 0x54, 0x00, 0xb8, 0x00, 0x00, 0x00])
         
-        asf.patch_image(setting_loc, pallete_addr, pixels_addr, logo)    
+        self.asf.patch_image(setting_loc, pallete_addr, pixels_addr, logo)
         
         # Find somewhere to stash our stuff in the flash memory
         # NOTE: Pallet is in 32-bit, and need room for struct stuff around pallete
@@ -2187,6 +2201,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         setting_loc = self.asf.find_bytes([0xB8, 0x00, 0x32, 0x00, 0x5c, 0x00, 0x00])
         
         self.asf.patch_image(setting_loc, pallete_addr, pixels_addr, text)
+        return PatchOutcome.ok()
 
     def patch_uart3_monitor(self):
 
@@ -2199,7 +2214,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         # irq_location = asf.find_flash_room(len(data)*2)
         # print("Suggest to place at %x"%irq_location)
         irq_location = 0xC600
-        asf.patch(irq_bin, irq_location, checkempty=True)
+        self.asf.patch(irq_bin, irq_location, checkempty=True)
         
         init_offset, init_bin = self.asf.prepare_bin("../serial_monitor/monitor_init")
         if init_offset != 0:
@@ -2212,27 +2227,25 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self.asf.patch(init_bin, init_location, clobber=True)
         
         #Entry is not at start of file sometimes in this file?
-        print("IRQ has offset of 0x%x (dealt with)"%irq_offset)
         irq_location += irq_offset
         
         # IRQ vector - at fixed location 0x080402DC so don't need to worry about
         # this moving. Address needs to be +1 for normal code jump location.
         irq_location_packed = struct.pack("<I", 0x08000000 + irq_location + 1)
         self.asf.patch(irq_location_packed, 0x402dc, clobber=True)
+        return PatchOutcome.ok(None, "USART3 monitor IRQ entry offset: 0x%X" % irq_offset)
         
     def patch_common_code(self):
         """Inject common_code shared library (required by graph, squarewave, etc.)"""
-        data, ver = self._load_versioned_bin('common_code')
-        if data is None:
-            return
+        if not self._supports_compiled_payloads():
+            return PatchOutcome.skip("unsupported CDX version %s" % self.asf.cdx_ver)
+        data, _ = self._load_versioned_bin('common_code', required=True)
         flash, _ = self._inject_payload('common_code', data)
-        print("  common_code: %dB at 0x%08X" % (len(data), flash))
+        return PatchOutcome.ok(None, self._payload_detail('common_code', len(data), flash))
 
     def patch_graph(self):
         """Add special graph module"""
-        data, ver = self._load_versioned_bin('graph')
-        if data is None:
-            return
+        ver = self._payload_version_key()
         SITES = {
             '0302': ((0xf92dc, 0x08067601), (0xf92d8, 0x080675d3),
                      (0xf396c, 0x080672f5), (0xfaa04, 0x0806771d)),
@@ -2246,13 +2259,12 @@ class ASFirmwarePatches(CompiledPayloadMixin):
                      (0xf455c, 0x08067a21), (0xfb628, 0x08067e49)),
         }
         sites = SITES.get(ver)
-        if sites is None:
-            print("  patch_graph: skipped (unsupported CDX version %s)" % self.asf.cdx_ver)
-            return
+        if not self._supports_compiled_payloads() or sites is None:
+            return PatchOutcome.skip("unsupported CDX version %s" % self.asf.cdx_ver)
+        data, _, elf_path = self._load_versioned_payload('graph')
         draw_site, update_site, header_site, numbers_site = sites
         draw_fptr = draw_site[0]
         update_fptr = update_site[0]
-        elf_path = self._versioned_artifact_path('graph', 'elf', ver)
         start = self._elf_symbol_addr(elf_path, 'start')
         update = self._elf_symbol_addr(elf_path, 'graph_widget_update')
         header_wrapper = self._elf_symbol_addr(elf_path, 'graph_header_update')
@@ -2286,14 +2298,20 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self.asf.write_u32(update_fptr, update | 1)
         self.asf.write_u32(header_site[0], header_wrapper | 1)
         self.asf.write_u32(numbers_site[0], numbers_wrapper | 1)
-        self.graph_applied = True
-        print("  graph: %dB at 0x%08X" % (len(data), flash))
+        self.applied_payloads.add('graph')
+        return PatchOutcome.ok(
+            None,
+            self._payload_detail('graph', len(data), flash),
+            self._hook_detail('graph draw pointer', self.asf.FLASH_BASE + draw_fptr, start | 1),
+            self._hook_detail('graph update pointer', self.asf.FLASH_BASE + update_fptr, update | 1),
+            self._hook_detail('graph header pointer', self.asf.FLASH_BASE + header_site[0],
+                              header_wrapper | 1),
+            self._hook_detail('graph pressure pointer', self.asf.FLASH_BASE + numbers_site[0],
+                              numbers_wrapper | 1))
 
     def patch_squarewave(self):
         """Add squarewave pressure mode"""
-        data, ver = self._load_versioned_bin('squarewave')
-        if data is None:
-            return
+        ver = self._payload_version_key()
         FPTR = {
             '0302': 0xf8dcc,
             '0305': 0xf9514,
@@ -2302,30 +2320,19 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             '0402': 0xf99f0,
         }
         fptr = FPTR.get(ver)
-        if fptr is None:
-            print("  patch_squarewave: skipped (unsupported CDX version %s)" % self.asf.cdx_ver)
-            return
-        elf_path = self._versioned_artifact_path('squarewave', 'elf', ver)
-        if not os.path.exists(elf_path):
-            raise ValueError("patch_squarewave: build/squarewave_%s.elf not found" % ver)
-        start = self._elf_symbol_addr(elf_path, 'start')
-        original_slot = self._elf_symbol_addr(elf_path, 'squarewave_original_handler')
-        payload_thumb = start | 1
-        original = self.asf.read_u32(fptr)
-        if original == payload_thumb:
-            original = self.asf.read_u32(original_slot - self.asf.FLASH_BASE)
-        flash, _ = self._inject_payload('squarewave', data)
-        self.asf.write_u32(fptr, payload_thumb)
-        self.asf.write_u32(original_slot - self.asf.FLASH_BASE, original)
-        self.squarewave_applied = True
-        print("  squarewave: %dB at 0x%08X" % (len(data), flash))
-        print("  original handler: 0x%08X -> ABI 0x%08X" % (original, original_slot))
+        if not self._supports_compiled_payloads() or fptr is None:
+            return PatchOutcome.skip("unsupported CDX version %s" % self.asf.cdx_ver)
+
+        # The payload replaces a stock function-table entry. Preserve the
+        # displaced handler in its ABI slot so disabled mode follows stock code.
+        details = self._inject_function_pointer_payload(
+            'squarewave', fptr, 'squarewave handler pointer',
+            'squarewave_original_handler')
+        return PatchOutcome.ok(None, *details)
 
     def patch_asv_task_wrapper(self):
         """Add runtime-controllable ASV backup-rate suppression."""
-        data, ver = self._load_versioned_bin('asv_task_wrapper')
-        if data is None:
-            return
+        ver = self._payload_version_key()
         FPTR = {
             '0302': 0xf3b68,
             '0305': 0xf427c,
@@ -2334,21 +2341,14 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             '0402': 0xf4758,
         }
         fptr = FPTR.get(ver)
-        if fptr is None:
-            print("  patch_asv_task_wrapper: skipped (unsupported CDX version %s)" % self.asf.cdx_ver)
-            return
-        elf_path = self._versioned_artifact_path('asv_task_wrapper', 'elf', ver)
-        start = self._elf_symbol_addr(elf_path, 'start')
-        flash, _ = self._inject_payload('asv_task_wrapper', data)
-        self.asf.write_u32(fptr, start | 1)
-        self.asv_task_wrapper_applied = True
-        print("  asv_task_wrapper: %dB at 0x%08X" % (len(data), flash))
+        if not self._supports_compiled_payloads() or fptr is None:
+            return PatchOutcome.skip("unsupported CDX version %s" % self.asf.cdx_ver)
+        details = self._inject_function_pointer_payload('asv_task_wrapper', fptr, 'ASV task handler pointer')
+        return PatchOutcome.ok(None, *details)
 
     def patch_wrapper_limit_max_pdiff(self):
         """Add VAuto/ASV pressure shaping wrapper"""
-        data, ver = self._load_versioned_bin('wrapper_limit_max_pdiff')
-        if data is None:
-            return
+        ver = self._payload_version_key()
         FPTR = {
             '0302': 0xf8a24,
             '0305': 0xf916c,
@@ -2357,19 +2357,16 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             '0402': 0xf9648,
         }
         fptr = FPTR.get(ver)
-        if fptr is None:
-            print("  patch_wrapper_limit_max_pdiff: skipped (unsupported CDX version %s)" % self.asf.cdx_ver)
-            return
-        elf_path = self._versioned_artifact_path('wrapper_limit_max_pdiff', 'elf', ver)
-        start = self._elf_symbol_addr(elf_path, 'start')
-        flash, _ = self._inject_payload('wrapper_limit_max_pdiff', data)
-        self.asf.write_u32(fptr, start | 1)
-        self.wrapper_limit_max_pdiff_applied = True
-        print("  limit_max_pdiff: %dB at 0x%08X" % (len(data), flash))
+        if not self._supports_compiled_payloads() or fptr is None:
+            return PatchOutcome.skip("unsupported CDX version %s" % self.asf.cdx_ver)
+        details = self._inject_function_pointer_payload(
+            'wrapper_limit_max_pdiff', fptr,
+            'VAuto pressure handler pointer')
+        return PatchOutcome.ok(None, *details)
 
     def patch_lcd_ili9325(self):
         """Universal ILI9325/ILI9328 + ILI9341 LCD driver"""
-        ver = self.asf.cdx_ver.replace('SX567-', '')
+        ver = self._payload_version_key()
         BL_OFF_MAP = {
             '0302': 0x7b8bc,
             '0305': 0x7c034,
@@ -2378,18 +2375,21 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             '0402': 0x7c030,
         }
         bl_off = BL_OFF_MAP.get(ver)
-        if bl_off is None:
-            raise ValueError("patch_lcd_ili9325: unsupported CDX version %s" % self.asf.cdx_ver)
+        if not self._supports_compiled_payloads() or bl_off is None:
+            return PatchOutcome.skip("unsupported CDX version %s" % self.asf.cdx_ver)
         expected_bl = b'\xFF\xF7\x7A\xFE'
-        if bytes(self.asf.fw[bl_off:bl_off+4]) != expected_bl:
+        if self.asf.read_bytes(bl_off, 4) != expected_bl:
             raise ValueError("patch_lcd_ili9325: unexpected LCD board init call bytes at 0x%X" % bl_off)
-        data, ver = self._load_versioned_bin('s10_lcd_ili9325', required=True)
-        elf_path = self._versioned_artifact_path('s10_lcd_ili9325', 'elf', ver)
+        data, _, elf_path = self._load_versioned_payload('s10_lcd_ili9325')
         board_init = self._elf_symbol_addr(elf_path, 'lcd_board_init')
         flash, _ = self._inject_payload('s10_lcd_ili9325', data)
-        print("  lcd_ili9325: %dB at 0x%08X" % (len(data), flash))
         bl_bytes = self._encode_thumb_bl(bl_off, board_init)
         self.asf.patch(bl_bytes, bl_off, clobber=True)
+        return PatchOutcome.ok(
+            None,
+            self._payload_detail('s10_lcd_ili9325', len(data), flash),
+            self._hook_detail('LCD board initialization call',
+                              self.asf.FLASH_BASE + bl_off, board_init))
 
     def _encode_thumb_bl(self, src_off, dst_addr):
         """Encode a Thumb BL instruction from file offset to absolute address."""
@@ -2415,34 +2415,29 @@ class ASFirmwarePatches(CompiledPayloadMixin):
 
     def patch_backlight_adapt(self):
         """improved backlight response to ambient light"""
-        data, ver = self._load_versioned_bin('backlight_adapt')
-        if data is None:
-            return
-
-        if ver not in ('0302', '0305', '0306', '0401', '0402'):
-            print("  skipped (unsupported version %s)" % ver)
-            return
+        ver = self._payload_version_key()
+        if not self._supports_compiled_payloads():
+            return PatchOutcome.skip("unsupported CDX version %s" % self.asf.cdx_ver)
+        data, _, elf_path = self._load_versioned_payload('backlight_adapt')
 
         # signature: bl A1D0; mov r0,r4; bl A2A4; movs r5,#0
         try:
             sig_off = self.asf.find_bytes(bytes.fromhex('00F0D5F8204600F03CF90025'))
         except ValueError:
-            print("  tick signature not found")
-            return
+            return PatchOutcome.skip("backlight update signature not found")
 
         hook_off = sig_off + 6
         expected_bl = b'\x00\xF0\x3C\xF9'
-        if bytes(self.asf.fw[hook_off:hook_off+4]) != expected_bl:
-            print("  unexpected bytes at hook site 0x%X, already patched?" % hook_off)
-            return
+        if self.asf.read_bytes(hook_off, 4) != expected_bl:
+            return PatchOutcome.warn(
+                "unexpected bytes at backlight hook site 0x%08X" %
+                (self.asf.FLASH_BASE + hook_off))
 
         # This gate must be removed so ASF continues tracking ASR while the display is active.
         gate_off = sig_off + 0x1C8
-        if bytes(self.asf.fw[gate_off:gate_off+2]) != b'\x4F\xD0':
-            print("  ASF update gate not found at expected offset")
-            return
+        if self.asf.read_bytes(gate_off, 2) != b'\x4F\xD0':
+            return PatchOutcome.warn("ASF update gate not found at expected offset")
 
-        elf_path = self._versioned_artifact_path('backlight_adapt', 'elf', ver)
         start = self._elf_symbol_addr(elf_path, 'start')
         flash, _ = self._inject_payload('backlight_adapt', data)
 
@@ -2458,35 +2453,34 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self.asf.write_u32(self.asf.find_var('LBH') + self.asf.G4_DEFAULT, 80)  # buttons high
         self.asf.write_u32(self.asf.find_var('ATH') + self.asf.G4_DEFAULT, 590)  # ambient low threshold
 
-        self.backlight_adapt_applied = True
-        print("  backlight_adapt: %dB at 0x%08X" % (len(data), flash))
+        self.applied_payloads.add('backlight_adapt')
+        return PatchOutcome.ok(
+            None,
+            self._payload_detail('backlight_adapt', len(data), flash),
+            self._hook_detail('backlight update call',
+                              self.asf.FLASH_BASE + hook_off, start))
 
     def patch_breath(self):
         """Add breath routine to allow full control"""
-        f = open("../breath.bin", "rb")
-        fw = f.read()
-        f.close()
+        with open("../breath.bin", "rb") as f:
+            fw = f.read()
         
         self.asf.patch(fw, 0xBB734, clobber=True)
+        return PatchOutcome.ok()
 
 
     def patch_vid_spoof(self):
         """Set VID from therapy mode, using a regional variant where known."""
-        ver = self.asf.cdx_ver.replace('SX567-', '')
-        bin_path = self._versioned_artifact_path('vid_spoof', 'bin', ver)
-        elf_path = self._versioned_artifact_path('vid_spoof', 'elf', ver)
-        if not os.path.exists(bin_path):
-            print("  patch_vid_spoof: build/vid_spoof_%s.bin not found (run make)" % ver)
-            return
-        if not os.path.exists(elf_path):
-            raise ValueError("patch_vid_spoof: build/vid_spoof_%s.elf not found" % ver)
-        with open(bin_path, 'rb') as f:
-            data = f.read()
+        if not self._supports_compiled_payloads():
+            return PatchOutcome.skip("unsupported CDX version %s" % self.asf.cdx_ver)
+        data, _, elf_path = self._load_versioned_payload('vid_spoof')
         flash, _ = self._inject_payload('vid_spoof', data)
-        print("  vid_spoof: build/vid_spoof_%s.bin (%dB) at 0x%08X" %
-              (ver, len(data), flash))
         handler = self._elf_symbol_addr(elf_path, 'start')
-        self.mop_callback_register_handler(handler, 'vid_spoof')
+        handler = self.mop_callback_register_handler(handler, 'vid_spoof')
+        return PatchOutcome.ok(
+            None,
+            self._payload_detail('vid_spoof', len(data), flash),
+            self._mop_handler_detail('vid_spoof', handler))
 
     def custom_palette(self):
         """Patch custom color palette."""
@@ -2499,13 +2493,11 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         }
         signature = signatures.get(self.asf.cdx_ver)
         if signature is None:
-            print("  custom_palette: skipped (unsupported CDX version %s)" % self.asf.cdx_ver)
-            return
+            return PatchOutcome.skip("unsupported CDX version %s" % self.asf.cdx_ver)
         try:
             base = self.asf.find_bytes(bytes.fromhex(signature))
         except ValueError:
-            print("  custom_palette: palette signature not found")
-            return
+            return PatchOutcome.warn("palette signature not found")
         base += 8
 
         self.asf.patch(b'\xCC\x33\x00\x00', base + 0x24, clobber=True)
@@ -2525,7 +2517,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         for off in (0x18, 0x34, 0x50, 0x6C, 0x88, 0xA4):
             self.asf.patch(b'\x08\x00\x08\x00', base + off, clobber=True)
 
-        print("  custom_palette: palette at 0x%X" % base)
+        return PatchOutcome.ok(None, "Palette table: 0x%08X" % (self.asf.FLASH_BASE + base))
 
 
     def patch_past_date(self):
@@ -2533,22 +2525,28 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         # date direction check: cmp r0,r5 -> cmp r0,r0
         off = self.asf.find_bytes(bytes.fromhex('0098a8428041c043c00f05b030bd'))
         self.asf.patch(b'\x80', addr=off + 2, clobber=True)
+        return PatchOutcome.ok()
 
     def motor_nagscreen(self):
         """Remove "Motor life exceeded" nag screen"""
         try:
-            self.asf.patch([0x0e, 0x49, 0x88, 0x42, 0x05, 0xe0, 0x03, 0x21, 0x0f, 0x20], dataseq=[0x0e, 0x49, 0x88, 0x42, 0x05, 0xdb, 0x03, 0x21, 0x0f, 0x20], clobber=True)
-            print("  BLT bypass patched")
+            expected = bytes.fromhex('0E 49 88 42 05 DB 03 21 0F 20')
+            replacement = bytes.fromhex('0E 49 88 42 05 E0 03 21 0F 20')
+            self.asf.patch(replacement, dataseq=expected, clobber=True)
+            return PatchOutcome.ok("patched by default method")
         except ValueError:
             # fallback: find and patch runtime threshold
             try:
                 self.asf.patch(b'\xFF\xFF\xFF\x7F', dataseq=[0xC0, 0x00, 0xB3, 0x04], clobber=True)
-                print("  threshold set to max")
+                return PatchOutcome.ok("patched by fallback method")
             except ValueError:
-                print("  WARN: neither patch location found!")
+                return PatchOutcome.warn("no known motor-nag patch location found")
 
     def patch_edf_merge(self):
         """Merge universal EDF signal superset into CCX"""
+        if not self.asf.cdx_ver.startswith('SX567-') or self.asf.ccx_size != 0x3c000:
+            return PatchOutcome.skip("requires SX567 CCX layout")
+
         try:
             from edf_ccx_merge import patch_edf_merge
         except ImportError:
@@ -2557,104 +2555,330 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             from edf_ccx_merge import patch_edf_merge
 
         buf = io.StringIO()
-        old_stdout = sys.stdout
-        sys.stdout = buf
-        try:
-            patches = patch_edf_merge(self.asf, force=True)
-        finally:
-            sys.stdout = old_stdout
+        with redirect_stdout(buf):
+            patch_edf_merge(self.asf, force=True)
         summary = buf.getvalue().strip()
-        if summary:
-            print("  %s" % summary)
+        if summary.startswith('EDF merge: '):
+            summary = summary[len('EDF merge: '):]
+        return PatchOutcome.ok(summary or None)
 
             
 def str2bool(v):
     if isinstance(v, bool):
-       return v
+        return v
     if v.lower() in ('yes', 'true', 't', 'y', '1'):
         return True
-    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+    if v.lower() in ('no', 'false', 'f', 'n', '0'):
         return False
-    else:
-        raise argparse.ArgumentTypeError('Boolean value expected.')
+    raise argparse.ArgumentTypeError('Boolean value expected.')
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Patch Airsense Firmware with various updates.')
-    parser.add_argument('INFILE', help="Input original binary file")
-    parser.add_argument('OUTFILE', help="Output patched file")
-    
-    parser.add_argument('OPERATION', help="Operation to perform", choices=['INFO', 'PATCH'])
-    
-    patch_list_yn = [
-        {'arg':"patch-bypass-start",    'desc':"Bypass checks that block start-up.",                    'default':True,  'function':'bypass_startcheck'},
-        {'arg':"patch-blx-dump",        'desc':"Add bootloader support for firmware dumps over UART.",  'default':True,  'function':'patch_blx_dump'},
-        {'arg':"patch-bypass-psuid",    'desc':"Bypass Power Supply check at start-up.",                'default':True,  'function':'bypass_psucheck'},
-        {'arg':"patch-unlock-uilimits", 'desc':"Unlock higher UI limits.",                              'default':True,  'function':'unlock_ui_limits'},
-        {'arg':"patch-unlock-languages",'desc':"Unlock all built-in languages",                         'default':True,  'function':'unlock_languages'},
-        {'arg':"patch-extra-debug",     'desc':"Add extra debug to display.",                           'default':True,  'function':'extra_debug'},
-        {'arg':"patch-extra-modes",     'desc':"Add all modes.",                                        'default':True,  'function':'extra_modes'},
-        {'arg':"patch-unlock-options",  'desc':"Unlock additional enum option masks.",                  'default':True,  'function':'unlock_option_masks'},
-        {'arg':"patch-gui-config",      'desc':"Enable all of the editable options in the settings menu.",
-                                                                                                        'default':True,  'function':'gui_config'},
-        {'arg':"patch-asv-ps-range",    'desc':"Unlock ASV/ASVAuto pressure constraints.",              'default':True,  'function':'asv_unlock_ps_range'},
-        {'arg':"patch-defaults",        'desc':"Change firmware defaults.",                             'default':True,  'function':'patch_defaults'},
-        {'arg':"patch-logos",           'desc':"Change start-up logos.",                                'default':False, 'function':'patch_logos'},
-        {'arg':"patch-fw-serialmonitor",'desc':"Add monitor binary running on USART3 accessory port.",  'default':False, 'function':'patch_uart3_monitor'},
-        {'arg':"patch-fw-breath",       'desc':"Add breath binary to allow direct pressure control.",   'default':False, 'function':'patch_breath'},
-        {'arg':"patch-fw-common-code",  'desc':"Inject shared code library (required by graph, squarewave, etc.).", 'default':False, 'function':'patch_common_code'},
-        {'arg':"patch-fw-graph",        'desc':"Add graph binary to allow graphing of pressures.",      'default':False, 'function':'patch_graph'},
-        {'arg':"patch-fw-squarewave",   'desc':"Add squarewave pressure mode.",                         'default':False, 'function':'patch_squarewave'},
-        {'arg':"patch-fw-asv-wrapper",  'desc':"Add ASV backup-rate control wrapper.",                  'default':False, 'function':'patch_asv_task_wrapper'},
-        {'arg':"patch-fw-vauto-wrapper",'desc':"Add VAuto/ASV pressure shaping wrapper.",               'default':False, 'function':'patch_wrapper_limit_max_pdiff'},
-        {'arg':"patch-fw-backlight",    'desc':"Improved backlight adaptation to ambient light.",       'default':True,  'function':'patch_backlight_adapt'},
-        {'arg':"patch-custom-settings", 'desc':"Expose settings for injected custom patch features.",
-                                                                                                        'default':True,  'function':'custom_patch_settings'},
-        {'arg':"patch-fw-vidspoof",     'desc':"Set VID from therapy mode, using a regional variant where known.",     'default':True, 'function':'patch_vid_spoof'},
-        {'arg':"patch-custom-palette",  'desc':"Patch custom color palette.",
-                                                                                                        'default':True,  'function':'custom_palette'},
-        {'arg':"patch-fw-lcd",          'desc':"Universal ILI9325/ILI9328 LCD driver.",                 'default':False, 'function':'patch_lcd_ili9325'},
-        {'arg':"patch-past-date",       'desc':"Allow setting past date in menu and UART.",             'default':True,  'function':'patch_past_date'},
-        {'arg':"patch-motor-nagscreen", 'desc':"Remove \"Motor life exceeded\" nag screen",             'default':True,  'function':'motor_nagscreen'},
-        {'arg':"patch-edf-merge",       'desc':"Merge universal EDF signal superset into CCX.",         'default':True,  'function':'patch_edf_merge'},
-    ]
-    
-    for arg in patch_list_yn:
-        if arg['default'] == True:
-            choices = ['Y', 'n']
+
+@dataclass(frozen=True)
+class PatchOutcome:
+    status: str = 'OK'
+    summary: str = None
+    details: tuple = ()
+
+    @classmethod
+    def ok(cls, summary=None, *details):
+        return cls('OK', summary, details)
+
+    @classmethod
+    def warn(cls, summary, *details):
+        return cls('WARN', summary, details)
+
+    @classmethod
+    def skip(cls, summary):
+        return cls('SKIP', summary)
+
+
+class TeeStream:
+    def __init__(self, *streams):
+        self.streams = streams
+
+    def write(self, data):
+        for stream in self.streams:
+            stream.write(data)
+        return len(data)
+
+    def flush(self):
+        for stream in self.streams:
+            stream.flush()
+
+
+@dataclass(frozen=True)
+class PatchSpec:
+    option: str
+    description: str
+    default: bool
+    method: str
+    deprecated: str = None
+
+
+# Patch order is part of the implementation. Payloads must be present before
+# custom settings patch their ABI slots; all MOP handlers must be registered
+# before finalization installs the shared dispatcher; CRCs are always last.
+PATCH_PHASES = (
+    ('Therapy unlocks', (
+        PatchSpec('patch-extra-modes', 'Add all modes.',
+                  True, 'extra_modes'),
+        PatchSpec('patch-unlock-uilimits', 'Unlock higher UI limits.',
+                  True, 'unlock_ui_limits'),
+        PatchSpec('patch-unlock-options', 'Unlock additional enum option masks.',
+                  True, 'unlock_option_masks'),
+        PatchSpec('patch-gui-config', 'Enable all editable options in the settings menu.',
+                  True, 'gui_config'),
+        PatchSpec('patch-asv-ps-range', 'Unlock ASV/ASVAuto pressure constraints.',
+                  True, 'asv_unlock_ps_range'),
+    )),
+
+    ('Quality of life', (
+        PatchSpec('patch-integrity-check', 'Bypass firmware integrity checks.',
+                  True, 'patch_integrity_check'),
+        PatchSpec('patch-bypass-psuid', 'Bypass Power Supply check at start-up.',
+                  True, 'bypass_psucheck'),
+        PatchSpec('patch-unlock-languages', 'Unlock all built-in languages.',
+                  True, 'unlock_languages'),
+        PatchSpec('patch-therapy-screen', 'Enable additional therapy-screen information.',
+                  True, 'patch_therapy_screen'),
+        PatchSpec('patch-defaults', 'Change firmware defaults.',
+                  True, 'patch_defaults'),
+        PatchSpec('patch-fw-backlight', 'Improve backlight adaptation to ambient light.',
+                  True, 'patch_backlight_adapt'),
+        PatchSpec('patch-custom-palette', 'Patch the custom color palette.',
+                  True, 'custom_palette'),
+        PatchSpec('patch-past-date', 'Allow setting past date in the menu and over UART.',
+                  True, 'patch_past_date'),
+        PatchSpec('patch-motor-nagscreen', 'Remove the "Motor life exceeded" nag screen.',
+                  True, 'motor_nagscreen'),
+        PatchSpec('patch-logos', 'Change start-up logos.',
+                  False, 'patch_logos',
+                  'requires unmaintained external logo assets'),
+    )),
+
+    ('Therapy modifications', (
+        PatchSpec('patch-fw-common-code', 'Inject the shared therapy payload library.',
+                  False, 'patch_common_code'),
+        PatchSpec('patch-fw-graph', 'Add the therapy pressure graph.',
+                  False, 'patch_graph'),
+        PatchSpec('patch-fw-squarewave', 'Add squarewave pressure shaping.',
+                  False, 'patch_squarewave'),
+        PatchSpec('patch-fw-asv-wrapper', 'Add ASV backup-rate runtime control.',
+                  False, 'patch_asv_task_wrapper'),
+        PatchSpec('patch-fw-vauto-wrapper', 'Add custom VAuto pressure shaping.',
+                  False, 'patch_wrapper_limit_max_pdiff'),
+        PatchSpec('patch-fw-breath', 'Add direct pressure-control firmware.',
+                  False, 'patch_breath',
+                  'requires an external breath.bin built for one fixed firmware address'),
+    )),
+
+    ('Custom settings integration', (
+        PatchSpec('patch-custom-settings', 'Expose settings for active injected features.',
+                  True, 'custom_patch_settings'),
+    )),
+
+    ('Therapy data and reporting', (
+        PatchSpec('patch-fw-vidspoof',
+                  'Set VID from therapy mode, using a regional variant where known.',
+                  True, 'patch_vid_spoof'),
+        PatchSpec('patch-edf-merge', 'Merge the universal EDF signal superset into CCX.',
+                  True, 'patch_edf_merge'),
+    )),
+
+    ('Miscellaneous', (
+        PatchSpec('patch-blx-dump', 'Add bootloader support for firmware dumps over UART.',
+                  True, 'patch_blx_dump'),
+        PatchSpec('patch-fw-lcd', 'Add the universal ILI9325/ILI9328 LCD driver.',
+                  False, 'patch_lcd_ili9325'),
+        PatchSpec('patch-fw-serialmonitor', 'Add a monitor on the USART3 accessory port.',
+                  False, 'patch_uart3_monitor',
+                  'requires external monitor binaries and fixed firmware addresses'),
+    )),
+)
+
+
+PATCH_DEPENDENCIES = {
+    'patch-fw-graph': ('patch-fw-common-code',),
+    'patch-fw-vauto-wrapper': ('patch-fw-common-code',),
+    'patch-fw-squarewave': ('patch-fw-common-code', 'patch-fw-vauto-wrapper'),
+}
+
+
+def iter_patch_specs():
+    for _, phase_patches in PATCH_PHASES:
+        yield from phase_patches
+
+
+def patch_option_selected(args, option):
+    return getattr(args, option.replace('-', '_'))
+
+
+def validate_patch_dependencies(parser, args):
+    errors = []
+    for option, dependencies in PATCH_DEPENDENCIES.items():
+        if not patch_option_selected(args, option):
+            continue
+
+        missing = [dependency for dependency in dependencies
+                   if not patch_option_selected(args, dependency)]
+        if missing:
+            errors.append('--%s requires %s' % (
+                option,
+                ' and '.join('--%s' % dependency for dependency in missing)))
+
+    if errors:
+        parser.error('; '.join(errors))
+
+
+def build_argument_parser():
+    parser = argparse.ArgumentParser(description='Patch AirSense firmware with selected updates.')
+    parser.add_argument('INFILE', help='Input original binary file')
+    parser.add_argument('OUTFILE', help='Output patched file')
+    parser.add_argument('OPERATION', choices=['INFO', 'PATCH'],
+                        help='Operation to perform')
+
+    for patch in iter_patch_specs():
+        state = 'enabled' if patch.default else 'disabled'
+        parser.add_argument(
+            '--' + patch.option,
+            type=str2bool,
+            default=patch.default,
+            metavar='BOOL',
+            help='%s (default: %s)' % (patch.description, state))
+
+    parser.add_argument('--overwrite', action='store_true',
+                        help='Overwrite output file if it already exists.')
+    parser.add_argument('--force-deprecated', action='store_true',
+                        help='Apply deprecated patches (you know what you are doing).')
+    parser.add_argument('-v', '--verbose', action='store_true',
+                        help='Show per-patch details.')
+    parser.add_argument('--log-file',
+                        help='Append a verbose patching transcript to this file.')
+    return parser
+
+
+def print_patch_output(text, stream=None):
+    for line in text.rstrip('\n').splitlines():
+        # Existing patch messages already use the standard two-space indent.
+        if line.startswith('  '):
+            line = line[2:]
+        print(('  ' + line) if line else '', file=stream)
+
+
+def print_patch_details(output, outcome, stream=None, include_summary=True):
+    print_patch_output(output, stream)
+    for detail in outcome.details:
+        print('  ' + detail, file=stream)
+    if include_summary and outcome.summary:
+        print('  ' + outcome.summary, file=stream)
+
+
+def apply_reported_patch(option, method, args, detail_log=None, deprecated=None):
+    if deprecated and not args.force_deprecated:
+        print('PATCH: %s [SKIP]' % option)
+        print('  ' + deprecated)
+        return PatchOutcome.skip(deprecated)
+
+    output = io.StringIO()
+    try:
+        with redirect_stdout(output):
+            outcome = method()
+        if not isinstance(outcome, PatchOutcome):
+            raise TypeError("%s returned %s instead of PatchOutcome" %
+                            (option, type(outcome).__name__))
+    except Exception as exc:
+        print('PATCH: %s [ERROR]' % option)
+        if args.verbose or detail_log is None:
+            print_patch_output(output.getvalue())
         else:
-            choices = ['y', 'N']
-        parser.add_argument("--"+arg['arg'], help=arg['desc'], default=arg['default'], choices=choices)
-    
-    parser.add_argument("--overwrite", action="store_true", help="Overwrite output file if it exists already.")
-    parser.add_argument("--force-deprecated", action="store_true", help="Apply deprecated patches (you know what you're doing).")
-    parser.add_argument("-v", "--verbose", action="store_true", help="Show per-patch byte-level details.")
-    
-    args = parser.parse_args()
+            print_patch_output(output.getvalue(), detail_log)
+        print('  ' + str(exc))
+        raise
 
-    #Open existing file
-    b = open(args.INFILE, "rb")
-    asf = ASFirmware(b)
-    b.close()
-    asf.verbose = args.verbose
+    status = outcome.status
+    if deprecated and status == 'OK':
+        status = 'WARN'
 
-    if args.OPERATION == "PATCH":
+    print('PATCH: %s [%s]' % (option, status))
+    if deprecated:
+        print('  deprecated: ' + deprecated)
+    if args.verbose:
+        print_patch_details(output.getvalue(), outcome)
+    else:
+        show_summary = outcome.status in ('WARN', 'SKIP')
+        if detail_log is not None:
+            print_patch_details(output.getvalue(), outcome, detail_log, include_summary=not show_summary)
+        if show_summary and outcome.summary:
+            print('  ' + outcome.summary)
+    return outcome
 
-        repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        build_identity = firmware_build_identity(repo_dir)
-        patches = ASFirmwarePatches(asf)
-        
-        for patch in patch_list_yn:
-            if str2bool(getattr(args, patch['arg'].replace("-","_"))):
-                if patch.get('deprecated'):
-                    if not args.force_deprecated:
-                        print("SKIP: %s -- %s" % (patch['desc'], patch['deprecated']))
-                        continue
-                    print("WARN: applying deprecated patch: " + patch['desc'])
-                print("PATCH: " + patch['desc'])
-                getattr(patches, patch['function'])()
 
-        patches.patch_mop_callback_dispatcher()
-        asf.patch_firmware_sid(build_identity)
-        asf.fix_crcs()
-        asf.write_output(args.OUTFILE, args.overwrite)
-        patches.print_custom_resource_summary()
+def apply_patch_phases(patches, args, detail_log=None):
+
+    for phase_name, phase_patches in PATCH_PHASES:
+        selected = [patch for patch in phase_patches
+                    if patch_option_selected(args, patch.option)]
+        if not selected:
+            continue
+
+        print('\n=== ' + phase_name)
+        for patch in selected:
+            apply_reported_patch(patch.option, getattr(patches, patch.method), args,
+                                 detail_log, patch.deprecated)
+
+
+def run_patcher(args, detail_log=None):
+    with open(args.INFILE, 'rb') as firmware_file:
+        asf = ASFirmware(firmware_file)
+    if args.OPERATION == 'INFO':
+        return 0
+
+    repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    build_identity = firmware_build_identity(repo_dir)
+    patches = ASFirmwarePatches(asf)
+
+    apply_patch_phases(patches, args, detail_log)
+
+    print('\n=== Finalization')
+    apply_reported_patch(
+        'patch-mop-callback-dispatcher',
+        patches.patch_mop_callback_dispatcher,
+        args, detail_log)
+
+    asf.patch_firmware_sid(build_identity)
+
+    output = io.StringIO()
+    try:
+        with redirect_stdout(output):
+            asf.fix_crcs()
+            asf.write_output(args.OUTFILE, args.overwrite)
+            patches.print_custom_resource_summary()
+    except Exception:
+        stream = detail_log if detail_log is not None and not args.verbose else None
+        print(output.getvalue(), end='', file=stream)
+        raise
+
+    if args.verbose:
+        print(output.getvalue(), end='')
+    elif detail_log is not None:
+        print(output.getvalue(), end='', file=detail_log)
+    return 0
+
+
+def main(argv=None):
+    parser = build_argument_parser()
+    args = parser.parse_args(argv)
+
+    if args.OPERATION == 'PATCH':
+        validate_patch_dependencies(parser, args)
+
+    if args.log_file is None:
+        return run_patcher(args)
+
+    with open(args.log_file, 'a', encoding='utf-8') as detail_log:
+        with redirect_stdout(TeeStream(sys.stdout, detail_log)):
+            return run_patcher(args, detail_log)
+
+
+if __name__ == '__main__':
+    sys.exit(main())

@@ -33,14 +33,19 @@ This builds compiled patches and produces following images:
 | `build/stm32-asv-plus_no-squarewave.bin` | same as stm32-asv-plus minus squarewave |
 | `build/stm32-asv-plus_with-backup.bin` | same as stm32-asv-plus minus backup-rate suppression |
 
-### Alternative patchers
+The console shows compact patch status by default. A verbose transcript of the
+latest build is written to `make.log`; use `make V=1` to also show it on the
+console.
 
-Bash (same as Makefile default):
+### Command-line patchers
+
+The compatibility command used by the Makefile is:
 ```
 ./patch-airsense stm32.bin build/stm32-patched.bin
 ```
 
-Python:
+`patch-airsense` accepts the environment variables listed below and invokes the
+Python patcher:
 ```
 ./python/patch-airsense.py stm32.bin build/stm32-patched.bin PATCH
 ```
@@ -51,35 +56,34 @@ All patches below are **enabled by default** unless noted.
 
 ### Therapy unlocks
 
-| Patch | What it does | Bash function | Python switch |
-|-------|-------------|---------------|---------------|
-| Unlock all modes | Enables all therapy modes in the mode selector (CPAP, AutoSet, VAuto, ASV, ASVAuto, iVAPS, ...) | `extra_modes` | `--patch-extra-modes` |
-| Unlock settings | Exposes all settings linked to unlocked modes by toggling their visibility flag | `gui_config` | `--patch-gui-config` |
-| Unlock pressure range | Extends min/max pressure limits to 1.0-30.0 cmH2O for all modes | `unlock_ui_limits` | `--patch-unlock-uilimits` |
-| Unlock ASV PS range | Removes the Min PS + 5 cmH2O floor on ASV/ASVAuto pressure support | `asv_unlock_ps_range` | `--patch-asv-ps-range` |
+| Patch | What it does | Switch |
+|-------|-------------|--------|
+| Unlock all modes | Enables all therapy modes in the mode selector (CPAP, AutoSet, VAuto, ASV, ASVAuto, iVAPS, ...) | `--patch-extra-modes` |
+| Unlock settings | Exposes all settings linked to unlocked modes by toggling their visibility flag | `--patch-gui-config` |
+| Unlock pressure range | Extends min/max pressure limits to 1.0-30.0 cmH2O for all modes | `--patch-unlock-uilimits` |
+| Unlock ASV PS range | Removes the Min PS + 5 cmH2O floor on ASV/ASVAuto pressure support | `--patch-asv-ps-range` |
 
-### Data and recording
+### Therapy data and reporting
 
-| Patch | What it does | Bash function | Python switch |
-|-------|-------------|---------------|---------------|
-| EDF signal merge | Expands SD-card therapy data recording across unlocked modes | `patch_edf_merge` | `--patch-edf-merge` |
-| VID spoof | Sets variant ID for the active therapy mode and selects a regional variant where known | `patch_vid_spoof` | `--patch-fw-vidspoof` |
-| UART firmware dump | Adds the SX577 bootloader command used by `resmed_flash.py --dump` | `patch_blx_dump` | `--patch-blx-dump` |
+| Patch | What it does | Switch |
+|-------|-------------|--------|
+| EDF signal merge | Expands SD-card therapy data recording across unlocked modes | `--patch-edf-merge` |
+| VID spoof | Sets variant ID for the active therapy mode and selects a regional variant where known | `--patch-fw-vidspoof` |
 
 ### Quality of life
 
-| Patch | What it does | Bash function | Python switch |
-|-------|-------------|---------------|---------------|
-| Motor nag removal | Removes the "Motor life exceeded" message that appears after ~20,000 runtime hours | `motor_nagscreen` | `--patch-motor-nagscreen` |
-| Past date | Allows setting date to past values via menu and UART | `patch_past_date` | `--patch-past-date` |
-| Unlock languages | Enables all built-in languages | `unlock_languages` | `--patch-unlock-languages` |
-| Extra debug | Enables additional info in the sleep report screen | `extra_debug` | `--patch-extra-debug` |
-| Defaults | Sets firmware defaults (English, cmH2O, pillows mask, slim tube) | `patch_defaults` | `--patch-defaults` |
-| Bypass integrity check | Disables firmware integrity checks that prevent boot on crc mismatch | `patch_tamper` | `--patch-bypass-start` |
-| Bypass PSU check | Disables power supply ID check at startup | `patch_psu_id` | `--patch-bypass-psuid` |
-| Color palette | Applies custom color scheme | `custom_palette` | `--patch-custom-palette` |
-| [Backlight adaptation](features/backlight.md) | Continuously adjusts LCD and button brightness to ambient light | `patch_backlight_adapt` | `--patch-fw-backlight` |
-| [Custom settings](../custom_settings.md) | Exposes menu settings for active compiled payloads | `custom_patch_settings` | `--patch-custom-settings` |
+| Patch | What it does | Switch |
+|-------|-------------|--------|
+| Motor nag removal | Removes the "Motor life exceeded" message that appears after ~20,000 runtime hours | `--patch-motor-nagscreen` |
+| Past date | Allows setting date to past values via menu and UART | `--patch-past-date` |
+| Unlock languages | Enables all built-in languages | `--patch-unlock-languages` |
+| Therapy screen | Enables additional information on the therapy screen | `--patch-therapy-screen` |
+| Defaults | Sets firmware defaults (English, cmH2O, pillows mask, slim tube) | `--patch-defaults` |
+| Bypass integrity check | Disables firmware integrity checks that prevent boot on CRC mismatch | `--patch-integrity-check` |
+| Bypass PSU check | Disables power supply ID check at startup | `--patch-bypass-psuid` |
+| Color palette | Applies custom color scheme | `--patch-custom-palette` |
+| [Backlight adaptation](features/backlight.md) | Continuously adjusts LCD and button brightness to ambient light | `--patch-fw-backlight` |
+| [Custom settings](../custom_settings.md) | Exposes menu settings for active compiled payloads | `--patch-custom-settings` |
 
 
 ### Therapy modifications
@@ -89,10 +93,10 @@ environment variables.
 
 | Env variable | What it does |
 |-------------|-------------|
-| `PATCH_CODE=1` | Add the therapy graph overlay and inject shared code used by the other therapy payloads |
-| `PATCH_S=1` | Enable [Square Wave](features/squarewave.md) pressure shaping in S, ST, T, and PAC (requires `PATCH_CODE=1`) |
-| `PATCH_ASV_TASK_WRAPPER=1` | Add [runtime control](features/asv_backup_rate.md) for stock ASV/ASVAuto backup rate (requires `PATCH_CODE=1`) |
-| `PATCH_VAUTO_WRAPPER=1` | Add [Custom VAuto](features/custom_vauto.md) pressure shaping and trigger/cycle assist (requires `PATCH_CODE=1`) |
+| `PATCH_CODE=1` | Add the therapy graph overlay and its shared code |
+| `PATCH_S=1` | Enable [Square Wave](features/squarewave.md) pressure shaping in S, ST, T, and PAC; requires `PATCH_VAUTO_WRAPPER=1` |
+| `PATCH_ASV_TASK_WRAPPER=1` | Add [runtime control](features/asv_backup_rate.md) for stock ASV/ASVAuto backup rate |
+| `PATCH_VAUTO_WRAPPER=1` | Add [Custom VAuto](features/custom_vauto.md) pressure shaping and trigger/cycle assist; the wrapper also selects its shared code |
 
 With custom settings, `Monitoring` in clinical Options enables or disables the
 flow and pressure graph. Without custom settings, the graph remains enabled.
@@ -105,27 +109,26 @@ export PATCH_VAUTO_WRAPPER=1
 ./patch-airsense stm32.bin build/stm32-asv-plus.bin
 ```
 
-### Other
+### Miscellaneous
 
-| Env variable | What it does |
-|-------------|-------------|
-| `PATCH_S10_LCD=1` | ILI9325/ILI9328 LCD driver |
+| Patch | What it does | Switch |
+|-------|-------------|--------|
+| UART firmware dump | Adds the SX577 bootloader command used by `resmed_flash.py --dump` | `--patch-blx-dump` |
+| Replacement LCD | Adds the ILI9325/ILI9328 LCD driver | `--patch-fw-lcd` or `PATCH_S10_LCD=1` |
 
-## Disabling a default patch
+## Selecting patches
 
-### Bash patcher
-
-Comment out the function call at the bottom of `patch-airsense`. For example, to skip the color palette:
-```bash
-# custom_palette
+Pass `n` to disable a default patch or `y` to enable an optional patch. Boolean
+values are case-insensitive. The compatibility wrapper forwards additional
+options to Python, so both forms below are valid:
 ```
-
-### Python patcher
-
-Pass `n` to the corresponding flag:
-```
+./patch-airsense stm32.bin out.bin --patch-gui-config n
 ./python/patch-airsense.py stm32.bin out.bin PATCH --patch-gui-config=n
 ```
+
+Direct Python selections enforce payload dependencies: graph and Custom VAuto
+require common code, while Square Wave requires both common code and Custom
+VAuto.
 
 List all flags:
 ```

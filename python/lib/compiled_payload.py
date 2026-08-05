@@ -107,20 +107,37 @@ class CompiledPayloadMixin(object):
             self._payload_repo_dir(), "build", "%s_%s.%s" % (name, ver, ext)
         )
 
+    def _require_versioned_artifact(self, name, ext, ver=None):
+        """Return one versioned build artifact or fail with a build hint."""
+        path = self._versioned_artifact_path(name, ext, ver)
+        if not os.path.exists(path):
+            raise CompiledPayloadError(
+                "%s: %s not found (run %s)" %
+                (name, os.path.relpath(path, self._payload_repo_dir()),
+                 self.PAYLOAD_BUILD_COMMAND)
+            )
+        return path
+
     def _load_versioned_bin(self, name, required=False):
         """Load a per-version binary, optionally failing when unavailable."""
         ver = self._payload_version_key()
         bin_path = self._versioned_artifact_path(name, "bin", ver)
+        if required:
+            bin_path = self._require_versioned_artifact(name, "bin", ver)
         if not os.path.exists(bin_path):
             message = "%s: build/%s_%s.bin not found (run %s)" % (
                 name, name, ver, self.PAYLOAD_BUILD_COMMAND
             )
-            if required:
-                raise CompiledPayloadError(message)
             print("  " + message)
             return None, ver
         with open(bin_path, "rb") as f:
             return f.read(), ver
+
+    def _load_versioned_payload(self, name):
+        """Load a payload binary and require its matching ELF metadata."""
+        data, ver = self._load_versioned_bin(name, required=True)
+        elf_path = self._require_versioned_artifact(name, "elf", ver)
+        return data, ver, elf_path
 
     def _load_payload_layout(self):
         """Load generated payload addresses and measured sizes."""
@@ -188,13 +205,7 @@ class CompiledPayloadMixin(object):
                 (name, len(data), expected_size, self.PAYLOAD_BUILD_COMMAND)
             )
 
-        elf_path = self._versioned_artifact_path(name, "elf")
-        if not os.path.exists(elf_path):
-            raise CompiledPayloadError(
-                "%s: %s not found (run %s)" %
-                (name, os.path.relpath(elf_path, self._payload_repo_dir()),
-                 self.PAYLOAD_BUILD_COMMAND)
-            )
+        elf_path = self._require_versioned_artifact(name, "elf")
         linked_text = elf_text_address(elf_path)
         if linked_text != flash:
             raise CompiledPayloadError(
