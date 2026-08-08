@@ -7,6 +7,25 @@ optionally apply the upgrade. Builds the `.abc` OTA container internally and
 sends it over the same RPC path the device's own updater uses. Supports both
 BLE and CAN transports.
 
+## Contents
+
+- [Commands](#commands)
+  - [`flash`](#flash)
+  - [`upload`](#upload)
+  - [`build`](#build)
+  - [`info`](#info)
+  - [`apply`](#apply)
+  - [`targets`](#targets)
+- [Flash specific blocks](#flash-specific-blocks)
+- [Apply modes](#apply-modes)
+  - [Apply over BLE](#apply-over-ble)
+- [Bootloader service](#bootloader-service)
+  - [Install and enter service mode](#install-and-enter-service-mode)
+  - [Service identity and reset](#service-identity-and-reset)
+  - [Read storage](#read-storage)
+  - [Write storage](#write-storage)
+  - [Transport options](#transport-options)
+
 ## Commands
 
 ### flash
@@ -132,3 +151,96 @@ patch first. Pick one path before flashing:
 
 CAN exposes `ApplyUpgrade` natively, so `--apply-plain` works there
 without either step.
+
+## Bootloader service
+
+The `service` command communicates with the bootloader service extension over
+direct CAN or AirCANnect binary TCP. It reads and writes internal STM32 flash
+and the physical SPI NOR independently of the normal OTA mechanism.
+
+### Install and enter service mode
+
+The device must contain the `patch-fgbl-service` patch. Hold the physical
+Start/Stop button while resetting or powering on the device, then release it
+when the status LED starts blinking.
+
+Check that the service responds:
+
+```
+as11_flash.py -d can:/dev/ttyACM0 service info
+as11_flash.py -d can:can0 --can-flavour socketcan service info
+as11_flash.py -d tcp:aircannect service info
+```
+
+See the [CAN firmware dump guide](../guide/as11/service_dump.md) for installing
+the service patch when the device does not already contain it.
+
+### Service identity and reset
+
+`service info` reports the service version and bootloader build ID. It does not
+read or modify storage.
+
+`service reset` leaves service mode and starts the normal application when the
+Start/Stop button is released.
+
+```
+as11_flash.py -d can:/dev/ttyACM0 service reset
+```
+
+### Read storage
+
+`read-flash` reads internal STM32 flash. `read-nor` reads the physical SPI NOR.
+Both commands require an output file; without a region or range they read the
+complete target.
+
+```
+as11_flash.py -d can:/dev/ttyACM0 service read-flash flash.bin
+as11_flash.py -d can:/dev/ttyACM0 service read-flash appl.bin APPL
+as11_flash.py -d can:/dev/ttyACM0 service read-flash part.bin \
+  0x08040000 0x20000
+as11_flash.py -d tcp:aircannect service read-nor nor.bin
+as11_flash.py -d tcp:aircannect service read-nor part.bin 0 0x10000
+```
+
+Flash reads accept the named regions `FGBL`, `CONF`, `APPL`, `APCX`, and
+`FGCB`, together with their normal `as11_flash.py` aliases. The output file is
+opened directly; a failed transfer leaves the bytes received before the
+failure in that file.
+
+### Write storage
+
+`write-flash` and `write-nor` require an input file. They erase each selected
+erase unit before programming it, then read back and verify each programmed
+fragment. Ranges must align to the storage erase unit: 128 KiB for internal
+flash and 64 KiB for SPI NOR.
+
+```
+as11_flash.py -d can:/dev/ttyACM0 service write-flash flash.bin
+as11_flash.py -d can:/dev/ttyACM0 service write-flash appl.bin APPL
+as11_flash.py -d can:/dev/ttyACM0 service write-flash flash.bin APPL
+as11_flash.py -d can:/dev/ttyACM0 service write-flash part.bin \
+  0x08040000 0x20000
+as11_flash.py -d tcp:aircannect service write-nor nor.bin
+```
+
+For a named flash region or numeric range, the input may contain either that
+range alone or the complete 2 MiB internal-flash image. A numeric SPI-NOR range
+similarly accepts either the selected range or a complete physical-NOR image.
+
+### Transport options
+
+The service uses fixed classic-CAN and ISO-TP settings, independently of the
+stock DatagramCan and JSON-RPC endpoint.
+
+The receiver controls multi-frame transfers with ISO-TP Flow Control frames.
+The AS11 advertises a block size of 32 frames and zero separation time. The
+direct CAN host advertises a block size of 255 and zero separation time;
+AirCANnect selects its own receive block size. Direct CAN commands accept
+`--block-size 0..255`; zero disables intermediate Flow Control frames.
+
+Read and write requests transfer at most 4071 data bytes. Each request has one
+response; the host does not automatically repeat failed requests.
+
+With `-d tcp:<host>[:<port>]`, the tool uses AirCANnect binary mode on port
+`39011` by default. AirCANnect handles ISO-TP fragmentation, flow control, and
+reassembly and carries complete service packets over TCP.

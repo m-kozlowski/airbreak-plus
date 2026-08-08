@@ -7,9 +7,10 @@ single fixed address map.
 ## Firmware Image
 
 Use a complete, unmodified 2 MiB Air11 image. It can be dumped from the target
-device over [SWD](openocd.md#dump-the-firmware) or obtained from another
-source. The image does not have to match the firmware release or product
-variant currently installed on the target device.
+device over [SWD](openocd.md#dump-the-firmware), dumped through the
+[bootloader CAN service](service_dump.md), or obtained from another source.
+The image does not have to match the firmware release or product variant
+currently installed on the target device.
 
 The repository does not distribute firmware images or patched builds. Retain
 an unmodified firmware dump for recovery.
@@ -86,6 +87,12 @@ instead of producing that reduced result.
 | Defaults | Changes the initial values of selected settings without replacing values already saved on the device | `--patch-defaults` |
 | Motor nag removal | Removes the design-life warning while preserving the runtime counter | `--patch-motor-nagscreen` |
 
+### Miscellaneous
+
+| Patch | What it does | Switch |
+|-------|--------------|--------|
+| Bootloader service | Adds internal-flash and SPI-NOR read/write service over CAN for bootloader 1.1.0 | `--patch-fgbl-service` |
+
 See [Features](features.md) for additional behavior details.
 
 ## Selecting Patches
@@ -109,6 +116,24 @@ List all patch switches with:
 ```bash
 python3 python/patch-airsense-s11.py -h
 ```
+
+## Bootloader Service
+
+`patch-fgbl-service` adds a bootloader maintenance mode for reading and writing
+internal flash and the physical SPI NOR over CAN. It is included in the default
+patch set for bootloader version 1.1.0. To enter service mode, hold the physical
+Start/Stop button while resetting or powering on the device. Release the button
+when the status LED starts blinking.
+
+```bash
+python3 python/patch-airsense-s11.py \
+    as11.bin build/as11-service.bin PATCH \
+    --all-patches n \
+    --patch-fgbl-service y
+```
+
+See [as11_flash service](../../tools/as11_flash.md#bootloader-service) for the
+CAN and AirCANnect commands.
 
 ## Next
 

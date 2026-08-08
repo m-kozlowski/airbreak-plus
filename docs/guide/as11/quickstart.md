@@ -4,18 +4,20 @@ End-to-end guide for unlocking ResMed AirSense 11 and AirCurve 11 devices.
 
 ## What You Need
 
-### Path A: dump the device over SWD
+### Path A: dump firmware from the device
 
-This path makes a complete backup before patching and keeps SWD available for
-recovery.
+This path makes a complete backup before patching. A direct SWD dump also keeps
+SWD available for recovery. If an unmodified Air11 image is available as a
+reference, the [bootloader CAN service](service_dump.md) can instead dump the
+firmware without opening the device.
 
-Hardware:
+SWD hardware:
 
 - an SWD programmer, such as ST-Link or WeAct MiniDebugger
 - a TC2050-IDC cable and jumper wires
 - access to the TC2050 footprint on the Air11 main board
 
-Software:
+SWD software:
 
 - OpenOCD
 - Python 3.10 or newer
@@ -74,22 +76,22 @@ sudo apt install python3-serial
 
 ## 2. Open and Connect the Device
 
-### Path A: SWD
+### SWD
 
 [Open the device](disassembly.md) to expose the programming footprint, then
 [connect the SWD programmer](connection.md#swd).
 
-### Path B: CAN
+### CAN
 
 Connect the USB-CAN adapter using the pass-through cable described in
 [Air11 CAN Connection](../../as11/can_connection.md#connector-and-pinout).
 
 ## 3. Obtain the Firmware Image
 
-### Path A: dump over SWD
+### Path A: dump firmware from the device
 
-Follow [OpenOCD and Firmware Dump](openocd.md), or start OpenOCD from the
-repository root:
+**SWD:** Follow [OpenOCD and Firmware Dump](openocd.md), or start OpenOCD from
+the repository root:
 
 ```bash
 ./run-ocd.sh as11
@@ -113,6 +115,11 @@ The same SWD session can also be used to
 [retrieve the device-specific OTA key](../../as11/ota_protocol.md#retrieving-the-local-ota-key)
 or check and correct the hardware RTC with `rtc::now`, `rtc::sync`, and
 `rtc::set_time`.
+
+**CAN (no SWD):** If you want to keep the device
+closed and have an unmodified Air11 image to use as a reference, follow
+[CAN firmware dump](service_dump.md). Use the resulting `device-original.bin`
+as `as11.bin`.
 
 ### Path B: use an existing unmodified image
 
@@ -138,7 +145,7 @@ selected patch.
 
 ## 5. Flash
 
-### Path A: SWD
+### SWD
 
 At the OpenOCD prompt:
 
@@ -146,7 +153,7 @@ At the OpenOCD prompt:
 flash_new build/as11-patched.bin
 ```
 
-### Path B: CAN
+### CAN
 
 For a serial SLCAN adapter:
 
@@ -190,6 +197,7 @@ The standard patch also permits plain BLE apply for later updates. See
 | [Disassembly](disassembly.md) | Opening the enclosure and reaching the SWD footprint |
 | [Connection](connection.md) | SWD wiring and optional CAN hardware |
 | [OpenOCD](openocd.md) | Firmware dump, optional OTA key, and RTC sync |
+| [CAN firmware dump](service_dump.md) | Optional closed-case dump using the bootloader service |
 | [Features](features.md) | Standard patch behavior and current limits |
 | [Patching](patching.md) | Build targets and patch selection |
 | [Flashing](flashing.md) | SWD, CAN, and BLE installation and restoring the original image |
