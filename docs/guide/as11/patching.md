@@ -37,6 +37,10 @@ This builds the Air11 payload binaries and creates:
 build/as11-patched.bin
 ```
 
+The console shows compact patch status by default. A verbose transcript of the
+latest build is written to `make.log`; use `make as11 V=1` to also show it on
+the console.
+
 To use different paths:
 
 ```bash

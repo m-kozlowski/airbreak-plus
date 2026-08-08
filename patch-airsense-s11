@@ -1,23 +1,29 @@
 #!/bin/bash
 
-die() { echo >&2 "$*" ; exit 1 ; }
+set -euo pipefail
 
-IN=$1
-OUT=$2
 
-if [ -z "$IN" -o -z "$OUT" ]; then
-    die "Usage: $0 input.bin output.bin"
+die() { echo >&2 "$*"; exit 1; }
+
+
+IN=${1:-}
+OUT=${2:-}
+
+if [[ -z "$IN" || -z "$OUT" ]]; then
+    die "Usage: $0 input.bin output.bin [Python patch options]"
 fi
 
-if [ ! -r "$IN" ]; then
+if [[ ! -r "$IN" ]]; then
     die "$IN: can not open input file"
 fi
+
+shift 2
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 PYTHON=${PYTHON:-python3}
 PATCHER="$SCRIPT_DIR/python/patch-airsense-s11.py"
 
-if [ ! -r "$PATCHER" ]; then
+if [[ ! -r "$PATCHER" ]]; then
     die "$PATCHER: can not open python patcher"
 fi
 
@@ -76,4 +82,5 @@ for permission in "${RPC_PERMISSIONS[@]}"; do
     args+=( "--rpc-permission" "$permission" )
 done
 
-exec "$PYTHON" "$PATCHER" "$IN" "$OUT" PATCH --overwrite "${args[@]}"
+exec "$PYTHON" "$PATCHER" "$IN" "$OUT" PATCH --overwrite \
+    "${args[@]}" "$@"

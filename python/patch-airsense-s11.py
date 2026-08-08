@@ -14,10 +14,13 @@
 import argparse
 import fnmatch
 import hashlib
+import io
 import os.path
 import re
 import struct
 import sys
+from contextlib import redirect_stdout
+from dataclasses import dataclass
 
 from lib.as11_patch_versions import AS11_FGBL_PATCH_VERSIONS, AS11_PATCH_VERSIONS
 from lib.compiled_payload import CompiledPayloadMixin
@@ -986,7 +989,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         )
 
         if not self.mop_callback_handlers:
-            return
+            return PatchOutcome.skip("no callback handlers registered")
         if len(self.mop_callback_handlers) > 4:
             raise ValueError(
                 "mop_callback_dispatcher: too many handlers (%d)" %
@@ -1564,7 +1567,8 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         ))
         if n_skipped:
             print("  skipped detail: %d not found, %d invalid" % (n_missing, n_invalid))
-        return n_changed
+            return PatchOutcome.warn("%d defaults skipped" % n_skipped)
+        return PatchOutcome.ok()
 
     def unlock_languages(self):
         """Unlock language availability and prevent persisted narrowing."""
@@ -1594,7 +1598,9 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         print("Patching language configuration... %d changed, %d already set, %d missing" % (
             n_changed, n_unchanged, n_missing
         ))
-        return n_changed
+        if n_missing:
+            return PatchOutcome.warn("language configuration not found")
+        return PatchOutcome.ok()
 
     def fix_ivaps_patient_height_range(self):
         """Replace the stripped metric-height descriptor with usable bounds."""
@@ -1858,7 +1864,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         """Install an ASV/ASVAuto update wrapper that inhibits backup breaths."""
         data, ver = self._load_versioned_bin(AS11_ASV_BACKUP_RATE_PAYLOAD)
         if data is None:
-            return
+            return PatchOutcome.skip("compiled payload unavailable")
 
         elf_path = self._versioned_artifact_path(
             AS11_ASV_BACKUP_RATE_PAYLOAD, "elf", ver
@@ -1916,8 +1922,10 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             print("Patching \"Motor life exceeded\" threshold...")
             self.asf.patch(b"\xFF\xFF\xFF\x7F", addr=offset, verbose=False)
             print("ok")
+            return PatchOutcome.ok()
         except ValueError:
             print("motor_nagscreen: threshold not found!")
+            return PatchOutcome.warn("threshold not found")
 
     def rpc_permission_record_flags_are_bits(self, off, stride):
         if off + stride > len(self.asf.fw) or stride < 2:
@@ -2034,7 +2042,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
 
     def rpc_permissions(self):
         if not self.rpc_permission_rules:
-            return
+            return PatchOutcome.skip("no permission rules configured")
 
         method_cmds = self.rpc_method_cmds()
         base, stride = self.find_rpc_permission_table()
@@ -2088,12 +2096,15 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         print("Patching RPC permissions... %d enabled, %d blocked, %d already set, %d missing "
               "(%d entries scanned)" %
               (enabled, blocked, already, missing, scanned))
+        if missing:
+            return PatchOutcome.warn("%d permission rows missing" % missing)
+        return PatchOutcome.ok()
 
     def vid_spoof(self):
         """Set VID from MOP after the stock writeback completes."""
         data, ver = self._load_versioned_bin(AS11_VID_SPOOF_PAYLOAD)
         if data is None:
-            return
+            return PatchOutcome.skip("compiled payload unavailable")
         flash, _off = self._inject_payload(AS11_VID_SPOOF_PAYLOAD, data)
         elf_path = self._versioned_artifact_path(AS11_VID_SPOOF_PAYLOAD, "elf", ver)
         handler = self._elf_symbol_addr(elf_path, "start")
@@ -2191,6 +2202,38 @@ PATCH_LIST = [
 ]
 
 
+@dataclass(frozen=True)
+class PatchOutcome:
+    status: str = "OK"
+    summary: str = None
+
+    @classmethod
+    def ok(cls, summary=None):
+        return cls("OK", summary)
+
+    @classmethod
+    def warn(cls, summary):
+        return cls("WARN", summary)
+
+    @classmethod
+    def skip(cls, summary):
+        return cls("SKIP", summary)
+
+
+class TeeStream:
+    def __init__(self, *streams):
+        self.streams = streams
+
+    def write(self, data):
+        for stream in self.streams:
+            stream.write(data)
+        return len(data)
+
+    def flush(self):
+        for stream in self.streams:
+            stream.flush()
+
+
 def add_patch_switch(parser, patch):
     parser.add_argument(
         "--" + patch["arg"],
@@ -2218,6 +2261,10 @@ def build_arg_parser():
         help="Default state for patch switches not explicitly set. Default: built-in patch defaults.",
     )
     parser.add_argument("--overwrite", action="store_true", help="Overwrite output file if it exists already.")
+    parser.add_argument("-v", "--verbose", action="store_true",
+                        help="Show detailed patch output.")
+    parser.add_argument("--log-file",
+                        help="Append a verbose patching transcript to this file.")
     parser.add_argument(
         "--rpc-permission",
         action="append",
@@ -2229,9 +2276,37 @@ def build_arg_parser():
     return parser
 
 
-def main(argv=None):
-    parser = build_arg_parser()
-    args = parser.parse_args(argv)
+def print_patch_output(text, stream=None):
+    for line in text.rstrip("\n").splitlines():
+        if line.startswith("  "):
+            line = line[2:]
+        print(("  " + line) if line else "", file=stream)
+
+
+def apply_reported_patch(option, method, args, detail_log=None):
+    output = io.StringIO()
+    try:
+        with redirect_stdout(output):
+            outcome = method()
+        if not isinstance(outcome, PatchOutcome):
+            outcome = PatchOutcome.ok()
+    except Exception as exc:
+        print("PATCH: %s [ERROR]" % option)
+        stream = None if args.verbose or detail_log is None else detail_log
+        print_patch_output(output.getvalue(), stream)
+        print("  " + str(exc))
+        raise
+
+    print("PATCH: %s [%s]" % (option, outcome.status))
+    if args.verbose:
+        print_patch_output(output.getvalue())
+    elif detail_log is not None:
+        print_patch_output(output.getvalue(), detail_log)
+    if outcome.status in ("WARN", "SKIP") and outcome.summary:
+        print("  " + outcome.summary)
+
+
+def run_patcher(args, detail_log=None):
 
     with open(args.INFILE, "rb") as f:
         asf = S11Firmware(f)
@@ -2248,6 +2323,7 @@ def main(argv=None):
 
     patches = S11FirmwarePatches(asf, rpc_permissions=rpc_permissions)
 
+    print("\n=== Patches")
     for patch in PATCH_LIST:
         enabled = getattr(args, patch["arg"].replace("-", "_"))
         if enabled is None:
@@ -2256,17 +2332,51 @@ def main(argv=None):
             else:
                 enabled = args.all_patches
         if enabled:
-            print("PATCH: " + patch["desc"])
-            getattr(patches, patch["function"])()
+            apply_reported_patch(
+                patch["arg"], getattr(patches, patch["function"]),
+                args, detail_log,
+            )
 
     # Feature patches queue controls; resolve them before building the shared
     # mode-change dispatcher that refreshes their visibility.
-    patches.finalize_custom_settings()
-    patches.patch_mop_callback_dispatcher()
-    asf.fix_crcs()
-    asf.write_output(args.OUTFILE, args.overwrite)
-    print(hashlib.sha256(bytes(asf.fw)).hexdigest() + "  " + args.OUTFILE)
+    def finalize_payloads():
+        patches.finalize_custom_settings()
+        return patches.patch_mop_callback_dispatcher()
+
+    print("\n=== Finalization")
+    apply_reported_patch(
+        "patch-mop-callback-dispatcher", finalize_payloads,
+        args, detail_log,
+    )
+
+    output = io.StringIO()
+    try:
+        with redirect_stdout(output):
+            asf.fix_crcs()
+            asf.write_output(args.OUTFILE, args.overwrite)
+            print(hashlib.sha256(bytes(asf.fw)).hexdigest() + "  " + args.OUTFILE)
+    except Exception:
+        stream = None if args.verbose or detail_log is None else detail_log
+        print(output.getvalue(), end="", file=stream)
+        raise
+
+    if args.verbose:
+        print(output.getvalue(), end="")
+    elif detail_log is not None:
+        print(output.getvalue(), end="", file=detail_log)
     return 0
+
+
+def main(argv=None):
+    parser = build_arg_parser()
+    args = parser.parse_args(argv)
+
+    if args.log_file is None:
+        return run_patcher(args)
+
+    with open(args.log_file, "a", encoding="utf-8") as detail_log:
+        with redirect_stdout(TeeStream(sys.stdout, detail_log)):
+            return run_patcher(args, detail_log)
 
 
 if __name__ == "__main__":

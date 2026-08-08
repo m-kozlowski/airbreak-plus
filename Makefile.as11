@@ -1,6 +1,13 @@
 AS11_FIRMWARE ?= as11.bin
 AS11_PATCHED ?= $(BUILD)/as11-patched.bin
 
+AS11_PATCHER_DEPS := \
+	patch-airsense-s11 \
+	python/patch-airsense-s11.py \
+	python/as11_edf_superset.py \
+	python/lib/as11_patch_versions.py \
+	python/lib/compiled_payload.py
+
 # Register APPL payloads by APPX version and FGBL payloads by BID.
 AS11_PAYLOAD_LAYOUT_VERSIONS := 8_0_1 8_3_0 8_4_0 8_5_0 8_6_0
 AS11_PAYLOADS_8_0_1 := as11_mop_callback_dispatcher as11_vid_spoof
@@ -184,8 +191,17 @@ $(foreach p,$(AS11_PAYLOAD_NAMES),$(eval $(call AS11_PAYLOAD_STAMP_template,$(p)
 .PHONY: as11 as11-binaries as11-patched as11-nor-sram-reader
 
 as11:
-	$(MAKE) as11-binaries
-	$(MAKE) $(AS11_PATCHED)
+	@: > '$(MAKE_LOG)'
+	@if $(MAKE) --no-print-directory -q $(AS11_PAYLOAD_STAMPS) $(AS11_PAYLOAD_LAYOUT_TSVS); then \
+		:; \
+	else \
+		status=$$?; \
+		[ "$$status" -eq 1 ] || exit "$$status"; \
+		printf 'Building payloads\n'; \
+		$(MAKE) --no-print-directory as11-binaries; \
+	fi
+	$(MAKE) --no-print-directory $(AS11_PATCHED)
+	@printf '\nFirmware image:\n  %s\n' '$(AS11_PATCHED)' | tee -a '$(MAKE_LOG)'
 
 as11-binaries: $(AS11_PAYLOAD_STAMPS) $(AS11_PAYLOAD_LAYOUT_TSVS)
 
@@ -204,9 +220,12 @@ as11-nor-sram-reader: $(AS11_NOR_READER_BIN)
 	@echo "  $(AS11_NOR_READER_BIN)"
 
 as11-patched:
-	-$(MAKE) as11-binaries
-	$(MAKE) $(AS11_PATCHED)
+	@: > '$(MAKE_LOG)'
+	-$(MAKE) --no-print-directory as11-binaries
+	$(MAKE) --no-print-directory $(AS11_PATCHED)
+	@printf '\nFirmware image:\n  %s\n' '$(AS11_PATCHED)' | tee -a '$(MAKE_LOG)'
 
-$(AS11_PATCHED): $(AS11_FIRMWARE) patch-airsense-s11 \
+$(AS11_PATCHED): $(AS11_FIRMWARE) $(AS11_PATCHER_DEPS) \
 		$(AS11_PAYLOAD_STAMPS) $(AS11_PAYLOAD_LAYOUT_TSVS) | $(BUILD)
-	./patch-airsense-s11 $< $@
+	$(announce_image)
+	./patch-airsense-s11 $< $@ $(PATCHER_OUTPUT_ARGS)
