@@ -20,6 +20,7 @@ Device-touching subcommands:
     upload     push a pre-built .abc; verify-only unless --apply / --apply-plain
     flash      build .abc from firmware, upload, and apply by transport default
     apply      apply a previously uploaded and verified .abc by file or hash
+    service    use the bootloader service over CAN or AirCANnect TCP
 
 Apply-mode flags, highest precedence first:
     --apply-plain          ApplyUpgrade (unauthenticated)
@@ -988,6 +989,112 @@ def build_transport_for_flash(args) -> Transport:
     )
 
 
+def build_service_client(args):
+    from as11_service import (
+        ISOTP_RX_BLOCK_SIZE,
+        ServiceCanClient,
+        ServicePacketClient,
+    )
+
+    spec = _resolve_device_spec(args)
+    if spec.startswith("can:"):
+        target = spec[4:]
+        if not target:
+            raise SystemExit(
+                "can: spec needs adapter target (serial path or interface name)"
+            )
+        if _can_transport is not None:
+            transport = _can_transport.from_args(target, args)
+        else:
+            from as11_can_transport import from_args as can_transport_from_args
+            transport = can_transport_from_args(target, args)
+        transport.connect()
+        client = ServiceCanClient(
+            transport.dev,
+            block_size=(args.block_size if args.block_size is not None
+                        else ISOTP_RX_BLOCK_SIZE),
+        )
+        return client, transport
+
+    if spec.startswith("tcp:"):
+        if args.block_size is not None:
+            raise SystemExit("--block-size applies only to direct CAN service transport")
+        target = spec[4:]
+        if not target:
+            raise SystemExit("tcp: spec needs host[:port]")
+        if _aircannect_transport is not None:
+            transport = _aircannect_transport.service_from_args(target, args)
+        else:
+            from as11_aircannect import service_from_args
+            transport = service_from_args(target, args)
+        transport.connect()
+        return ServicePacketClient(transport), transport
+
+    raise SystemExit(
+        "service mode requires -d can:<target> or tcp:<host>[:<port>]"
+    )
+
+
+def _service_storage(flash: bool):
+    from as11_service import (
+        FLASH_BASE,
+        FLASH_ERASE_SIZE,
+        FLASH_PROGRAM_SIZE,
+        FLASH_SIZE,
+        NOR_ERASE_SIZE,
+        NOR_SIZE,
+        TARGET_FGCB,
+        TARGET_SPIN,
+    )
+
+    if flash:
+        return (
+            TARGET_FGCB, "FGCB", FLASH_BASE, FLASH_SIZE,
+            FLASH_ERASE_SIZE, FLASH_PROGRAM_SIZE,
+        )
+
+    return TARGET_SPIN, "SPIN", 0, NOR_SIZE, NOR_ERASE_SIZE, 1
+
+
+def _service_range(flash: bool, selection: list[str]):
+    (target, target_name, target_start, target_size,
+     erase_size, program_size) = _service_storage(flash)
+
+    if not selection:
+        offset = target_start
+        length = target_size
+    elif flash and len(selection) == 1:
+        region = resolve_block(selection[0])
+        offset = region.flash_start
+        length = region.size
+        target_name = region.code
+    elif len(selection) == 2:
+        try:
+            offset = _service_u32(selection[0])
+            length = _service_length(selection[1])
+        except argparse.ArgumentTypeError as exc:
+            raise SystemExit(str(exc)) from exc
+    else:
+        expected = "[REGION | OFFSET LENGTH]" if flash else "[OFFSET LENGTH]"
+        raise SystemExit(f"expected {expected}")
+
+    target_end = target_start + target_size
+    if offset < target_start or offset >= target_end:
+        raise SystemExit(
+            f"{target_name} offset 0x{offset:08X} is outside "
+            f"0x{target_start:08X}..0x{target_end:08X}"
+        )
+    if length > target_end - offset:
+        raise SystemExit(
+            f"{target_name} range 0x{offset:08X}+0x{length:X} "
+            "extends past the target"
+        )
+    return (
+        target, target_name, offset, length, target_start, target_size,
+        erase_size, program_size,
+    )
+
+
 def _resolve_device_spec(args) -> str:
     if getattr(args, "device", None):
         return args.device
@@ -1316,6 +1423,189 @@ def cmd_targets(_args) -> int:
     print("Block aliases: config->CONF, firmware/app->APPL, conf+app->APCX,")
     print("               bootloader->FGBL, full/all->FGCB")
     return 0
+
+
+def cmd_service(args) -> int:
+    client, transport = build_service_client(args)
+    try:
+        if args.service_cmd == "info":
+            info = client.info(timeout=args.timeout)
+            version = ".".join(str(part) for part in info.service_version)
+            print(f"Service: {version}")
+            print(f"FGBL:    {info.fgbl_build_id}")
+            return 0
+
+        if args.service_cmd == "reset":
+            client.reset(timeout=args.timeout)
+            print("Reset requested.")
+            return 0
+
+        if args.service_cmd in ("read-flash", "read-nor"):
+            (target, target_name, offset, length, _target_start, _target_size,
+             _erase_size, _program_size) = _service_range(
+                args.service_cmd == "read-flash", args.selection
+            )
+            _service_read_to_file(
+                client, target, target_name, offset, length,
+                Path(args.file), timeout=args.timeout,
+            )
+            return 0
+
+        if args.service_cmd in ("write-flash", "write-nor"):
+            from as11_service import MAX_WRITE_DATA
+
+            (target, target_name, offset, length, target_start, target_size,
+             erase_size, program_size) = _service_range(
+                args.service_cmd == "write-flash", args.selection
+            )
+
+            _service_write_file(
+                client, target, target_name, offset, length,
+                Path(args.file), target_start=target_start,
+                target_size=target_size, erase_size=erase_size,
+                program_size=program_size,
+                max_write_data=MAX_WRITE_DATA,
+                timeout=args.timeout,
+            )
+            return 0
+
+        raise SystemExit(f"unknown service command {args.service_cmd!r}")
+    finally:
+        transport.close()
+
+
+def _service_read_to_file(client, target: int, target_name: str,
+                          offset: int, length: int, output: Path, *,
+                          timeout: float) -> None:
+    done = 0
+    started = time.monotonic()
+    next_report = started + 1.0
+
+    print(
+        f"\rREAD {target_name}: 0/{length} bytes (  0.0%, 0 B/s)",
+        end="",
+        file=sys.stderr,
+        flush=True,
+    )
+
+    with output.open("wb") as stream:
+        for chunk in client.iter_read(
+                target, offset, length, timeout=timeout):
+            stream.write(chunk)
+            done += len(chunk)
+            now = time.monotonic()
+            if done == length or now >= next_report:
+                elapsed = max(now - started, 0.001)
+                print(
+                    f"\rREAD {target_name}: {done}/{length} bytes "
+                    f"({done * 100.0 / length:5.1f}%, "
+                    f"{done / elapsed:.0f} B/s)",
+                    end="" if done != length else "\n",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                next_report = now + 1.0
+
+    elapsed = max(time.monotonic() - started, 0.001)
+    print(
+        f"Saved {length} bytes from {target_name} "
+        f"0x{offset:08X} to {output} ({length / elapsed:.0f} B/s)"
+    )
+
+
+def _service_write_file(client, target: int, target_name: str,
+                        offset: int, length: int, input_path: Path, *,
+                        target_start: int, target_size: int,
+                        erase_size: int, program_size: int,
+                        max_write_data: int, timeout: float) -> None:
+    if not input_path.is_file():
+        raise SystemExit(f"write input is not a file: {input_path}")
+    input_size = input_path.stat().st_size
+    if input_size == length:
+        input_offset = 0
+    elif input_size == target_size:
+        input_offset = offset - target_start
+    else:
+        raise SystemExit(
+            f"{target_name} write requires a {length}-byte range image or a "
+            f"{target_size}-byte complete target image; {input_path} has "
+            f"{input_size} bytes"
+        )
+    if erase_size <= 0 or offset % erase_size or length % erase_size:
+        raise SystemExit(
+            f"{target_name} write range must be aligned to the "
+            f"{erase_size}-byte erase unit"
+        )
+    chunk_size = max_write_data - (max_write_data % program_size)
+    if chunk_size <= 0:
+        raise SystemExit(
+            f"service write limit {max_write_data} is smaller than "
+            f"the {target_name} program unit {program_size}"
+        )
+
+    done = 0
+    started = time.monotonic()
+    next_report = started
+    sector_count = length // erase_size
+    status_width = 0
+
+    def report_progress(detail: str, *, final: bool = False) -> None:
+        nonlocal status_width
+        elapsed = max(time.monotonic() - started, 0.001)
+        line = (
+            f"WRITE {target_name}: {done}/{length} bytes "
+            f"({done * 100.0 / length:5.1f}%, {done / elapsed:.0f} B/s; "
+            f"{detail})"
+        )
+        status_width = max(status_width, len(line))
+        print(
+            f"\r{line:<{status_width}}",
+            end="\n" if final else "",
+            file=sys.stderr,
+            flush=True,
+        )
+
+    with input_path.open("rb") as stream:
+        stream.seek(input_offset)
+        for sector_relative in range(0, length, erase_size):
+            sector_length = erase_size
+            sector_offset = offset + sector_relative
+            sector_index = sector_relative // erase_size + 1
+            report_progress(
+                f"erasing sector {sector_index}/{sector_count}"
+            )
+            client.erase(
+                target, sector_offset, sector_length, timeout=timeout
+            )
+            sector_done = 0
+            while sector_done < sector_length:
+                write_length = min(chunk_size, sector_length - sector_done)
+                if write_length % program_size:
+                    raise SystemExit(
+                        f"{target_name} write tail is not aligned to "
+                        f"the {program_size}-byte program unit"
+                    )
+                data = stream.read(write_length)
+                if len(data) != write_length:
+                    raise SystemExit(
+                        f"write input ended at {sector_relative + sector_done} bytes"
+                    )
+                client.write(
+                    target, sector_offset + sector_done, data,
+                    timeout=timeout,
+                )
+                sector_done += write_length
+                done = sector_relative + sector_done
+                now = time.monotonic()
+                if now >= next_report or done == length:
+                    report_progress("programming", final=done == length)
+                    next_report = now + 1.0
+
+    elapsed = max(time.monotonic() - started, 0.001)
+    print(
+        f"Wrote {length} bytes to {target_name} at 0x{offset:08X} "
+        f"({length / elapsed:.0f} B/s)"
+    )
 
 
 def cmd_build(args) -> int:
@@ -1778,6 +2068,57 @@ def _add_device_args(p: argparse.ArgumentParser) -> None:
         _aircannect_transport.add_args(p)
 
 
+def _service_u32(text: str) -> int:
+    try:
+        value = int(text.replace("_", ""), 0)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"invalid integer {text!r}") from exc
+    if not 0 <= value <= 0xFFFFFFFF:
+        raise argparse.ArgumentTypeError("value must be in range 0..0xffffffff")
+    return value
+
+
+def _service_length(text: str) -> int:
+    value = _service_u32(text)
+    if value == 0:
+        raise argparse.ArgumentTypeError("length must be positive")
+    return value
+
+
+def _service_block_size(text: str) -> int:
+    try:
+        value = int(text, 0)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"invalid block size {text!r}") from exc
+    if not 0 <= value <= 0xFF:
+        raise argparse.ArgumentTypeError("block size must be in range 0..255")
+    return value
+
+
+def _service_timeout(text: str) -> float:
+    try:
+        value = float(text)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"invalid timeout {text!r}") from exc
+    if value <= 0:
+        raise argparse.ArgumentTypeError("timeout must be positive")
+    return value
+
+
+def _add_service_link_args(p: argparse.ArgumentParser, *, defaults: bool) -> None:
+    p.add_argument(
+        "--timeout", type=_service_timeout,
+        default=5.0 if defaults else argparse.SUPPRESS,
+        metavar="SECONDS", help="service response timeout (default: 5)",
+    )
+    p.add_argument(
+        "--block-size", type=_service_block_size,
+        default=None if defaults else argparse.SUPPRESS,
+        metavar="FRAMES",
+        help="direct CAN receive block size, 0 for unlimited (default: 255)",
+    )
+
+
 def main(argv=None) -> int:
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -1850,6 +2191,51 @@ def main(argv=None) -> int:
                      help="also write the built .abc to this path")
     _add_upload_args(p_f)
     p_f.set_defaults(func=cmd_flash)
+
+    # Bootloader service mode
+    p_s = sub.add_parser(
+        "service", help="communicate with the bootloader service"
+    )
+    _add_device_args(p_s)
+    _add_service_link_args(p_s, defaults=True)
+    service_sub = p_s.add_subparsers(dest="service_cmd", required=True)
+
+    p_s_info = service_sub.add_parser("info", help="query service identity")
+    _add_device_args(p_s_info)
+    _add_service_link_args(p_s_info, defaults=False)
+
+    p_s_reset = service_sub.add_parser("reset", help="leave service mode and reset")
+    _add_device_args(p_s_reset)
+    _add_service_link_args(p_s_reset, defaults=False)
+
+    for command, selection_help in (
+            ("read-flash", "optional REGION or absolute OFFSET LENGTH"),
+            ("read-nor", "optional physical OFFSET LENGTH")):
+        p_s_read = service_sub.add_parser(
+            command, help="read storage to a raw file"
+        )
+        _add_device_args(p_s_read)
+        _add_service_link_args(p_s_read, defaults=False)
+        p_s_read.add_argument("file", help="output file")
+        p_s_read.add_argument(
+            "selection", nargs="*", metavar="RANGE",
+            help=f"{selection_help}; omit for the complete target",
+        )
+
+    for command, selection_help in (
+            ("write-flash", "optional REGION or absolute OFFSET LENGTH"),
+            ("write-nor", "optional physical OFFSET LENGTH")):
+        p_s_write = service_sub.add_parser(
+            command, help="erase and write storage from a raw file"
+        )
+        _add_device_args(p_s_write)
+        _add_service_link_args(p_s_write, defaults=False)
+        p_s_write.add_argument("file", help="input file")
+        p_s_write.add_argument(
+            "selection", nargs="*", metavar="RANGE",
+            help=f"{selection_help}; omit for the complete target",
+        )
+    p_s.set_defaults(func=cmd_service)
 
     args = ap.parse_args(argv)
 

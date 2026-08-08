@@ -330,6 +330,75 @@ class AirCannectTransport:
             return
 
 
+class AirCannectServiceTransport(AirCannectTransport):
+    """Complete AS11 service packets over AirCANnect's binary TCP mode."""
+
+    @staticmethod
+    def _packet_size_from_header(header: bytes) -> int:
+        from as11_service import MAX_RESPONSE_PACKET_SIZE, PACKET_MAGIC
+
+        if len(header) != 8:
+            raise FramingError(
+                f"AirCANnect service header has {len(header)} bytes; expected 8"
+            )
+        if header[0] != PACKET_MAGIC:
+            raise FramingError(
+                f"AirCANnect service response has bad magic 0x{header[0]:02X}"
+            )
+        payload_length = int.from_bytes(header[6:8], "little")
+        packet_size = 8 + payload_length + 4
+        if packet_size > MAX_RESPONSE_PACKET_SIZE:
+            raise FramingError(
+                f"AirCANnect service response declares {packet_size} bytes; "
+                f"limit is {MAX_RESPONSE_PACKET_SIZE}"
+            )
+        return packet_size
+
+    def _read_exact(self, size: int, *, deadline: float) -> bytes:
+        result = bytearray()
+        while len(result) < size:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("AirCANnect service response timed out")
+            try:
+                self.sock.settimeout(remaining)
+                chunk = self.sock.recv(size - len(result))
+            except socket.timeout as exc:
+                raise TimeoutError(
+                    "AirCANnect service response timed out"
+                ) from exc
+            except OSError as exc:
+                raise TransportError(
+                    f"AirCANnect service read failed: {exc}"
+                ) from exc
+            if not chunk:
+                raise TransportError(
+                    "AirCANnect service connection closed before response completed"
+                )
+            result.extend(chunk)
+        return bytes(result)
+
+    def exchange_service_packet(self, packet: bytes, *, timeout: float) -> bytes:
+        deadline = time.monotonic() + timeout
+        try:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("AirCANnect service request timed out")
+            self.sock.settimeout(remaining)
+            self.sock.sendall(packet)
+            header = self._read_exact(8, deadline=deadline)
+            packet_size = self._packet_size_from_header(header)
+            return header + self._read_exact(packet_size - 8, deadline=deadline)
+        except (FramingError, TimeoutError, TransportError):
+            self.close()
+            raise
+        except OSError as exc:
+            self.close()
+            raise TransportError(
+                f"AirCANnect service write failed: {exc}"
+            ) from exc
+
+
 def add_args(p: argparse.ArgumentParser) -> None:
     suppr = argparse.SUPPRESS
     g = p.add_argument_group("AirCANnect bridge (ignored unless -d tcp:...)")
@@ -339,13 +408,20 @@ def add_args(p: argparse.ArgumentParser) -> None:
 
 
 __all__ = [
+    "AirCannectServiceTransport",
     "AirCannectTransport",
     "DEFAULT_PORT",
     "add_args",
     "from_args",
     "parse_target",
+    "service_from_args",
 ]
 
 
 def from_args(target: str, args: argparse.Namespace) -> AirCannectTransport:
     return AirCannectTransport.from_args(target, args)
+
+
+def service_from_args(target: str,
+                      args: argparse.Namespace) -> AirCannectServiceTransport:
+    return AirCannectServiceTransport.from_args(target, args)
