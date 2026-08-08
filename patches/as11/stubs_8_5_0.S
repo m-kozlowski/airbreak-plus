@@ -3,7 +3,7 @@
 #define NSTUB(addr, name) \
 	.global name; \
 	.type name, %function; \
-	name = addr
+	.thumb_set name, addr
 
 .text
 

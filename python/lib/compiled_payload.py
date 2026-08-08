@@ -88,13 +88,15 @@ class CompiledPayloadMixin(object):
     PAYLOAD_BUILD_COMMAND = "make binaries"
 
     def _init_compiled_payloads(self):
-        self.payload_layout = None
-        self.payload_layout_version = None
+        self.payload_layouts = {}
 
-    def _payload_version_key(self):
+    def _payload_version_key(self, region=None):
         raise NotImplementedError
 
-    def _payload_flash_range(self):
+    def _payload_layout_template(self, region=None):
+        return self.PAYLOAD_LAYOUT_TEMPLATE
+
+    def _payload_flash_range(self, region=None):
         raise NotImplementedError
 
     def _payload_repo_dir(self):
@@ -118,9 +120,9 @@ class CompiledPayloadMixin(object):
             )
         return path
 
-    def _load_versioned_bin(self, name, required=False):
+    def _load_versioned_bin(self, name, required=False, region=None):
         """Load a per-version binary, optionally failing when unavailable."""
-        ver = self._payload_version_key()
+        ver = self._payload_version_key(region)
         bin_path = self._versioned_artifact_path(name, "bin", ver)
         if required:
             bin_path = self._require_versioned_artifact(name, "bin", ver)
@@ -139,14 +141,10 @@ class CompiledPayloadMixin(object):
         elf_path = self._require_versioned_artifact(name, "elf", ver)
         return data, ver, elf_path
 
-    def _load_payload_layout(self):
-        """Load generated payload addresses and measured sizes."""
-        ver = self._payload_version_key()
-        if self.payload_layout_version == ver:
-            return
-
+    def _read_payload_layout(self, template, ver, storage_range):
+        """Read one generated layout with separate storage and runtime addresses."""
         path = os.path.join(
-            self._payload_repo_dir(), "build", self.PAYLOAD_LAYOUT_TEMPLATE % ver
+            self._payload_repo_dir(), "build", template % ver
         )
         if not os.path.exists(path):
             raise CompiledPayloadError(
@@ -154,7 +152,7 @@ class CompiledPayloadMixin(object):
                 (os.path.relpath(path, self._payload_repo_dir()), self.PAYLOAD_BUILD_COMMAND)
             )
 
-        range_start, range_end = self._payload_flash_range()
+        range_start, range_end = storage_range
         layout = {}
         with open(path, "r", encoding="ascii") as f:
             for lineno, line in enumerate(f, 1):
@@ -162,26 +160,45 @@ class CompiledPayloadMixin(object):
                 if not line or line.startswith("#"):
                     continue
                 fields = line.split()
-                if len(fields) != 4:
+                if len(fields) != 6:
                     raise CompiledPayloadError(
                         "payload layout: malformed row %d in %s" % (lineno, path)
                     )
-                name, flash_text, size_text, end_text = fields
+                (name, runtime_text, size_text, runtime_end_text,
+                 storage_text, storage_end_text) = fields
                 if name in layout:
                     raise CompiledPayloadError("payload layout: duplicate payload %s" % name)
-                flash = int(flash_text, 0)
+                runtime = int(runtime_text, 0)
                 size = int(size_text, 0)
-                end = int(end_text, 0)
-                if flash % 4 or size <= 0 or flash + size != end:
+                runtime_end = int(runtime_end_text, 0)
+                storage = int(storage_text, 0)
+                storage_end = int(storage_end_text, 0)
+                if (runtime % 4 or storage % 4 or size <= 0 or
+                        runtime + size != runtime_end or
+                        storage + size != storage_end):
                     raise CompiledPayloadError("payload layout: invalid range for %s" % name)
-                if flash < range_start or end > range_end:
+                if storage < range_start or storage_end > range_end:
                     raise CompiledPayloadError(
                         "payload layout: %s lies outside the payload region" % name
                     )
-                layout[name] = (flash, size)
+                layout[name] = {
+                    "runtime": runtime,
+                    "storage": storage,
+                    "size": size,
+                }
+        return layout
 
-        self.payload_layout = layout
-        self.payload_layout_version = ver
+    def _load_payload_layout(self, region=None):
+        """Load generated payload addresses and measured sizes."""
+        ver = self._payload_version_key(region)
+        template = self._payload_layout_template(region)
+        storage_range = self._payload_flash_range(region)
+        key = (template, ver, storage_range)
+        if key not in self.payload_layouts:
+            self.payload_layouts[key] = self._read_payload_layout(
+                template, ver, storage_range
+            )
+        return ver, self.payload_layouts[key]
 
     def _elf_symbol_addr(self, elf_path, symbol):
         return elf_symbol_address(elf_path, symbol)
@@ -189,29 +206,34 @@ class CompiledPayloadMixin(object):
     def _elf_symbol_size(self, elf_path, symbol):
         return elf_symbol_size(elf_path, symbol)
 
-    def _inject_payload(self, name, data):
+    def _inject_payload(self, name, data, region=None):
         """Validate and inject one payload at its generated layout address."""
         data = bytes(data)
-        self._load_payload_layout()
-        if name not in self.payload_layout:
+        ver, layout = self._load_payload_layout(region)
+        if name not in layout:
             raise CompiledPayloadError(
                 "payload layout: %s not allocated for %s" %
-                (name, self._payload_version_key())
+                (name, ver)
             )
-        flash, expected_size = self.payload_layout[name]
+        entry = layout[name]
+        runtime = entry["runtime"]
+        storage = entry["storage"]
+        expected_size = entry["size"]
         if len(data) != expected_size:
             raise CompiledPayloadError(
                 "%s: binary size %dB differs from layout %dB (run %s)" %
                 (name, len(data), expected_size, self.PAYLOAD_BUILD_COMMAND)
             )
 
-        elf_path = self._require_versioned_artifact(name, "elf")
+        # Validate the execution address, then install the bytes at their
+        # storage address. These differ for payloads copied into SRAM.
+        elf_path = self._require_versioned_artifact(name, "elf", ver)
         linked_text = elf_text_address(elf_path)
-        if linked_text != flash:
+        if linked_text != runtime:
             raise CompiledPayloadError(
                 "%s: ELF .text is linked at 0x%08X, layout assigns 0x%08X "
                 "(run %s)" %
-                (name, linked_text, flash, self.PAYLOAD_BUILD_COMMAND)
+                (name, linked_text, runtime, self.PAYLOAD_BUILD_COMMAND)
             )
         if elf_binary_data(elf_path) != data:
             raise CompiledPayloadError(
@@ -219,6 +241,6 @@ class CompiledPayloadMixin(object):
                 (name, os.path.basename(elf_path), self.PAYLOAD_BUILD_COMMAND)
             )
 
-        off = flash - self.asf.FLASH_BASE
+        off = storage - self.asf.FLASH_BASE
         self.asf.patch(data, off, checkempty=True, verbose=False)
-        return flash, off
+        return storage, off

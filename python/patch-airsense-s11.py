@@ -885,6 +885,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
     """Patch methods for S11 firmware."""
 
     PAYLOAD_LAYOUT_TEMPLATE = "as11_payload_layout_%s.tsv"
+    FGBL_PAYLOAD_LAYOUT_TEMPLATE = "as11_fgbl_payload_layout_%s.tsv"
     PAYLOAD_BUILD_COMMAND = "make as11-binaries"
     CUSTOM_MENU_SECTIONS = {
         "therapy": 0,
@@ -923,12 +924,33 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             for method, vcid_permissions in rpc_permissions.items()
         }
 
-    def _payload_version_key(self):
-        return self.asf.appx_version_key()
+    def _payload_version_key(self, region=None):
+        region = "APPL" if region is None else region
+        if region == "APPL":
+            return self.asf.appx_version_key()
+        if region == "FGBL":
+            match = re.match(r"^(\d+)\.(\d+)\.(\d+)(?:\.|$)", self.asf.bid)
+            if match is not None:
+                return "_".join(match.groups())
+        raise ValueError("cannot derive %s payload version" % region)
 
-    def _payload_flash_range(self):
-        start = self.asf.FLASH_BASE + self.asf.APPL_OFF
-        return start, start + self.asf.APPL_SIZE
+    def _payload_layout_template(self, region=None):
+        region = "APPL" if region is None else region
+        if region == "APPL":
+            return self.PAYLOAD_LAYOUT_TEMPLATE
+        if region == "FGBL":
+            return self.FGBL_PAYLOAD_LAYOUT_TEMPLATE
+        raise ValueError("cannot select %s payload layout" % region)
+
+    def _payload_flash_range(self, region=None):
+        region = "APPL" if region is None else region
+        if region == "APPL":
+            start = self.asf.FLASH_BASE + self.asf.APPL_OFF
+            return start, start + self.asf.APPL_SIZE
+        if region == "FGBL":
+            start = self.asf.FLASH_BASE + self.asf.FGBL_OFF
+            return start, start + self.asf.FGBL_SIZE
+        raise ValueError("cannot select %s payload range" % region)
 
     def mop_callback_register_handler(self, handler, name):
         """Register one feature handler to run after a MOP writeback."""

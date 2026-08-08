@@ -1,6 +1,6 @@
-# cdx_version	start	end_exclusive
-0302	0x080FCF98	0x080FFFFE
-0305	0x080FCF98	0x080FFFFE
-0306	0x080FCF98	0x080FFFFE
-0401	0x080FCF98	0x080FFFFE
-0402	0x080FCF98	0x080FFFFE
+# cdx_version  region  storage_start  storage_end  image_base  runtime_base
+0302           cdx     0x080FCF98     0x080FFFFE   0x08000000  0x08000000
+0305           cdx     0x080FCF98     0x080FFFFE   0x08000000  0x08000000
+0306           cdx     0x080FCF98     0x080FFFFE   0x08000000  0x08000000
+0401           cdx     0x080FCF98     0x080FFFFE   0x08000000  0x08000000
+0402           cdx     0x080FCF98     0x080FFFFE   0x08000000  0x08000000

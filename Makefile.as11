@@ -1,6 +1,7 @@
 AS11_FIRMWARE ?= as11.bin
 AS11_PATCHED ?= $(BUILD)/as11-patched.bin
 
+# Register APPL payloads by APPX version and FGBL payloads by BID.
 AS11_PAYLOAD_LAYOUT_VERSIONS := 8_0_1 8_3_0 8_4_0 8_5_0 8_6_0
 AS11_PAYLOADS_8_0_1 := as11_mop_callback_dispatcher as11_vid_spoof
 AS11_PAYLOADS_8_3_0 := $(AS11_PAYLOADS_8_0_1) as11_asv_backup_rate as11_custom_settings
@@ -8,12 +9,22 @@ AS11_PAYLOADS_8_4_0 := $(AS11_PAYLOADS_8_3_0)
 AS11_PAYLOADS_8_5_0 := $(AS11_PAYLOADS_8_3_0)
 AS11_PAYLOADS_8_6_0 := $(AS11_PAYLOADS_8_5_0)
 
-as11_payload_versions = $(strip $(foreach v,$(AS11_PAYLOAD_LAYOUT_VERSIONS),$(if $(filter $(1),$(AS11_PAYLOADS_$(v))),$(v))))
+# Resolve a payload name to its supported versions, binaries, and region.
+as11_appl_payload_versions = $(strip $(foreach v,$(AS11_PAYLOAD_LAYOUT_VERSIONS),$(if $(filter $(1),$(AS11_PAYLOADS_$(v))),$(v))))
+as11_fgbl_payload_versions = $(strip $(foreach v,$(AS11_FGBL_PAYLOAD_VERSIONS),$(if $(filter $(1),$(AS11_FGBL_PAYLOADS_$(v))),$(v))))
+as11_payload_versions = $(strip $(call as11_appl_payload_versions,$(1)) $(call as11_fgbl_payload_versions,$(1)))
 as11_payload_bins = $(foreach v,$(call as11_payload_versions,$(1)),$(BUILD)/$(1)_$(v).bin)
+as11_fgbl_payload_region = $(if $(filter $(1),$(AS11_FGBL_SRAM_PAYLOADS_$(2))),fgbl_sram,fgbl)
+as11_layout_field = awk -v name="$(1)" -v field="$(2)" '$$$$1 == name { print $$$$field; found=1; exit } END { if (!found) exit 1 }' $(strip $(3))
 
-AS11_PAYLOAD_NAMES := $(sort $(foreach v,$(AS11_PAYLOAD_LAYOUT_VERSIONS),$(AS11_PAYLOADS_$(v))))
+AS11_APPL_PAYLOAD_NAMES := $(sort $(foreach v,$(AS11_PAYLOAD_LAYOUT_VERSIONS),$(AS11_PAYLOADS_$(v))))
+AS11_FGBL_PAYLOAD_NAMES := $(sort $(foreach v,$(AS11_FGBL_PAYLOAD_VERSIONS),$(AS11_FGBL_PAYLOADS_$(v))))
+AS11_PAYLOAD_NAMES := $(sort $(AS11_APPL_PAYLOAD_NAMES) $(AS11_FGBL_PAYLOAD_NAMES))
+AS11_PAYLOAD_VERSIONS := $(sort $(AS11_PAYLOAD_LAYOUT_VERSIONS) $(AS11_FGBL_PAYLOAD_VERSIONS))
 AS11_PAYLOAD_STAMPS := $(foreach p,$(AS11_PAYLOAD_NAMES),$(BUILD)/payload_$(p).stamp)
-AS11_PAYLOAD_LAYOUT_TSVS := $(foreach v,$(AS11_PAYLOAD_LAYOUT_VERSIONS),$(BUILD)/as11_payload_layout_$(v).tsv)
+AS11_PAYLOAD_LAYOUT_TSVS := \
+	$(foreach v,$(AS11_PAYLOAD_LAYOUT_VERSIONS),$(BUILD)/as11_payload_layout_$(v).tsv) \
+	$(foreach v,$(AS11_FGBL_PAYLOAD_VERSIONS),$(BUILD)/as11_fgbl_payload_layout_$(v).tsv)
 
 AS11_CFLAGS := \
 	-g \
@@ -52,68 +63,107 @@ AS11_NOR_READER_CFLAGS := \
 	-Wno-unused-parameter \
 	-Wno-unused-variable
 
+# Probe sizes feed the code-cave allocator for each region and version.
+# $(1): default region, $(2): version, $(3): output stem, $(4): payload list
 define AS11_PAYLOAD_LAYOUT_template
-AS11_PAYLOAD_PROBE_BINS_$(1) := $$(foreach p,$$(AS11_PAYLOADS_$(1)),$$(BUILD)/$$(p)_$(1).probe.bin)
-
-$$(BUILD)/as11_payload_sizes_$(1).tsv: $$(AS11_PAYLOAD_PROBE_BINS_$(1)) Makefile Makefile.as11 | $$(BUILD)
+$$(BUILD)/$(3)_payload_sizes_$(2).tsv: \
+		$$(foreach p,$(4),$$(BUILD)/$$(p)_$(2).probe.bin) \
+		Makefile Makefile.as11 | $$(BUILD)
 	@: > $$@.tmp
 	@for bin in $$(filter %.probe.bin,$$^); do \
 		base=$$$${bin##*/}; \
-		name=$$$${base%_$(1).probe.bin}; \
-		printf '%s\t%s\n' "$$$$name" "$$$$(stat -c %s "$$$$bin")" >> $$@.tmp; \
+		name=$$$${base%_$(2).probe.bin}; \
+		region=$(1); \
+		case ' $$(AS11_FGBL_SRAM_PAYLOADS_$(2)) ' in \
+			*" $$$$name "*) region=fgbl_sram ;; \
+		esac; \
+		printf '%s\t%s\t%s\n' "$$$$name" "$$$$(stat -c %s "$$$$bin")" "$$$$region" >> $$@.tmp; \
 	done
 	@mv $$@.tmp $$@
 
-$$(BUILD)/as11_payload_layout_$(1).tsv: \
-		$$(BUILD)/as11_payload_sizes_$(1).tsv $$(SRC)/as11_code_caves.tsv \
+$$(BUILD)/$(3)_payload_layout_$(2).tsv: \
+		$$(BUILD)/$(3)_payload_sizes_$(2).tsv $$(SRC)/as11_code_caves.tsv \
 		$$(SRC)/generate_payload_layout.awk | $$(BUILD)
-	@awk -v version=$(1) \
+	@awk -v version=$(2) \
 		-f $$(SRC)/generate_payload_layout.awk \
-		$$(SRC)/as11_code_caves.tsv $$(BUILD)/as11_payload_sizes_$(1).tsv \
-		> $$(BUILD)/as11_payload_layout_$(1).tsv.tmp
-	@mv $$(BUILD)/as11_payload_layout_$(1).tsv.tmp $$(BUILD)/as11_payload_layout_$(1).tsv
+		$$(SRC)/as11_code_caves.tsv $$(BUILD)/$(3)_payload_sizes_$(2).tsv \
+		> $$@.tmp
+	@mv $$@.tmp $$@
 endef
 
-$(foreach v,$(AS11_PAYLOAD_LAYOUT_VERSIONS),$(eval $(call AS11_PAYLOAD_LAYOUT_template,$(v))))
+$(foreach v,$(AS11_PAYLOAD_LAYOUT_VERSIONS),\
+	$(eval $(call AS11_PAYLOAD_LAYOUT_template,appl,$(v),as11,$(AS11_PAYLOADS_$(v)))))
+$(foreach v,$(AS11_FGBL_PAYLOAD_VERSIONS),\
+	$(eval $(call AS11_PAYLOAD_LAYOUT_template,fgbl,$(v),as11_fgbl,$(AS11_FGBL_PAYLOADS_$(v)))))
 
-$(BUILD)/as11_stubs_%.o: $(SRC)/as11/stubs_%.S | $(BUILD)
-	$(AS) $(AS11_CFLAGS) -c -o $@ $<
+$(BUILD)/as11_stubs_%.o: $(SRC)/as11/stubs_%.S Makefile Makefile.as11 | $(BUILD)
+	$(AS) $(AS11_CFLAGS) -DAPPX_VER_$* -DFGBL_VER_$* -c -o $@ $<
 
+$(BUILD)/as11_fgbl_stubs_%.o: $(SRC)/as11/fgbl_stubs_%.S Makefile Makefile.as11 | $(BUILD)
+	$(AS) $(AS11_CFLAGS) -DAPPX_VER_$* -DFGBL_VER_$* -c -o $@ $<
+
+# APPL and FGBL payloads share one versioned object rule.
 define AS11_VERSIONED_OBJECTS_template
 $$(BUILD)/as11_%_$(1).o: $$(SRC)/as11/%.c $$(SRC)/as11/stubs.h \
-		$$(SRC)/as11/vars.h $$(SRC)/as11/vars_$(1).h | $$(BUILD)
-	$$(CC) $$(AS11_CFLAGS) -DAPPX_VER_$(1) -c -o $$@ $$<
+		$$(SRC)/as11/vars.h $$(wildcard $$(SRC)/as11/vars_$(1).h) \
+		Makefile Makefile.as11 | $$(BUILD)
+	$$(CC) $$(AS11_CFLAGS) $$(AS11_PAYLOAD_CFLAGS_as11_$$*) \
+		-DAPPX_VER_$(1) -DFGBL_VER_$(1) -c -o $$@ $$<
+
+$$(BUILD)/as11_%_$(1).o: $$(SRC)/as11/%.S $$(SRC)/as11/stubs.h \
+		$$(SRC)/as11/vars.h $$(wildcard $$(SRC)/as11/vars_$(1).h) \
+		Makefile Makefile.as11 | $$(BUILD)
+	$$(AS) $$(AS11_CFLAGS) -DAPPX_VER_$(1) -DFGBL_VER_$(1) -c -o $$@ $$<
 endef
 
-$(foreach v,$(AS11_PAYLOAD_LAYOUT_VERSIONS),$(eval $(call AS11_VERSIONED_OBJECTS_template,$(v))))
+$(foreach v,$(AS11_PAYLOAD_VERSIONS),$(eval $(call AS11_VERSIONED_OBJECTS_template,$(v))))
 
+# Probe links derive runtime addresses from storage mappings; final links use
+# the allocator-selected runtime address and must retain the probed size.
+# $(1): payload, $(2): version, $(3): region, $(4): stubs, $(5): layout
 define AS11_PAYLOAD_template
-$$(BUILD)/$(1)_$(2).probe.elf: $$(BUILD)/$(1)_$(2).o $$(BUILD)/as11_stubs_$(2).o | $$(BUILD)
-	$$(LD) --nostdlib --no-dynamic-linker \
-		--Ttext $(PROBE_LINK_ADDR) --entry start --sort-section=name \
-		-o $$@ $$^
-
-$$(BUILD)/$(1)_$(2).elf: $$(BUILD)/$(1)_$(2).o $$(BUILD)/as11_stubs_$(2).o \
-		$$(BUILD)/as11_payload_layout_$(2).tsv | $$(BUILD)
-	@set -e; addr=$$$$(awk -v name="$(1)" '$$$$1 == name { print $$$$2; found=1; exit } END { if (!found) exit 1 }' $(BUILD)/as11_payload_layout_$(2).tsv); \
+$$(BUILD)/$(1)_$(2).probe.elf: $$(BUILD)/$(1)_$(2).o $(strip $(4)) \
+		$$(SRC)/as11_code_caves.tsv Makefile Makefile.as11 | $$(BUILD)
+	@set -e; mapping=$$$$(awk -v version="$(2)" -v region="$(strip $(3))" \
+		'$$$$1 == version && $$$$2 == region { print $$$$3, $$$$5, $$$$6; found=1; exit } END { if (!found) exit 1 }' \
+		$$(SRC)/as11_code_caves.tsv); \
+	set -- $$$$mapping; \
+	addr=$$$$(printf '0x%08X' $$$$(( $$$$3 + $$$$1 - $$$$2 ))); \
 	$$(LD) --nostdlib --no-dynamic-linker \
 		--Ttext $$$$addr --entry start --sort-section=name \
-		-o $$@ $$(BUILD)/$(1)_$(2).o $$(BUILD)/as11_stubs_$(2).o
+		-o $$@ $$(filter %.o,$$^)
+
+$$(BUILD)/$(1)_$(2).probe.bin: $$(BUILD)/$(1)_$(2).probe.elf
+	$$(OBJCOPY) -O binary $$< $$@
+
+$$(BUILD)/$(1)_$(2).elf: $$(BUILD)/$(1)_$(2).o $(strip $(4)) $(strip $(5)) | $$(BUILD)
+	@set -e; addr=$$$$($(call as11_layout_field,$(1),2,$(strip $(5)))); \
+	$$(LD) --nostdlib --no-dynamic-linker \
+		--Ttext $$$$addr --entry start --sort-section=name \
+		-o $$@ $$(filter %.o,$$^)
 
 $$(BUILD)/$(1)_$(2).bin: $$(BUILD)/$(1)_$(2).elf
 	$$(OBJCOPY) -Obinary $$< $$@
 	@set -e; actual=$$$$(stat -c %s $$@); \
-		expected=$$$$(awk -v name="$(1)" '$$$$1 == name { print $$$$3; found=1; exit } END { if (!found) exit 1 }' $(BUILD)/as11_payload_layout_$(2).tsv); \
+		expected=$$$$($(call as11_layout_field,$(1),3,$(strip $(5)))); \
 		[ "$$$$actual" -eq "$$$$expected" ] || { \
 			echo "$$@: final size $$$$actual differs from layout size $$$$expected" >&2; \
 			exit 1; \
 		}
 endef
 
-$(foreach p,$(AS11_PAYLOAD_NAMES),\
-	$(foreach v,$(call as11_payload_versions,$(p)),\
-		$(eval $(call AS11_PAYLOAD_template,$(p),$(v)))))
+$(foreach p,$(AS11_APPL_PAYLOAD_NAMES),\
+	$(foreach v,$(call as11_appl_payload_versions,$(p)),\
+		$(eval $(call AS11_PAYLOAD_template,$(p),$(v),appl,\
+			$(BUILD)/as11_stubs_$(v).o,$(BUILD)/as11_payload_layout_$(v).tsv))))
+$(foreach p,$(AS11_FGBL_PAYLOAD_NAMES),\
+	$(foreach v,$(call as11_fgbl_payload_versions,$(p)),\
+		$(eval $(call AS11_PAYLOAD_template,$(p),$(v),\
+			$(call as11_fgbl_payload_region,$(p),$(v)),\
+			$(BUILD)/as11_fgbl_stubs_$(v).o,\
+			$(BUILD)/as11_fgbl_payload_layout_$(v).tsv))))
 
+# Top-level builds consume one stamp per registered payload.
 define AS11_PAYLOAD_STAMP_template
 $(BUILD)/payload_$(1).stamp: $(call as11_payload_bins,$(1)) Makefile Makefile.as11 | $(BUILD)
 	@printf '  %-8s %-30s [%s]\n' PAYLOAD $(1) '$(call as11_payload_versions,$(1))'
@@ -122,31 +172,13 @@ endef
 
 $(foreach p,$(AS11_PAYLOAD_NAMES),$(eval $(call AS11_PAYLOAD_STAMP_template,$(p))))
 
-.PHONY: as11 as11-binaries as11-mop-callback-dispatcher as11-vid-spoof \
-	as11-asv-backup-rate as11-custom-settings as11-patched \
-	as11-nor-sram-reader
+.PHONY: as11 as11-binaries as11-patched as11-nor-sram-reader
 
 as11:
 	$(MAKE) as11-binaries
 	$(MAKE) $(AS11_PATCHED)
 
 as11-binaries: $(AS11_PAYLOAD_STAMPS) $(AS11_PAYLOAD_LAYOUT_TSVS)
-
-as11-mop-callback-dispatcher: $(call as11_payload_bins,as11_mop_callback_dispatcher)
-	@echo "AS11 MOP callback dispatcher patches built:"
-	@$(foreach v,$(call as11_payload_versions,as11_mop_callback_dispatcher),echo "  $(BUILD)/as11_mop_callback_dispatcher_$(v).bin";)
-
-as11-vid-spoof: $(call as11_payload_bins,as11_vid_spoof)
-	@echo "AS11 VID spoof patches built:"
-	@$(foreach v,$(call as11_payload_versions,as11_vid_spoof),echo "  $(BUILD)/as11_vid_spoof_$(v).bin";)
-
-as11-asv-backup-rate: $(call as11_payload_bins,as11_asv_backup_rate)
-	@echo "AS11 ASV backup-rate patches built:"
-	@$(foreach v,$(call as11_payload_versions,as11_asv_backup_rate),echo "  $(BUILD)/as11_asv_backup_rate_$(v).bin";)
-
-as11-custom-settings: $(call as11_payload_bins,as11_custom_settings)
-	@echo "AS11 custom-settings patches built:"
-	@$(foreach v,$(call as11_payload_versions,as11_custom_settings),echo "  $(BUILD)/as11_custom_settings_$(v).bin";)
 
 $(AS11_NOR_READER_ELF): $(AS11_NOR_READER_SRC) Makefile Makefile.as11 | $(BUILD)
 	$(CC) $(AS11_NOR_READER_CFLAGS) \
@@ -166,5 +198,6 @@ as11-patched:
 	-$(MAKE) as11-binaries
 	$(MAKE) $(AS11_PATCHED)
 
-$(AS11_PATCHED): $(AS11_FIRMWARE) patch-airsense-s11 | $(BUILD)
+$(AS11_PATCHED): $(AS11_FIRMWARE) patch-airsense-s11 \
+		$(AS11_PAYLOAD_STAMPS) $(AS11_PAYLOAD_LAYOUT_TSVS) | $(BUILD)
 	./patch-airsense-s11 $< $@

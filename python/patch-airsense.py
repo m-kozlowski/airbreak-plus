@@ -614,6 +614,10 @@ class ASFirmware(object):
         # Read version strings
         self.pcd = self.read_bytes(self.ccx_off + 0x20, 7).split(b'\x00', 1)[0].decode()
         self.pna = self.read_bytes(self.ccx_off + 0x30, 0x1f).split(b'\x00', 1)[0].decode()
+        cid_values = [self.read_u32(self.globals_offset(0) + i * 4) for i in range(7)]
+        self.cid = "CX%03d-%03d-%03d-%03d-%03d-%03d-%03d" % (
+            cid_values[1], cid_values[0], cid_values[3], cid_values[2],
+            cid_values[5], cid_values[4], cid_values[6])
         self.cdx_sid = self.read_bytes(self.cdx_off, 0x20).split(b'\x00', 1)[0].decode()
         self.cdx_ver = self.cdx_sid[:10]
         if not re.match(r'^SX[0-9]{3}-[0-9]{4}$', self.cdx_ver):
@@ -840,10 +844,15 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self._init_compiled_payloads()
         self.custom_patch_settings_init()
 
-    def _payload_version_key(self):
-        return self.asf.cdx_ver.rsplit('-', 1)[-1]
+    def _payload_version_key(self, region=None):
+        region = "CDX" if region is None else region
+        return {
+            "BLX": self.asf.bid.replace('-', '_'),
+            "CCX": self.asf.cid.replace('-', '_'),
+            "CDX": self.asf.cdx_ver.rsplit('-', 1)[-1],
+        }[region]
 
-    def _payload_flash_range(self):
+    def _payload_flash_range(self, region=None):
         return self.asf.FLASH_BASE, self.asf.FLASH_BASE + len(self.asf.fw)
 
     def _supports_compiled_payloads(self):

@@ -23,13 +23,15 @@ without being enabled in a particular output image.
 `patches/s10_code_caves.tsv` lists available half-open ranges:
 
 ```text
-cdx_version  start       end_exclusive
-0402         0x080FCF98  0x080FFFFE
+cdx_version  region  storage_start  storage_end  image_base  runtime_base
+0402         cdx     0x080FCF98     0x080FFFFE   0x08000000  0x08000000
 ```
 
 The format supports multiple sorted ranges per version. Ranges must start on a
 4-byte boundary and must not overlap. The current registry contains one range
-per supported version.
+per supported version. `image_base` and `runtime_base` describe how stored
+payload bytes map into the execution address space. They are equal for the
+current CDX regions, so storage and runtime addresses are identical.
 
 ## Build pipeline
 
@@ -40,7 +42,7 @@ The payload layout is generated in two link passes:
 3. convert each probe ELF to a binary and record its measured size
 4. allocate payloads with first fit, from the lowest address of the first cave
 5. align each allocation to 4 bytes
-6. write `build/payload_layout_<version>.tsv` and `.mk`
+6. write `build/payload_layout_<version>.tsv`
 7. link final ELFs at their assigned addresses
 8. convert final ELFs to the binaries consumed by the patchers
 
@@ -52,9 +54,9 @@ has enough remaining space.
 Example generated layout:
 
 ```text
-payload                  address      size  end_exclusive
-mop_callback_dispatcher  0x080FCF98   ...   ...
-vid_spoof                 ...          ...   ...
+payload                  runtime      size  runtime_end  storage      storage_end
+mop_callback_dispatcher  0x080FCF98   ...   ...          0x080FCF98   ...
+vid_spoof                 ...          ...   ...          ...          ...
 ```
 
 Inspect a layout with:
@@ -70,8 +72,10 @@ Both patchers consume the generated TSV layout. Before injection they verify:
 
 - the payload exists in the selected CDX layout
 - the binary size matches the measured layout size
+- the final ELF is linked at the assigned runtime address
+- flattening the final ELF reproduces the supplied binary exactly
 - the complete destination range contains erased `0xFF` bytes
-- the payload fits inside its assigned range
+- the storage range lies inside the selected firmware region
 
 Patch code resolves entry points and ABI objects from the final ELF symbol
 table. Source code and patcher functions do not maintain duplicate payload

@@ -1,6 +1,6 @@
-# appx_version  start       end_exclusive
-8_0_1           0x081DBAD0  0x081FFCF8
-8_3_0           0x081DBAD0  0x081FFCF8
-8_4_0           0x081DBAD0  0x081FFCF8
-8_5_0           0x081DBAD0  0x081FFCF8
-8_6_0           0x081DCC18  0x081FFCF8
+# version         region      storage_start  storage_end  image_base  runtime_base
+8_0_1           appl    0x081DBAD0     0x081FFCF8   0x08000000  0x08000000
+8_3_0           appl    0x081DBAD0     0x081FFCF8   0x08000000  0x08000000
+8_4_0           appl    0x081DBAD0     0x081FFCF8   0x08000000  0x08000000
+8_5_0           appl    0x081DBAD0     0x081FFCF8   0x08000000  0x08000000
+8_6_0           appl    0x081DCC18     0x081FFCF8   0x08000000  0x08000000

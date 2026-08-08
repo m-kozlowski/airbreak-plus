@@ -158,7 +158,7 @@ $$(BUILD)/payload_sizes_$(1).tsv: $$(PAYLOAD_PROBE_BINS_$(1)) Makefile | $$(BUIL
 		base=$$$${bin##*/}; \
 		name=$$$${base%.probe.bin}; \
 		name=$$$${name%_$(1)}; \
-		printf '%s\t%s\n' "$$$$name" "$$$$(stat -c %s "$$$$bin")" >> $$@.tmp; \
+		printf '%s\t%s\tcdx\n' "$$$$name" "$$$$(stat -c %s "$$$$bin")" >> $$@.tmp; \
 	done
 	@mv $$@.tmp $$@
 
