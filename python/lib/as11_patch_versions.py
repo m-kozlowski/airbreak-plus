@@ -21,6 +21,15 @@ AS11_OTA_DESCRIPTOR_PRESETS = {
 }
 
 
+# TODO: Integrate FGBL patch metadata with the version-maintenance workflow.
+AS11_FGBL_PATCH_VERSIONS = {
+    "1_1_0": {
+        "selector_hook": 0x080009F6,
+        "dispatch_hook_storage": 0x08009AB2,
+    },
+}
+
+
 AS11_PATCH_VERSIONS = {
     "8_0_1": {
         "mop_callback_dispatcher": {

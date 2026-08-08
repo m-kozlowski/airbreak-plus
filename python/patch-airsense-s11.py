@@ -19,7 +19,7 @@ import re
 import struct
 import sys
 
-from lib.as11_patch_versions import AS11_PATCH_VERSIONS
+from lib.as11_patch_versions import AS11_FGBL_PATCH_VERSIONS, AS11_PATCH_VERSIONS
 from lib.compiled_payload import CompiledPayloadMixin
 
 try:
@@ -951,6 +951,23 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             start = self.asf.FLASH_BASE + self.asf.FGBL_OFF
             return start, start + self.asf.FGBL_SIZE
         raise ValueError("cannot select %s payload range" % region)
+
+    def patch_fgbl_service(self):
+        """Add bootloader support for firmware dump and restore over CAN."""
+        version = self._payload_version_key("FGBL")
+        version_data = AS11_FGBL_PATCH_VERSIONS.get(version)
+        if version_data is None:
+            raise ValueError("FGBL service: unsupported bootloader BID %r" % self.asf.bid)
+        storage = {}
+        for role in ("gate", "extension"):
+            name = "as11_fgbl_service_" + role
+            data, _ = self._load_versioned_bin(name, required=True, region="FGBL")
+            storage[role], _ = self._inject_payload(name, data, region="FGBL")
+        for hook, role in (("selector_hook", "gate"),
+                           ("dispatch_hook_storage", "extension")):
+            self.asf.write_thumb2_bl_target(
+                self.asf.ptr_to_off(version_data[hook]), storage[role]
+            )
 
     def mop_callback_register_handler(self, handler, name):
         """Register one feature handler to run after a MOP writeback."""
@@ -2099,6 +2116,12 @@ class S11FirmwarePatches(CompiledPayloadMixin):
 
 
 PATCH_LIST = [
+    {
+        "arg": "patch-fgbl-service",
+        "desc": "Add bootloader support for firmware dump and restore over CAN.",
+        "default": True,
+        "function": "patch_fgbl_service",
+    },
     {
         "arg": "patch-unlock-features",
         "desc": "Unlock supported therapy modes, related settings, and GUI editability.",

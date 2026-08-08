@@ -9,6 +9,11 @@ AS11_PAYLOADS_8_4_0 := $(AS11_PAYLOADS_8_3_0)
 AS11_PAYLOADS_8_5_0 := $(AS11_PAYLOADS_8_3_0)
 AS11_PAYLOADS_8_6_0 := $(AS11_PAYLOADS_8_5_0)
 
+AS11_FGBL_PAYLOAD_VERSIONS := 1_1_0
+AS11_FGBL_PAYLOADS_1_1_0 := as11_fgbl_service_gate as11_fgbl_service_extension
+# FGBL payloads default to fgbl; list copied-to-SRAM payloads here.
+AS11_FGBL_SRAM_PAYLOADS_1_1_0 := as11_fgbl_service_extension
+
 # Resolve a payload name to its supported versions, binaries, and region.
 as11_appl_payload_versions = $(strip $(foreach v,$(AS11_PAYLOAD_LAYOUT_VERSIONS),$(if $(filter $(1),$(AS11_PAYLOADS_$(v))),$(v))))
 as11_fgbl_payload_versions = $(strip $(foreach v,$(AS11_FGBL_PAYLOAD_VERSIONS),$(if $(filter $(1),$(AS11_FGBL_PAYLOADS_$(v))),$(v))))
@@ -25,6 +30,10 @@ AS11_PAYLOAD_STAMPS := $(foreach p,$(AS11_PAYLOAD_NAMES),$(BUILD)/payload_$(p).s
 AS11_PAYLOAD_LAYOUT_TSVS := \
 	$(foreach v,$(AS11_PAYLOAD_LAYOUT_VERSIONS),$(BUILD)/as11_payload_layout_$(v).tsv) \
 	$(foreach v,$(AS11_FGBL_PAYLOAD_VERSIONS),$(BUILD)/as11_fgbl_payload_layout_$(v).tsv)
+
+AS11_PAYLOAD_CFLAGS_as11_fgbl_service_extension := \
+	-fno-builtin -fno-unwind-tables -fno-asynchronous-unwind-tables \
+	-ffunction-sections
 
 AS11_CFLAGS := \
 	-g \
