@@ -25,13 +25,15 @@
 #define SPI_TXDR   (SPI5_BASE + 0x20u)
 #define SPI_RXDR   (SPI5_BASE + 0x30u)
 
-#define SCB_DCCMVAC 0xE000EF68u
+#define SCB_DCCMVAC  0xE000EF68u
+#define SCB_DCCIMVAC 0xE000EF70u
 #define SPI_MAX_FRAMES 0xFFFCu
 #define NOR_CMD_BYTES  4u
 
 static inline void barrier(void);
 static inline void feed_iwdg(void);
 static void clean_dcache_range(uint8_t *ptr, uint32_t len);
+static void clean_invalidate_dcache_range(uint8_t *ptr, uint32_t len);
 static void read_transfer(uint32_t nor_addr, uint8_t *dst, uint32_t len);
 
 void _start(uint32_t nor_addr, uint32_t len, uint8_t *dst) {
@@ -39,6 +41,7 @@ void _start(uint32_t nor_addr, uint32_t len, uint8_t *dst) {
     uint32_t done = 0u;
 
     feed_iwdg();
+    clean_invalidate_dcache_range(dst, len);
 
     while (done < len) {
         uint32_t n = len - done;
@@ -74,6 +77,19 @@ static void clean_dcache_range(uint8_t *ptr, uint32_t len) {
 
     for (uintptr_t p = start; p < end; p += 32u) {
         REG32(SCB_DCCMVAC) = (uint32_t)p;
+        if ((p & 0x7FFFu) == 0u) {
+            feed_iwdg();
+        }
+    }
+    barrier();
+}
+
+static void clean_invalidate_dcache_range(uint8_t *ptr, uint32_t len) {
+    uintptr_t start = (uintptr_t)ptr & ~(uintptr_t)31u;
+    uintptr_t end = ((uintptr_t)ptr + len + 31u) & ~(uintptr_t)31u;
+
+    for (uintptr_t p = start; p < end; p += 32u) {
+        REG32(SCB_DCCIMVAC) = (uint32_t)p;
         if ((p & 0x7FFFu) == 0u) {
             feed_iwdg();
         }
