@@ -7,13 +7,12 @@ single fixed address map.
 ## Firmware Image
 
 Use a complete, unmodified 2 MiB Air11 image. It can be dumped from the target
-device over [SWD](openocd.md#dump-the-firmware) or obtained from another 
+device over [SWD](openocd.md#dump-the-firmware) or obtained from another
 source. The image does not have to match the firmware release or product
 variant currently installed on the target device.
 
-The repository does not distribute firmware images or patched builds. Keep the
-unmodified input separately from generated output. When SWD access is
-available, also preserve the exact image dumped from the target for recovery.
+The repository does not distribute firmware images or patched builds. Retain
+an unmodified firmware dump for recovery.
 
 Using a different release or product variant can change product identity and
 may reset persisted settings or sleep data on first boot.
@@ -49,25 +48,45 @@ toolchain. It attempts to build the payloads, then lets the patcher skip patches
 whose compiled payload is unavailable. The standard `make as11` target fails
 instead of producing that reduced result.
 
-## Default Patch Set
+## What Each Patch Does
 
-The compatibility wrapper selects:
+### Therapy Unlocks
 
-| Patch | Effect |
-|-------|--------|
-| `patch-unlock-features` | supported therapy modes, settings, and GUI editability |
-| `patch-unlock-languages` | configured language availability |
-| `patch-defaults` | selected firmware defaults |
-| `patch-rpc-json-profile-visibility` | supported therapy and feature RPC nodes |
-| `patch-edf-superset` | expanded SD-card therapy data recording for unlocked modes |
-| `patch-vid-spoof` | correct product identification in SD-card and cloud data for unlocked modes |
-| `patch-motor-nagscreen` | removes the "device has reached its design life" warning triggered after ~20,000 hours of runtime |
-| `patch-asv-ps-range` | ASV/ASVAuto MinPS-MaxPS range restriction removal |
-| `patch-asv-backup-rate` | disables the ASV/ASVAuto backup rate; `patch-custom-settings` adds a persistent On/Off control |
-| `patch-custom-settings` | menu controls requested by selected compiled payloads |
-| `patch-rpc-permissions` | controls which device commands are available through each communication interface |
+| Patch | What it does | Switch |
+|-------|--------------|--------|
+| Unlock features | Enables additional supported therapy modes and settings and makes them editable in the clinical menu | `--patch-unlock-features` |
+| Unlock ASV PS range | Removes the stock 5 cmH2O separation between minimum and maximum pressure support in ASV and ASVAuto | `--patch-asv-ps-range` |
 
-See [Features](features.md) for the resulting behavior.
+### Therapy Modifications
+
+| Patch | What it does | Switch |
+|-------|--------------|--------|
+| ASV backup rate | Allows automatic backup breaths to be disabled in ASV and ASVAuto; the Backup Rate setting controls the behavior | `--patch-asv-backup-rate` |
+| [Custom settings](../../as11/custom_settings.md) | Adds clinical-menu settings used by other patches and preserves their values across restarts | `--patch-custom-settings` |
+
+### Therapy Data and Reporting
+
+| Patch | What it does | Switch |
+|-------|--------------|--------|
+| EDF superset | Adds all supported signals to SD-card therapy files, including signals used by unlocked modes | `--patch-edf-superset` |
+| VID spoof | Updates `VariantIdentifier` when therapy mode changes so EDF and cloud identity follow the mapped device family | `--patch-vid-spoof` |
+
+### Connectivity and Control
+
+| Patch | What it does | Switch |
+|-------|--------------|--------|
+| RPC profile visibility | Exposes supported therapy and feature profile nodes in RPC JSON | `--patch-rpc-json-profile-visibility` |
+| RPC permissions | Applies configured command permissions for each communication-interface VCID | `--patch-rpc-permissions` |
+
+### Quality of Life
+
+| Patch | What it does | Switch |
+|-------|--------------|--------|
+| Unlock languages | Enables all configured language choices | `--patch-unlock-languages` |
+| Defaults | Changes the initial values of selected settings without replacing values already saved on the device | `--patch-defaults` |
+| Motor nag removal | Removes the design-life warning while preserving the runtime counter | `--patch-motor-nagscreen` |
+
+See [Features](features.md) for additional behavior details.
 
 ## Selecting Patches
 
@@ -91,10 +110,6 @@ List all patch switches with:
 python3 python/patch-airsense-s11.py -h
 ```
 
-## Build Result
+## Next
 
-A successful run prints the result of every selected patch, updates the image
-checksums, and prints the output hash. Do not flash the image if the patcher
-reports an error or unexpectedly skips a selected patch.
-
-Continue with [Flashing](flashing.md).
+- [Flashing](flashing.md)
