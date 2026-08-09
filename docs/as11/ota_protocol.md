@@ -122,8 +122,9 @@ tcl/as11-keys.tcl
 ```
 
 It resets and halts the target, configures the SPI5 NOR pins used by the
-device, reads one 32-byte provider key slot, prints it as 64 uppercase hex
-characters, then resets/runs the target again.
+device, reads a 32-byte slot from the firmware `SecurityData` area, prints it
+as 64 uppercase hex characters, then resets/runs the target again. The OTA
+key is selected by default.
 
 At the OpenOCD prompt:
 
@@ -131,13 +132,17 @@ At the OpenOCD prompt:
 as11_keys::key
 ```
 
-`as11_keys::key` defaults to the OTA slot. Other provider key slots can be
-read by numeric index when explicitly needed:
+`as11_keys::key OTA` selects the same identified OTA slot. Numeric indexes
+`0..7` provide raw access to 32-byte chunks in the second half of
+`SecurityData`:
 
 ```tcl
 as11_keys::key OTA
 as11_keys::key 0
 ```
+
+Index `0` contains the OTA key. The individual roles of indexes `1..7` are not
+identified.
 
 The helper refuses all-00/all-ff reads as suspicious. Treat the printed value
 as device secret material; do not paste it into logs or public docs.

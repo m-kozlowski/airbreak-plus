@@ -1,10 +1,10 @@
-# AirSense/AirCurve 11 provider key page reader for OpenOCD.
+# AirSense/AirCurve 11 SecurityData key reader for OpenOCD.
 #
 # Self-contained, read-only, and intentionally small:
 #   - reset-halt before touching SPI NOR
 #   - configure only SPI5 pins/peripheral known from firmware:
 #       SCK=PH6 MISO=PH7 MOSI=PF9 CS=PH5
-#   - read one 32-byte slot from the provider OTA key page
+#   - read a 32-byte slot from the second half of SecurityData
 #   - print the raw key as 64 hex characters
 #   - reset-run after the read attempt
 #
@@ -16,6 +16,8 @@ namespace eval as11_keys {
     variable RCC_APB2ENR  0x580244F0
     variable RCC_APB2RSTR 0x58024498
     variable SPI5 0x40015000
+    # Slot 0 is the OTA key. APPL exposes slots 4..7 together to Steehl;
+    # the roles of slots 1..3 are not identified.
     variable OTA_PAGE 0x100
     variable KEY_SIZE 0x20
     variable KEY_SLOTS 8
@@ -181,10 +183,10 @@ namespace eval as11_keys {
         }
 
         if {[catch {expr {int($index)}} idx] != 0} {
-            error "invalid provider key index: $index"
+            error "invalid SecurityData slot: $index"
         }
         if {$idx < 0 || $idx >= $KEY_SLOTS} {
-            error [format "provider key index out of range: %d (valid 0..%d)" $idx [expr {$KEY_SLOTS - 1}]]
+            error [format "SecurityData slot out of range: %d (valid 0..%d)" $idx [expr {$KEY_SLOTS - 1}]]
         }
         return $idx
     }
@@ -212,10 +214,10 @@ namespace eval as11_keys {
 
             set key [_read32 $addr]
             if {[llength $key] != 32} {
-                error "short provider key read"
+                error "short SecurityData slot read"
             }
             if {[_all_same $key 0] || [_all_same $key 0xff]} {
-                error "refusing suspicious all-00/all-ff provider key slot read"
+                error "refusing suspicious all-00/all-ff SecurityData slot read"
             }
 
             set hex [_hex $key]
@@ -231,12 +233,13 @@ namespace eval as11_keys {
     }
 
     proc help {} {
-        echo {AS11 provider key page reader (::as11_keys)}
-        echo {===================================================}
+        echo {AS11 SecurityData key reader (::as11_keys)}
+        echo {============================================}
         echo ""
         echo {  as11_keys::key          read OTA key slot, print hex, reset run}
         echo {  as11_keys::key OTA      same as above}
-        echo {  as11_keys::key <index>  read provider key slot 0..7}
+        echo {  as11_keys::key <index>  read raw SecurityData slot 0..7}
+        echo {                            roles of slots 1..7 are unidentified}
     }
 }
 
