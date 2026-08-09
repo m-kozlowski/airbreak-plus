@@ -48,7 +48,9 @@ variable AS11_SPI_CFG2 0x0C
 variable AS11_SPI_SR   0x14
 variable AS11_SPI_IFCR 0x18
 
-variable AS11_NOR_STUB_PATH [file normalize [file join [file dirname [info script]] .. build as11-nor-sram-reader.bin]]
+variable AS11_NOR_STUB_PATH [file join \
+    [file normalize [file join [file dirname [info script]] ..]] \
+    build as11-nor-sram-reader.bin]
 
 proc _mrw {addr} {
     return [lindex [read_memory $addr 32 1] 0]
