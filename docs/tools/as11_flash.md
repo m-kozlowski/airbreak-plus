@@ -160,9 +160,22 @@ and the physical SPI NOR independently of the normal OTA mechanism.
 
 ### Install and enter service mode
 
-The device must contain the `patch-fgbl-service` patch. Hold the physical
-Start/Stop button while resetting or powering on the device, then release it
-when the status LED starts blinking.
+The device must contain the `patch-fgbl-service` patch. While resetting or
+powering on the device, either hold the physical Start/Stop button or transmit
+a continuous 1 Mbit/s CAN burst. Release the button or stop the burst when the
+status LED starts blinking.
+
+Enter service mode with:
+
+```
+as11_flash.py -d can:/dev/ttyACM0 service enter
+```
+
+If the service is already running, `enter` reports its identity without
+resetting it. Otherwise it sends `ResetDevice(Fast)` and starts a CAN burst.
+`INFO` probes are interleaved with the burst every 100 ms, and the command
+returns as soon as service mode responds. The entry window is 30 seconds.
+`enter` currently requires a direct CAN adapter.
 
 Check that the service responds:
 
@@ -206,6 +219,9 @@ Flash reads accept the named regions `FGBL`, `CONF`, `APPL`, `APCX`, and
 `FGCB`, together with their normal `as11_flash.py` aliases. The output file is
 opened directly; a failed transfer leaves the bytes received before the
 failure in that file.
+
+Complete NOR dumps can be inspected and extracted with
+[`as11_nor_tool.py`](as11_nor_tool.md).
 
 ### Write storage
 

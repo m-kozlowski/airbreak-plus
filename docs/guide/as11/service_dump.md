@@ -64,6 +64,16 @@ python3 python/as11_flash.py flash \
 3. Restore power while holding the button.
 4. Release the button when the status LED starts blinking.
 
+Alternatively, start the CAN entry burst:
+
+```
+python3 python/as11_flash.py \
+    -d can:/dev/ttyACM0 service enter
+```
+
+Restore power while the command is running. It stops the burst as soon as
+service mode responds.
+
 Confirm that the service responds:
 
 ```
@@ -122,7 +132,8 @@ The SPI NOR contains unit-specific data, including device identity, calibration,
 
 ## Leave service mode
 
-Release the Start/Stop button, then reset the device through the service:
+Stop the CAN burst or release the Start/Stop button, then reset the device
+through the service:
 
 ```
 python3 python/as11_flash.py \

@@ -7,6 +7,12 @@ import binascii
 import struct
 from dataclasses import dataclass
 
+from as11_rpc import TransportError
+
+
+class CanTxBufferFull(TransportError):
+    """The adapter cannot queue another frame yet."""
+
 
 def parse_int(text: str) -> int:
     return int(text.replace("_", ""), 0)

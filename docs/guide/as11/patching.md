@@ -125,9 +125,10 @@ python3 python/patch-airsense-s11.py -h
 
 `patch-fgbl-service` adds a bootloader maintenance mode for reading and writing
 internal flash and the physical SPI NOR over CAN. It is included in the default
-patch set for bootloader version 1.1.0. To enter service mode, hold the physical
-Start/Stop button while resetting or powering on the device. Release the button
-when the status LED starts blinking.
+patch set for bootloader version 1.1.0. To enter service mode while resetting or
+powering on the device, hold the physical Start/Stop button or transmit a
+continuous 1 Mbit/s CAN burst. Release the button or stop the burst when the
+status LED starts blinking.
 
 ```bash
 python3 python/patch-airsense-s11.py \

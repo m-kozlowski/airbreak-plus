@@ -18,6 +18,7 @@ import time
 from dataclasses import dataclass as _dataclass
 
 from as11_can_common import (
+    CanTxBufferFull,
     CanDatagramCodec,
     CanFrame,
     DEFAULT_RPC_RX_ID,
@@ -155,7 +156,9 @@ class _SocketcanRaw:
                 if exc.errno not in (errno.ENOBUFS, errno.EAGAIN, errno.EWOULDBLOCK):
                     raise TransportError(f"SocketCAN write failed on {self.ifname!r}: {exc}") from exc
                 if time.monotonic() >= deadline:
-                    raise TransportError(f"SocketCAN write timed out on {self.ifname!r}: {exc}") from exc
+                    raise CanTxBufferFull(
+                        f"SocketCAN transmit queue remained full on {self.ifname!r}"
+                    ) from exc
                 time.sleep(0.0005)
 
 

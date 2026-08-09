@@ -16,6 +16,7 @@ except Exception:  # pragma: no cover
     serial = None
 
 from as11_can_common import (
+    CanTxBufferFull,
     CanDatagramCodec,
     CanFrame,
     DEFAULT_RPC_RX_ID,
@@ -354,6 +355,8 @@ class _CanableSlcan:
                 if code == "":
                     return
                 detail = SLCAN_FEEDBACK.get(code, f"unknown adapter feedback {code!r}")
+                if code == "7":
+                    raise CanTxBufferFull(f"SLCAN command failed: {detail}")
                 raise TransportError(f"SLCAN command failed: {detail}")
 
     def command(self, command: str, *, expect_feedback: bool = False, expect_text: bool = False,
@@ -371,6 +374,8 @@ class _CanableSlcan:
                     code = line[1:]
                     if code:
                         detail = SLCAN_FEEDBACK.get(code, f"unknown adapter feedback {code!r}")
+                        if code == "7":
+                            raise CanTxBufferFull(f"SLCAN command failed: {detail}")
                         raise TransportError(f"SLCAN command failed: {detail}")
                     continue
                 return line
@@ -438,6 +443,11 @@ class _CanableSlcan:
                 return frames[0]
             if self.debug:
                 _log_can_rpc.debug("serial event <<< %s", line)
+        return None
+
+    def read_pending_frame(self) -> CanFrame | None:
+        if self._rx_frames:
+            return self._rx_frames.popleft()
         return None
 
     def send_frame(self, can_id: int, data: bytes, *, extended: bool = False, remote: bool = False) -> None:

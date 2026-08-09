@@ -77,7 +77,7 @@ except ModuleNotFoundError as exc:  # pragma: no cover
         raise
 
 from as11_rpc import (  # noqa: E402
-    Transport, TransportError, FramingError,
+    Transport, TransportError, FramingError, build_request,
 )
 from lib.as11_patch_versions import (  # noqa: E402
     AS11_OTA_DESCRIPTOR_PRESETS,
@@ -1430,9 +1430,11 @@ def cmd_service(args) -> int:
     try:
         if args.service_cmd == "info":
             info = client.info(timeout=args.timeout)
-            version = ".".join(str(part) for part in info.service_version)
-            print(f"Service: {version}")
-            print(f"FGBL:    {info.fgbl_build_id}")
+            _print_service_identity(info)
+            return 0
+
+        if args.service_cmd == "enter":
+            _service_enter(client, transport, args)
             return 0
 
         if args.service_cmd == "reset":
@@ -1472,6 +1474,49 @@ def cmd_service(args) -> int:
         raise SystemExit(f"unknown service command {args.service_cmd!r}")
     finally:
         transport.close()
+
+
+def _print_service_identity(info) -> None:
+    version = ".".join(str(part) for part in info.service_version)
+    print(f"Service: {version}")
+    print(f"FGBL:    {info.fgbl_build_id}")
+
+
+def _service_enter(client, transport, args) -> None:
+    from as11_can_common import CanTxBufferFull
+
+    if not hasattr(client, "raw_can"):
+        raise SystemExit(
+            "service enter over tcp requires AirCANnect entry support"
+        )
+
+    request = build_request(
+        "ResetDevice", {"type": "Fast"},
+        int(time.time() * 1000) & 0x7FFFFFFF,
+    )
+    try:
+        transport.send_payload(request)
+    except CanTxBufferFull:
+        pass
+    else:
+        print("ResetDevice(Fast) sent.")
+
+    burst_frame = b"\x00" * 8
+    def burst(duration):
+        deadline = time.monotonic() + duration
+        while time.monotonic() < deadline:
+            try:
+                client.raw_can.send_frame(
+                    0x7FF, burst_frame, extended=False, remote=False
+                )
+            except CanTxBufferFull:
+                time.sleep(0.001)
+                continue
+            time.sleep(0.0005)
+
+    print(f"CAN entry burst (up to {args.timeout:g} s)...")
+    info = client.info_during_activity(burst, timeout=args.timeout)
+    _print_service_identity(info)
 
 
 def _service_read_to_file(client, target: int, target_name: str,
@@ -2105,11 +2150,12 @@ def _service_timeout(text: str) -> float:
     return value
 
 
-def _add_service_link_args(p: argparse.ArgumentParser, *, defaults: bool) -> None:
+def _add_service_link_args(p: argparse.ArgumentParser, *, defaults: bool,
+                           timeout_help: str = "service response timeout") -> None:
     p.add_argument(
         "--timeout", type=_service_timeout,
         default=5.0 if defaults else argparse.SUPPRESS,
-        metavar="SECONDS", help="service response timeout (default: 5)",
+        metavar="SECONDS", help=timeout_help,
     )
     p.add_argument(
         "--block-size", type=_service_block_size,
@@ -2203,6 +2249,16 @@ def main(argv=None) -> int:
     p_s_info = service_sub.add_parser("info", help="query service identity")
     _add_device_args(p_s_info)
     _add_service_link_args(p_s_info, defaults=False)
+
+    p_s_enter = service_sub.add_parser(
+        "enter", help="enter service mode during a reset"
+    )
+    _add_device_args(p_s_enter)
+    _add_service_link_args(
+        p_s_enter, defaults=False,
+        timeout_help="CAN entry window (default: 30)",
+    )
+    p_s_enter.set_defaults(timeout=30.0)
 
     p_s_reset = service_sub.add_parser("reset", help="leave service mode and reset")
     _add_device_args(p_s_reset)

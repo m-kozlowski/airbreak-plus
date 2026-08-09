@@ -8,6 +8,7 @@ import struct
 import time
 from dataclasses import dataclass
 
+from as11_can_common import CanTxBufferFull
 from as11_rpc import FramingError, TransportError
 
 
@@ -132,6 +133,10 @@ class _ServiceClient:
 
     def info(self, *, timeout: float = 5.0) -> ServiceInfo:
         payload = self.request(COMMAND_INFO, timeout=timeout)
+        return self._decode_info(payload)
+
+    @staticmethod
+    def _decode_info(payload: bytes) -> ServiceInfo:
         if len(payload) != _INFO.size:
             raise FramingError(
                 f"service INFO payload has {len(payload)} bytes; expected "
@@ -400,6 +405,77 @@ class ServiceCanClient(_ServiceClient):
         except ValueError as exc:
             raise FramingError(f"service response framing failed: {exc}") from exc
         return self._accept_response(response, command, sequence)
+
+    def info_during_activity(self, activity, *, timeout: float) -> ServiceInfo:
+        read_pending = getattr(self.raw_can, "read_pending_frame", None)
+        if read_pending is None:
+            activity(timeout)
+            return self.info(timeout=min(timeout, 5.0))
+
+        sequence, request = self._prepare_request(COMMAND_INFO, b"")
+        length = len(request)
+        first_frame = bytes([
+            ISOTP_FIRST_FRAME | (length >> 8), length & 0xFF,
+        ]) + request[:6]
+        final_frame = bytes([
+            ISOTP_CONSECUTIVE_FRAME | 1,
+        ]) + request[6:]
+        deadline = time.monotonic() + timeout
+        next_probe = 0.0
+
+        while time.monotonic() < deadline:
+            activity(0.001)
+            now = time.monotonic()
+            if now >= next_probe:
+                try:
+                    _send_can_frame(
+                        self.raw_can, SERVICE_REQUEST_ID, first_frame
+                    )
+                except CanTxBufferFull:
+                    pass
+                next_probe = now + 0.1
+
+            while True:
+                frame = read_pending()
+                if frame is None:
+                    break
+                data = frame.data
+                if (frame.extended or frame.remote
+                        or frame.can_id != SERVICE_RESPONSE_ID
+                        or not data
+                        or data[0] & ISOTP_TYPE_MASK != ISOTP_FLOW_CONTROL
+                        or data[0] & 0x0F != ISOTP_FLOW_STATUS_CTS):
+                    continue
+
+                while True:
+                    try:
+                        _send_can_frame(
+                            self.raw_can, SERVICE_REQUEST_ID, final_frame
+                        )
+                        break
+                    except CanTxBufferFull:
+                        time.sleep(0.001)
+
+                try:
+                    complete = _receive_isotp(
+                        self.raw_can, SERVICE_RESPONSE_ID,
+                        SERVICE_REQUEST_ID, time.monotonic() + 5.0,
+                        max_packet_size=MAX_RESPONSE_PACKET_SIZE,
+                        block_size=self.block_size,
+                    )
+                    response = decode_packet(complete)
+                except ValueError as exc:
+                    raise FramingError(
+                        f"service response framing failed: {exc}"
+                    ) from exc
+                payload = self._accept_response(
+                    response, COMMAND_INFO, sequence
+                )
+                return self._decode_info(payload)
+
+        raise TimeoutError(
+            f"service mode did not respond within {timeout:g}s"
+        )
 
 
 class ServicePacketClient(_ServiceClient):
