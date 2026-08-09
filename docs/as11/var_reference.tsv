@@ -203,7 +203,7 @@ g2	BIP				0x00B7	0x00C5	0x00C8	0..50 step 0.2
 g2	BML				0x00B8	0x00C6	0x00C9	0..2 step 0.02
 g2	BMR				0x00B9	0x00C7	0x00CA	0..40 step 0.2
 g2	BRF				0x00BA	0x00C8	0x00CB	-2..3 step 0.01
-g2	ZBM						0x00CC	0..2147483647 step 1
+g2	ZBM						0x00CC	0..2147483647 step 1; last dynamic-message presentation time, epoch minutes
 g2	TOC						0x00CD	0..2147483647 step 1
 g2	MKI	InspiratoryPressure-TwoSecond	Press.2s		0x00BB	0x00C9	0x00CE	0..50 step 0.2
 g2	BFT	BlowerFlow-100hz			0x00BC	0x00CA	0x00CF	-4..4 step 0.01
@@ -246,8 +246,8 @@ g2	PCS				0x00E0	0x00EE	0x00F3	0..3000 step 1
 g2	TCS				0x00E1	0x00EF	0x00F4	0..3000 step 1
 g2	CAI						0x00F5	1..64 step 1
 g2	DDD	DownloadBytesDelta			0x00E2	0x00F0	0x00F6	0..2147483647 step 1
-g2	DTD				0x00E3	0x00F1	0x00F7	0..2147483647 step 1
-g2	DTU				0x00E4	0x00F2	0x00F8	0..2147483647 step 1
+g2	DTD				0x00E3	0x00F1	0x00F7	0..2147483647 step 1; cumulative cellular downloaded bytes
+g2	DTU				0x00E4	0x00F2	0x00F8	0..2147483647 step 1; cumulative cellular uploaded bytes
 g2	DUD	UploadBytesDelta			0x00E5	0x00F3	0x00F9	0..2147483647 step 1
 g2	CEI						0x00FA	1..64 step 1
 g2	QS2				0x00E6	0x00F4	0x00FB	0..7 step 1
@@ -302,7 +302,7 @@ g2	ZS1				0x0116	0x0124	0x012B	0..2147483647 step 1
 g2	DRD				0x0117	0x0125	0x012C	0..2147483647 step 1
 g2	DIT				0x0118	0x0126	0x012D	0..2147483647 step 1
 g2	DMC						0x012E	0..2147483647 step 1
-g2	DME	MessageExpiryDate					0x012F	0..2147483647 step 1
+g2	DME	MessageExpiryDate					0x012F	0..2147483647 step 1; dynamic messaging
 g2	EAI				0x0119	0x0127	0x0130	1..2147483647 step 1
 g2	EIC	CepstrumAverageCount			0x011A	0x0128	0x0131	1..2147483647 step 1
 g2	ESC				0x011B	0x0129	0x0132	-2147483647..2147483647 step 1
@@ -406,7 +406,7 @@ g2	HUP	HumidifierPWM			0x0177	0x0186	0x0191	0..100 step 0.1
 g2	HME				0x0178	0x0187	0x0192	1..8 step 1
 g2	HMS	HumidifierLevel	S.HumLevel		0x0179	0x0188	0x0193	1..8 step 1
 g2	HYC				0x017A	0x0189	0x0194	0..4095 step 1
-g2	ILS				0x017B	0x018A	0x0195	4..20 step 1
+g2	ILS				0x017B	0x018A	0x0195	4..20 step 1; learned inspiratory pressure
 g2	IPS				0x017C	0x018B	0x0196	0..2147483647 step 1
 g2	INP	InspiratoryPressure			0x017D	0x018C	0x0197	0..50 step 0.2
 g2	INH	InspiratoryPressure-50hz			0x017E	0x018D	0x0198	0..50 step 0.2
@@ -453,12 +453,12 @@ g2	KPT	ButtonRegMap			0x01A6	0x01B5	0x01C0	0..255 step 1
 g2	PIN					0x01B6	0x01C1	0..240 step 0.1
 g2	LBT				0x01A7	0x01B7	0x01C2	0..2147483647 step 1
 g2	LDT	LastDataPostDateTime			0x01A8	0x01B8	0x01C3	-2147483647..2147483647 step 1
-g2	ZFE				0x01A9	0x01B9	0x01C4	0..24836 step 1
+g2	ZFE				0x01A9	0x01B9	0x01C4	0..24836 step 1; therapy-day key rate-limiting HoseBlocked reports
 g2	PLL					0x01BA	0x01C5	0..3 step 0.02
 g2	LMS	LastMachineServiceDateTime			0x01AA	0x01BB	0x01C6	0..2147483647 step 1
 g2	OUD					0x01BC	0x01C7	0..1440 step 1
-g2	LI9				0x01AB	0x01BD	0x01C8	0..50 step 0.2
-g2	LPD				0x01AC	0x01BE	0x01C9	0..1440 step 1
+g2	LI9				0x01AB	0x01BD	0x01C8	0..50 step 0.2; previous therapy-day inspiratory-pressure 95th percentile
+g2	LPD				0x01AC	0x01BE	0x01C9	0..1440 step 1; previous therapy-day duration, minutes
 g2	DSC				0x01AD	0x01BF	0x01CA	0..24836 step 1; TLP; current day stored after Soundcheck and used for run-frequency gating
 g2	LK7	Summary-Leak-75	Leak.70		0x01AE	0x01C0	0x01CB	0..2 step 0.02
 g2	LK9	Summary-Leak-95	Leak.95		0x01AF	0x01C1	0x01CC	0..2 step 0.02
@@ -614,18 +614,18 @@ g2	RET					0x0255	0x0260	0..2147483647 step 1
 g2	RCR				0x0241	0x0256	0x0261	0..100 step 1
 g2	RTR				0x0242	0x0257	0x0262	0..100 step 1
 g2	RID	RegionIdentifier			0x0243	0x0258	0x0263	0..99 step 1
-g2	MDF				0x0244	0x0259	0x0264	0..2147483647 step 1
-g2	MDM				0x0245	0x025A	0x0265	0..2147483647 step 1
-g2	MDT				0x0246	0x025B	0x0266	0..2147483647 step 1
-g2	MDW				0x0247	0x025C	0x0267	0..2147483647 step 1
+g2	MDF				0x0244	0x0259	0x0264	0..2147483647 step 1; filter reminder elapsed-time state
+g2	MDM				0x0245	0x025A	0x0265	0..2147483647 step 1; mask reminder elapsed-time state
+g2	MDT				0x0246	0x025B	0x0266	0..2147483647 step 1; tubing reminder elapsed-time state
+g2	MDW				0x0247	0x025C	0x0267	0..2147483647 step 1; humidifier reminder elapsed-time state
 g2	FUC				0x0248	0x025D	0x0268	0..2147483647 step 1
 g2	MUC				0x0249	0x025E	0x0269	0..2147483647 step 1
 g2	TUC				0x024A	0x025F	0x026A	0..2147483647 step 1
 g2	WUC				0x024B	0x0260	0x026B	0..2147483647 step 1
-g2	RCF				0x024C	0x0261	0x026C	0..2147483647 step 1
-g2	RCM				0x024D	0x0262	0x026D	0..2147483647 step 1
-g2	RCT				0x024E	0x0263	0x026E	0..2147483647 step 1
-g2	RCH				0x024F	0x0264	0x026F	0..2147483647 step 1
+g2	RCF				0x024C	0x0261	0x026C	0..2147483647 step 1; filter reminder recurrence count
+g2	RCM				0x024D	0x0262	0x026D	0..2147483647 step 1; mask reminder recurrence count
+g2	RCT				0x024E	0x0263	0x026E	0..2147483647 step 1; tubing reminder recurrence count
+g2	RCH				0x024F	0x0264	0x026F	0..2147483647 step 1; humidifier reminder recurrence count
 g2	RTF	ReminderFilterDate			0x0250	0x0265	0x0270	0..2147483647 step 1
 g2	RTM	ReminderMaskDate			0x0251	0x0266	0x0271	0..2147483647 step 1
 g2	RTT	ReminderTubingDate			0x0252	0x0267	0x0272	0..2147483647 step 1
@@ -643,14 +643,14 @@ g2	RCC	Summary-ReraIndex	RIN		0x025D	0x0272	0x027D	active_vids=3; 0..240 step 0.
 g2	ZS6				0x025E	0x0273	0x027E	0..2147483647 step 1
 g2	CUD	LastTherapyUseDateTime			0x025F	0x0274	0x027F	0..2147483647 step 1
 g2	SCS				0x0260	0x0275	0x0280	0..1440 step 1
-g2	MHU	MachineRunMeter			0x0261	0x0276	0x0281	0..315360000 step 1; modes=CPAP,AutoSet,HerAuto,Spont,ST,Timed,VAuto,ASV,ASVAuto,iVAPS,PAC
-g2	MHR	MotorRunMeter			0x0262	0x0277	0x0282	0..315360000 step 1
-g2	MHS	MotorRunSinceLastServiceMeter			0x0263	0x0278	0x0283	0..315360000 step 1
-g2	ZSE				0x0264	0x0279	0x0284	0..2147483647 step 1
-g2	ZDD				0x0265	0x027A	0x0285	0..24836 step 1
-g2	ZDT				0x0266	0x027B	0x0286	0..2147483647 step 1
+g2	MHU	MachineRunMeter			0x0261	0x0276	0x0281	0..315360000 step 1; seconds; backup-SRAM SettingsUnit; modes=CPAP,AutoSet,HerAuto,Spont,ST,Timed,VAuto,ASV,ASVAuto,iVAPS,PAC
+g2	MHR	MotorRunMeter			0x0262	0x0277	0x0282	0..315360000 step 1; seconds; backup-SRAM SettingsUnit
+g2	MHS	MotorRunSinceLastServiceMeter			0x0263	0x0278	0x0283	0..315360000 step 1; seconds; backup-SRAM SettingsUnit
+g2	ZSE				0x0264	0x0279	0x0284	0..2147483647 step 1; saved resettable-error code
+g2	ZDD				0x0265	0x027A	0x0285	0..24836 step 1; saved error date, days since epoch
+g2	ZDT				0x0266	0x027B	0x0286	0..2147483647 step 1; saved error time, milliseconds since midnight
 g2	CPD				0x0267	0x027C	0x0287	0..1440 step 1
-g2	PHM	TherapyRunMeter			0x0268	0x027D	0x0288	0..315360000 step 1
+g2	PHM	TherapyRunMeter			0x0268	0x027D	0x0288	0..315360000 step 1; seconds; backup-SRAM SettingsUnit
 g2	SW0				0x0269	0x027E	0x0289	0..2147483647 step 1
 g2	SLT				0x026A	0x027F	0x028A	0..2147483647 step 1
 g2	PR2	AdcPressureMonitoring			0x026B	0x0280	0x028B	0..4095 step 1
@@ -715,7 +715,7 @@ g2	SCL				0x02A2	0x02BA	0x02C5	0..3750 step 1; 2625 for 65W, 3638 for 90W, minus
 g2	SCM				0x02A3	0x02BB	0x02C6	0..5000 step 1
 g2	SCG				0x02A4	0x02BC	0x02C7	1000..3000 step 1
 g2	ZPM				0x02A5	0x02BD	0x02C8	0..2147483647 step 1
-g2	SET					0x02BE	0x02C9	0..2147483647 step 1
+g2	SET					0x02BE	0x02C9	0..2147483647 step 1; latest system-error time, epoch minutes
 g2	STK				0x02A6	0x02BF	0x02CA	0..2147483647 step 1
 g2	ZZ2	Spont-TargetExpiratoryPressure	S.S.EPAP	EPAP	0x02A7	0x02C0	0x02CB	active_vids=7,10; 2..25 step 0.2; modes=Spont
 g2	Z17	Spont-FallTime		Fall Time	0x02A8	0x02C1	0x02CC	INACT; 0.1..0.7 step 0.1; modes=Spont
@@ -825,7 +825,7 @@ g3	SYH				0x030F	0x0328	0x0332	bits=6 fixed=0x00000000 editable=0x0000003f
 g3	SY2				0x0310	0x0329	0x0333	bits=4 fixed=0x00000000 editable=0x0000000f
 g3	ZOY				0x0311	0x032A	0x0334	bits=1 fixed=0x00000000 editable=0x00000001
 g3	LNC	LanguageConfiguration		Language	0x0312	0x032B	0x0335	bits=27 fixed=0x000000a3 editable=0x07ffffff; options: English, French, German, Italian, Spanish EU, Spanish US, Portuguese EU, Portuguese US, Dutch, Swedish, Danish, Norwegian, Finnish, Russian, Turkish, Polish, Czech, Greek, Estonian, Chinese Traditional, Chinese Simplified, Japanese, Korean, Croatian, Hungarian, Romanian
-g3	REM			Restore Defaults / Erase Data	0x0313	0x032C	0x0336	bits=3 fixed=0x00000000 editable=0x00000007
+g3	REM			Restore Defaults / Erase Data	0x0313	0x032C	0x0336	bits=3 fixed=0x00000000 editable=0x00000007; bit0=SleepData bit1=Settings bit2=Logs
 g3	ZPC				0x0314	0x032D	0x0337	bits=14 fixed=0x00000000 editable=0x00003fff
 g3	OCS				0x0315	0x032E	0x0338	bits=3 fixed=0x00000000 editable=0x00000007
 g3	AER	ActiveAlarms			0x0316	0x032F	0x0339	INACT; bits=9 fixed=0x00000000 editable=0x00000000
@@ -852,7 +852,7 @@ g5	ACY				0x032A	0x0343	0x034D	3 opts mask=0x00000007
 g5	ATT				0x032B	0x0344	0x034E	3 opts mask=0x00000007
 g5	ALT				0x032C	0x0345	0x034F	4 opts mask=0x0000000f
 g5	ATQ				0x032D	0x0346	0x0350	4 opts mask=0x0000000f
-g5	AUP				0x032E	0x0347	0x0351	2 opts mask=0x00000003
+g5	AUP				0x032E	0x0347	0x0351	2 opts mask=0x00000003; alarm-board firmware-upgrade pending latch
 g5	AUS				0x032F	0x0348	0x0352	5 opts mask=0x0000001f
 g5	AVO				0x0330	0x0349	0x0353	3 opts mask=0x00000007
 g5	AVP				0x0331	0x034A	0x0354	4 opts mask=0x0000000f
@@ -865,9 +865,9 @@ g5	AKM				0x0337	0x0350	0x035A	4 opts mask=0x0000000f
 g5	BTR				0x0338	0x0351	0x035B	2 opts mask=0x00000001
 g5	BTE	TriggerCycleEvent			0x0339	0x0352	0x035C	6 opts mask=0x0000003f
 g5	BBE	DynamicMessageToggle		Dynamic Message			0x035D	2 opts mask=0x00000003; options: Off, On
-g5	BMS						0x035E	3 opts mask=0x00000007
+g5	BMS						0x035E	3 opts mask=0x00000007; dynamic-message state: 0=inactive 1=pending 2=presented
 g5	TOA						0x035F	3 opts mask=0x00000007
-g5	MTP	MessageType					0x0360	3 opts mask=0x00000007
+g5	MTP	MessageType					0x0360	3 opts mask=0x00000007; options=MyAir,Resupply,Coaching
 g5	BAS				0x033A	0x0353	0x0361	2 opts mask=0x00000003
 g5	BCO				0x033B	0x0354	0x0362	8 opts mask=0x000000ff
 g5	BCR				0x033C	0x0355	0x0363	2 opts mask=0x00000003
@@ -875,7 +875,7 @@ g5	BDS				0x033D	0x0356	0x0364	2 opts mask=0x00000003
 g5	BNP	BluetoothPassthrough		Bluetooth	0x033E	0x0357	0x0365	2 opts mask=0x00000003; options: Off, On
 g5	BRS				0x033F	0x0358	0x0366	2 opts mask=0x00000003
 g5	BSC				0x0340	0x0359	0x0367	2 opts mask=0x00000003
-g5	BTU				0x0341	0x035A	0x0368	2 opts mask=0x00000003
+g5	BTU				0x0341	0x035A	0x0368	2 opts mask=0x00000003; completed-upgrade latch; nonzero blocks a new upgrade
 g5	ZLE				0x0342	0x035B	0x0369	2 opts mask=0x00000003
 g5	CEN				0x0343	0x035C	0x036A	active_vids=3,7; 2 opts mask=0x00000003
 g5	CAL				0x0344	0x035D	0x036B	15 opts mask=0x00007fff
@@ -887,7 +887,7 @@ g5	ZSD				0x0349	0x0362	0x0370	2 opts mask=0x00000003
 g5	ZCU				0x034A	0x0363	0x0371	2 opts mask=0x00000003
 g5	CDT				0x034B	0x0364	0x0372	2 opts mask=0x00000003
 g5	CCA	CareCheckInAvailable		Care Check-In	0x034C	0x0365	0x0373	2 opts mask=0x00000003; options: Off, On
-g5	CCT				0x034D	0x0366	0x0374	5 opts mask=0x00000002
+g5	CCT				0x034D	0x0366	0x0374	5 opts mask=0x00000002; Care Check-in product family; options=Off,AirSense,AirCurve,Lumis,HFT
 g5	SCP				0x034E	0x0367	0x0375	3 opts mask=0x00000007
 g5	CDM	DataMode			0x034F	0x0368	0x0376	2 opts mask=0x00000003
 g5	CDR				0x0350	0x0369	0x0377	2 opts mask=0x00000003
@@ -1035,7 +1035,7 @@ g5	KPM				0x03CE	0x03ED	0x03FF	10 opts mask=0x000003ff
 g5	ZPA				0x03CF	0x03EE	0x0400	2 opts mask=0x00000003
 g5	ZOA				0x03D0	0x03EF	0x0401	2 opts mask=0x00000003
 g5	LAN	Language		Language	0x03D1	0x03F0	0x0402	27 opts mask=0x07ffffff; modes=CPAP,AutoSet,HerAuto,Spont,ST,Timed,VAuto,ASV,ASVAuto,iVAPS,PAC; options: English, French, German, Italian, Spanish EU, Spanish US, Portuguese EU, Portuguese US, Dutch, Swedish, Danish, Norwegian, Finnish, Russian, Turkish, Polish, Czech, Greek, Estonian, Chinese Traditional, Chinese Simplified, Japanese, Korean, Croatian, Hungarian, Romanian
-g5	LRE				0x03D2	0x03F1	0x0403	4 opts mask=0x0000000f
+g5	LRE				0x03D2	0x03F1	0x0403	4 opts mask=0x0000000f; recoverable circuit error; options=NoError,HoseDisconnected,HumidifierTubRemoved,HoseBlocked
 g5	LST				0x03D3	0x03F2	0x0404	4 opts mask=0x0000000f
 g5	LTS	LCDTouchStatus			0x03D4	0x03F3	0x0405	3 opts mask=0x00000007
 g5	LCA				0x03D5	0x03F4	0x0406	2 opts mask=0x00000003
@@ -1099,7 +1099,7 @@ g5	RPE	RampEnablePatientAccess		Ramp	0x0410	0x042D	0x043F	INACT; 2 opts mask=0x0
 g5	RPS				0x0411	0x042E	0x0440	2 opts mask=0x00000001
 g5	IRS	IsReadyForShipping			0x0412	0x042F	0x0441	3 opts mask=0x00000007
 g5	RQH					0x0430	0x0442	2 opts mask=0x00000003
-g5	RFP				0x0413	0x0431	0x0443	2 opts mask=0x00000003
+g5	RFP				0x0413	0x0431	0x0443	2 opts mask=0x00000003; recoverable-error clear-pending latch
 g5	RYS	RecoverableError			0x0414	0x0432	0x0444	4 opts mask=0x0000000f
 g5	ARE				0x0415	0x0433	0x0445	10 opts mask=0x000003ff
 g5	RUM				0x0416	0x0434	0x0446	13 opts mask=0x00001fff
@@ -1138,7 +1138,7 @@ g5	CCZ				0x0433	0x0454	0x0466	2 opts mask=0x00000003
 g5	SLS	LanguageSelection		Language Selection	0x0434	0x0455	0x0467	2 opts mask=0x00000003; options: Off, On
 g5	DMS				0x0435	0x0456	0x0468	2 opts mask=0x00000003
 g5	SOS	OobxOnStartup			0x0436	0x0457	0x0469	2 opts mask=0x00000003
-g5	ABU				0x0437	0x0458	0x046A	2 opts mask=0x00000003
+g5	ABU				0x0437	0x0458	0x046A	2 opts mask=0x00000003; alarm-board state resynchronization latch after main firmware upgrade
 g5	SVI				0x0438	0x0459	0x046B	2 opts mask=0x00000003
 g5	SVP					0x045A	0x046C	6 opts mask=0x0000003f
 g5	SMN				0x0439	0x045B	0x046D	2 opts mask=0x00000003
@@ -1154,7 +1154,7 @@ g5	STT	SoundcheckStatus			0x0442	0x0464	0x0476	5 opts mask=0x0000001f
 g5	SSE	SplashScreenDisplaySelection			0x0443	0x0465	0x0477	2 opts mask=0x00000003
 g5	SCY				0x0444	0x0466	0x0478	5 opts mask=0x0000001f
 g5	SPN				0x0445	0x0467	0x0479	3 opts mask=0x00000007
-g5	GBE						0x047A	2 opts mask=0x00000003
+g5	GBE						0x047A	2 opts mask=0x00000003; persisted mirror of DynamicMessageToggle; options=Off,On
 g5	SOD				0x0446	0x0468	0x047B	3 opts mask=0x00000007
 g5	XAB	ST-CycleSensitivity	S.ST.Cycle	Cycle	0x0447	0x0469	0x047C	active_vids=10; 7 opts mask=0x00000000; options: Very Low, Low, Med, High, Very High
 g5	XAX				0x0448	0x046A	0x047D	active_vids=10; 7 opts mask=0x00000000
@@ -1169,7 +1169,7 @@ g5	SDR				0x044F	0x0472	0x0485	2 opts mask=0x00000003
 g5	STC				0x0450	0x0473	0x0486	34 opts mask=0xffffffff
 g5	FSE	SystemError			0x0451	0x0474	0x0487	23 opts mask=0x007fffff
 g5	SEM				0x0452	0x0475	0x0488	5 opts mask=0x0000001f
-g5	XSS				0x0453	0x0476	0x0489	2 opts mask=0x00000003
+g5	XSS				0x0453	0x0476	0x0489	2 opts mask=0x00000003; persisted system-error continuity latch
 g5	Z12	Spont-CycleSensitivity	S.S.Cycle	Cycle	0x0454	0x0477	0x048A	active_vids=7,10; 7 opts mask=0x00000000; options: Very Low, Low, Med, High, Very High
 g5	Z18				0x0455	0x0478	0x048B	active_vids=7,10; 7 opts mask=0x00000000
 g5	Z19					0x0479	0x048C	active_vids=7,10; 7 opts mask=0x00000000
