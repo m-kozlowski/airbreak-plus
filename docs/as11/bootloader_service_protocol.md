@@ -172,7 +172,8 @@ The command field is one byte:
 
 | Range | Assignment |
 |-------|------------|
-| `0x00..0x01` | reserved |
+| `0x00` | reserved |
+| `0x01` | reserved by the device; AirCANnect-local ENTER |
 | `0x02` | INFO |
 | `0x03` | READ |
 | `0x04` | ERASE |
@@ -180,8 +181,8 @@ The command field is one byte:
 | `0x06` | RESET |
 | `0x07..0xff` | reserved for compatible extension |
 
-A client MUST NOT send a reserved command. The 0.7.0 service returns
-`BadCommand` for any command not listed above.
+A direct-CAN client MUST NOT send a reserved command or ENTER. The 0.7.0
+service returns `BadCommand` for any command not listed above.
 
 ## Targets and geometry
 
@@ -305,8 +306,9 @@ reset.
 | `0x08` | `EraseFailure` | erase or erase verification failed |
 | `0x09` | `WriteFailure` | storage programming failed |
 | `0x0a` | `VerifyFailure` | programmed data did not match readback |
+| `0x0b` | `EntryTimeout` | AirCANnect did not enter service mode in time |
 
-Values `0x0b..0xff` are reserved for compatible extension. A client MUST treat
+Values `0x0c..0xff` are reserved for compatible extension. A client MUST treat
 every unknown nonzero status as command failure.
 
 ## Error mapping
@@ -370,6 +372,21 @@ There is no TCP length prefix, delimiter, JSON encoding, or ISO-TP framing.
 The service header provides the record length. A TCP client MUST receive the
 complete response before sending another request. Binary service traffic is
 separate from AirCANnect's line-oriented JSON-RPC behavior.
+
+AirCANnect intercepts command `0x01` (`ENTER`) on this TCP endpoint and MUST
+NOT forward it to the device. The request status and payload MUST be zero and
+empty. AirCANnect uses the ENTER sequence for its internal INFO transaction.
+Before sending `ResetDevice(Fast)`, it MUST block new bridge-managed RPC and
+complete or cancel operations already in flight. It then transmits entry
+traffic until the internal INFO succeeds or 30 seconds elapse.
+
+On success, AirCANnect returns ENTER with status `OK`, the request sequence,
+and exactly the 19-byte INFO payload. It leaves the connection open in normal
+packet-bridge mode and MUST NOT forward the intercepted INFO response again.
+CAN ownership remains exclusive to that service connection until it closes.
+On timeout AirCANnect returns ENTER with `EntryTimeout`, closes the connection,
+and releases ownership. A disconnect or other failure MUST also release it
+immediately.
 
 ## Implementation checklist
 

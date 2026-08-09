@@ -175,7 +175,8 @@ If the service is already running, `enter` reports its identity without
 resetting it. Otherwise it sends `ResetDevice(Fast)` and starts a CAN burst.
 `INFO` probes are interleaved with the burst every 100 ms, and the command
 returns as soon as service mode responds. The entry window is 30 seconds.
-`enter` currently requires a direct CAN adapter.
+With AirCANnect, the bridge performs the same sequence locally and converts
+the successful internal `INFO` response into the `enter` response.
 
 Check that the service responds:
 

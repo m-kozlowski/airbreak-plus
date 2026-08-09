@@ -17,6 +17,7 @@ SERVICE_RESPONSE_ID = 0x3C0
 PROTOCOL_VERSION = 2
 PACKET_MAGIC = 0xA5
 
+COMMAND_AIRCANNECT_ENTER = 0x01
 COMMAND_INFO = 0x02
 COMMAND_READ = 0x03
 COMMAND_ERASE = 0x04
@@ -36,6 +37,7 @@ STATUS_NAMES = {
     0x08: "EraseFailure",
     0x09: "WriteFailure",
     0x0A: "VerifyFailure",
+    0x0B: "EntryTimeout",
 }
 
 TARGET_FGCB = 0x01
@@ -330,10 +332,13 @@ def _send_isotp(raw_can, tx_id: int, fc_id: int, packet: bytes,
 def _receive_isotp(raw_can, rx_id: int, fc_id: int, deadline: float, *,
                    max_packet_size: int,
                    block_size: int = ISOTP_RX_BLOCK_SIZE) -> bytes:
-    data = _read_can_frame(raw_can, rx_id, deadline)
-    if not data:
-        raise FramingError("empty ISO-TP frame")
-    frame_type = data[0] & ISOTP_TYPE_MASK
+    while True:
+        data = _read_can_frame(raw_can, rx_id, deadline)
+        if not data:
+            raise FramingError("empty ISO-TP frame")
+        frame_type = data[0] & ISOTP_TYPE_MASK
+        if frame_type != ISOTP_FLOW_CONTROL:
+            break
     if frame_type == ISOTP_SINGLE_FRAME:
         length = data[0] & 0x0F
         if length == 0 or length > len(data) - 1 or length > max_packet_size:
@@ -498,3 +503,9 @@ class ServicePacketClient(_ServiceClient):
                 f"service response framing failed: {exc}"
             ) from exc
         return self._accept_response(response, command, sequence)
+
+    def enter(self, *, timeout: float = 35.0) -> ServiceInfo:
+        payload = self.request(
+            COMMAND_AIRCANNECT_ENTER, timeout=timeout
+        )
+        return self._decode_info(payload)

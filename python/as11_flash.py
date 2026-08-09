@@ -1486,9 +1486,9 @@ def _service_enter(client, transport, args) -> None:
     from as11_can_common import CanTxBufferFull
 
     if not hasattr(client, "raw_can"):
-        raise SystemExit(
-            "service enter over tcp requires AirCANnect entry support"
-        )
+        info = client.enter(timeout=max(args.timeout, 30.0) + 5.0)
+        _print_service_identity(info)
+        return
 
     request = build_request(
         "ResetDevice", {"type": "Fast"},
