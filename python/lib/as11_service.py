@@ -13,7 +13,7 @@ from as11_rpc import FramingError, TransportError
 
 SERVICE_REQUEST_ID = 0x3C1
 SERVICE_RESPONSE_ID = 0x3C0
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 PACKET_MAGIC = 0xA5
 
 COMMAND_INFO = 0x02
@@ -37,8 +37,8 @@ STATUS_NAMES = {
     0x0A: "VerifyFailure",
 }
 
-TARGET_FGCB = int.from_bytes(b"FGCB", "little")
-TARGET_SPIN = int.from_bytes(b"SPIN", "little")
+TARGET_FGCB = 0x01
+TARGET_SPIN = 0x02
 
 FLASH_BASE = 0x08000000
 FLASH_SIZE = 0x00200000
@@ -59,16 +59,15 @@ ISOTP_RX_BLOCK_SIZE = 255
 ISOTP_MAX_PACKET_SIZE = 0xFFF
 
 _HEADER = struct.Struct("<BBBBHH")
-_CRC = struct.Struct("<I")
+_CRC = struct.Struct("<H")
 _INFO = struct.Struct("<BBB16s")
-_READ = struct.Struct("<IIHH")
-_ERASE = struct.Struct("<IIIHH")
-_WRITE = struct.Struct("<IIHH")
-WRITE_GUARD = 0xA55A
+_READ = struct.Struct("<BIH")
+_ERASE = struct.Struct("<BII")
+_WRITE = struct.Struct("<BI")
 MAX_REQUEST_PAYLOAD = ISOTP_MAX_PACKET_SIZE - _HEADER.size - _CRC.size
 MAX_RESPONSE_PACKET_SIZE = ISOTP_MAX_PACKET_SIZE
 MAX_RESPONSE_PAYLOAD = MAX_RESPONSE_PACKET_SIZE - _HEADER.size - _CRC.size
-MAX_READ_DATA = MAX_RESPONSE_PAYLOAD - _READ.size
+MAX_READ_DATA = MAX_RESPONSE_PAYLOAD
 MAX_WRITE_DATA = MAX_REQUEST_PAYLOAD - _WRITE.size
 
 
@@ -150,37 +149,15 @@ class _ServiceClient:
     def read(self, target: int, offset: int, length: int, *,
              timeout: float = 5.0) -> bytes:
         payload = self.request(
-            COMMAND_READ, _READ.pack(target, offset, length, 0),
+            COMMAND_READ, _READ.pack(target, offset, length),
             timeout=timeout,
         )
-        if len(payload) < _READ.size:
-            raise FramingError(
-                f"service READ response has {len(payload)} bytes; "
-                f"expected at least {_READ.size}"
-            )
-        response_target, response_offset, response_length, flags = \
-            _READ.unpack_from(payload)
-        data = payload[_READ.size:]
-        if response_target != target:
-            raise FramingError(
-                f"service READ target mismatch: requested "
-                f"0x{target:08X}, received 0x{response_target:08X}"
-            )
-        if response_offset != offset:
-            raise FramingError(
-                f"service READ offset mismatch: requested "
-                f"0x{offset:08X}, received 0x{response_offset:08X}"
-            )
-        if response_length != length or len(data) != length:
+        if len(payload) != length:
             raise FramingError(
                 f"service READ length mismatch: requested {length}, "
-                f"header reports {response_length}, received {len(data)}"
+                f"received {len(payload)}"
             )
-        if flags != 0:
-            raise FramingError(
-                f"service READ response has unsupported flags 0x{flags:04X}"
-            )
-        return data
+        return payload
 
     def iter_read(self, target: int, offset: int, length: int, *,
                   timeout: float = 5.0):
@@ -194,19 +171,19 @@ class _ServiceClient:
 
     def erase(self, target: int, offset: int, length: int, *,
               timeout: float = 5.0) -> None:
-        request = _ERASE.pack(target, offset, length, WRITE_GUARD, 0)
+        request = _ERASE.pack(target, offset, length)
         payload = self.request(COMMAND_ERASE, request, timeout=timeout)
-        if payload != request:
-            raise FramingError("service ERASE response metadata mismatch")
+        if payload:
+            raise FramingError("service ERASE response must not carry a payload")
 
     def write(self, target: int, offset: int, data: bytes, *,
               timeout: float = 5.0) -> None:
-        metadata = _WRITE.pack(target, offset, WRITE_GUARD, 0)
+        metadata = _WRITE.pack(target, offset)
         payload = self.request(
             COMMAND_WRITE, metadata + bytes(data), timeout=timeout
         )
-        if payload != metadata:
-            raise FramingError("service WRITE response metadata mismatch")
+        if payload:
+            raise FramingError("service WRITE response must not carry a payload")
 
     def reset(self, *, timeout: float = 5.0) -> None:
         payload = self.request(COMMAND_RESET, timeout=timeout)
@@ -223,7 +200,7 @@ def encode_packet(packet: ServicePacket) -> bytes:
         packet.sequence,
         len(packet.payload),
     ) + packet.payload
-    return body + _CRC.pack(binascii.crc32(body) & 0xFFFFFFFF)
+    return body + _CRC.pack(binascii.crc_hqx(body, 0xFFFF))
 
 
 def decode_packet(data: bytes) -> ServicePacket:
@@ -244,11 +221,11 @@ def decode_packet(data: bytes) -> ServicePacket:
             f"expected {PROTOCOL_VERSION}"
         )
     expected_crc = _CRC.unpack_from(data, len(data) - _CRC.size)[0]
-    actual_crc = binascii.crc32(data[:-_CRC.size]) & 0xFFFFFFFF
+    actual_crc = binascii.crc_hqx(data[:-_CRC.size], 0xFFFF)
     if actual_crc != expected_crc:
         raise ValueError(
-            f"service packet CRC mismatch: expected 0x{expected_crc:08X}, "
-            f"got 0x{actual_crc:08X}"
+            f"service packet CRC mismatch: expected 0x{expected_crc:04X}, "
+            f"got 0x{actual_crc:04X}"
         )
     payload = bytes(data[_HEADER.size:-_CRC.size])
     return ServicePacket(command, status, sequence, payload)

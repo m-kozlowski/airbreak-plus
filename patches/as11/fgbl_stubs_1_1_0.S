@@ -15,6 +15,7 @@
 NSTUB(0x08000940, fgbl_copy_sram_updater_and_jump)
 NSTUB(0x08000990, fgbl_jump_to_application)
 NSTUB(0x24007DC0, sram_updater_run_staged_upgrade_flow)
+NSTUB(0x24008E64, sram_updater_crc16_ccitt)
 NSTUB(0x240071B2, sram_nor_read_job_submit_and_copy)
 NSTUB(0x2400720E, sram_nor_read_job_transmit)
 NSTUB(0x24007314, sram_nor_read_job_get)

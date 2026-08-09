@@ -17,6 +17,7 @@ extern u8 sram_writer_wrapper_singleton;
 
 /* Native SRAM updater entry and periodic status/watchdog service. */
 extern void sram_updater_run_staged_upgrade_flow(void *context);
+extern u16 sram_updater_crc16_ccitt(const void *data, u32 length);
 extern void sram_writer_wrapper_service(void *wrapper);
 
 /* Native SPI-NOR job API retained in the copied SRAM updater. */
@@ -56,7 +57,7 @@ extern int sram_flash_writer_flush_partial(void *writer);
 /* Service packet ABI. */
 #define SERVICE_REQUEST_ID  0x3C1u
 #define SERVICE_RESPONSE_ID 0x3C0u
-#define SERVICE_PROTOCOL_VERSION 1u
+#define SERVICE_PROTOCOL_VERSION 2u
 #define SERVICE_MAGIC 0xA5u
 
 #define SERVICE_COMMAND_INFO 0x02u
@@ -77,9 +78,9 @@ extern int sram_flash_writer_flush_partial(void *writer);
 #define SERVICE_STATUS_WRITE_FAILURE   0x09u
 #define SERVICE_STATUS_VERIFY_FAILURE  0x0Au
 
-/* Stable little-endian FourCC target identifiers. */
-#define SERVICE_TARGET_FGCB 0x42434746u
-#define SERVICE_TARGET_SPIN 0x4E495053u
+/* Stable storage target identifiers. */
+#define SERVICE_TARGET_FGCB 0x01u
+#define SERVICE_TARGET_SPIN 0x02u
 
 /* ISO-TP framing over classic CAN. */
 #define ISOTP_TYPE_MASK 0xF0u
@@ -93,21 +94,19 @@ extern int sram_flash_writer_flush_partial(void *writer);
 #define ISOTP_RX_BLOCK_SIZE 32u
 
 #define SERVICE_HEADER_SIZE 8u
-#define SERVICE_CRC_SIZE 4u
-#define SERVICE_MAX_REQUEST_PAYLOAD 4083u
+#define SERVICE_CRC_SIZE 2u
+#define SERVICE_MAX_REQUEST_PAYLOAD 4085u
 #define SERVICE_MAX_REQUEST_PACKET \
     (SERVICE_HEADER_SIZE + SERVICE_MAX_REQUEST_PAYLOAD + SERVICE_CRC_SIZE)
-#define SERVICE_MAX_RESPONSE_PAYLOAD 4083u
+#define SERVICE_MAX_RESPONSE_PAYLOAD 4085u
 #define SERVICE_MAX_RESPONSE_PACKET \
     (SERVICE_HEADER_SIZE + SERVICE_MAX_RESPONSE_PAYLOAD + SERVICE_CRC_SIZE)
-#define SERVICE_READ_METADATA_SIZE 12u
-#define SERVICE_ERASE_METADATA_SIZE 16u
-#define SERVICE_WRITE_METADATA_SIZE 12u
-#define SERVICE_MAX_READ_DATA \
-    (SERVICE_MAX_RESPONSE_PAYLOAD - SERVICE_READ_METADATA_SIZE)
+#define SERVICE_READ_METADATA_SIZE 7u
+#define SERVICE_ERASE_METADATA_SIZE 9u
+#define SERVICE_WRITE_METADATA_SIZE 5u
+#define SERVICE_MAX_READ_DATA SERVICE_MAX_RESPONSE_PAYLOAD
 #define SERVICE_MAX_WRITE_DATA \
     (SERVICE_MAX_REQUEST_PAYLOAD - SERVICE_WRITE_METADATA_SIZE)
-#define SERVICE_WRITE_GUARD 0xA55Au
 
 /* Storage geometry and SPI-NOR commands. */
 #define FLASH_BASE 0x08000000u
@@ -259,14 +258,6 @@ static void put_u16_le(u8 *data, u16 value)
     data[1] = (u8)(value >> 8);
 }
 
-static void put_u32_le(u8 *data, u32 value)
-{
-    data[0] = (u8)value;
-    data[1] = (u8)(value >> 8);
-    data[2] = (u8)(value >> 16);
-    data[3] = (u8)(value >> 24);
-}
-
 static int range_ok(u32 offset, u32 length, u32 base, u32 size)
 {
     if (offset < base) {
@@ -276,7 +267,7 @@ static int range_ok(u32 offset, u32 length, u32 base, u32 size)
     return offset < size && length <= size - offset;
 }
 
-static u8 target_range_status(u32 target, u32 offset, u32 length)
+static u8 target_range_status(u8 target, u32 offset, u32 length)
 {
     if (target == SERVICE_TARGET_FGCB) {
         return range_ok(offset, length, FLASH_BASE, FLASH_SIZE) ?
@@ -287,21 +278,6 @@ static u8 target_range_status(u32 target, u32 offset, u32 length)
             SERVICE_STATUS_OK : SERVICE_STATUS_RANGE_ERROR;
     }
     return SERVICE_STATUS_BAD_TARGET;
-}
-
-static u32 crc32(const u8 *data, u32 length)
-{
-    u32 crc = 0xFFFFFFFFu;
-    u32 i;
-
-    while (length-- != 0u) {
-        crc ^= *data++;
-        for (i = 0; i != 8u; ++i) {
-            u32 mask = 0u - (crc & 1u);
-            crc = (crc >> 1) ^ (0xEDB88320u & mask);
-        }
-    }
-    return ~crc;
 }
 
 static int wait_register(u32 offset, u32 mask, u32 expected)
@@ -600,7 +576,7 @@ static int send_packet(u8 command, u8 status, u16 sequence,
     u32 total_length;
     u32 offset;
     u32 i;
-    u32 checksum;
+    u16 checksum;
     u8 consecutive_sequence = 1u;
     u8 block_size;
     u8 block_count = 0u;
@@ -618,8 +594,8 @@ static int send_packet(u8 command, u8 status, u16 sequence,
         packet[SERVICE_HEADER_SIZE + i] = payload[i];
     }
     total_length = SERVICE_HEADER_SIZE + payload_length;
-    checksum = crc32(packet, total_length);
-    put_u32_le(packet + total_length, checksum);
+    checksum = sram_updater_crc16_ccitt(packet, total_length);
+    put_u16_le(packet + total_length, checksum);
     total_length += SERVICE_CRC_SIZE;
 
     if (total_length <= 7u) {
@@ -927,10 +903,9 @@ static void handle_read_request(const u8 *request, const u8 *payload,
 {
     u8 response[SERVICE_MAX_RESPONSE_PAYLOAD];
     u16 sequence = get_u16_le(request + 4);
-    u32 target;
+    u8 target;
     u32 offset;
     u16 length;
-    u16 flags;
     u8 status;
     u32 i;
 
@@ -939,11 +914,10 @@ static void handle_read_request(const u8 *request, const u8 *payload,
         return;
     }
 
-    target = get_u32_le(payload);
-    offset = get_u32_le(payload + 4);
-    length = get_u16_le(payload + 8);
-    flags = get_u16_le(payload + 10);
-    if (length == 0u || length > SERVICE_MAX_READ_DATA || flags != 0u) {
+    target = payload[0];
+    offset = get_u32_le(payload + 1);
+    length = get_u16_le(payload + 5);
+    if (length == 0u || length > SERVICE_MAX_READ_DATA) {
         send_error(request, SERVICE_STATUS_BAD_LENGTH);
         return;
     }
@@ -953,37 +927,28 @@ static void handle_read_request(const u8 *request, const u8 *payload,
         return;
     }
 
-    put_u32_le(response, target);
-    put_u32_le(response + 4, offset);
-    put_u16_le(response + 8, length);
-    put_u16_le(response + 10, 0u);
-
     if (target == SERVICE_TARGET_FGCB) {
         for (i = 0u; i != length; ++i) {
-            response[SERVICE_READ_METADATA_SIZE + i] =
-                *(volatile const u8 *)(offset + i);
+            response[i] = *(volatile const u8 *)(offset + i);
         }
     } else {
-        if (nor_read_range(
-                offset, response + SERVICE_READ_METADATA_SIZE, length) == 0) {
+        if (nor_read_range(offset, response, length) == 0) {
             send_error(request, SERVICE_STATUS_READ_FAILURE);
             return;
         }
     }
 
     send_packet(SERVICE_COMMAND_READ, SERVICE_STATUS_OK, sequence,
-                response, (u16)(SERVICE_READ_METADATA_SIZE + length));
+                response, length);
 }
 
 static void handle_erase_request(const u8 *request, const u8 *payload,
                                  u16 payload_length)
 {
     u16 sequence = get_u16_le(request + 4);
-    u32 target;
+    u8 target;
     u32 offset;
     u32 length;
-    u16 guard;
-    u16 flags;
     u8 status;
     int result;
 
@@ -991,15 +956,9 @@ static void handle_erase_request(const u8 *request, const u8 *payload,
         send_error(request, SERVICE_STATUS_BAD_LENGTH);
         return;
     }
-    target = get_u32_le(payload);
-    offset = get_u32_le(payload + 4);
-    length = get_u32_le(payload + 8);
-    guard = get_u16_le(payload + 12);
-    flags = get_u16_le(payload + 14);
-    if (guard != SERVICE_WRITE_GUARD || flags != 0u) {
-        send_error(request, SERVICE_STATUS_BAD_LENGTH);
-        return;
-    }
+    target = payload[0];
+    offset = get_u32_le(payload + 1);
+    length = get_u32_le(payload + 5);
     status = target_range_status(target, offset, length);
     if (status != SERVICE_STATUS_OK) {
         send_error(request, status);
@@ -1021,18 +980,15 @@ static void handle_erase_request(const u8 *request, const u8 *payload,
         send_error(request, SERVICE_STATUS_ERASE_FAILURE);
         return;
     }
-    send_packet(SERVICE_COMMAND_ERASE, SERVICE_STATUS_OK, sequence,
-                payload, SERVICE_ERASE_METADATA_SIZE);
+    send_packet(SERVICE_COMMAND_ERASE, SERVICE_STATUS_OK, sequence, 0, 0u);
 }
 
 static void handle_write_request(const u8 *request, const u8 *payload,
                                  u16 payload_length)
 {
     u16 sequence = get_u16_le(request + 4);
-    u32 target;
+    u8 target;
     u32 offset;
-    u16 guard;
-    u16 flags;
     u32 length;
     u8 status;
     int result;
@@ -1041,13 +997,10 @@ static void handle_write_request(const u8 *request, const u8 *payload,
         send_error(request, SERVICE_STATUS_BAD_LENGTH);
         return;
     }
-    target = get_u32_le(payload);
-    offset = get_u32_le(payload + 4);
-    guard = get_u16_le(payload + 8);
-    flags = get_u16_le(payload + 10);
+    target = payload[0];
+    offset = get_u32_le(payload + 1);
     length = payload_length - SERVICE_WRITE_METADATA_SIZE;
-    if (length > SERVICE_MAX_WRITE_DATA ||
-        guard != SERVICE_WRITE_GUARD || flags != 0u) {
+    if (length > SERVICE_MAX_WRITE_DATA) {
         send_error(request, SERVICE_STATUS_BAD_LENGTH);
         return;
     }
@@ -1080,8 +1033,7 @@ static void handle_write_request(const u8 *request, const u8 *payload,
         send_error(request, SERVICE_STATUS_VERIFY_FAILURE);
         return;
     }
-    send_packet(SERVICE_COMMAND_WRITE, SERVICE_STATUS_OK, sequence,
-                payload, SERVICE_WRITE_METADATA_SIZE);
+    send_packet(SERVICE_COMMAND_WRITE, SERVICE_STATUS_OK, sequence, 0, 0u);
 }
 
 static void handle_packet(struct rx_packet *packet)
@@ -1090,10 +1042,13 @@ static void handle_packet(struct rx_packet *packet)
     const u8 *payload;
     u16 sequence;
     u16 payload_length;
-    u32 expected_crc;
-    u32 actual_crc;
+    u16 expected_crc;
+    u16 actual_crc;
 
     if (packet->length < SERVICE_HEADER_SIZE + SERVICE_CRC_SIZE) {
+        return;
+    }
+    if (request[0] != SERVICE_MAGIC) {
         return;
     }
     payload = request + SERVICE_HEADER_SIZE;
@@ -1104,12 +1059,11 @@ static void handle_packet(struct rx_packet *packet)
         send_error(request, SERVICE_STATUS_BAD_LENGTH);
         return;
     }
-    expected_crc = get_u32_le(payload + payload_length);
-    actual_crc = crc32(request, SERVICE_HEADER_SIZE + payload_length);
+    expected_crc = get_u16_le(payload + payload_length);
+    actual_crc = sram_updater_crc16_ccitt(
+        request, SERVICE_HEADER_SIZE + payload_length
+    );
 
-    if (request[0] != SERVICE_MAGIC) {
-        return;
-    }
     if (request[1] != SERVICE_PROTOCOL_VERSION) {
         send_error(request, SERVICE_STATUS_BAD_VERSION);
         return;
@@ -1133,7 +1087,7 @@ static void handle_packet(struct rx_packet *packet)
             return;
         }
         info[0] = 0u;
-        info[1] = 6u;
+        info[1] = 7u;
         info[2] = 0u;
         for (i = 0; i != sizeof(fgbl_bid); ++i) {
             info[3 + i] = fgbl_bid[i];

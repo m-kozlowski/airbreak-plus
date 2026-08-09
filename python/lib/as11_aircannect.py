@@ -346,7 +346,7 @@ class AirCannectServiceTransport(AirCannectTransport):
                 f"AirCANnect service response has bad magic 0x{header[0]:02X}"
             )
         payload_length = int.from_bytes(header[6:8], "little")
-        packet_size = 8 + payload_length + 4
+        packet_size = 8 + payload_length + 2
         if packet_size > MAX_RESPONSE_PACKET_SIZE:
             raise FramingError(
                 f"AirCANnect service response declares {packet_size} bytes; "

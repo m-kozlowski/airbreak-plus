@@ -17,6 +17,7 @@ does not describe any specific USB-CAN adapter protocol.
 - [Local accessories](#local-accessories)
   - [TxLink 2](#txlink-2)
 - [Service access](#service-access)
+- [Bootloader service mode](#bootloader-service-mode)
 - [Debug log stream](#debug-log-stream)
 
 ## Physical bus
@@ -41,6 +42,8 @@ Bus settings:
 | `0x25b` | accessory to device | TxLink 2 presence datagrams |
 | `0x796` | device to host | CAL/S70 debug log stream |
 | `0x2c8` | device to host | `FgPowerup` boot notification |
+| `0x3c1` | host to patched bootloader | binary service request and response Flow Control |
+| `0x3c0` | patched bootloader to host | binary service response and request Flow Control |
 
 ## DatagramCan frame format
 
@@ -137,6 +140,13 @@ normally visible on the paired BLE patient path. Examples include
 
 This is a plaintext local service lane. The protocol does not add the BLE
 SRP/AES layer.
+
+## Bootloader service mode
+
+The optional bootloader service patch uses ISO-TP and a binary packet protocol
+on `0x3c1` / `0x3c0`. It is independent of DatagramCan and application RPC.
+See the [bootloader service protocol](bootloader_service_protocol.md) for the
+packet format, commands, and storage targets.
 
 ## Debug log stream
 

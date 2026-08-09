@@ -230,16 +230,14 @@ similarly accepts either the selected range or a complete physical-NOR image.
 ### Transport options
 
 The service uses fixed classic-CAN and ISO-TP settings, independently of the
-stock DatagramCan and JSON-RPC endpoint.
+stock DatagramCan and JSON-RPC endpoint. The complete wire contract is in the
+[bootloader service protocol](../as11/bootloader_service_protocol.md).
 
 The receiver controls multi-frame transfers with ISO-TP Flow Control frames.
 The AS11 advertises a block size of 32 frames and zero separation time. The
 direct CAN host advertises a block size of 255 and zero separation time;
 AirCANnect selects its own receive block size. Direct CAN commands accept
 `--block-size 0..255`; zero disables intermediate Flow Control frames.
-
-Read and write requests transfer at most 4071 data bytes. Each request has one
-response; the host does not automatically repeat failed requests.
 
 With `-d tcp:<host>[:<port>]`, the tool uses AirCANnect binary mode on port
 `39011` by default. AirCANnect handles ISO-TP fragmentation, flow control, and
