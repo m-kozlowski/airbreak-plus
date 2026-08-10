@@ -1,13 +1,14 @@
 # Air11 Bootloader Service Protocol
 
 The patched Air11 bootloader exposes a binary request/response service for
-reading, erasing, and writing internal flash and physical SPI NOR. It is
-independent of the application JSON-RPC and DatagramCan protocols.
+reading, erasing, and writing internal flash and physical SPI NOR, and reading
+or writing backup SRAM. It is independent of the application JSON-RPC and
+DatagramCan protocols.
 
 This document describes protocol version 2 and the implementation profile of
-service version 0.7.0. Requirements use `MUST`, `SHOULD`, and `MAY` as
+service version 0.8.0. Requirements use `MUST`, `SHOULD`, and `MAY` as
 normative terms. Text explicitly marked as an implementation profile describes
-0.7.0 rather than a general protocol requirement.
+0.8.0 rather than a general protocol requirement.
 
 ## Contents
 
@@ -92,14 +93,14 @@ packet uses a First Frame and at least one Consecutive Frame. Single Frame is
 recognized by the transport decoder but cannot contain a complete service
 packet.
 
-The 0.7.0 service advertises `BS=32`, `STmin=0` while receiving requests. A
+The 0.8.0 service advertises `BS=32`, `STmin=0` while receiving requests. A
 host MUST obey the values in each Flow Control frame rather than assume these
 constants. It MUST stop after each nonzero `BS` block and wait for another
 Continue To Send Flow Control frame.
 
 When sending a response, the service MUST follow the `BS` supplied by the
 host. `BS=0` permits sending the remainder of the packet without another Flow
-Control frame. The 0.7.0 service transmitter supports only `STmin=0`; a
+Control frame. The 0.8.0 service transmitter supports only `STmin=0`; a
 conforming host MUST advertise zero to that implementation. It accepts
 Continue To Send and Wait flow statuses and rejects Overflow or unsupported
 Flow Control values.
@@ -181,7 +182,7 @@ The command field is one byte:
 | `0x06` | RESET |
 | `0x07..0xff` | reserved for compatible extension |
 
-A direct-CAN client MUST NOT send a reserved command or ENTER. The 0.7.0
+A direct-CAN client MUST NOT send a reserved command or ENTER. The 0.8.0
 service returns `BadCommand` for any command not listed above.
 
 ## Targets and geometry
@@ -193,16 +194,17 @@ Protocol version 2 assigns these one-byte target IDs:
 | reserved | `0x00` | none |
 | `FGCB` | `0x01` | absolute STM32 address |
 | `SPIN` | `0x02` | offset from start of SPI NOR |
-| reserved | `0x03..0xff` | none |
+| `BKPS` | `0x03` | offset from start of backup SRAM |
+| reserved | `0x04..0xff` | none |
 
-The 0.7.0 implementation profile uses this geometry:
+The 0.8.0 implementation profile uses this geometry:
 
-| Property | `FGCB` | `SPIN` |
-|----------|--------|--------|
-| Start | `0x08000000` | `0x00000000` |
-| Size | `0x00200000` | `0x01000000` |
-| Erase unit | `0x20000` | `0x1000` or `0x10000` |
-| Program unit | 32 bytes | byte ranges, split at 256-byte pages |
+| Property | `FGCB` | `SPIN` | `BKPS` |
+|----------|--------|--------|--------|
+| Start | `0x08000000` | `0x00000000` | `0x00000000` |
+| Size | `0x00200000` | `0x01000000` | `0x00001000` |
+| Erase unit | `0x20000` | `0x1000` or `0x10000` | none |
+| Program unit | 32 bytes | byte ranges, split at 256-byte pages | byte ranges |
 
 The internal-flash regions commonly used by clients are:
 
@@ -231,8 +233,8 @@ The response payload MUST contain exactly 19 bytes:
 | `0x02` | 1 | service patch version |
 | `0x03` | 16 | bootloader build ID in ASCII |
 
-The 0.7.0 implementation returns build ID `1.1.0.736edbdfd`. The build-ID
-field is fixed-width; clients MUST stop at the first NUL if one is present.
+The build-ID field is fixed-width; clients MUST stop at the first NUL if one
+is present.
 
 ### READ (`0x03`)
 
@@ -262,6 +264,8 @@ For `FGCB`, one request MUST select exactly one aligned 128 KiB sector. For
 returning success, the service MUST read the selected range back and verify
 that every byte is `0xff`.
 
+`BKPS` does not support ERASE and returns `BadTarget`.
+
 The successful response payload MUST be empty.
 
 ### WRITE (`0x05`)
@@ -277,11 +281,13 @@ Request payload:
 WRITE data MUST NOT exceed 4080 bytes. `FGCB` addresses and lengths
 MUST be multiples of 32, so its largest request contains 4064 data bytes.
 `SPIN` writes MAY cross page boundaries; the service splits them into physical
-page-program operations.
+page-program operations. `BKPS` accepts unaligned byte ranges and does not
+require an erase operation.
 
-WRITE does not erase storage. The client MUST issue suitable ERASE commands
-before programming. Before returning success, the service MUST read each
-programmed fragment back and compare it with the request.
+WRITE does not erase storage. Before programming `FGCB` or `SPIN`, the client
+MUST issue suitable ERASE commands. `BKPS` is overwritten directly. Before
+returning success, the service MUST read each written fragment back and compare
+it with the request.
 
 The successful response payload MUST be empty.
 
@@ -313,7 +319,7 @@ every unknown nonzero status as command failure.
 
 ## Error mapping
 
-The 0.7.0 service reports the first error reached in its validation order.
+The 0.8.0 service reports the first error reached in its validation order.
 Malformed ISO-TP or a packet too short to contain the service header and CRC
 produces no service response.
 
@@ -340,6 +346,7 @@ Command validation:
 | READ | SPI-NOR transfer fails | `ReadFailure` |
 | ERASE | payload size is not 9 bytes | `BadLength` |
 | ERASE | target is unknown | `BadTarget` |
+| ERASE | target is `BKPS` | `BadTarget` |
 | ERASE | requested range is outside the target | `RangeError` |
 | ERASE | `FGCB` length is not 128 KiB or address is not sector-aligned | `RangeError` |
 | ERASE | `FGCB` erase or erased-state verification fails | `EraseFailure` |

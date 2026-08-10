@@ -81,6 +81,7 @@ extern int sram_flash_writer_flush_partial(void *writer);
 /* Stable storage target identifiers. */
 #define SERVICE_TARGET_FGCB 0x01u
 #define SERVICE_TARGET_SPIN 0x02u
+#define SERVICE_TARGET_BKPS 0x03u
 
 /* ISO-TP framing over classic CAN. */
 #define ISOTP_TYPE_MASK 0xF0u
@@ -128,13 +129,20 @@ extern int sram_flash_writer_flush_partial(void *writer);
 #define NOR_STATUS_WRITE_ENABLE 0x02u
 #define NOR_WAIT_LIMIT 1000000u
 
+#define BKPSRAM_BASE 0x38800000u
+#define BKPSRAM_SIZE 0x00001000u
+
 /* Minimal STM32H7 clock, GPIO, and FDCAN register map. */
 #define RCC_D2CCIP1R 0x58024450u
 #define RCC_AHB4ENR  0x580244E0u
 #define RCC_APB1HENR 0x580244ECu
 #define RCC_GPIOAEN  (1u << 0)
+#define RCC_BKPRAMEN (1u << 28)
 #define RCC_FDCANEN  (1u << 8)
 #define RCC_FDCANSEL_MASK 0x30000000u
+
+#define PWR_CR1 0x58024800u
+#define PWR_CR1_DBP (1u << 8)
 
 #define GPIOA_BASE 0x58020000u
 #define GPIO_MODER   0x00u
@@ -275,6 +283,10 @@ static u8 target_range_status(u8 target, u32 offset, u32 length)
     }
     if (target == SERVICE_TARGET_SPIN) {
         return range_ok(offset, length, 0u, NOR_SIZE) ?
+            SERVICE_STATUS_OK : SERVICE_STATUS_RANGE_ERROR;
+    }
+    if (target == SERVICE_TARGET_BKPS) {
+        return range_ok(offset, length, 0u, BKPSRAM_SIZE) ?
             SERVICE_STATUS_OK : SERVICE_STATUS_RANGE_ERROR;
     }
     return SERVICE_STATUS_BAD_TARGET;
@@ -897,6 +909,51 @@ static int flash_write_range(u32 address, const u8 *source, u32 length)
     return 1;
 }
 
+/* Backup SRAM is retained across reset but its AHB4 clock may be gated. */
+static void backup_sram_read(u32 offset, u8 *destination, u32 length)
+{
+    u32 ahb4enr = REG32(RCC_AHB4ENR);
+    u32 i;
+
+    REG32(RCC_AHB4ENR) = ahb4enr | RCC_BKPRAMEN;
+    (void)REG32(RCC_AHB4ENR);
+    barrier();
+    for (i = 0u; i != length; ++i) {
+        destination[i] = *(volatile const u8 *)(BKPSRAM_BASE + offset + i);
+    }
+    REG32(RCC_AHB4ENR) = ahb4enr;
+    (void)REG32(RCC_AHB4ENR);
+}
+
+/* Return 1 on success and -1 when readback differs. */
+static int backup_sram_write(u32 offset, const u8 *source, u32 length)
+{
+    u32 ahb4enr = REG32(RCC_AHB4ENR);
+    u32 pwr_cr1 = REG32(PWR_CR1);
+    u32 i;
+    int result = 1;
+
+    REG32(RCC_AHB4ENR) = ahb4enr | RCC_BKPRAMEN;
+    REG32(PWR_CR1) = pwr_cr1 | PWR_CR1_DBP;
+    (void)REG32(RCC_AHB4ENR);
+    (void)REG32(PWR_CR1);
+    barrier();
+    for (i = 0u; i != length; ++i) {
+        *(volatile u8 *)(BKPSRAM_BASE + offset + i) = source[i];
+    }
+    barrier();
+    for (i = 0u; i != length; ++i) {
+        if (*(volatile const u8 *)(BKPSRAM_BASE + offset + i) != source[i]) {
+            result = -1;
+            break;
+        }
+    }
+    REG32(PWR_CR1) = pwr_cr1;
+    REG32(RCC_AHB4ENR) = ahb4enr;
+    (void)REG32(RCC_AHB4ENR);
+    return result;
+}
+
 /* Validate service requests and dispatch them to one storage backend. */
 static void handle_read_request(const u8 *request, const u8 *payload,
                                 u16 payload_length)
@@ -931,6 +988,8 @@ static void handle_read_request(const u8 *request, const u8 *payload,
         for (i = 0u; i != length; ++i) {
             response[i] = *(volatile const u8 *)(offset + i);
         }
+    } else if (target == SERVICE_TARGET_BKPS) {
+        backup_sram_read(offset, response, length);
     } else {
         if (nor_read_range(offset, response, length) == 0) {
             send_error(request, SERVICE_STATUS_READ_FAILURE);
@@ -962,6 +1021,10 @@ static void handle_erase_request(const u8 *request, const u8 *payload,
     status = target_range_status(target, offset, length);
     if (status != SERVICE_STATUS_OK) {
         send_error(request, status);
+        return;
+    }
+    if (target == SERVICE_TARGET_BKPS) {
+        send_error(request, SERVICE_STATUS_BAD_TARGET);
         return;
     }
 
@@ -1017,6 +1080,10 @@ static void handle_write_request(const u8 *request, const u8 *payload,
             return;
         }
         result = flash_write_range(
+            offset, payload + SERVICE_WRITE_METADATA_SIZE, length
+        );
+    } else if (target == SERVICE_TARGET_BKPS) {
+        result = backup_sram_write(
             offset, payload + SERVICE_WRITE_METADATA_SIZE, length
         );
     } else {
@@ -1087,7 +1154,7 @@ static void handle_packet(struct rx_packet *packet)
             return;
         }
         info[0] = 0u;
-        info[1] = 7u;
+        info[1] = 8u;
         info[2] = 0u;
         for (i = 0; i != sizeof(fgbl_bid); ++i) {
             info[3 + i] = fgbl_bid[i];

@@ -203,9 +203,9 @@ as11_flash.py -d can:/dev/ttyACM0 service reset
 
 ### Read storage
 
-`read-flash` reads internal STM32 flash. `read-nor` reads the physical SPI NOR.
-Both commands require an output file; without a region or range they read the
-complete target.
+`read-flash` reads internal STM32 flash, `read-nor` reads the physical SPI NOR,
+and `read-bkpsram` reads the 4 KiB battery-backed SRAM. All commands require an
+output file; without a region or range they read the complete target.
 
 ```
 as11_flash.py -d can:/dev/ttyACM0 service read-flash flash.bin
@@ -214,6 +214,7 @@ as11_flash.py -d can:/dev/ttyACM0 service read-flash part.bin \
   0x08040000 0x20000
 as11_flash.py -d tcp:aircannect service read-nor nor.bin
 as11_flash.py -d tcp:aircannect service read-nor part.bin 0 0x10000
+as11_flash.py -d can:/dev/ttyACM0 service read-bkpsram bkpsram.bin
 ```
 
 Flash reads accept the named regions `FGBL`, `CONF`, `APPL`, `APCX`, and
@@ -231,6 +232,9 @@ erase unit before programming it, then read back and verify each programmed
 fragment. Ranges must align to the storage erase unit: 128 KiB for internal
 flash and 64 KiB for SPI NOR.
 
+`write-bkpsram` writes backup SRAM directly and verifies it without erase. Its
+offset is relative to `0x38800000`; without a range it writes all 4096 bytes.
+
 ```
 as11_flash.py -d can:/dev/ttyACM0 service write-flash flash.bin
 as11_flash.py -d can:/dev/ttyACM0 service write-flash appl.bin APPL
@@ -238,6 +242,7 @@ as11_flash.py -d can:/dev/ttyACM0 service write-flash flash.bin APPL
 as11_flash.py -d can:/dev/ttyACM0 service write-flash part.bin \
   0x08040000 0x20000
 as11_flash.py -d tcp:aircannect service write-nor nor.bin
+as11_flash.py -d can:/dev/ttyACM0 service write-bkpsram bkpsram.bin
 ```
 
 For a named flash region or numeric range, the input may contain either that

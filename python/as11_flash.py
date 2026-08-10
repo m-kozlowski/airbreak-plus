@@ -1035,35 +1035,38 @@ def build_service_client(args):
     )
 
 
-def _service_storage(flash: bool):
+def _service_storage(kind: str):
     from as11_service import (
+        BKPSRAM_SIZE,
         FLASH_BASE,
         FLASH_ERASE_SIZE,
         FLASH_PROGRAM_SIZE,
         FLASH_SIZE,
         NOR_ERASE_SIZE,
         NOR_SIZE,
+        TARGET_BKPS,
         TARGET_FGCB,
         TARGET_SPIN,
     )
 
-    if flash:
+    if kind == "flash":
         return (
             TARGET_FGCB, "FGCB", FLASH_BASE, FLASH_SIZE,
             FLASH_ERASE_SIZE, FLASH_PROGRAM_SIZE,
         )
+    if kind == "nor":
+        return TARGET_SPIN, "SPIN", 0, NOR_SIZE, NOR_ERASE_SIZE, 1
+    return TARGET_BKPS, "BKPS", 0, BKPSRAM_SIZE, 0, 1
 
-    return TARGET_SPIN, "SPIN", 0, NOR_SIZE, NOR_ERASE_SIZE, 1
 
-
-def _service_range(flash: bool, selection: list[str]):
+def _service_range(kind: str, selection: list[str]):
     (target, target_name, target_start, target_size,
-     erase_size, program_size) = _service_storage(flash)
+     erase_size, program_size) = _service_storage(kind)
 
     if not selection:
         offset = target_start
         length = target_size
-    elif flash and len(selection) == 1:
+    elif kind == "flash" and len(selection) == 1:
         region = resolve_block(selection[0])
         offset = region.flash_start
         length = region.size
@@ -1075,7 +1078,10 @@ def _service_range(flash: bool, selection: list[str]):
         except argparse.ArgumentTypeError as exc:
             raise SystemExit(str(exc)) from exc
     else:
-        expected = "[REGION | OFFSET LENGTH]" if flash else "[OFFSET LENGTH]"
+        expected = (
+            "[REGION | OFFSET LENGTH]" if kind == "flash"
+            else "[OFFSET LENGTH]"
+        )
         raise SystemExit(f"expected {expected}")
 
     target_end = target_start + target_size
@@ -1442,10 +1448,10 @@ def cmd_service(args) -> int:
             print("Reset requested.")
             return 0
 
-        if args.service_cmd in ("read-flash", "read-nor"):
+        if args.service_cmd in ("read-flash", "read-nor", "read-bkpsram"):
             (target, target_name, offset, length, _target_start, _target_size,
              _erase_size, _program_size) = _service_range(
-                args.service_cmd == "read-flash", args.selection
+                args.service_cmd.removeprefix("read-"), args.selection
             )
             _service_read_to_file(
                 client, target, target_name, offset, length,
@@ -1453,12 +1459,12 @@ def cmd_service(args) -> int:
             )
             return 0
 
-        if args.service_cmd in ("write-flash", "write-nor"):
+        if args.service_cmd in ("write-flash", "write-nor", "write-bkpsram"):
             from as11_service import MAX_WRITE_DATA
 
             (target, target_name, offset, length, target_start, target_size,
              erase_size, program_size) = _service_range(
-                args.service_cmd == "write-flash", args.selection
+                args.service_cmd.removeprefix("write-"), args.selection
             )
 
             _service_write_file(
@@ -1576,7 +1582,7 @@ def _service_write_file(client, target: int, target_name: str,
             f"{target_size}-byte complete target image; {input_path} has "
             f"{input_size} bytes"
         )
-    if erase_size <= 0 or offset % erase_size or length % erase_size:
+    if erase_size and (offset % erase_size or length % erase_size):
         raise SystemExit(
             f"{target_name} write range must be aligned to the "
             f"{erase_size}-byte erase unit"
@@ -1591,7 +1597,8 @@ def _service_write_file(client, target: int, target_name: str,
     done = 0
     started = time.monotonic()
     next_report = started
-    sector_count = length // erase_size
+    unit_size = erase_size or length
+    sector_count = length // unit_size
     status_width = 0
 
     def report_progress(detail: str, *, final: bool = False) -> None:
@@ -1612,16 +1619,17 @@ def _service_write_file(client, target: int, target_name: str,
 
     with input_path.open("rb") as stream:
         stream.seek(input_offset)
-        for sector_relative in range(0, length, erase_size):
-            sector_length = erase_size
+        for sector_relative in range(0, length, unit_size):
+            sector_length = unit_size
             sector_offset = offset + sector_relative
-            sector_index = sector_relative // erase_size + 1
-            report_progress(
-                f"erasing sector {sector_index}/{sector_count}"
-            )
-            client.erase(
-                target, sector_offset, sector_length, timeout=timeout
-            )
+            if erase_size:
+                sector_index = sector_relative // unit_size + 1
+                report_progress(
+                    f"erasing sector {sector_index}/{sector_count}"
+                )
+                client.erase(
+                    target, sector_offset, sector_length, timeout=timeout
+                )
             sector_done = 0
             while sector_done < sector_length:
                 write_length = min(chunk_size, sector_length - sector_done)
@@ -2266,7 +2274,8 @@ def main(argv=None) -> int:
 
     for command, selection_help in (
             ("read-flash", "optional REGION or absolute OFFSET LENGTH"),
-            ("read-nor", "optional physical OFFSET LENGTH")):
+            ("read-nor", "optional physical OFFSET LENGTH"),
+            ("read-bkpsram", "optional OFFSET LENGTH")):
         p_s_read = service_sub.add_parser(
             command, help="read storage to a raw file"
         )
@@ -2280,9 +2289,10 @@ def main(argv=None) -> int:
 
     for command, selection_help in (
             ("write-flash", "optional REGION or absolute OFFSET LENGTH"),
-            ("write-nor", "optional physical OFFSET LENGTH")):
+            ("write-nor", "optional physical OFFSET LENGTH"),
+            ("write-bkpsram", "optional OFFSET LENGTH")):
         p_s_write = service_sub.add_parser(
-            command, help="erase and write storage from a raw file"
+            command, help="write storage from a raw file"
         )
         _add_device_args(p_s_write)
         _add_service_link_args(p_s_write, defaults=False)
