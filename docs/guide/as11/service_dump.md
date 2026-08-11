@@ -26,7 +26,7 @@ Only its 128 KiB bootloader region is written to the device.
 Check the reference image versions:
 
 ```
-python3 python/as11_descriptors.py reference.bin
+python3 python/resmed_image.py info reference.bin
 ```
 
 The bootloader version must be `1.1.0`.
@@ -91,11 +91,11 @@ python3 python/as11_flash.py \
 Check the dump:
 
 ```
-stat -c %s device-dump.bin
-python3 python/as11_descriptors.py device-dump.bin
+python3 python/resmed_image.py info device-dump.bin
 ```
 
-The bootloader in this dump includes the service patch.
+The output must identify a complete Air11 image and show `ok` for all three
+block CRCs. The bootloader in this dump includes the service patch.
 
 ## Rebuild an unmodified image
 
@@ -104,20 +104,17 @@ unmodified bootloader from the reference image before using the dump as patcher
 input:
 
 ```
-cp device-dump.bin device-original.bin
-dd if=reference.bin of=device-original.bin \
-    bs=131072 count=1 conv=notrunc status=none
-```
-
-Check the rebuilt image:
-
-```
-python3 python/as11_descriptors.py device-original.bin
+python3 python/resmed_image.py replace \
+    device-dump.bin device-original.bin \
+    --fgbl reference.bin
 ```
 
 Use `device-original.bin` as the input for normal patching. It combines the
 stock bootloader from the reference image with the model definition and
 application firmware dumped from the device.
+
+See the [`resmed_image.py` reference](../../tools/resmed_image.md) for other
+file operations.
 
 ## Optional: dump the physical NOR
 
