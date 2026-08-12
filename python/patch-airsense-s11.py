@@ -13,7 +13,6 @@
 
 import argparse
 import fnmatch
-import hashlib
 import io
 import os.path
 import re
@@ -307,34 +306,10 @@ class S11Firmware(object):
         },
     }
 
-    GLOBAL_NAMES = {
-        0: "conf_header",
-        1: "volatile_text_descriptors",
-        2: "numeric_descriptors",
-        3: "bitfield_descriptors",
-        4: "bitfield_gui_selection_order",
-        5: "enum_descriptors",
-        6: "nor_settings_groups",
-        7: "backup_sram_power_loss_snapshot",
-        8: "short_name_bucket_headers",
-        9: "short_name_reverse_table",
-        10: "mode_visibility",
-        11: "mode_visibility_count",
-        12: "event_spool_definitions",
-        13: "event_json_payload_overrides",
-        14: "periodic_collections",
-        15: "summary_schema_header",
-        16: "edf_stream_schemas",
-        17: "event_label_tables",
-        18: "rpc_json_permission_table",
-        19: "configuration_change_source_header",
-    }
-
     def __init__(self, fileobj):
         self.fw = bytearray(fileobj.read())
         self.crcfunc = self.make_crcfunc()
-        self._globals_cache = {}
-        self.hash = hashlib.sha256(bytes(self.fw)).hexdigest()
+        self._rpc_json_index = None
 
         self.validate()
         self.setup_arrays()
@@ -471,19 +446,6 @@ class S11Firmware(object):
             raise ValueError("Passed sequence is not unique! Found at 0x%x and 0x%x" % (i1, i2))
         return i1
 
-    def find_u32_offsets(self, value, skip_range=None):
-        needle = struct.pack("<I", value)
-        out = []
-        start = 0
-        while True:
-            off = bytes(self.fw).find(needle, start)
-            if off < 0:
-                break
-            if skip_range is None or not (skip_range[0] <= off < skip_range[1]):
-                out.append(off)
-            start = off + 1
-        return out
-
     def read_thumb2_bl_target(self, off):
         # Decode the target of a Thumb-2 immediate BL instruction.
         first = self.u16(off)
@@ -560,64 +522,48 @@ class S11Firmware(object):
             off = self.ptr_to_off(value)
             out.append({
                 "index": idx,
-                "name": self.GLOBAL_NAMES.get(idx, "g%d" % idx),
                 "value": value,
                 "offset": off,
             })
         return out
 
     def globals_offset(self, idx):
-        if idx not in self._globals_cache:
-            if not hasattr(self, "globals"):
-                self.globals = self.read_globals()
-            off = self.globals[idx]["offset"]
-            if off is None:
-                value = self.globals[idx]["value"]
-                raise ValueError("globals[%d] value 0x%08X is not a flash pointer" % (idx, value))
-            self._globals_cache[idx] = off
-        return self._globals_cache[idx]
+        row = self.globals[idx]
+        if row["offset"] is None:
+            raise ValueError(
+                "globals[%d] value 0x%08X is not a flash pointer" %
+                (idx, row["value"])
+            )
+        return row["offset"]
 
     def setup_arrays(self):
         self.globals = self.read_globals()
-        for row in self.globals:
-            if row["offset"] is not None:
-                setattr(self, "g%d_base" % row["index"], row["offset"])
-            else:
-                setattr(self, "g%d_value" % row["index"], row["value"])
-
-        self.g1_base = self.globals_offset(1)
-        self.g2_base = self.globals_offset(2)
-        self.g3_base = self.globals_offset(3)
-        self.g5_base = self.globals_offset(5)
         self.perm_table = self.globals_offset(18)
 
         item_layout = discover_dataitem_layout(self.fw, self.APPL_OFF)
-        self.g1_count = item_layout.g1_count
-        self.g2_count = item_layout.g2_count
-        self.g3_count = item_layout.g3_count
-        self.g5_count = item_layout.g5_count
-
-        # Descriptor var IDs are table-order based
-        self.g1_id_base = 0
-        self.g2_id_base = self.g1_count
-        self.g3_id_base = self.g2_id_base + self.g2_count
-        self.g5_id_base = self.g3_id_base + self.g3_count
-
         self.arrays = {
-            "g1": dict(base=self.g1_base, stride=self.G1_STRIDE, count=self.g1_count, id_base=self.g1_id_base),
-            "g2": dict(base=self.g2_base, stride=self.G2_STRIDE, count=self.g2_count, id_base=self.g2_id_base),
-            "g3": dict(base=self.g3_base, stride=self.G3_STRIDE, count=self.g3_count, id_base=self.g3_id_base),
-            "g5": dict(base=self.g5_base, stride=self.G5_STRIDE, count=self.g5_count, id_base=self.g5_id_base),
+            "g1": dict(base=self.globals_offset(1), stride=self.G1_STRIDE,
+                       count=item_layout.g1_count, id_base=item_layout.g1_base),
+            "g2": dict(base=self.globals_offset(2), stride=self.G2_STRIDE,
+                       count=item_layout.g2_count, id_base=item_layout.g2_base),
+            "g3": dict(base=self.globals_offset(3), stride=self.G3_STRIDE,
+                       count=item_layout.g3_count, id_base=item_layout.g3_base),
+            "g5": dict(base=self.globals_offset(5), stride=self.G5_STRIDE,
+                       count=item_layout.g5_count, id_base=item_layout.g5_base),
         }
 
         print("Arrays:    g1=%d g2=%d g3=%d g5=%d" % (
-            self.g1_count, self.g2_count, self.g3_count, self.g5_count
+            item_layout.g1_count, item_layout.g2_count,
+            item_layout.g3_count, item_layout.g5_count,
         ))
-        print("Globals:   %d known entries, g11=%d" % (len(self.globals), self.g11_value))
+        print("Globals:   %d known entries, g11=%d" % (
+            len(self.globals), self.globals[11]["value"]
+        ))
 
     def build_short_names(self):
         base = self.globals_offset(9)
-        count = self.g5_id_base + self.g5_count
+        g5 = self.arrays["g5"]
+        count = g5["id_base"] + g5["count"]
         return {
             vid: bytes(self.fw[base + vid * 3:base + vid * 3 + 3]).decode("ascii")
             for vid in range(count)
@@ -754,59 +700,45 @@ class S11Firmware(object):
             field_off, width = layout[field]
             writers[width](row["offset"] + field_off, value)
 
+    def rpc_json_index(self):
+        if self._rpc_json_index is None:
+            rows = {}
+            nodes = {}
+            for off in range(self.APPL_OFF, len(self.fw) - 12, 4):
+                if self.u32(off + 8) != 0x00007FFF:
+                    continue
+                name = self.string_at_ptr(self.u32(off))
+                value = self.string_at_ptr(self.u32(off + 4))
+                if not name or not value:
+                    continue
+                rows[off] = (name, value)
+                if value.startswith("!") and value[1:].isdigit():
+                    nodes[name] = int(value[1:])
+            self._rpc_json_index = rows, nodes
+        return self._rpc_json_index
+
     def find_rpc_nodes(self, names):
-        names = set(names)
-        found = {}
-        for off in range(0, len(self.fw) - 12, 4):
-            name = self.string_at_ptr(self.u32(off))
-            if name not in names:
-                continue
-            node = self.string_at_ptr(self.u32(off + 4))
-            if not node:
-                continue
-            match = re.match(r"^!(\d+)$", node)
-            if not match:
-                continue
-            if self.u32(off + 8) != 0x00007FFF:
-                continue
-            found[name] = int(match.group(1))
-        return found
+        wanted = set(names)
+        nodes = self.rpc_json_index()[1]
+        return {
+            name: node_id for name, node_id in nodes.items()
+            if name in wanted
+        }
 
     def find_rpc_feature_nodes(self):
-        found = {}
-        for off in range(0, len(self.fw) - 12, 4):
-            name = self.string_at_ptr(self.u32(off))
-            if not name or not name.endswith("Feature"):
-                continue
-            node = self.string_at_ptr(self.u32(off + 4))
-            if not node:
-                continue
-            match = re.match(r"^!(\d+)$", node)
-            if not match:
-                continue
-            if self.u32(off + 8) != 0x00007FFF:
-                continue
-            found[name] = int(match.group(1))
-        return found
-
-    def rpc_json_row(self, off):
-        if off < 0 or off + 12 > len(self.fw):
-            return None
-        name = self.string_at_ptr(self.u32(off))
-        value = self.string_at_ptr(self.u32(off + 4))
-        if not name or not value or self.u32(off + 8) != 0x00007FFF:
-            return None
-        return (name, value)
+        return {
+            name: node_id
+            for name, node_id in self.rpc_json_index()[1].items()
+            if name.endswith("Feature")
+        }
 
     def find_rpc_feature_setting_names(self):
-        feature_offsets = []
-        for off in range(0, len(self.fw) - 12, 4):
-            row = self.rpc_json_row(off)
-            if row is None:
-                continue
-            name, value = row
-            if name.endswith("Feature") and re.match(r"^!\d+$", value):
-                feature_offsets.append(off)
+        rows, _ = self.rpc_json_index()
+        feature_offsets = [
+            off for off, (name, value) in rows.items()
+            if (name.endswith("Feature") and
+                value.startswith("!") and value[1:].isdigit())
+        ]
         if not feature_offsets:
             return []
 
@@ -816,11 +748,11 @@ class S11Firmware(object):
         seen = set()
         off = max(feature_offsets) + 12
         while True:
-            row = self.rpc_json_row(off)
+            row = rows.get(off)
             if row is None:
                 break
             name, value = row
-            if re.match(r"^!\d+$", value):
+            if value.startswith("!") and value[1:].isdigit():
                 if name.endswith("Profile"):
                     break
             elif value not in seen:
@@ -831,7 +763,7 @@ class S11Firmware(object):
 
     def fix_crcs(self):
         print("Updating checksums")
-        for name, off, size in self.blocks():
+        for _, off, size in self.blocks():
             crc_off = off + size - 2
             new_crc = self.crcfunc(bytes(self.fw[off:crc_off]))
             self.fw[crc_off] = (new_crc >> 8) & 0xFF
@@ -2322,7 +2254,6 @@ def run_patcher(args, detail_log=None):
         with redirect_stdout(output):
             asf.fix_crcs()
             asf.write_output(args.OUTFILE, args.overwrite)
-            print(hashlib.sha256(bytes(asf.fw)).hexdigest() + "  " + args.OUTFILE)
     except Exception:
         stream = None if args.verbose or detail_log is None else detail_log
         print(output.getvalue(), end="", file=stream)
