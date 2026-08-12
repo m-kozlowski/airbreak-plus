@@ -104,29 +104,31 @@ STR rows carry two scale fields in the firmware `SummaryRecord` schema:
 
 | Field | Meaning |
 |-------|---------|
-| `logical_scale` | source-value scale used by the STR formatter |
-| `edf_output_scale` | digital EDF sample scale used by the EDF header |
+| `summary_spool_multiplier` | multiplier used when the same stored raw value is emitted through the `Summary` spool |
+| `edf_physical_divisor` | raw-to-physical divisor represented by the EDF signal header |
 
-For setting snapshot rows, the source is the runtime CONF value. The
-formatter first converts it to a logical value, then packs it with
-`edf_output_scale`.
+The persistent Summary record stores raw DataItem integers. The STR writer
+writes that stored integer as the EDF digital sample; it does not apply either
+scale field while packing the sample. The EDF header represents the physical
+value as `edf_raw / edf_physical_divisor`.
 
-For summary statistic rows (`Summary-*` values), the source value is already
-the Summary/statistic wire value. The firmware divides by `logical_scale`
-before writing the EDF digital sample:
+When the row is also enabled in the `Summary` spool, its protobuf integer is
+formed independently:
 
 ```text
-edf_raw = round(summary_wire / logical_scale)
-edf_value = edf_raw / edf_output_scale
+summary_wire = round(stored_raw * summary_spool_multiplier)
+edf_raw = stored_raw
+edf_value = edf_raw / edf_physical_divisor
 ```
 
-Most statistic rows use `logical_scale * edf_output_scale == 100`, so the
-Summary wire value is effectively centi-units. `Ti.*` rows use product
-`1000`, because their Summary source is in milliseconds.
+Most statistic rows use
+`summary_spool_multiplier * edf_physical_divisor == 100`, so the Summary spool
+integer is effectively centi-units. `Ti.*` rows use product `1000`, because
+their Summary source is in milliseconds.
 
 Examples:
 
-| Signal | Summary wire | logical_scale | edf_output_scale | EDF raw | EDF value |
+| Signal | Summary wire | summary_spool_multiplier | edf_physical_divisor | EDF raw | EDF value |
 |--------|--------------|---------------|------------------|---------|-----------|
 | `RespRate.50` | `1680` | `20` | `5` | `84` | `16.8 bpm` |
 | `Flow.95` | `40` | `0.2` | `500` | `200` | `0.4 L/s` |
@@ -200,10 +202,10 @@ Examples:
 | 36 | S.ST.RespRate | ST-SetRespiratoryRate | XA6 |
 | 37 | S.ST.TiMax | ST-SetMaxInspiratoryTime | XA7 |
 | 38 | S.ST.TiMin | ST-SetMinInspiratoryTime | XA8 |
-| 39 | S.ST.RiseEnable | ST-RiseTimeEnable | XA9 |
+| 39 | S.ST.RiseEnable <sup>[map](#str-enum-export-maps)</sup> | ST-RiseTimeEnable | XA9 |
 | 40 | S.ST.RiseTime | ST-RiseTime | XAA |
 | 41 | S.ST.Trigger <sup>[map](#str-enum-export-maps)</sup> | ST-TriggerSensitivity | ZU1 |
-| 42 | S.ST.Cycle | ST-CycleSensitivity | XAB |
+| 42 | S.ST.Cycle <sup>[map](#str-enum-export-maps)</sup> | ST-CycleSensitivity | XAB |
 | 43 | S.T.StartPress | Timed-StartPressure | XB0 |
 | 44 | S.T.IPAP | Timed-TargetInspiratoryPressure | XB1 |
 | 45 | S.T.EPAP | Timed-TargetExpiratoryPressure | XB2 |
@@ -230,22 +232,22 @@ Examples:
 
 | # | Signal | name | short |
 |---|--------|------|-------|
-| 59 | S.AS.Comfort | AutoSetComfort | AFC |
-| 60 | S.RampEnable | RampEnable | RMA |
+| 59 | S.AS.Comfort <sup>[map](#str-enum-export-maps)</sup> | AutoSetComfort | AFC |
+| 60 | S.RampEnable <sup>[map](#str-enum-export-maps)</sup> | RampEnable | RMA |
 | 61 | S.RampTime | RampTime | RMT |
-| 62 | S.EPR.ClinEnable | EprEnablePatientAccess | EPA |
-| 63 | S.EPR.EPREnable | EprEnable | EPX |
+| 62 | S.EPR.ClinEnable <sup>[map](#str-enum-export-maps)</sup> | EprEnablePatientAccess | EPA |
+| 63 | S.EPR.EPREnable <sup>[map](#str-enum-export-maps)</sup> | EprEnable | EPX |
 | 64 | S.EPR.Level | EprPressure | EPR |
-| 65 | S.EPR.EPRType | EprType | EPT |
-| 66 | S.SmartStart | SmartStart | SST |
-| 67 | S.PtAccess | PatientView | ACC |
-| 68 | S.ABFilter | AntiBacterialFilter | ABF |
-| 69 | S.Mask | MaskType | MSK |
-| 70 | S.Tube | TubeType | TBT |
-| 71 | S.ClimateControl | ClimateControl | CCO |
-| 72 | S.HumEnable | HumidifierSettingEnable | HMX |
+| 65 | S.EPR.EPRType <sup>[map](#str-enum-export-maps)</sup> | EprType | EPT |
+| 66 | S.SmartStart <sup>[map](#str-enum-export-maps)</sup> | SmartStart | SST |
+| 67 | S.PtAccess <sup>[map](#str-enum-export-maps)</sup> | PatientView | ACC |
+| 68 | S.ABFilter <sup>[map](#str-enum-export-maps)</sup> | AntiBacterialFilter | ABF |
+| 69 | S.Mask <sup>[map](#str-enum-export-maps)</sup> | MaskType | MSK |
+| 70 | S.Tube <sup>[map](#str-enum-export-maps)</sup> | TubeType | TBT |
+| 71 | S.ClimateControl <sup>[map](#str-enum-export-maps)</sup> | ClimateControl | CCO |
+| 72 | S.HumEnable <sup>[map](#str-enum-export-maps)</sup> | HumidifierSettingEnable | HMX |
 | 73 | S.HumLevel | HumidifierLevel | HMS |
-| 74 | S.TempEnable | HeatedTubeSettingEnable | HTX |
+| 74 | S.TempEnable <sup>[map](#str-enum-export-maps)</sup> | HeatedTubeSettingEnable | HTX |
 | 75 | S.Temp | HeatedTubeTemperature | HTS |
 | 76 | HeatedTube <sup>[map](#str-enum-export-maps)</sup> | Summary-TubeConnected | ZHT |
 | 77 | Humidifier <sup>[map](#str-enum-export-maps)</sup> | Summary-HumidifierConnected | HUC |
@@ -328,28 +330,66 @@ Examples:
 
 ### STR enum export maps
 
-Some STR enum fields are not written as raw CONF option indexes. For these
-rows, firmware writes `edf_value = map[raw_option_index]`. A dash in the
-superset-number column means that the mapped row exists in the stock schema
-inventory but is not activated by the current 134-signal superset patch.
+Enum-backed STR rows are selected for conversion by `SummaryRecord.field_id`.
+The corresponding mapper, source DataItem ID, range limit, and byte table are
+compiled into APPL; CONF contains no map pointer or map payload. Each table
+below is indexed by the raw zero-based enum option. Firmware 16.8.5.0 and
+17.8.6.0 use identical field IDs and map contents, although their source
+DataItem IDs differ. A dash in the superset-number column means that the
+mapped row is not activated by the current 134-signal superset patch.
 
 | Superset # | Signal | name | short | map |
 |-----------:|--------|------|-------|-----|
 | 5 | Mode | ActiveTherapyProfile | MOP | [3,1,2,4,10,16,8,6,7,5,9] |
+| -- | n/a | Cpap-TriggerSensitivity | C11 | [1,2,3,4,5,6,7] |
 | 20 | S.VA.Trigger | VAuto-TriggerSensitivity | XE6 | [1,2,3,4,5,6,7] |
 | 21 | S.VA.Cycle | VAuto-CycleSensitivity | XE7 | [1,2,3,4,5,6,7] |
-| 25 | S.S.EasyBreathe | Spont-EasyBreatheEnable | ZZ4 | [1,2] |
-| 26 | S.S.RespRateEn | Spont-RespiratoryRateEnable | ZZ5 | [1,3] |
-| 29 | S.S.RiseEnable | Spont-RiseTimeEnable | ZZ9 | [1,2] |
 | 31 | S.S.Trigger | Spont-TriggerSensitivity | Z11 | [1,2,3,4,5,6,7] |
 | 32 | S.S.Cycle | Spont-CycleSensitivity | Z12 | [1,2,3,4,5,6,7] |
-| -- | S.S.FallEnable | Spont-FallTimeEnable | Z16 | [1,2] |
 | 41 | S.ST.Trigger | ST-TriggerSensitivity | ZU1 | [1,2,3,4,5,6,7] |
+| 42 | S.ST.Cycle | ST-CycleSensitivity | XAB | [1,2,3,4,5,6,7] |
+| -- | n/a | PAC-TriggerSensitivity | PA7 | [1,2,3,4,5,6,7] |
+| -- | n/a | iVAPS-TriggerSensitivity | VTS | [1,2,3,4,5,6,7] |
+| -- | n/a | iVAPS-CycleSensitivity | VCS | [1,2,3,4,5,6,7] |
+| 25 | S.S.EasyBreathe | Spont-EasyBreatheEnable | ZZ4 | [1,2] |
+| 29 | S.S.RiseEnable | Spont-RiseTimeEnable | ZZ9 | [1,2] |
+| -- | S.S.FallEnable | Spont-FallTimeEnable | Z16 | [1,2] |
+| 39 | S.ST.RiseEnable | ST-RiseTimeEnable | XA9 | [1,2] |
 | -- | S.ST.FallEnable | ST-FallTimeEnable | XAM | [1,2] |
+| -- | n/a | ST-IntelligentBackupRateEnable | XAC | [1,2] |
 | 48 | S.T.RiseEnable | Timed-RiseTimeEnable | XB6 | [1,2] |
-| -- | S.T.FallEnable | Timed-FallTimeEnable | XB9 | [1,2] |
-| 76 | HeatedTube | Summary-TubeConnected | ZHT | [3,4,1,5,2] |
+| -- | n/a | PAC-RiseTimeEnable | PA3 | [1,2] |
+| -- | n/a | PAC-FallTimeEnable | P11 | [1,2] |
+| -- | n/a | iVAPS-AutoEPAPEnable | IEU | [1,2] |
+| -- | n/a | iVAPS-RiseTimeEnable | IRC | [1,2] |
+| -- | n/a | iVAPS-FallTimeEnable | IRZ | [1,2] |
+| 59 | S.AS.Comfort | AutoSetComfort | AFC | [1,2] |
+| -- | n/a | RampEnablePatientAccess | RPE | [1,2] |
+| 62 | S.EPR.ClinEnable | EprEnablePatientAccess | EPA | [1,2] |
+| 63 | S.EPR.EPREnable | EprEnable | EPX | [1,2] |
+| 65 | S.EPR.EPRType | EprType | EPT | [1,2] |
+| 66 | S.SmartStart | SmartStart | SST | [1,2] |
+| 68 | S.ABFilter | AntiBacterialFilter | ABF | [1,2] |
+| 71 | S.ClimateControl | ClimateControl | CCO | [1,2] |
+| 72 | S.HumEnable | HumidifierSettingEnable | HMX | [1,2] |
+| -- | n/a | ExternalHumidifier | EXH | [1,2] |
+| -- | n/a | HighLeakAlarmEnable | HLA | [1,2] |
+| -- | n/a | NonVentedMaskAlarmEnable | NMA | [1,2] |
+| -- | n/a | LowMinuteVentAlarmEnable | LMC | [1,2] |
+| -- | n/a | ApneaAlarmEnable | ANC | [1,2] |
+| -- | n/a | ConfirmStopEnable | SCF | [1,2] |
+| -- | n/a | TherapyLEDAlwaysOn | TLF | [1,2] |
+| -- | n/a | RampDownEnable | RDE | [1,2] |
+| -- | n/a | RampDownEnablePatientAccess | DPE | [1,2] |
+| 26 | S.S.RespRateEn | Spont-RespiratoryRateEnable | ZZ5 | [1,3] |
+| 60 | S.RampEnable | RampEnable | RMA | [1,2,3] |
+| 74 | S.TempEnable | HeatedTubeSettingEnable | HTX | [1,2,3] |
 | 77 | Humidifier | Summary-HumidifierConnected | HUC | [1,2,3] |
+| 67 | S.PtAccess | PatientView | ACC | [2,1] |
+| 69 | S.Mask | MaskType | MSK | [2,3,4,5] |
+| 70 | S.Tube | TubeType | TBT | [3,4,5] |
+| -- | n/a | AlarmVolumeLevel | AVQ | [3,2,1] |
+| 76 | HeatedTube | Summary-TubeConnected | ZHT | [3,4,1,5,2] |
 
 ### STR variant provenance
 

@@ -87,12 +87,12 @@ selected fields in g[1], g[2], g[3], or g[5] descriptors; it does not convert a
 DataItem from one table to another. The current reclaim pool supplies g[2]
 numeric and g[5] enum fields.
 
-| Table | Writable descriptor fields |
-|-------|----------------------------|
-| g[1] | `flags`, `ui_group_id`, `owner_ref`, `factory_tag`, `max_length` |
-| g[2] | `flags`, `ui_group_id`, `owner_ref`, `factory_tag`, `default`, `max`, `min`, `format_selector`, `scale`, `step`, `bounds_slot`, `sample_source_id`, `quantity_class` |
-| g[3] | `flags`, `ui_group_id`, `owner_ref`, `factory_tag`, `fixed_mask`, `editable_mask`, `bit_count`, `g4_list_offset` |
-| g[5] | `flags`, `g4_options_offset`, `owner_ref`, `factory_tag`, `default`, `n_options`, `option_mask` |
+| Table | Descriptor fields |
+|-------|-------------------|
+| g[1] | `flags`, `data_rule_id`, `linked_counter_index`, `change_event_queue_index`, `buffer_capacity` |
+| g[2] | `flags`, `data_rule_id`, `linked_counter_index`, `change_event_queue_index`, `default`, `max`, `min`, `decimal_places`, `scale`, `step`, `bounds_slot`, `sample_block_signal_id`, `quantity_class` |
+| g[3] | `flags`, `data_rule_id`, `linked_counter_index`, `change_event_queue_index`, `default_mask`, `editable_mask`, `bit_count`, `selection_order_offset` |
+| g[5] | `flags`, `data_rule_id`, `linked_counter_index`, `change_event_queue_index`, `default_option`, `n_options`, `reserved`, `option_mask` |
 
 Only fields supplied by the feature are changed. This permits reuse of a stock
 descriptor without rewriting unrelated metadata or option tables.

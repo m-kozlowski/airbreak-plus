@@ -22,6 +22,11 @@ import sys
 from contextlib import redirect_stdout
 from dataclasses import dataclass
 
+from lib.as11_conf_discovery import (
+    discover_conf_global_count,
+    discover_dataitem_layout,
+    discover_rpc_json_permission_count,
+)
 from lib.as11_patch_versions import AS11_FGBL_PATCH_VERSIONS, AS11_PATCH_VERSIONS
 from lib.compiled_payload import CompiledPayloadMixin
 
@@ -100,7 +105,7 @@ THERAPY_MODES = (
 # Override built-in defaults for selected settings.
 DEFAULT_SETTINGS = (
     # Entries may use long names, short names, or numeric var IDs. The
-    # default writer handles g1 scalar, g2 numeric, and g5 enum records.
+    # default writer handles g2 numeric and g5 enum records.
     ("RampEnablePatientAccess", 1),
     ("EprEnablePatientAccess", 1),
     ("Language", 0),
@@ -250,7 +255,6 @@ class S11Firmware(object):
     APPL_SIZE = 0x1C0000
 
     GLOBALS_REL = 0x104
-    GLOBAL_COUNT = 20
     BID_OFFSET = FGBL_OFF + 0x4000
 
     G1_STRIDE = 10
@@ -261,68 +265,69 @@ class S11Firmware(object):
     DESCRIPTOR_FIELDS = {
         "g1": {
             "flags": (0x00, 2),
-            "ui_group_id": (0x02, 2),
-            "owner_ref": (0x04, 2),
-            "factory_tag": (0x06, 2),
-            "max_length": (0x08, 2),
+            "data_rule_id": (0x02, 1),
+            "linked_counter_index": (0x04, 2),
+            "change_event_queue_index": (0x06, 1),
+            "buffer_capacity": (0x08, 2),
         },
         "g2": {
             "flags": (0x00, 2),
-            "ui_group_id": (0x02, 2),
-            "owner_ref": (0x04, 2),
-            "factory_tag": (0x06, 2),
+            "data_rule_id": (0x02, 1),
+            "linked_counter_index": (0x04, 2),
+            "change_event_queue_index": (0x06, 1),
             "default": (0x08, 4),
             "max": (0x0C, 4),
             "min": (0x10, 4),
-            "format_selector": (0x14, 2),
+            "decimal_places": (0x14, 1),
             "scale": (0x16, 2),
             "step": (0x18, 2),
             "bounds_slot": (0x1A, 1),
-            "sample_source_id": (0x1B, 1),
-            "quantity_class": (0x1C, 4),
+            "sample_block_signal_id": (0x1B, 1),
+            "quantity_class": (0x1C, 1),
         },
         "g3": {
             "flags": (0x00, 2),
-            "ui_group_id": (0x02, 2),
-            "owner_ref": (0x04, 2),
-            "factory_tag": (0x06, 2),
-            "fixed_mask": (0x08, 4),
+            "data_rule_id": (0x02, 1),
+            "linked_counter_index": (0x04, 2),
+            "change_event_queue_index": (0x06, 1),
+            "default_mask": (0x08, 4),
             "editable_mask": (0x0C, 4),
             "bit_count": (0x10, 1),
-            "g4_list_offset": (0x12, 2),
+            "selection_order_offset": (0x12, 2),
         },
         "g5": {
             "flags": (0x00, 2),
-            "g4_options_offset": (0x02, 2),
-            "owner_ref": (0x04, 2),
-            "factory_tag": (0x06, 2),
-            "default": (0x08, 1),
+            "data_rule_id": (0x02, 1),
+            "linked_counter_index": (0x04, 2),
+            "change_event_queue_index": (0x06, 1),
+            "default_option": (0x08, 1),
             "n_options": (0x09, 1),
+            "reserved": (0x0A, 2),
             "option_mask": (0x0C, 4),
         },
     }
 
     GLOBAL_NAMES = {
         0: "conf_header",
-        1: "scalar_descriptors",
+        1: "volatile_text_descriptors",
         2: "numeric_descriptors",
         3: "bitfield_descriptors",
-        4: "shared_backing_store",
+        4: "bitfield_gui_selection_order",
         5: "enum_descriptors",
-        6: "var_list_headers",
-        7: "pdl_settings_unit_list",
-        8: "short_name_buckets",
-        9: "short_name_linear_pool",
-        10: "mode_var_registration",
-        11: "mode_var_registration_count",
-        12: "event_definitions",
-        13: "event_routes_ddo_storage",
-        14: "collection_definitions",
-        15: "str_summary_schema",
+        6: "nor_settings_groups",
+        7: "backup_sram_power_loss_snapshot",
+        8: "short_name_bucket_headers",
+        9: "short_name_reverse_table",
+        10: "mode_visibility",
+        11: "mode_visibility_count",
+        12: "event_spool_definitions",
+        13: "event_json_payload_overrides",
+        14: "periodic_collections",
+        15: "summary_schema_header",
         16: "edf_stream_schemas",
         17: "event_label_tables",
         18: "rpc_json_permission_table",
-        19: "reporting_ddo_pool",
+        19: "configuration_change_source_header",
     }
 
     def __init__(self, fileobj):
@@ -333,13 +338,14 @@ class S11Firmware(object):
 
         self.validate()
         self.setup_arrays()
-        self.name_buckets = self.build_name_buckets()
+        self.short_names = self.build_short_names()
         self.appl_nodes = self.build_appl_nodes()
 
     def validate(self):
         if len(self.fw) < self.APPL_OFF + self.APPL_SIZE:
             raise IOError("Input is too small for an S11 full firmware image")
 
+        self.data_version = self.u32(self.CONF_OFF)
         self.bid = self.read_str(self.BID_OFFSET, 16)
         self.platform = self.read_str(self.CONF_OFF + 0x18, 16)
         self.model = self.read_str(self.CONF_OFF + 0x28, 16)
@@ -548,7 +554,8 @@ class S11Firmware(object):
     def read_globals(self):
         out = []
         base = self.globals_addr()
-        for idx in range(self.GLOBAL_COUNT):
+        count = discover_conf_global_count(self.fw, base)
+        for idx in range(count):
             value = self.u32(base + idx * 4)
             off = self.ptr_to_off(value)
             out.append({
@@ -557,21 +564,6 @@ class S11Firmware(object):
                 "value": value,
                 "offset": off,
             })
-        pointer_offsets = sorted(
-            row["offset"] for row in out
-            if row["offset"] is not None and self.CONF_OFF <= row["offset"] < self.CONF_OFF + self.CONF_SIZE
-        )
-        for row in out:
-            off = row["offset"]
-            row["size"] = None
-            if off is None or not (self.CONF_OFF <= off < self.CONF_OFF + self.CONF_SIZE):
-                continue
-            end = self.CONF_OFF + self.CONF_SIZE
-            for candidate in pointer_offsets:
-                if candidate > off:
-                    end = candidate
-                    break
-            row["size"] = end - off
         return out
 
     def globals_offset(self, idx):
@@ -585,21 +577,11 @@ class S11Firmware(object):
             self._globals_cache[idx] = off
         return self._globals_cache[idx]
 
-    def count_records(self, base, stride):
-        count = 0
-        while base + count * stride + stride <= len(self.fw):
-            vt = self.u16(base + count * stride)
-            if vt < 0x0200 or vt > 0x0FFF:
-                break
-            count += 1
-        return count
-
     def setup_arrays(self):
         self.globals = self.read_globals()
         for row in self.globals:
             if row["offset"] is not None:
                 setattr(self, "g%d_base" % row["index"], row["offset"])
-                setattr(self, "g%d_size" % row["index"], row["size"])
             else:
                 setattr(self, "g%d_value" % row["index"], row["value"])
 
@@ -607,20 +589,13 @@ class S11Firmware(object):
         self.g2_base = self.globals_offset(2)
         self.g3_base = self.globals_offset(3)
         self.g5_base = self.globals_offset(5)
-        self.g8_base = self.globals_offset(8)
         self.perm_table = self.globals_offset(18)
 
-        self.g1_count = self.count_records(self.g1_base, self.G1_STRIDE)
-        self.g2_count = self.count_records(self.g2_base, self.G2_STRIDE)
-        # Some CONF layouts place g[5] immediately after g[2]. g[5] rows can
-        # look like g[2] rows when stepped at 32 bytes, so stop g[2] at the
-        # physical g[5] boundary when it appears before the scanned terminator.
-        if self.g2_base < self.g5_base:
-            physical_g2_count = (self.g5_base - self.g2_base) // self.G2_STRIDE
-            if physical_g2_count > 0:
-                self.g2_count = min(self.g2_count, physical_g2_count)
-        self.g3_count = self.count_records(self.g3_base, self.G3_STRIDE)
-        self.g5_count = self.count_records(self.g5_base, self.G5_STRIDE)
+        item_layout = discover_dataitem_layout(self.fw, self.APPL_OFF)
+        self.g1_count = item_layout.g1_count
+        self.g2_count = item_layout.g2_count
+        self.g3_count = item_layout.g3_count
+        self.g5_count = item_layout.g5_count
 
         # Descriptor var IDs are table-order based
         self.g1_id_base = 0
@@ -640,28 +615,13 @@ class S11Firmware(object):
         ))
         print("Globals:   %d known entries, g11=%d" % (len(self.globals), self.g11_value))
 
-    def build_name_buckets(self):
-        # globals[8] is an A-Z bucket table mapping short 3-byte setting tags
-        # such as MOP or TLF back to var IDs.
-        out = {}
-        for bucket in range(26):
-            off = self.g8_base + bucket * 8
-            ptr = self.u32(off)
-            count = self.u32(off + 4)
-            table_off = self.ptr_to_off(ptr)
-            if table_off is None or count > 300:
-                continue
-            prefix = chr(ord("A") + bucket)
-            for idx in range(count):
-                eoff = table_off + idx * 4
-                if eoff + 4 > len(self.fw):
-                    break
-                c1 = self.u8(eoff)
-                c2 = self.u8(eoff + 1)
-                vid = self.u16(eoff + 2)
-                if 0x20 < c1 < 0x7F and 0x20 < c2 < 0x7F and vid < 0x1000:
-                    out[vid] = prefix + chr(c1) + chr(c2)
-        return out
+    def build_short_names(self):
+        base = self.globals_offset(9)
+        count = self.g5_id_base + self.g5_count
+        return {
+            vid: bytes(self.fw[base + vid * 3:base + vid * 3 + 3]).decode("ascii")
+            for vid in range(count)
+        }
 
     def valid_appl_name_entry(self, off):
         if off + 8 > len(self.fw):
@@ -713,7 +673,7 @@ class S11Firmware(object):
         return out
 
     def var_short_name(self, vid):
-        return self.name_buckets.get(vid, "")
+        return self.short_names.get(vid, "")
 
     def var_long_name(self, vid):
         return self.appl_nodes.get(vid, "")
@@ -736,21 +696,22 @@ class S11Firmware(object):
             "short_name": self.var_short_name(vid),
             "long_name": self.var_long_name(vid),
             "name": self.var_name(vid),
-            "vid_type": self.u16(off),
+            "flags": self.u16(off),
             "active": bool(self.u16(off) & 1),
         }
         if array == "g5":
             row.update({
-                "sub": self.u8(off + 8),
+                "default_option": self.u8(off + 8),
                 "n_options": self.u8(off + 9),
+                "reserved": self.u16(off + 10),
                 "option_mask": self.u32(off + 12),
             })
         elif array == "g3":
             row.update({
-                "fixed_mask": self.u32(off + 8),
+                "default_mask": self.u32(off + 8),
                 "editable_mask": self.u32(off + 12),
                 "bit_count": self.u8(off + 16),
-                "g4_list_offset": self.u16(off + 18),
+                "selection_order_offset": self.u16(off + 18),
             })
         return row
 
@@ -1463,8 +1424,8 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             if self.is_blacklisted_setting(row):
                 continue
             off = row["offset"]
-            vt = row["vid_type"]
-            if vt >= 0x0200 and not (vt & 1):
+            flags = row["flags"]
+            if flags >= 0x0200 and not (flags & 1):
                 self.asf.write_u8(off, self.asf.u8(off) | 1)
                 n += 1
         return n
@@ -1499,25 +1460,17 @@ class S11FirmwarePatches(CompiledPayloadMixin):
     def find_default_rows(self, target):
         if isinstance(target, int):
             rows = []
-            for array in ("g1", "g2", "g5"):
+            for array in ("g2", "g5"):
                 spec = self.asf.arrays[array]
                 idx = target - spec["id_base"]
                 if 0 <= idx < spec["count"]:
                     rows.append(self.asf.descriptor(array, idx))
             return rows
-        return self.asf.find_descriptors_by_name(target, ("g1", "g2", "g5"))
+        return self.asf.find_descriptors_by_name(target, ("g2", "g5"))
 
     def write_default_value(self, row, value):
         off = row["offset"]
         array = row["array"]
-        if array == "g1":
-            if not 0 <= value <= 0xFFFF:
-                raise ValueError("g1 default outside u16 range")
-            old = self.asf.u16(off + 8)
-            if old != value:
-                self.asf.write_u16(off + 8, value)
-                return True
-            return False
         if array == "g2":
             old = self.asf.u32(off + 8)
             value &= 0xFFFFFFFF
@@ -1711,10 +1664,10 @@ class S11FirmwarePatches(CompiledPayloadMixin):
                 continue
             for row in rows:
                 n_options = row["n_options"]
-                if n_options == 0 or n_options > 31:
+                if n_options == 0:
                     n_enum_skipped += 1
                     continue
-                desired_mask = (1 << n_options) - 1
+                desired_mask = (1 << min(n_options, 32)) - 1
                 off = row["offset"]
                 if self.asf.u32(off + 12) == desired_mask:
                     n_enum_already += 1
@@ -1731,13 +1684,16 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             # preserved because variant firmwares may already narrow them.
             n_options = row["n_options"]
             mask = self.asf.u32(row["offset"] + 12)
-            if n_options == 0 or n_options > 31:
+            if n_options == 0:
                 n_skipped += 1
                 continue
             if mask != 0:
                 n_already += 1
                 continue
-            self.asf.write_u32(row["offset"] + 12, (1 << n_options) - 1)
+            self.asf.write_u32(
+                row["offset"] + 12,
+                (1 << min(n_options, 32)) - 1,
+            )
             n_editable += 1
 
         print("Patching GUI ACT flags... g1=%d g2=%d g3=%d g5=%d" % (n_g1, n_g2, n_g3, n_g5))
@@ -1754,9 +1710,9 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         ))
 
     def rpc_json_profile_visibility(self):
-        # globals[18] contains u16 permissions for APPL/RPC JSON tree nodes.
-        # These gates expose profile nodes in Get responses; backing setting
-        # descriptors still need their own ACT bits and option masks.
+        # Each globals[18] record contains independent read-enabled and
+        # write-blocked bytes. Profile visibility changes only the former;
+        # backing setting descriptors still need their own flags and masks.
         mode_profile_nodes = tuple(
             profile for _bit, _prefix, profile, supported in THERAPY_MODES if supported
         )
@@ -1773,19 +1729,29 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         if not nodes:
             raise ValueError("metadata: no RPC JSON profile nodes resolved")
 
+        hidden_nodes = self.asf.find_rpc_nodes(blacklisted_nodes)
+        permission_count = discover_rpc_json_permission_count(
+            self.asf.fw, self.asf.APPL_OFF
+        )
+        for name, node_id in {**nodes, **hidden_nodes}.items():
+            if not 0 <= node_id < permission_count:
+                raise ValueError(
+                    "metadata: RPC node %s id %d exceeds permission count %d" %
+                    (name, node_id, permission_count)
+                )
+
         n = 0
         for name, node_id in sorted(nodes.items(), key=lambda item: (item[1], item[0])):
             off = self.asf.perm_table + node_id * 2
-            if self.asf.u16(off) == 0:
-                self.asf.write_u16(off, 1)
+            if self.asf.u8(off) == 0:
+                self.asf.write_u8(off, 1)
                 n += 1
 
         n_hidden = 0
-        hidden_nodes = self.asf.find_rpc_nodes(blacklisted_nodes)
         for name, node_id in sorted(hidden_nodes.items(), key=lambda item: (item[1], item[0])):
             off = self.asf.perm_table + node_id * 2
-            if self.asf.u16(off) != 0:
-                self.asf.write_u16(off, 0)
+            if self.asf.u8(off) != 0:
+                self.asf.write_u8(off, 0)
                 n_hidden += 1
 
         print("Patching RPC JSON profile visibility... %d/%d nodes enabled" % (n, len(nodes)))
@@ -1802,7 +1768,9 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         rows = []
         n_static_bounds = 0
         n_max_floor = 0
-        static_bounds_slot = 0x3E
+        static_bounds_slot = (
+            0x3D if self.asf.data_version >= 16 else 0x3E
+        )
 
         for max_name, min_name in pairs:
             found = self.asf.find_descriptors_by_name(max_name, ("g2",))
@@ -1900,7 +1868,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         )
         self.custom_setting_define(
             backup_rate_setting,
-            default=1,
+            default_option=1,
         )
         self.custom_menu_add(
             section="therapy",

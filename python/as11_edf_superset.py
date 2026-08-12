@@ -15,6 +15,8 @@ import struct
 import sys
 from pathlib import Path
 
+from lib.as11_conf_discovery import discover_edf_schema_layout
+
 
 STREAM_HEADER_SIZE = 16
 STREAM_SIGNAL_SIZE = 16
@@ -67,10 +69,10 @@ STREAM_SCHEMAS = (
 
 
 # STR formatter metadata from the active-row union of official S11 8.4.0 variants.
-# record_class is 0 for setting snapshots and 1 for summary/status rows.
+# spool_enabled controls inclusion in the Summary spool independently of EDF.
 # reserved16 is always zero in checked official active rows.
-# Format: key, EDF label, EDF unit, logical scale, EDF output scale,
-# record_class, reserved16
+# Format: key, EDF label, EDF unit, Summary spool multiplier,
+# EDF physical divisor, spool_enabled, reserved16.
 STR_SUPERSET_METADATA = (
     ((0, 3, 0x7FFF, 0x7FFF, 0x0000), "", "", 1, 1, 0x01, 0x0000),  # n/a
     ((1, 2, 0x02B6, 0x7FFF, 0x0000), "Duration", "min.", 1, 1, 0x01, 0x0000),  # PPD
@@ -349,21 +351,41 @@ def align_up(value: int, align: int) -> int:
 class S11EdfSupersetPatcher:
     def __init__(self, asf):
         self.asf = asf
+        self._edf_schema_layout = None
+
+    def edf_schema_layout(self):
+        if self._edf_schema_layout is None:
+            self._edf_schema_layout = discover_edf_schema_layout(
+                self.asf.fw,
+                self.asf.APPL_OFF,
+                self.asf.CONF_OFF,
+                self.asf.CONF_SIZE,
+                self.asf.FLASH_BASE,
+            )
+        return self._edf_schema_layout
 
     def stream_header_slots(self):
         base = self.asf.globals_offset(16)
         out = []
-        for index in range(8):
+        tags = set()
+        for index in range(self.edf_schema_layout().stream_count):
             off = base + index * STREAM_HEADER_SIZE
             period = self.asf.u16(off)
             samples = self.asf.u16(off + 2)
-            count = self.asf.u32(off + 4)
+            count = self.asf.u16(off + 4)
+            reserved = self.asf.u16(off + 6)
             tag_ptr = self.asf.u32(off + 8)
             table_ptr = self.asf.u32(off + 12)
             tag = self.asf.string_at_ptr(tag_ptr)
             table_off = self.asf.ptr_to_off(table_ptr)
-            if not tag or count > 128 or period == 0:
-                break
+            if (not tag or tag in tags or count > 128 or
+                    period == 0 or samples == 0):
+                raise ValueError("invalid EDF stream header %d" % index)
+            tags.add(tag)
+            if reserved != 0:
+                raise ValueError(
+                    "EDF stream %s has nonzero reserved header field" % tag
+                )
             if table_off is None and (count != 0 or table_ptr != 0):
                 raise ValueError("EDF stream %s signal table is outside image" % tag)
             out.append({
@@ -371,8 +393,9 @@ class S11EdfSupersetPatcher:
                 "offset": off,
                 "tag": tag,
                 "period_ms": period,
-                "samples_per_60s": samples,
+                "samples_per_record": samples,
                 "signal_count": count,
+                "reserved": reserved,
                 "signal_table_ptr": table_ptr,
                 "signal_table_off": table_off,
             })
@@ -388,12 +411,18 @@ class S11EdfSupersetPatcher:
         out = []
         for index in range(stream["signal_count"]):
             off = stream["signal_table_off"] + index * STREAM_SIGNAL_SIZE
+            reserved = self.asf.u16(off + 2)
+            if reserved != 0:
+                raise ValueError(
+                    "EDF stream %s signal %d has nonzero reserved field" %
+                    (stream["tag"], index)
+                )
             name_ptr = self.asf.u32(off + 4)
             unit_ptr = self.asf.u32(off + 8)
             out.append({
                 "index": index,
                 "offset": off,
-                "id": self.asf.u32(off),
+                "var_id": self.asf.u16(off),
                 "name_ptr": name_ptr,
                 "name": self.asf.string_at_ptr(name_ptr) or "",
                 "unit_ptr": unit_ptr,
@@ -487,7 +516,8 @@ class S11EdfSupersetPatcher:
             return False
         for got, want in zip(signals, resolved_signals):
             sig_id, name, unit, scale = want
-            if got["id"] != sig_id or got["name"] != name or got["unit"] != unit:
+            if (got["var_id"] != sig_id or got["name"] != name or
+                    got["unit"] != unit):
                 return False
             if abs(got["scale"] - scale) > 0.00001:
                 return False
@@ -540,16 +570,17 @@ class S11EdfSupersetPatcher:
         for index, (sig_id, name, unit, scale) in enumerate(resolved_signals):
             off = table_off + index * STREAM_SIGNAL_SIZE
             struct.pack_into(
-                "<IIIf",
+                "<HHIIf",
                 self.asf.fw,
                 off,
                 sig_id,
+                0,
                 ptrs[name],
                 ptrs[unit],
                 scale,
             )
 
-        self.asf.write_u32(stream["offset"] + 4, len(resolved_signals))
+        self.asf.write_u16(stream["offset"] + 4, len(resolved_signals))
         self.asf.write_u32(stream["offset"] + 12, self.asf.off_to_addr(table_off))
         print(
             "Patching EDF %s stream... %d signals, table 0x%06X, %d strings"
@@ -578,9 +609,9 @@ class S11EdfSupersetPatcher:
             )
 
         changed = 0
-        wanted_flags = row["vid_type"] | 1
+        wanted_flags = row["flags"] | 1
         wanted_mask = (1 << row["n_options"]) - 1
-        if row["vid_type"] != wanted_flags or row["option_mask"] != wanted_mask:
+        if row["flags"] != wanted_flags or row["option_mask"] != wanted_mask:
             self.asf.write_descriptor_fields(
                 row,
                 {"flags": wanted_flags, "option_mask": wanted_mask},
@@ -599,40 +630,42 @@ class S11EdfSupersetPatcher:
 
     def find_csl_event_schema(self):
         base = self.asf.globals_offset(17)
-        end = min(len(self.asf.fw), self.asf.CONF_OFF + self.asf.CONF_SIZE)
-        for schema_bytes in (EVENT_SCHEMA_SIZE, LEGACY_EVENT_SCHEMA_SIZE):
-            off = base
-            while off + schema_bytes <= end:
-                if schema_bytes == EVENT_SCHEMA_SIZE:
-                    label_count = self.asf.u16(off + 2)
-                    flags_off = off + 0x0c
-                    tag_ptr = self.asf.u32(off + 0x10)
-                    label_table = self.asf.u32(off + 0x18)
-                else:
-                    label_count = self.asf.u16(off)
-                    flags_off = off + 8
-                    tag_ptr = self.asf.u32(off + 0x0c)
-                    label_table = self.asf.u32(off + 0x10)
+        layout = self.edf_schema_layout()
+        schema_bytes = layout.event_stride
+        for row_index in range(layout.event_count):
+            off = base + row_index * schema_bytes
+            if schema_bytes == EVENT_SCHEMA_SIZE:
+                label_count = self.asf.u16(off + 2)
+                flags_off = off + 0x0c
+                tag_ptr = self.asf.u32(off + 0x10)
+                label_table = self.asf.u32(off + 0x18)
+                if (self.asf.u16(off + 6) != 0 or
+                        self.asf.u32(off + 0x14) != 1):
+                    raise ValueError("invalid current EDF event schema")
+            else:
+                label_count = self.asf.u16(off)
+                flags_off = off + 8
+                tag_ptr = self.asf.u32(off + 0x0c)
+                label_table = self.asf.u32(off + 0x10)
 
-                tag = self.asf.string_at_ptr(tag_ptr)
-                if not tag:
-                    break
-                if tag == "CSL":
-                    table_off = self.asf.ptr_to_off(label_table)
-                    if (label_count == 0 or table_off is None or
-                            table_off + label_count * 4 > len(self.asf.fw)):
-                        raise ValueError("invalid CSL event label table")
-                    labels = []
-                    for index in range(label_count):
-                        label = self.asf.string_at_ptr(
-                            self.asf.u32(table_off + index * 4),
-                            allow_empty=True,
-                        )
-                        if label is None:
-                            raise ValueError("invalid CSL event label")
-                        labels.append(label)
-                    return flags_off, labels
-                off += schema_bytes
+            tag = self.asf.string_at_ptr(tag_ptr)
+            if not tag:
+                raise ValueError("invalid EDF event schema tag")
+            if tag == "CSL":
+                table_off = self.asf.ptr_to_off(label_table)
+                if (label_count == 0 or table_off is None or
+                        table_off + label_count * 4 > len(self.asf.fw)):
+                    raise ValueError("invalid CSL event label table")
+                labels = []
+                for index in range(label_count):
+                    label = self.asf.string_at_ptr(
+                        self.asf.u32(table_off + index * 4),
+                        allow_empty=True,
+                    )
+                    if label is None:
+                        raise ValueError("invalid CSL event label")
+                    labels.append(label)
+                return flags_off, labels
         raise ValueError("CSL event schema not found")
 
     def patch_csl_events(self):
@@ -650,6 +683,10 @@ class S11EdfSupersetPatcher:
 
     def summary_key(self, off):
         kind = self.asf.u32(off + 4)
+        if kind > 7:
+            raise ValueError("unsupported STR SummaryRecord kind %d" % kind)
+        if self.asf.u8(off + 0x0f) != 0:
+            raise ValueError("STR SummaryRecord has nonzero reserved byte")
         var_a = self.asf.u16(off + 8)
         var_b = self.asf.u16(off + 10)
         selected = var_b if kind < 3 else var_a
@@ -658,7 +695,7 @@ class S11EdfSupersetPatcher:
             kind,
             selected,
             self.asf.u16(off + 12),
-            self.asf.u16(off + 14),
+            struct.unpack_from("<b", self.asf.fw, off + 14)[0],
         )
 
     def summary_selected_name(self, off):
@@ -672,7 +709,8 @@ class S11EdfSupersetPatcher:
         header = self.asf.globals_offset(15)
         count = self.asf.u16(header + 4)
         table_off = self.asf.ptr_to_off(self.asf.u32(header + 8))
-        if table_off is None:
+        if (table_off is None or
+                table_off + count * SUMMARY_RECORD_SIZE > len(self.asf.fw)):
             raise ValueError("STR SummaryRecord pointer is outside image")
 
         metadata_by_key = {row[0]: row[1:] for row in STR_SUPERSET_METADATA}
@@ -690,7 +728,9 @@ class S11EdfSupersetPatcher:
             metadata_by_name[name] = row[1:]
 
         strings = []
-        for _key, label, unit, _logical_scale, _edf_scale, _record_class, _reserved16 in STR_SUPERSET_METADATA:
+        for (_key, label, unit, _summary_spool_multiplier,
+             _edf_physical_divisor,
+             _spool_enabled, _reserved16) in STR_SUPERSET_METADATA:
             strings.append(label)
             strings.append(unit)
         string_ptrs, strings_written = self.resolve_str_string_ptrs(strings)
@@ -710,17 +750,22 @@ class S11EdfSupersetPatcher:
             if metadata is None:
                 continue
             found.add(found_id)
-            label, unit, logical_scale, edf_scale, record_class, reserved16 = metadata
+            (label, unit, summary_spool_multiplier, edf_physical_divisor,
+             spool_enabled, reserved16) = metadata
             before = bytes(self.asf.fw[off + 16:off + 36])
-            struct.pack_into("<f", self.asf.fw, off + 16, logical_scale)
-            self.asf.write_u8(off + 20, record_class)
+            struct.pack_into(
+                "<f", self.asf.fw, off + 16, summary_spool_multiplier
+            )
+            self.asf.write_u8(off + 20, spool_enabled)
             if self.asf.u8(off + 21) == 0:
                 self.asf.write_u8(off + 21, 1)
                 activated += 1
             self.asf.write_u16(off + 22, reserved16)
             self.asf.write_u32(off + 24, string_ptrs[label])
             self.asf.write_u32(off + 28, string_ptrs[unit])
-            struct.pack_into("<f", self.asf.fw, off + 32, edf_scale)
+            struct.pack_into(
+                "<f", self.asf.fw, off + 32, edf_physical_divisor
+            )
             if bytes(self.asf.fw[off + 16:off + 36]) != before:
                 hydrated += 1
 

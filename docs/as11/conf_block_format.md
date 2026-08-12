@@ -6,33 +6,33 @@ dispatch, descriptor record shapes, and per-table semantics.
 ## Table of contents
 
 - [globals[] map](#globals-map)
+- [Runtime consumers](#runtime-consumers)
 - [Conventions](#conventions)
-- [Quick analysis workflow](#quick-analysis-workflow)
-- [Physical packing and pointer-owned payloads](#physical-packing-and-pointer-owned-payloads)
 - [Structure families](#structure-families)
-- [Var-ID dispatch](#var-id-dispatch)
+- [DataItem descriptor selection](#dataitem-descriptor-selection)
 - [Flags field](#flags-field)
 - [Common DataItem descriptor fields](#common-dataitem-descriptor-fields)
+- [Data rule callbacks](#data-rule-callbacks)
 - [g[0] -- CONF header](#g0----conf-header)
-- [g[1] -- scalar DataItem descriptors](#g1----scalar-dataitem-descriptors)
+- [g[1] -- volatile-text DataItem descriptors](#g1----volatile-text-dataitem-descriptors)
 - [g[2] -- numeric DataItem descriptors](#g2----numeric-dataitem-descriptors)
 - [g[3] -- bitfield DataItem descriptors](#g3----bitfield-dataitem-descriptors)
-- [g[4] -- option/index byte-list pool](#g4----optionindex-byte-list-pool)
+- [g[4] -- bitfield GUI selection-order pool](#g4----bitfield-gui-selection-order-pool)
 - [g[5] -- enum DataItem descriptors](#g5----enum-dataitem-descriptors)
-- [g[6] -- named var-id list headers](#g6----named-var-id-list-headers)
-- [g[7] -- PDL SettingsUnit header](#g7----pdl-settingsunit-header)
+- [g[6] -- external-NOR SettingsGroup schemas](#g6----external-nor-settingsgroup-schemas)
+- [g[7] -- PDL backup-SRAM snapshot](#g7----pdl-backup-sram-snapshot)
 - [g[8] -- short-name bucket headers](#g8----short-name-bucket-headers)
 - [g[9] -- short-name reverse table](#g9----short-name-reverse-table)
-- [g[10] -- per-mode variable registration](#g10----per-mode-variable-registration)
+- [g[10] -- per-mode baseline visibility](#g10----per-mode-baseline-visibility)
 - [g[11] -- record count for g[10]](#g11----record-count-for-g10)
-- [g[12] -- event/log definitions](#g12----eventlog-definitions)
-- [g[13] -- event route table](#g13----event-route-table)
-- [g[14] -- periodic/session collections](#g14----periodicsession-collections)
+- [g[12] -- event spool definitions](#g12----event-spool-definitions)
+- [g[13] -- EventNotification payload overrides](#g13----eventnotification-payload-overrides)
+- [g[14] -- periodic collections](#g14----periodic-collections)
 - [g[15] -- STR.edf SummaryRecord schema](#g15----stredf-summaryrecord-schema)
 - [g[16] -- EDF stream file schemas](#g16----edf-stream-file-schemas)
 - [g[17] -- event label tables](#g17----event-label-tables)
 - [g[18] -- RPC JSON node permission table](#g18----rpc-json-node-permission-table)
-- [g[19] -- DDO/reporting source list](#g19----ddoreporting-source-list)
+- [g[19] -- ConfigurationProfiles change-watch list](#g19----configurationprofiles-change-watch-list)
 
 ---
 
@@ -40,26 +40,47 @@ dispatch, descriptor record shapes, and per-table semantics.
 
 | Global | Meaning |
 | ---: | ------- |
-| g[0] | CONF header: product/platform, variant id, build/firmware strings, master-table trampoline |
-| g[1] | scalar `DataItem` descriptors |
+| g[0] | CONF header: product/platform, variant id, and build/data-model strings |
+| g[1] | volatile-text `DataItem` descriptors |
 | g[2] | numeric `DataItem` descriptors |
 | g[3] | bitfield `DataItem` descriptors |
-| g[4] | option/index byte-list pool for g[3]/g[5], plus pointer-owned tables used by g[8]/g[16]/g[17] |
+| g[4] | GUI bitfield-message selection order referenced by g[3] descriptors |
 | g[5] | enum `DataItem` descriptors |
-| g[6] | named var-id list headers (`BGL`, `DDO`, `DID`, `HST`, `MCA`, `MCF`, `TLP`) |
-| g[7] | `PDL` `SettingsUnit` header; later bytes in its physical interval are pointer-owned payloads |
+| g[6] | external-NOR `SettingsGroup` schemas (`BGL.set`, `DDO.set`, `DID.set`, `HST.set`, `MCA.set`, `MCF.set`, `TLP.set`) |
+| g[7] | `PDL` backup-SRAM snapshot definition |
 | g[8] | A-Z short-name bucket headers (3-char tag -> var_id) |
 | g[9] | linear var-id -> 3-char short-tag pool |
-| g[10] | per-mode variable registration rows |
+| g[10] | per-mode baseline visibility rows |
 | g[11] | scalar count for g[10] |
-| g[12] | event/log definitions; later bytes in its physical interval are pointer-owned payloads |
-| g[13] | event route table root; the adjacent `DDO` var-id payload is pointed to by g[6] |
-| g[14] | periodic/session collections (`CSF`, `TIP`, `MLK`, `MPD`, `RFD`, `NRF`, `APD`) |
+| g[12] | event spool definitions |
+| g[13] | per-event `EventNotification` payload rules |
+| g[14] | periodic collection schemas (`CSF`, `TIP`, `MLK`, `MPD`, `RFD`, `NRF`, `APD`) |
 | g[15] | `STR.edf` `SummaryRecord` schema header |
 | g[16] | EDF stream file schemas (`BRP`, `SA2`, `PLD`, `TCV`) |
 | g[17] | event label tables (`EVE`, `AEV`, `CSL`) |
-| g[18] | RPC JSON node permission table; later bytes are g[8] short-name bucket payloads |
-| g[19] | DDO/reporting snapshot source list, reporting tag/string/list pool, then erased tail |
+| g[18] | RPC JSON node permission table |
+| g[19] | `ConfigurationProfiles` change-watch list (14.8.3.0 and later) |
+
+---
+
+## Runtime consumers
+
+| Roots | Primary consumer | Relationship |
+|-------|------------------|--------------|
+| g[0] | identification/profile services | supplies platform, variant, build, and data-model identity |
+| g[1], g[2], g[3], g[5] | `DataItemFactory` | maps each var ID to its runtime DataItem type and descriptor |
+| g[4] | bitfield GUI/rule selection | orders candidate bits referenced by g[3] without changing the stored mask |
+| g[6] | external-NOR settings storage | serializes active members of named `SettingsGroup` schemas into `/SETTINGS/*.set` |
+| g[7] | power-loss state storage | serializes the PDL DataItem set into backup SRAM with CRC |
+| g[8], g[9] | short-name resolver | maps three-character tags to var IDs and var IDs back to tags |
+| g[10], g[11] | therapy-mode visibility updater | applies the active MOP column as baseline DataItem visibility |
+| g[12], g[13] | event queue, spool files, and live event JSON | defines event storage and per-event JSON trailing payloads |
+| g[14] | periodic-data sampler and spool writer | defines sampling, block closure, retention, compression, and source DataItems |
+| g[15] | long-term summary and STR writer | defines retained therapy-day limits and STR rows |
+| g[16] | sampled EDF writer | defines BRP, SA2, PLD, and TCV sampled-signal schemas |
+| g[17] | EDF annotation writer | maps event values to EVE, AEV, and CSL annotation labels |
+| g[18] | RPC profile JSON schema | independently gates node reads and writes |
+| g[19] | configuration-profile change tracker | selects the DDO values that trigger a new configuration report |
 
 ---
 
@@ -74,349 +95,177 @@ dispatch, descriptor record shapes, and per-table semantics.
   little-endian values.
 - Var IDs are firmware `DataItem` IDs, but they are **version-local**. They
   are assigned by descriptor array order and drift when records are inserted
-  or removed. The three-letter tag (`MOP`, `LAN`, etc.) and RPC long name are
-  better semantic anchors for cross-version work. RPC may expose long
-  names such as `ActiveTherapyProfile` and underscore aliases such as `_MOP`,
-  but bare three-letter tags are internal names.
-- [Variable reference](var_reference.tsv) lists variables against the known
-  14.8.3.0, 15.8.4.0, and 16.8.5.0 var IDs. Treat the ID columns as lookup
-  results for those specific releases, not as portable constants.
+  or removed. Cross-version identity uses the three-letter tag (`MOP`, `LAN`,
+  etc.) or RPC long name. RPC may expose long names such as
+  `ActiveTherapyProfile` and underscore aliases such as `_MOP`; bare
+  three-letter tags are internal names.
+- [Variable reference](var_reference.tsv) lists variables and their
+  release-specific var IDs for 14.8.3.0, 15.8.4.0, 16.8.5.0, and 17.8.6.0.
 - Record layouts describe the structure shared by the listed firmware
   versions. Counts, addresses, IDs, masks, and example values belong to the
   version named in the adjacent table or example.
 
 ---
 
-## Quick analysis workflow
-
-Use this document as both a map and a decoder:
-
-1. Start from [globals[] map](#globals-map) to identify the root table.
-2. Use [Physical packing and pointer-owned payloads](#physical-packing-and-pointer-owned-payloads)
-   before assuming bytes after a table are free or unrelated.
-3. For settings and variables, derive the descriptor array from
-   [Var-ID dispatch](#var-id-dispatch), then decode the row with g[1], g[2],
-   g[3], or g[5].
-4. For UI/RPC availability, combine descriptor flags, enum option masks,
-   g[10] mode registration, g[18] RPC node visibility, and g[15]
-   SummaryRecord activation.
-5. For EDF/reporting work, use g[15] for `STR.edf`, g[16] for BRP/SA2/PLD/TCV
-   g[17] for event labels, and g[19] for DDO/reporting sources.
-6. For cross-version or cross-variant patching, resolve names and table bases
-   from the target image rather than importing offsets from another build.
-
----
-
-## Physical packing and pointer-owned payloads
-
-`globals[]` entries are accessor roots, not ownership boundaries. The sorted
-address range from one global pointer to the next is useful for locality, but
-it does not mean every byte in that range belongs to that global's primary
-structure.
-
-Most globals fall into one of two shapes:
-
-- **Direct arrays**: the global points at a fixed-stride table and firmware
-  knows the count from dispatch ranges or a nearby scalar. Examples: g[1],
-  g[2], g[3], g[5], g[10], g[12], g[14], g[17].
-- **Header objects**: the global points at a small header whose payload lives
-  elsewhere by pointer. Examples: g[6], g[7], g[15], g[16], g[19].
-
-The CONF block then packs many pointer-owned payloads into gaps after those
-headers and arrays. Common payloads include:
-
-- g[8] short-name bucket payloads
-- g[6] var-id list payloads
-- g[17] event label pointer tables
-- g[16] EDF stream signal records
-- g[14] periodic collection var-id lists and signal metadata
-- string/unit/code pools referenced by pointer fields
-
-Example from vid03 15.8.4.0:
-
-| Physical location | Logical owner |
-|-------------------|---------------|
-| after g[2] descriptors at `0x025688` | g[15] `SummaryRecord` table |
-| after g[3] descriptors | g[8] `Z`, `S`, and `A` short-name bucket payloads |
-| after g[7] `PDL` header | g[17] `CSL` label table, g[8] `K`/`N` buckets, EDF strings referenced by other tables |
-| after g[12] event definitions | g[8] `O` short-name bucket payload |
-| inside the g[14] address interval | g[14] signal metadata, g[8] buckets, g[6] `HST` list |
-| after g[18] permission table | g[8] `C`, `M`, `R`, and `H` bucket payloads |
-
-So "tail" data after an array is often related, just not related through the
-array's record stride. Patchers must follow pointers and known header counts
-before treating any area as free or movable. Erased `0xff` slack is usable only
-after confirming no known table, list, string, or pointer table references it.
-
-Across the checked 15.8.4.0 images, the main pointer-owned payload split
-points are stable:
-
-| Physical interval | Pointer-owned payload start |
-|-------------------|-----------------------------|
-| g[2] | g[15] `SummaryRecord` table at g[2] + `0x5580` |
-| g[12] | g[8].`O` bucket at g[12] + `0x33c` |
-| g[14] | g[8].`D` bucket at g[14] + `0x16c` |
-| g[18] | g[8].`M`/`R`/`H`/`C` buckets after the permission table |
-| g[7] | g[17].`CSL`, g[8].`K`/`N`, and g[14].`CSF` payloads |
-| g[13] | g[6].`DDO` list payload at g[13] + `0x80` |
-
-### Address-sorted layout example
-
-The master table order is logical, not physical. In vid03 15.8.4.0, the
-address-sorted layout begins with g[0], g[2], g[5], g[9], g[10], then g[1].
-Patchers must use the master-table roots and descriptor formats to identify
-arrays, not physical order alone.
-
-| Root | File range | Primary object |
-|------|------------|----------------|
-| g[0] | `0x020000..0x020108` | CONF header |
-| g[2] | `0x020108..0x027188` | numeric descriptors, then pointer-owned payloads |
-| g[5] | `0x027188..0x0287e8` | enum descriptors |
-| g[9] | `0x0287e8..0x0295cc` | 3-char short-name reverse pool |
-| g[10] | `0x0295cc..0x029b70` | mode registration rows |
-| g[1] | `0x029b70..0x029ff8` | scalar descriptors |
-| g[12] | `0x029ff8..0x02a5a0` | event definitions, then pointer-owned payloads |
-| g[3] | `0x02a5a0..0x02acd0` | bitfield descriptors, then g[8] bucket payloads |
-| g[14] | `0x02acd0..0x02b39c` | collection headers, then pointer-owned payloads |
-| g[18] | `0x02b39c..0x02b8c0` | RPC node permissions, then g[8] bucket payloads |
-| g[8] | `0x02b8c0..0x02ba54` | A-Z short-name bucket headers |
-| g[17] | `0x02ba54..0x02bb68` | event label table headers |
-| g[4] | `0x02bb68..0x02bff0` | option/index byte-list pool and pointer-owned tables |
-| g[13] | `0x02bff0..0x02c0f0` | event route table, padding, then g[6].`DDO` list payload |
-| g[6] | `0x02c0f0..0x02c468` | var-id list headers, then pointer-owned list payloads |
-| g[16] | `0x02c468..0x02cce8` | EDF stream headers, then pointer-owned signal tables |
-| g[15] | `0x02cce8..0x02cf60` | STR header, inline auxiliary key map, then EDF label strings |
-| g[7] | `0x02cf60..0x02d040` | PDL header, then pointer-owned payloads |
-| g[19] | `0x02d040..0x040000` | DDO/reporting header and pools |
-
----
-
 ## Structure families
 
-Use this as the first-pass classifier when analyzing a byte range:
+CONF roots use the following structure families and extent rules:
 
-| Family | Typical root | How to find extent |
-|--------|--------------|--------------------|
-| Descriptor array | g[1]/g[2]/g[3]/g[5] | dispatch range count times stride |
-| Fixed table | g[10]/g[12]/g[14]/g[17] | known count times stride, or stop at invalid pointers |
-| Header + list pointer | g[6]/g[7]/g[19] | header count plus the pointed u16 list |
-| Header + record pointer | g[15]/g[16] | header count plus pointed records and strings |
-| Permission table | g[18] | highest APPL node id times 2; later bytes are owned through other roots |
-| Pointer-owned payload | tails after many globals | only pointer references define ownership |
-
-This is also the safest patching rule: update the object through its own
-header fields and pointers, not by assuming everything between two adjacent
-global roots is one object.
+| Family | Roots | Extent rule |
+|--------|-------|-------------|
+| Descriptor array | g[1], g[2], g[3], g[5] | APPL dispatch count multiplied by record stride |
+| Byte pool | g[4] | maximum `selection_order_offset + bit_count` referenced by g[3] |
+| Fixed table with companion count | g[10] | g[11] multiplied by record stride |
+| Fixed table | g[6], g[13] | fixed record count multiplied by record stride |
+| Table with APPL-defined count | g[12], g[14], g[16], g[17] | consumer count multiplied by record stride |
+| Header with referenced data | g[7], g[15], g[19] | header size; decode referenced objects through their pointer and count fields |
+| Bucket headers | g[8] | 26 headers; each header carries its own entry pointer and count |
+| Var-id indexed table | g[9] | number of DataItem IDs multiplied by three bytes |
+| Node-id indexed table | g[18] | number of RPC node IDs multiplied by two bytes |
 
 ---
 
-## Var-ID dispatch
+## DataItem descriptor selection
 
-`DataItemFactory_create` routes var IDs to descriptor arrays by range.
-Implicit indexing: `record_index = var_id - id_base`. Those ranges are
-computed from descriptor counts in the target image, so they drift across
-firmware releases.
-
-| Version | Table | var_id range | Stride | Records |
-|---------|-------|--------------|---:|---:|
-| 14.8.3.0 | g[1] | `0x0000..0x006e` | 10 | 111 |
-| 14.8.3.0 | g[2] | `0x006f..0x0306` | 32 | 664 |
-| 14.8.3.0 | g[3] | `0x0307..0x0320` | 20 | 26 |
-| 14.8.3.0 | g[5] | `0x0321..0x047a` | 16 | 346 |
-| 15.8.4.0 | g[1] | `0x0000..0x0073` | 10 | 116 |
-| 15.8.4.0 | g[2] | `0x0074..0x031f` | 32 | 684 |
-| 15.8.4.0 | g[3] | `0x0320..0x0339` | 20 | 26 |
-| 15.8.4.0 | g[5] | `0x033a..0x049f` | 16 | 358 |
-| 16.8.5.0 | g[1] | `0x0000..0x0076` | 10 | 119 |
-| 16.8.5.0 | g[2] | `0x0077..0x0329` | 32 | 691 |
-| 16.8.5.0 | g[3] | `0x032a..0x0343` | 20 | 26 |
-| 16.8.5.0 | g[5] | `0x0344..0x04b1` | 16 | 366 |
-
-Example from 15.8.4.0: `TherapyLEDAlwaysOn` var_id `0x0484` ->
-`g[5][0x0484 - 0x033a]` = `g[5][330]` -> file offset `0x28628`.
-
-g[5]'s `id_base` shifts by version because it depends on the preceding table
-counts:
+DataItem var IDs address the descriptor arrays as one contiguous sequence:
 
 ```text
-g[5] id_base = g[1] count + g[2] count + g[3] count
+g[1] base = 0
+g[2] base = g[1] base + g[1] count
+g[3] base = g[2] base + g[2] count
+g[5] base = g[3] base + g[3] count
+
+record_index = var_id - selected_array_base
 ```
 
-| Version | g[1]+g[2]+g[3] | g[5] id_base |
-|---------|----------------|--------------|
-| 14.8.3.0 | 111 + 664 + 26 | `0x0321` |
-| 15.8.4.0 | 116 + 684 + 26 | `0x033a` |
-| 16.8.5.0 | 119 + 691 + 26 | `0x0344` |
-
-Using a different version's `id_base` shifts every enum var onto the wrong
-record. Patchers must recompute it from the target image's master table and
-resolve variables by short/long name or descriptor shape before using a
-var_id.
-
-Version-local examples:
-
-| Variable | 14.8.3.0 | 15.8.4.0 | 16.8.5.0 |
-|----------|---------:|---------:|---------:|
-| `HeartRate` / `HRT` | `0x0157` | `0x0168` | `0x0173` |
-| `SpO2` / `SAO` | `0x0285` | `0x029c` | `0x02a7` |
-| `LanguageConfiguration` / `LNC` | `0x0312` | `0x032b` | `0x0335` |
-| `BluetoothPassthrough` / `BNP` | `0x033e` | `0x0357` | `0x0365` |
-| `ActiveTherapyProfile` / `MOP` | `0x03f1` | `0x040e` | `0x0420` |
-| `PeripheralMsg` / `PMS` | `0x03fe` | `0x041b` | `0x042d` |
-| `RampEnablePatientAccess` / `RPE` | `0x0410` | `0x042d` | `0x043f` |
+Descriptor counts are release-specific. Three-letter tags and RPC long names
+provide cross-release variable identity.
 
 ---
 
 ## Flags field
 
-The u16 at +0x00 of every g[1]/g[2]/g[3]/g[5] descriptor record. Encodes
-descriptor capability bits and seeds runtime state bits.
+The u16 at `+0x00` of every g[1], g[2], g[3], and g[5] descriptor contains
+the initial DataItem flags. Some bits describe immutable capabilities; others
+seed mutable runtime shadow state.
 
-The descriptor's data-item type (scalar/numeric/bitfield/enum) is not
-encoded here -- it is implicit in which globals[] table holds the record;
-`DataItemFactory_create` routes by var_id range alone (see
-[Var-ID dispatch](#var-id-dispatch)).
+| Bit | Mask | Name | Meaning |
+|----:|------|------|---------|
+| 0 | `0x0001` | `ACTIVE` | Item participates in normal use, settings loading, and writes. Factory dispatch is independent of this bit. |
+| 1 | `0x0002` | `VISIBLE` | Baseline visible state. Effective visibility also depends on runtime shadow state. |
+| 2 | `0x0004` | `MODE_BOUND` | Item participates in mode-dependent GUI binding. This is independent of visibility. |
+| 3 | `0x0008` | `SIGNED` | Selects signed numeric conversion and serialization. g[2] default/min/max storage is always signed i32. |
+| 4 | `0x0010` | `INHIBITED` | Suppresses runtime value availability without clearing the stored value. |
+| 5 | `0x0020` | `HAS_VALUE` | The runtime value storage has been initialized. This bit does not by itself make the item available. |
+| 6 | `0x0040` | `UPDATE_LOCK` | Blocks non-forced value commits and changes to `INHIBITED`. It is not part of the availability predicate. |
+| 7 | `0x0080` | `RAW_NUMERIC` | g[2] input bypasses step quantization and is saturated to the active bounds. |
+| 8 | `0x0100` | `MONITORED` | Runtime change monitoring is enabled; used by `ValueChange` subscriptions. |
+| 9 | `0x0200` | `RPC_EXPOSED` | Item may be resolved and formatted through the RPC/name layer. |
+| 10 | `0x0400` | `RPC_WRITABLE` | RPC `Set` may write the item. Firmware may change this bit at runtime. |
+| 11 | `0x0800` | `PERSISTENT_SETTING` | Item belongs to the persistent-setting apply cohort used by settings-file loading, reset-to-default, and callback reapplication. |
 
-### Bit map
+Bits 12 through 15 have no defined use in the documented layouts.
 
-Bit semantics derived from the DataItem base-class accessors at `0x08070dde`
-.. `0x08070f26` and their callers. Bits with named meanings have been traced
-to specific high-level callers; the rest are documented by their accessor
-behavior only.
+The value-bearing availability predicate is:
 
-| Bit | Mask | Source | Name / role | Evidence |
-|----:|------|--------|-------------|----------|
-| 0 | `0x0001` | descriptor + shadow | **ACTIVE** -- master enable | universal precondition; cleared on inactive variant rows (`0x0606` etc.); seeded into shadow at boot |
-| 1 | `0x0002` | descriptor AND shadow | **VISIBLE** -- UI/RPC node visibility | `therapy_profiles_update` writes from `node_isVisible(...)`; mirrored from `FeatureProfiles` permission state |
-| 2 | `0x0004` | shadow | **ACTIVE_MODE_BOUND** -- mutated together with bit 10 in `ActiveTherapyProfile` enter/leave paths | toggled in pairs at `0x08151766` (clear) and `0x08151808` (set) |
-| 3 | `0x0008` | descriptor only | **NUMERIC_SOURCE** -- g[2]-only source/reporting numeric marker | set on live/source/summary numeric rows such as RawFlow, 100 Hz pressure/flow, one-minute values, and D00-style source slots; absent from config settings |
-| 4 | `0x0010` | shadow | runtime inhibit/state flag; accessor returns true when clear | test pattern at `0x08070e70` |
-| 5 | `0x0020` | shadow | **HAS_VALUE** -- value present / set since reset | set by `FUN_08070db4` after every `setValue`; AND-checked across required-var lists to validate "all needed values present" |
-| 6 | `0x0040` | shadow | **RUNTIME_FLAG_40** -- runtime-only shadow flag | no ROM descriptor in the checked 15.8.4.0 variants has this bit set; accessor exists at `0x08070df2` |
-| 7 | `0x0080` | descriptor only | **NUMERIC_RUNTIME_VALUE** -- g[2]-only runtime/measurement numeric marker | set on most runtime/measurement numerics; absent from g[1]/g[3]/g[5] and from most therapy/config settings |
-| 9 | `0x0200` | shadow | mutable; always set in ROM on observed records | accessor at `0x08070e3e` |
-| 10 | `0x0400` | shadow + setter | toggled together with bit 2 in `ActiveTherapyProfile` enter/leave paths | accessor at `0x08070e46`, setter wrapper at `0x08070f26` |
-| 11 | `0x0800` | descriptor + shadow | **SETTING_APPLY_CANDIDATE** -- persistent/apply-path candidate marker | set on most mutable HST setting rows and selected TLP/meter/reset rows; absent from passive display choices such as Language, TemperatureUnit, and ActiveTherapyProfile; accessor at `0x08070e4e` |
+```text
+is_active() && HAS_VALUE && !INHIBITED
+```
 
-Bit 8 and bits 12-15 have not been observed set in any descriptor and have no
-known accessor.
+`HAS_VALUE` records that a producer or settings loader has supplied a value.
+`INHIBITED` can temporarily hide that value from consumers while retaining it.
+`UPDATE_LOCK` protects both the retained value and the inhibited state: a
+non-forced commit or inhibit-state change is ignored while the lock is set,
+while a forced operation still takes effect.
 
 ---
 
 ## Common DataItem descriptor fields
 
-The g[1]/g[2]/g[3]/g[5] descriptors share the same flags, owner reference,
-and factory tag fields. The u16 at +0x02 is array-specific: it behaves like a
-grouping id in g[1]/g[2]/g[3], but in g[5] it is the enum option-pool offset
-into g[4].
+The fields below have the same layout and meaning in g[1], g[2], g[3], and
+g[5].
 
-| Offset | Field | Meaning |
-|--------|-------|---------|
-| +0x00 | flags | active/visibility/runtime seed bits; see [Flags field](#flags-field) |
-| +0x04 | owner_ref | named-list anchor or parent/source var reference; `0x7fff` means none |
-| +0x06 | factory_tag | DataItem factory/class tag; normally `0x0017` |
+| Offset | Size | Field | Meaning |
+|--------|-----:|-------|---------|
+| +0x00 | 2 | flags | active/visibility/runtime seed bits; see [Flags field](#flags-field) |
+| +0x02 | 1 | data_rule_id | callback index in the APPL data-rule registry; zero means no callback |
+| +0x03 | 1 | reserved | zero |
+| +0x04 | 2 | linked_counter_index | g[2] descriptor index incremented when this item is committed; `0x7fff` means none |
+| +0x06 | 1 | change_event_queue_index | g[12] queue receiving the item change event; the g[12] count is the no-queue sentinel for that release |
+| +0x07 | 1 | reserved | zero |
 
-### ui_group_id
+Membership in a persistent settings group is defined by the var-id lists
+referenced by g[6], not by these descriptor fields.
 
-Stored at `+0x02` in g[1], g[2], and g[3] records.
+---
 
-For g[1]/g[2]/g[3], non-zero `ui_group_id` values cluster settings that the
-GUI/config/RPC layer treats as a small family. The role is inferred from
-cross-record grouping and is consistent across the checked 15.8.4.0 variants.
+## Data rule callbacks
 
-Examples from vid03 15.8.4.0:
+APPL maintains a fixed-size runtime registry indexed by `data_rule_id`. Its
+constructor initializes every slot to an application-error callback;
+subsystems replace the nonzero slots they own during startup. The IDs form a
+release-specific interface between CONF descriptors and APPL code; they are
+not pointers or indexes into another CONF root.
 
-| ui_group_id | Records |
-|------------:|---------|
-| `0x04` | HerAuto pressure triplet |
-| `0x05` | AutoSet pressure triplet |
-| `0x0b` | climate numeric siblings, humidifier level, heated tube temperature |
-| `0x0d` | CPAP pressure pair |
-| `0x20` | iVAPS target rate and inspiratory time group |
-| `0x28` | iVAPS EPAP/pressure-support group |
-| `0x32` | PAC pressure/rate/time group |
-| `0x43` | ST pressure/rate/time group |
-| `0x46` | Spont pressure/time/rate-enable group |
-| `0x49` | Timed pressure/rate/time group |
-| `0x4d` | VAuto pressure/time/sensitivity group |
+Normal DataItem commits process a rule in this order:
 
-Singleton group ids also exist, for example `LanguageConfiguration` uses
-`0x29`, `MaxRampDownTime` uses `0x2c`, and `MaxRampTime` uses `0x2d`.
+1. validate and store the new value;
+2. increment `linked_counter_index`, when present;
+3. invoke the callback selected by `data_rule_id`;
+4. publish the monitored value change.
 
-### owner_ref
+The callback therefore observes the committed value and can update dependent
+bounds, values, or visibility before change processing finishes. Multiple
+DataItems may select the same callback. A zero ID skips this step. A nonzero ID
+whose callback was not registered reports a firmware application error.
 
-`owner_ref` has two observed modes:
+For example, `ActiveTherapyProfile` (`MOP`) selects rule `0x34`. Its callback
+applies the selected therapy mode's g[10] visibility column and then recomputes
+the additional mode-dependent setting visibility.
 
-1. If the value matches a g[6] list anchor (`BGL`, `DDO`, `DID`, `HST`,
-   `MCA`, `MCF`, `TLP`), the DataItem belongs to that named list.
-2. Otherwise, non-`0x7fff` values are actual var_ids used as parent/source
-   references by small dependent records.
+This mechanism is independent of `change_event_queue_index`: a data rule
+updates firmware state synchronously, while the queue index selects an event
+spool for the committed change.
 
-Known g[6] anchors:
-
-| owner_ref | g[6] tag | Role |
-|----------:|----------|------|
-| `0x0071` | `BGL` | pressure and flow calibration coefficients: gain/offset pairs for flow, pressure, and pressure monitor conversion |
-| `0x00a5` | `DDO` | data-delivery/reporting DataItems: event and periodic payload handles plus companion timestamp/status fields used by the DDO/reporting path |
-| `0x00b2` | `DID` | identification profile fields: product, serial, UUID/UDI, geography, hardware, and cellular model/provider identity |
-| `0x00c5` | `TLP` | telemetry/cloud control plane fields: APN/service endpoint, data mode, broker periods, OTA status/report periods, CAL/flight flags, and internal transport/log state |
-| `0x010b` | `HST` | settings-history persistence set: therapy parameters, comfort/ramp/EPR/climate/circuit/language/reminder/alarm/display settings, including hidden modes |
-| `0x0182` | `MCA` | single CAML broker/config blob (`CamlData`), an encoded cloud/update state payload |
-| `0x0183` | `MCF` | single application-data blob (`ApplicationData`), companion opaque application config/state payload |
-
-
-Examples of true parent/source references in g[5]:
-
-| Record | owner_ref | Referenced var |
-|--------|----------:|----------------|
-| `TDS` TestDriveState | `0x0284` | `SMT` |
-| `TZE` | `0x028c` | SetPressure-100hz |
-| `ZSD` | `0x02ab` | ST-FallTime |
-| `SCH` | `0x0224` | PAC-StartPressure |
-
-### factory_tag
-
-`factory_tag` is `0x0017` for all observed g[1]/g[2]/g[3] descriptors and
-all normal g[5] descriptors. The checked 15.8.4.0 g[5] exception is `FSE` /
-`SystemError`, which has `factory_tag = 0x0009`, 23 options, and
-`option_mask = 0x007fffff`. Treat this as a factory/class discriminator, not
-as a free constant.
-
-### Descriptor role summary
-
-| Array | Offset | Field | Role |
-|-------|--------|-------|------|
-| g[1]/g[2]/g[3] | +0x02 | ui_group_id | related-setting cluster id |
-| g[5] | +0x02 | g4_options_offset | byte offset into the enum code-list pool in g[4] |
-| g[1]/g[2]/g[3]/g[5] | +0x04 | owner_ref | g[6] list anchor or parent/source var reference |
-| g[1]/g[2]/g[3]/g[5] | +0x06 | factory_tag | DataItem factory/class discriminator |
-| g[2] | +0x1a | bounds_slot | dynamic numeric bounds slot; `0x3e` means use descriptor min/max directly |
-| g[2] | +0x1b | sample_source_id | runtime sample-channel id on selected source numerics; zero on normal settings |
-| g[2] | +0x1c | quantity_class | physical quantity/unit family used with scale/format |
+`as11_descriptors.py firmware.bin data-rules` reconstructs the APPL callback
+map and lists the CONF variables assigned to each rule.
 
 ---
 
 ## g[0] -- CONF header
 
-Not a descriptor array; points to the start of the CONF block. Direct readers
-populate platform/build identifiers.
+g[0] points to the start of the CONF block and supplies platform and build
+identifiers.
 
 | Offset | Size | Field | Description |
 |--------|------|-------|-------------|
-| +0x00 | 4 | DataVersionIdentifier (`_PVD`) | `0x0f` (15) on 15.8.4.0; major version field of the SW string |
-| +0x04 | 4 | PlatformIdentifier (`_MID`) | `0x2e` (46); platform identifier |
-| +0x08 | 4 | -- | zero |
-| +0x0c | 4 | VariantIdentifier (`_VID`) | 3, 7, 10, 12 |
-| +0x10 | 4 | -- | zero |
-| +0x14 | 4 | ProfileVariantIdentifier ptr | UUID-format string |
-| +0x18 | 16 | platform name | "SIMPLICITY" |
-| +0x28 | 16 | model | "390XX" |
-| +0x38 | 16 | codename | "Pacific" |
-| +0x68 | char[] | application git hash | "791777c3b" |
-| +0x72 | char[] | data model version | "v2.15.2" |
-| +0x7e | char[] | data model git hash | "7fc2c6467" |
-| +0x100 | -- | Thumb trampoline | returns master table pointer at +0x104 |
-| +0x104 | 4 | master table pointer | |
+| +0x00 | 4 | DataVersionIdentifier (`_PVD`) | data/configuration schema generation |
+| +0x04 | 4 | PlatformIdentifier (`_MID`) | platform identifier; 46 on Air11 |
+| +0x08 | 4 | AID | application identity component |
+| +0x0c | 4 | VariantIdentifier (`_VID`) | product variant |
+| +0x10 | 4 | RegionIdentifier (`_RID`) | region identity component |
+| +0x14 | 4 | ProfileVariationIdentifier ptr | UUID-format string |
+| +0x18 | 16 | platform family text | "SIMPLICITY" |
+| +0x28 | 16 | default ProductCode | copied to `PCD` when product identity is empty or reset |
+| +0x38 | 16 | default ProductName | copied to `PNA` when product identity is empty or reset |
+| +0x48 | 32 | reserved | zero |
+| +0x68 | 10 | configuration build hash | NUL-terminated, e.g. "791777c3b" |
+| +0x72 | 11 | data model version | NUL-terminated, e.g. "v2.15.2" |
+| +0x7d | 11 | data model build hash | NUL-terminated, e.g. "7fc2c6467" |
+| +0x88 | 120 | unused | erased (`0xff`) |
+
+The header occupies `0x100` bytes. At `CONF+0x100`, a four-byte Thumb veneer
+returns the pointer stored at `CONF+0x104`; that pointer addresses the
+`globals[]` master table. Firmware 11.8.0.1 has 19 roots (`g[0]..g[18]`);
+14.8.3.0 and later have 20 (`g[0]..g[19]`).
+
+| APPX release | `_PVD` | `_MID` | `_AID` | Data model | Configuration hash | Data-model hash |
+|--------------|-------:|-------:|-------:|------------|--------------------|-----------------|
+| 8.0.1 | 11 | 46 | 0 | `v2.2.1` | `d43514eda` | `39783838c` |
+| 8.3.0 | 14 | 46 | 0 | `v2.5.0` | `81371a5ed` | `2f569f795` |
+| 8.4.0 | 15 | 46 | 0 | `v2.15.2` | `791777c3b` | `7fc2c6467` |
+| 8.5.0 | 16 | 46 | 0 | `v2.15.3` | `9cd562102` | `53c1a73b8` |
+| 8.6.0 | 17 | 46 | 0 | `v2.17.1` | `6c36d978a` | `e183d56e9` |
 
 ### Runtime composite identifiers
 
@@ -426,17 +275,15 @@ The runtime RPC composes several identifiers from the header fields above:
 |-----------|------------------------|-------------|
 | `_FGT` | `2e_M46_V3` | `<MID-hex>_M<MID-decimal>_V<VID>` |
 | `ProfileVariantIdentifier` | `00000000-0000-3000-8000-000015046003` | UUID with trailing `<PVD:02d><MID:03d><VID:03d>` |
-| `ApplicationIdentifier` | `SW04600.15.8.4.0.791777c3b` | `SW<04600>.<full SW version>.<+0x68>` |
-| `DataModelVersionIdentifier` | `v2.15.2.7fc2c6467` | `<+0x72>.<+0x7e>` |
-| `ConfigurationIdentifier` | `CF04600.15.03.00.791777c3b` | `CF<04600>.<PVD:02d>.<VID:02d>.00.<+0x68>` |
+| `ApplicationIdentifier` | `SW04600.15.8.4.0.791777c3b` | `SW<MID:03d><AID:02d>.<APPX version and hash>` |
+| `DataModelVersionIdentifier` | `v2.15.2.7fc2c6467` | `<+0x72>.<+0x7d>` |
+| `ConfigurationIdentifier` | `CF04600.15.03.00.791777c3b` | `CF<MID:03d><AID:02d>.<PVD:02d>.<VID:02d>.<RID:02d>.<+0x68>` |
 
-The `04600` token in `ApplicationIdentifier` and `ConfigurationIdentifier`
-appears to be a fixed product-line marker derived from the platform identifier
-(`0x2e * 100` = `4600`).
+The `04600` token is `PlatformIdentifier=046` followed by `AID=00`.
 
 ---
 
-## g[1] -- scalar DataItem descriptors
+## g[1] -- volatile-text DataItem descriptors
 
 **Record stride:** 10 bytes
 
@@ -447,20 +294,24 @@ in SRAM; this descriptor only describes its shape.
 | Offset | Size | Field | Description |
 |--------|------|-------|-------------|
 | +0x00 | 2 | flags | see [Flags field](#flags-field) |
-| +0x02 | 2 | ui_group_id | see [ui_group_id](#ui_group_id) |
-| +0x04 | 2 | owner_ref | see [owner_ref](#owner_ref) |
-| +0x06 | 2 | factory_tag | common descriptor field; `0x0017` in observed records |
-| +0x08 | 2 | max_length | maximum string length in bytes (e.g. 30, 32, 50, 64, 192) |
+| +0x02 | 1 | data_rule_id | see [Common DataItem descriptor fields](#common-dataitem-descriptor-fields) |
+| +0x03 | 1 | reserved | zero |
+| +0x04 | 2 | linked_counter_index | linked g[2] update-counter descriptor |
+| +0x06 | 1 | change_event_queue_index | g[12] queue index or no-queue sentinel |
+| +0x07 | 1 | reserved | zero |
+| +0x08 | 2 | buffer_capacity | allocated runtime string-buffer capacity in bytes (e.g. 30, 32, 50, 64, 192) |
 
 Example -- `SID` / `ApplicationIdentifier` in 16.8.5.0:
 
 | Offset | Raw bytes | Field | Decoded value |
 |-------:|-----------|-------|---------------|
 | `+0x00` | `07 02` | flags | `0x0207` |
-| `+0x02` | `00 00` | ui_group_id | `0` |
-| `+0x04` | `FF 7F` | owner_ref | `0x7fff` (none) |
-| `+0x06` | `17 00` | factory_tag | `0x0017` |
-| `+0x08` | `40 00` | max_length | 64 bytes |
+| `+0x02` | `00` | data_rule_id | no rule callback |
+| `+0x03` | `00` | reserved | 0 |
+| `+0x04` | `FF 7F` | linked_counter_index | none |
+| `+0x06` | `17` | change_event_queue_index | no-queue sentinel in this release |
+| `+0x07` | `00` | reserved | 0 |
+| `+0x08` | `40 00` | buffer_capacity | 64 bytes |
 
 ---
 
@@ -475,67 +326,58 @@ by `scale`.
 | Offset | Size | Field | Description |
 |--------|------|-------|-------------|
 | +0x00 | 2 | flags | see [Flags field](#flags-field) |
-| +0x02 | 2 | ui_group_id | see [ui_group_id](#ui_group_id) |
-| +0x04 | 2 | owner_ref | see [owner_ref](#owner_ref) |
-| +0x06 | 2 | factory_tag | common descriptor field; `0x0017` in observed records |
+| +0x02 | 1 | data_rule_id | DataItem rule callback id |
+| +0x03 | 1 | reserved | zero |
+| +0x04 | 2 | linked_counter_index | linked g[2] update-counter descriptor |
+| +0x06 | 1 | change_event_queue_index | g[12] queue index or no-queue sentinel |
+| +0x07 | 1 | reserved | zero |
 | +0x08 | 4 | default_raw | factory default in raw units |
 | +0x0c | 4 | max_raw | upper clamp |
 | +0x10 | 4 | min_raw (i32) | lower clamp; negative on signed records |
-| +0x14 | 2 | format_selector | display formatter index (`0` plain, `1` scaled, `2` ms, `3` h:m:s, `4` text/bool, ...) |
-| +0x16 | 2 | scale | raw-to-display divisor (e.g. raw 500 / scale 50 = display 10.0) |
-| +0x18 | 2 | step_raw | UI increment/decrement step in raw units |
-| +0x1a | 1 | bounds_slot | dynamic min/max bounds slot; `0x00..0x3d` index the runtime bounds table, `0x3e` uses static descriptor bounds |
-| +0x1b | 1 | sample_source_id | nonzero on selected runtime/source numerics; zero on normal settings |
-| +0x1c | 4 | quantity_class | physical quantity / unit class used with formatter/reporting code |
+| +0x14 | 1 | decimal_places | number of fractional digits emitted by numeric RPC/JSON formatting |
+| +0x15 | 1 | reserved | zero |
+| +0x16 | 2 | scale (i16) | raw-to-display divisor (e.g. raw 500 / scale 50 = display 10.0) |
+| +0x18 | 2 | step_raw (i16) | UI increment/decrement step in raw units |
+| +0x1a | 1 | bounds_slot | signed selector for a runtime bounds-table slot or the descriptor's static min/max fields |
+| +0x1b | 1 | sample_block_signal_id | wire identifier for this value in a g[14] compressed sample block; zero means no periodic signal assignment |
+| +0x1c | 1 | quantity_class | physical quantity / unit class used by RPC range metadata |
+| +0x1d | 3 | reserved | zero |
 
-Format-selector decoding lives in `FUN_08073426`. Selector values map to:
+RPC numeric output divides the raw value by `scale` and rounds it to
+`decimal_places`. ISO duration, date/time, and timezone encodings are selected
+by a separate APPL table keyed by var-id; they are not encoded by this field.
 
-| Selector | Display |
-|---------:|---------|
-| 0 | raw integer (with `scale` for divisor) |
-| 1 | raw / scale |
-| 2 | raw * 1000, with scale (ms) |
-| 3 | raw / 3600 (hours) |
-| 4 | text/bool lookup |
-| 5 | raw / 60 (minutes) |
-| 6 | text/bool lookup, alt |
-| 7 | raw * 60, with scale |
-| 8 | raw * 1000, with scale (ms, signed) |
-| 9 | raw as i8, with scale |
+### bounds_slot
 
-Code anchors:
+`bounds_slot` selects the source of numeric min/max limits. Firmware reads it
+as signed i8. Nonnegative values below the release's runtime-table count select
+dynamic bounds; larger nonnegative values select the descriptor's own
+`min_raw` and `max_raw` fields.
 
-| Function | Reads | Use |
-|----------|-------|-----|
-| `FUN_08073660` / `..737dc` / `..73838` / `..738a6` | record+0x18 | numeric step |
-| `FUN_08073c2c` | record+0x16 | display scale |
-| `FUN_08073426` | record+0x14 (via param) | format selector |
-| `FUN_08073900` | record+0x0c, +0x10 | min/max bounds |
+| APPX | Dynamic slots | Canonical static marker |
+|------|---------------|-------------------------|
+| 8.0.1 through 8.4.0 | `0x00..0x3d` | `0x3e` |
+| 8.5.0 and 8.6.0 | `0x00..0x3c` | `0x3d` |
 
-### bounds_slot and sample_source_id
-
-`bounds_slot` selects the source of numeric min/max limits. The numeric
-accessor code reads byte `+0x1a` as a signed byte and compares it with
-`0x3e`.
-
-- `0x00..0x3d` index a 62-entry RAM table of dynamic min/max bounds.
-- `0x3e` selects the descriptor's own `min_raw` and `max_raw` fields.
-- A numeric setting uses a dynamic slot when its legal range depends on other
-  state; otherwise it usually uses `0x3e`.
+The comparison also routes values between the static marker and `0x7f` to
+static bounds. Descriptor tables in the listed releases use the canonical
+marker. Values `0x80..0xff` are signed negative selectors and are invalid in a
+CONF descriptor.
 
 Conceptually:
 
 ```c
 struct DynamicBounds {
-    int32_t min_raw;
     int32_t max_raw;
+    int32_t min_raw;
 };
 
-DynamicBounds dynamic_bounds[0x3e];  // slots 0x00..0x3d
+size_t dynamic_bounds_count = release_dynamic_bounds_count;
+int8_t slot = descriptor.bounds_slot;
 
-if (descriptor.bounds_slot < 0x3e) {
-    min_raw = dynamic_bounds[descriptor.bounds_slot].min_raw;
-    max_raw = dynamic_bounds[descriptor.bounds_slot].max_raw;
+if (slot < dynamic_bounds_count) {
+    min_raw = dynamic_bounds[slot].min_raw;
+    max_raw = dynamic_bounds[slot].max_raw;
 } else {
     min_raw = descriptor.min_raw;
     max_raw = descriptor.max_raw;
@@ -543,17 +385,44 @@ if (descriptor.bounds_slot < 0x3e) {
 ```
 
 For example, `RMT` / `RampTime` has `bounds_slot = 0x21`, so its active range
-comes from `dynamic_bounds[0x21]`. `MRT` / `MaxRampTime` has
-`bounds_slot = 0x3e`, so its active range comes from its own descriptor fields.
+comes from `dynamic_bounds[0x21]`. In 16.8.5.0,
+`Cpap-SetPressure` has `bounds_slot = 0x3d`, so its active range comes from its
+own descriptor fields.
 
+`as11_descriptors.py firmware.bin bounds-slots` lists the dynamic slots, their
+g[2] users, and the descriptor values used to initialize each slot.
 
-`sample_source_id` is byte `+0x1b`. It is zero on normal settings and nonzero
-on a small group of ownerless runtime source numerics.
-The nonzero values form a stable source-channel id namespace
-used by periodic/session collection plumbing. g[14] collections select
-DataItems by var_id and may use any subset of these source channels.
+### sample_block_signal_id
 
-Observed nonzero source ids:
+g[14] selects each value to sample by var ID. The selected numeric DataItem's
+`sample_block_signal_id` supplies the wire identifier stored with its compressed
+payload. It does not select the DataItem, sampling interval, or codec.
+
+Each encoded sample block contains a channel directory followed by the channel
+payloads:
+
+```text
+channel directory:  { u8 signal_id, u16 payload_bytes } * signal_count
+channel payloads:   payload[0] || payload[1] || ...
+```
+
+The decoder finds a channel by `signal_id`, then uses `payload_bytes` to locate
+the corresponding compressed data. ID zero is reserved as no channel: the
+lookup functions do not return a payload for it. Every DataItem referenced by
+a stock g[14] collection has a nonzero ID, while other numeric DataItems may
+carry IDs reserved for collections not enabled in that CONF image.
+
+This ID belongs only to the g[14] periodic sample-block format. Other spool
+families use their own record schemas. The `StartSpool` formatter consumes the
+ID while mapping an internal sample block to output protobuf fields, so the ID
+is not necessarily present in the returned RPC payload.
+
+For example, the `RFD` collection selects `BRF` by var ID. `BRF` has
+`sample_block_signal_id = 0x17`, so the saved block identifies its payload as
+signal `0x17`. The spool formatter recognizes `0x17` as the respiratory-flow
+channel used by `RespiratoryFlow6p25Hz`.
+
+Periodic sample-block signal IDs:
 
 ```text
 01 AIP  02 LKP  03 AAH  04 RFA  05 AFL  06 LKR  07 BPA  08 BFL  09 BPR
@@ -563,14 +432,28 @@ Observed nonzero source ids:
 
 ### quantity_class
 
-`quantity_class` is a semantic unit family id used with `format_selector`,
-`scale`, and sometimes stream-specific metadata to present or report numeric
-values.
+`quantity_class` identifies the physical quantity associated with the numeric
+value. RPC range metadata emits units for the following classes:
 
-Across the 15.8.4.0 variants, the observed classes are:
+| quantity_class | RPC unit |
+|---------------:|----------|
+| `0x00` | `cmH2O` |
+| `0x01` | `litresPerMinute` |
+| `0x02` | `seconds` |
+| `0x03` | `litresPerSecond` |
+| `0x05` | `%` |
+| `0x07` | `beatsPerMinute` |
+| `0x08` | `breathsPerMinute` |
+| `0x0a` | `litres` |
+| `0x0b` | `minutes` |
 
-| quantity_class | Observed family |
-|---------------:|-----------------|
+Classes `0x04`, `0x06`, `0x09`, and `0x0c` do not have an entry in the RPC
+unit table.
+
+Quantity classes:
+
+| quantity_class | Value family |
+|---------------:|--------------|
 | `0x00` | pressure / pressure support, usually cmH2O |
 | `0x01` | ventilation, usually L/min |
 | `0x02` | duration, usually seconds |
@@ -590,18 +473,22 @@ Example -- `Cpap-SetPressure` in 16.8.5.0:
 | Offset | Raw bytes | Field | Decoded value |
 |-------:|-----------|-------|---------------|
 | `+0x00` | `07 0E` | flags | `0x0e07` |
-| `+0x02` | `0E 00` | ui_group_id | `0x000e` |
-| `+0x04` | `13 01` | owner_ref | `0x0113` (`HST`) |
-| `+0x06` | `17 00` | factory_tag | `0x0017` |
+| `+0x02` | `0E` | data_rule_id | `0x0e` |
+| `+0x03` | `00` | reserved | 0 |
+| `+0x04` | `13 01` | linked_counter_index | g[2] descriptor `0x0113` |
+| `+0x06` | `17` | change_event_queue_index | no-queue sentinel in this release |
+| `+0x07` | `00` | reserved | 0 |
 | `+0x08` | `F4 01 00 00` | default_raw | 500 -> 10.0 cmH2O |
 | `+0x0c` | `E8 03 00 00` | max_raw | 1000 -> 20.0 cmH2O |
 | `+0x10` | `C8 00 00 00` | min_raw | 200 -> 4.0 cmH2O |
-| `+0x14` | `01 00` | format_selector | 1 (scaled) |
+| `+0x14` | `01` | decimal_places | one fractional digit |
+| `+0x15` | `00` | reserved | 0 |
 | `+0x16` | `32 00` | scale | 50 |
 | `+0x18` | `0A 00` | step_raw | 10 -> 0.2 cmH2O |
-| `+0x1a` | `3D` | bounds_slot | dynamic bounds slot `0x3d` |
-| `+0x1b` | `00` | sample_source_id | 0 |
-| `+0x1c` | `00 00 00 00` | quantity_class | 0 (pressure) |
+| `+0x1a` | `3D` | bounds_slot | static descriptor bounds in 16.8.5.0 |
+| `+0x1b` | `00` | sample_block_signal_id | 0 |
+| `+0x1c` | `00` | quantity_class | 0 (pressure) |
+| `+0x1d` | `00 00 00` | reserved | 0 |
 
 ---
 
@@ -609,86 +496,66 @@ Example -- `Cpap-SetPressure` in 16.8.5.0:
 
 **Record stride:** 20 bytes
 
-Backs `BitFieldDataItem` -- multi-bit toggle variables (e.g.
-`LanguageConfiguration`, `NodeAccessFlags`). The runtime value is a u32
-bitmask masked through `editable_mask`. `LanguageConfiguration` (`LNC`)
-lives here, not in the enum table.
+Backs `BitFieldDataItem` variables such as `LanguageConfiguration` and
+`NodeAccessFlags`. The runtime value is a u32 bitmask constrained by
+`editable_mask`. `LanguageConfiguration` (`LNC`) lives here, not in g[5].
 
 | Offset | Size | Field | Description |
 |--------|------|-------|-------------|
 | +0x00 | 2 | flags | see [Flags field](#flags-field) |
-| +0x02 | 2 | ui_group_id | see [ui_group_id](#ui_group_id) |
-| +0x04 | 2 | owner_ref | see [owner_ref](#owner_ref) |
-| +0x06 | 2 | factory_tag | common descriptor field; `0x0017` in observed records |
-| +0x08 | 4 | fixed_mask | bits forced to default value outside `editable_mask`; ORed into the result |
+| +0x02 | 1 | data_rule_id | DataItem rule callback id |
+| +0x03 | 1 | reserved | zero |
+| +0x04 | 2 | linked_counter_index | linked g[2] update-counter descriptor |
+| +0x06 | 1 | change_event_queue_index | g[12] queue index or no-queue sentinel |
+| +0x07 | 1 | reserved | zero |
+| +0x08 | 4 | default_mask | default bitfield value and source of immutable bit values |
 | +0x0c | 4 | editable_mask | bits the user may set; values written by `setValue` are masked through this |
-| +0x10 | 1 | bit_count | number of meaningful bits (popcount of `editable_mask` in observed records) |
+| +0x10 | 1 | bit_count | number of logical bit positions |
 | +0x11 | 1 | -- | always 0 |
-| +0x12 | 2 | g4_list_offset | byte offset into `g[4]` for the bit-priority/index list used by the bit selector |
+| +0x12 | 2 | selection_order_offset | byte offset into g[4] for `bit_count` order bytes |
 
 Apply rule:
 
 ```text
-new_value = (requested & editable_mask) | (fixed_mask & ~editable_mask)
+new_value = (requested & editable_mask) | (default_mask & ~editable_mask)
 ```
+
+The core bitfield read/write path does not use this list and retains the value
+as a u32 mask. The GUI bitfield-message selector intersects a candidate mask
+with the current value, selects the set bit with the lowest corresponding
+priority byte, and uses that bit index to select the message mapping row.
 
 Example -- `LNC` / `LanguageConfiguration` in 16.8.5.0:
 
 | Offset | Raw bytes | Field | Decoded value |
 |-------:|-----------|-------|---------------|
 | `+0x00` | `07 06` | flags | `0x0607` |
-| `+0x02` | `2C 00` | ui_group_id | `0x002c` |
-| `+0x04` | `13 01` | owner_ref | `0x0113` (`HST`) |
-| `+0x06` | `17 00` | factory_tag | `0x0017` |
-| `+0x08` | `A3 00 00 00` | fixed_mask | `0x000000a3` |
+| `+0x02` | `2C` | data_rule_id | `0x2c` |
+| `+0x03` | `00` | reserved | 0 |
+| `+0x04` | `13 01` | linked_counter_index | g[2] descriptor `0x0113` |
+| `+0x06` | `17` | change_event_queue_index | no-queue sentinel in this release |
+| `+0x07` | `00` | reserved | 0 |
+| `+0x08` | `A3 00 00 00` | default_mask | `0x000000a3` |
 | `+0x0c` | `FF FF FF 07` | editable_mask | `0x07ffffff` |
 | `+0x10` | `1B` | bit_count | 27 |
 | `+0x11` | `00` | reserved | 0 |
-| `+0x12` | `54 00` | g4_list_offset | `0x0054` |
+| `+0x12` | `54 00` | selection_order_offset | `0x0054` |
 
 ---
 
-## g[4] -- option/index byte-list pool
+## g[4] -- bitfield GUI selection-order pool
 
-g[4] is the base pointer for compact one-byte code lists used by g[3] and
-g[5] descriptors. Those descriptors store small offsets, not absolute
-pointers:
+g[4] is the base address for compact byte lists referenced by g[3]
+descriptors:
 
-- g[3] `g4_list_offset` selects `bit_count` bytes. In the checked firmware
-  these bytes are bit codes for each logical bit slot.
-- g[5] `g4_options_offset` selects `n_options` bytes. Byte `j` is the enum
-  option code for logical option slot `j`.
+```text
+selection_order = g[4] + selection_order_offset
+```
 
-Firmware resolves those lists as `globals[4] + offset`. For g[5],
-`default_option` and `option_mask` are indexed by logical slot number, while
-the g[4] byte list supplies the option code attached to each slot. The code
-values are not required to be `0..n_options-1`: for example,
-`ActiveTherapyProfile` uses codes `8..18`, and `ClimateControl` uses codes
-`6,0`.
-
-The first `0x00b9` bytes form the g[3]/g[5] byte-list pool. Many g[5] records
-reuse common prefixes of the same pool. Offset 0 starts at the global
-ascending byte sequence `0,1,2,...`; descriptors can also point into the
-middle of that pool or into later explicit code sequences.
-
-15.8.4.0 vid03 layout example:
-
-| g[4] rel range | Owner | Contents |
-|---------------:|-------|----------|
-| `+0x000..+0x0b9` | g[3]/g[5] | bitfield and enum option/index byte lists |
-| `+0x0b9..+0x0bc` | padding | zero padding |
-| `+0x0bc..+0x174` | g[8] | short-name bucket `T` entries |
-| `+0x174..+0x22c` | g[8] | short-name bucket `X` entries |
-| `+0x22c..+0x2e0` | g[8] | short-name bucket `I` entries |
-| `+0x2e0..+0x374` | g[17] | `AEV` label pointer table |
-| `+0x374..+0x404` | g[16] | `PLD` stream signal table |
-| `+0x404..+0x488` | g[8] | short-name bucket `F` entries |
-
-The byte-list pool and T/X/I bucket offsets are stable across the checked
-15.8.4.0 variants. The AEV/PLD tail is variant-dependent: AirCurve-style
-variants have a larger PLD table and pack PLD before AEV, shifting the final
-F bucket. Follow the owning pointers from g[8], g[16], and g[17] instead of
-hard-coding tail offsets.
+The list contains `bit_count` bytes. Byte `i` gives the GUI message-selection
+order of logical bit `i`; the set bit with the lowest value wins. It does not
+change the stored bitfield value and does not order DataItems. Lists in the
+documented releases are permutations of `0..bit_count-1`.
 
 ---
 
@@ -696,175 +563,303 @@ hard-coding tail offsets.
 
 **Record stride:** 16 bytes
 
-Backs `EnumDataItem` -- single-selection variables drawn from a fixed option
-list (mode toggles, comfort selectors, sensitivity levels, profile pickers).
-The descriptor stores an option-slot count and an offset into the g[4] enum
-code-list pool.
+Backs `EnumDataItem` -- single-selection variables drawn from a fixed logical
+option range (mode toggles, comfort selectors, sensitivity levels, profile
+pickers). The runtime value is the selected option index in
+`0..n_options-1`. That value lives in the DataItem value store and, for
+persistent settings, the corresponding settings file; it is not a field of
+this descriptor.
 
 | Offset | Size | Field | Description |
 |--------|------|-------|-------------|
 | +0x00 | 2 | flags | see [Flags field](#flags-field) |
-| +0x02 | 2 | g4_options_offset | byte offset into `g[4]`; read `n_options` one-byte enum codes from there |
-| +0x04 | 2 | owner_ref | see [owner_ref](#owner_ref) |
-| +0x06 | 2 | factory_tag | common descriptor field; `0x0017` on all but one record |
+| +0x02 | 1 | data_rule_id | DataItem rule callback id |
+| +0x03 | 1 | reserved | zero |
+| +0x04 | 2 | linked_counter_index | linked g[2] update-counter descriptor |
+| +0x06 | 1 | change_event_queue_index | g[12] queue index or no-queue sentinel |
+| +0x07 | 1 | reserved | zero |
 | +0x08 | 1 | default_option | factory default logical option slot (0..`n_options-1`) |
-| +0x09 | 1 | n_options | number of logical option slots; also the number of bytes read from the g[4] code-list pool |
+| +0x09 | 1 | n_options | number of logical option slots |
 | +0x0a | 2 | -- | always 0 |
-| +0x0c | 4 | option_mask | bitmask of logical option slots enabled in this variant; slot `i` is selectable only if `(option_mask >> i) & 1` |
+| +0x0c | 4 | option_mask | availability mask for logical option slots `0..31`; higher slots below `n_options` are implicitly enabled |
 
-To decode an enum descriptor, read `n_options` bytes at
-`globals[4] + g4_options_offset`. The byte at position `i` is the enum code
-for logical option slot `i`; `option_mask` decides whether that slot is
-available in the current variant.
+`default_option` supplies the initial value when no stored value is applied.
+The generic GUI enum list and RPC enum metadata enumerate available choices as:
+
+```text
+for option in 0 .. n_options-1:
+    enabled = option >= 32 || (option_mask & (1 << option)) != 0
+    if DataItem == Language:
+        enabled &= (current_LNC_mask & (1 << option)) != 0
+    if enabled:
+        include option
+```
+
+The 34-option `STC` descriptor therefore uses `option_mask` for its first 32
+choices and exposes the final two without mask bits. `Language` is the only
+special case in the core option-availability function; its options are also
+gated by the current `LanguageConfiguration` (`LNC`) value. Descriptor flags
+control the DataItem as a whole, not individual options. `data_rule_id` is not
+consulted when constructing this list.
+
+### Option meanings
+
+The descriptor defines the numeric option range, default, and availability;
+it does not define what an option means. APPL contains two independent
+12-byte lookup tables keyed by the g[5] descriptor index and raw option value:
+
+| Consumer | Record | Result |
+|----------|--------|--------|
+| JSON RPC | `u32 enum_index, u32 raw_option, char *symbol` | stable protocol value such as `Off`, `Auto`, or `VAutoProfile` |
+| GUI | `u32 enum_index, u32 raw_option, i16 text_id` | localized GUI text selected from the active language table |
+
+Known table locations are APPX virtual addresses. The corresponding full-image
+file offset is the address minus `0x08000000`.
+
+| APPX | RPC symbol table | Records | GUI text-ID table | Records |
+|------|-----------------:|--------:|------------------:|--------:|
+| 8.0.1 | `0x080fd764` | 893 | `0x08138d70` | 279 |
+| 8.3.0 | `0x08105318` | 974 | `0x081417b4` | 319 |
+| 8.4.0 | `0x081070a0` | 1027 | `0x0813f048` | 357 |
+| 8.5.0 | `0x08107ba8` | 1032 | `0x0813fb5c` | 355 |
+| 8.6.0 | `0x08108398` | 1041 | `0x08140450` | 355 |
+
+The g[5] descriptor contains no table pointer. `DataItemFactory` derives the
+lookup key from the var ID:
+
+```text
+g5_var_id_base = g1_count + g2_count + g3_count
+enum_index = var_id - g5_var_id_base
+```
+
+Each lookup scans for a record whose first two fields match
+`(enum_index, raw_option)`. RPC `Get` converts the stored raw value to the
+matching symbol; RPC `Set` performs the reverse symbol lookup. The generic GUI
+list resolves each available raw value to a text ID and then renders that text
+in the current language.
+
+For example, in 8.6.0 `MOP` has var ID `0x0426` and g[5] begins at var ID
+`0x0349`, giving enum index `0x00dd`. Its RPC symbols occupy records 555..565
+and its GUI labels records 192..202, but the lookup uses the two key fields
+rather than those physical record numbers.
+
+Raw values therefore have no universal boolean meaning. For example,
+`RampEnable` maps `0`, `1`, and `2` to `Off`, `On`, and `Auto`, while
+`ActiveTherapyProfile` maps `0` to `CpapProfile`. Specialized controls may
+combine or format multiple DataItems instead of displaying this generic enum
+list directly.
 
 Example -- `MOP` / `ActiveTherapyProfile` in 16.8.5.0 vid03:
 
 | Offset | Raw bytes | Field | Decoded value |
 |-------:|-----------|-------|---------------|
 | `+0x00` | `07 06` | flags | `0x0607` |
-| `+0x02` | `34 00` | g4_options_offset | `0x0034` |
-| `+0x04` | `13 01` | owner_ref | `0x0113` (`HST`) |
-| `+0x06` | `17 00` | factory_tag | `0x0017` |
+| `+0x02` | `34` | data_rule_id | `0x34` |
+| `+0x03` | `00` | reserved | 0 |
+| `+0x04` | `13 01` | linked_counter_index | g[2] descriptor `0x0113` |
+| `+0x06` | `17` | change_event_queue_index | no-queue sentinel in this release |
+| `+0x07` | `00` | reserved | 0 |
 | `+0x08` | `01` | default_option | slot 1 (`AutoSetProfile`) |
 | `+0x09` | `0B` | n_options | 11 |
 | `+0x0a` | `00 00` | reserved | 0 |
 | `+0x0c` | `07 00 00 00` | option_mask | slots 0, 1, and 2 enabled |
 
-The 11 bytes at `g[4]+0x0034` are enum codes `0x0b..0x15`.
-
 ---
 
-## g[6] -- named var-id list headers
+## g[6] -- external-NOR SettingsGroup schemas
 
-Seven 16-byte records.
+Seven 16-byte records define the `SettingsGroup` schemas stored under
+`nor:0:\\SETTINGS`. Each record supplies the filename stem, a g[2] update
+counter, and an ordered candidate list of DataItems. Only active DataItems are
+written to or applied from the corresponding file.
 
 | Offset | Size | Field |
 |--------|------|-------|
-| +0x00 | 4 | tag (NUL-terminated 3-char) |
-| +0x04 | 4 | list_id / anchor id |
+| +0x00 | 4 | filename stem (NUL-terminated 3-char) |
+| +0x04 | 2 | update_counter_index (i16) |
+| +0x06 | 2 | reserved; zero |
 | +0x08 | 4 | var_id_list_ptr |
-| +0x0c | 4 | count |
+| +0x0c | 1 | count |
+| +0x0d | 3 | reserved; zero |
 
-Observed tags: `BGL`, `DDO`, `DID`, `HST`, `MCA`, `MCF`, `TLP`.
-
-The field at +0x04 is not an arithmetic base for the following list. For
-example, `DDO` has +0x04 = `0x00a5`, but its first list entry is `0x0022`.
-Treat it as a list identifier or anchor used by the consuming subsystem.
+The +0x04 field selects the g[2] counter updated when the set changes. It is
+independent of the var IDs in the pointed list.
 
 Example -- the 16.8.5.0 `BGL` header:
 
 | Offset | Raw bytes | Field | Decoded value |
 |-------:|-----------|-------|---------------|
-| `+0x00` | `42 47 4C 00` | tag | `BGL` |
-| `+0x04` | `73 00 00 00` | list_id | `0x0073` |
+| `+0x00` | `42 47 4C 00` | filename stem | `BGL` (`nor:0:\SETTINGS\BGL.set`) |
+| `+0x04` | `73 00` | update_counter_index | g[2] descriptor `0x0073` |
+| `+0x06` | `00 00` | reserved | 0 |
 | `+0x08` | `08 D1 02 08` | var_id_list_ptr | `0x0802d108` |
-| `+0x0c` | `06 00 00 00` | count | 6 u16 var IDs |
+| `+0x0c` | `06` | count | 6 u16 var IDs |
+| `+0x0d` | `00 00 00` | reserved | 0 |
 
-Known list roles:
+SettingsGroup membership:
 
-| Tag | Count | Role |
-|-----|------:|------|
-| `BGL` | 6 | pressure/flow calibration coefficients (`PressureGain`, `PressureOffset`, `PressureMonitorGain`, `PressureMonitorOffset`, `FlowGain`, `FlowOffset`) |
-| `DDO` | 64 | data-delivery/reporting variables: event/periodic payload handles, timestamp/status siblings, and storage/report state used with g[12], g[13], g[14], and g[19] |
-| `DID` | 13 | identification profile variables: product code/name, serial, UUID, UDI, geography, hardware ids, and cellular product identity |
-| `HST` | 163 | settings-history persistence variables: all therapy/comfort/environment/display/alarm/reminder settings, including inactive or hidden therapy modes |
-| `MCA` | 1 | CAML broker/config blob (`CamlData`) |
-| `MCF` | 1 | application-data blob (`ApplicationData`) |
-| `TLP` | 40 | telemetry/cloud control variables: service endpoint/APN, data mode, broker/contact periods, OTA lifecycle fields, CAL/flight mode, and internal transport/log state |
+| File | 8.0.1 | 8.3.0 | 8.4.0 | 8.5.0 | 8.6.0 | Contents |
+|------|------:|------:|------:|------:|------:|----------|
+| `BGL.set` | 6 | 6 | 6 | 6 | 6 | pressure/flow calibration coefficients (`PressureGain`, `PressureOffset`, `PressureMonitorGain`, `PressureMonitorOffset`, `FlowGain`, `FlowOffset`) |
+| `DDO.set` | 48 | 61 | 64 | 64 | 64 | data-delivery/reporting state used by event and periodic storage |
+| `DID.set` | 13 | 13 | 13 | 13 | 13 | product, device, and cellular identification profile values |
+| `HST.set` | 159 | 162 | 163 | 162 | 162 | therapy, comfort, environment, display, alarm, and reminder settings, including inactive mode settings |
+| `MCA.set` | 1 | 1 | 1 | 1 | 1 | `CamlData` blob |
+| `MCF.set` | 1 | 1 | 1 | 1 | 1 | `ApplicationData` blob |
+| `TLP.set` | 39 | 42 | 40 | 41 | 41 | telemetry/cloud configuration and transport state |
 
-The list counts above also match descriptor `owner_ref` membership. For
-example, `BGL` owns six g[2] numeric calibration descriptors, `DID` owns
-thirteen g[1] text/id descriptors, and `HST` spans g[1], g[2], g[3], and g[5]
-settings descriptors.
+Membership and ordering are invariant among CONF variants of the same release.
+Variant availability is controlled by descriptor activity, enum option masks,
+mode visibility, and other schemas.
 
-`HST` is a 163-entry settings/history list and includes all therapy setting
-var_ids, including inactive modes. The list is identical across all four
-15.8.4.0 variants - variant availability comes from descriptor activity,
-option masks, and SummaryRecord activation, not by removing entries here.
+Each file uses this format:
+
+```text
+u16 days_since_1970
+u32 milliseconds_since_midnight
+u8  node_count
+node_count x {
+    u16 length_after_length
+    char short_tag[3]
+    byte payload[length_after_length - 3]
+}
+u32 crc32
+```
+
+The CRC is IEEE CRC-32 over all preceding bytes. Numeric nodes contain one
+raw u32 value. Text nodes contain the descriptor-sized string buffer followed
+by NUL. Files are limited to `0x7fa` bytes. Loading resolves nodes by short tag,
+skips unknown tags, and applies only DataItems that are active in the current
+CONF.
 
 ---
 
-## g[7] -- PDL SettingsUnit header
+## g[7] -- PDL backup-SRAM snapshot
 
-`PDL` is a small `SettingsUnit` header. Only the first 12 bytes are the PDL
-object. Later bytes in the same physical interval are owned by other globals
-through explicit pointers.
+`PDL` is a 12-byte named var-list header. It defines the DataItems serialized
+into the `0x400`-byte power-loss snapshot in backup SRAM.
 
 | Offset | Size | Field |
 |--------|------|-------|
 | +0x00 | 4 | tag ("PDL\0") |
-| +0x04 | 4 | list_ptr (43 x u16 var ids) |
-| +0x08 | 4 | count (43) |
+| +0x04 | 4 | var_id_list_ptr (`count` x u16) |
+| +0x08 | 1 | count |
+| +0x09 | 3 | reserved |
 
-Firmware caches g[7], reads count at +0x08, and returns `list_ptr[index]` from
-+0x04. Implemented in the `SettingsUnit` path at `0x08166ff8`, `0x08167014`,
-`0x081676cc`, `0x081676d8`, `0x081676de`.
-
-15.8.4.0 pointers:
-
-| VID | g7 | list | count |
-|----:|------|------|---:|
-| 3 | `0x0802cf60` | `0x0802c160` | 43 |
-| 7 | `0x0802d050` | `0x0802c180` | 43 |
-| 10 | `0x0802d064` | `0x0802c170` | 43 |
-| 12 | `0x0802cf68` | `0x0802c170` | 43 |
-
-The 43-entry list is identical across all four 15.8.4.0 variants:
+The snapshot has this layout:
 
 ```text
-00 0x032c REM            22 0x0277 MHR 
-01 0x0279 ZSE            23 0x0278 MHS 
-02 0x027b ZDT            24 0x0276 MHU 
-03 0x027a ZDD            25 0x01bb LMS LastMachineServiceDateTime
-04 0x0143 FW0            26 0x01be LPD
-05 0x0146 FW1            27 0x01bd LI9
-06 0x0149 FWC            28 0x0420 PTF
-07 0x0141 FE0            29 0x0262 RCM
-08 0x0144 FE1            30 0x025a MDM
-09 0x0147 FE2            31 0x0263 RCT
-10 0x035a BTU            32 0x025b MDT
-11 0x00db BUC            33 0x0264 RCH
-12 0x0476 XSS            34 0x025c MDW
-13 0x03f1 LRE            35 0x0261 RCF
-14 0x0431 RFP            36 0x0259 MDF
-15 0x01b9 ZFE            37 0x00f2 DTU
-16 0x018a ILS            38 0x00f1 DTD
-17 0x045b SMN            39 0x0366 CCT
-18 0x045c SVN            40 0x0458 ABU
-19 0x0274 CUD LastTherapyUseDateTime  41 0x0347 AUP
-20 0x0101 CED LastEraseDataDateTime   42 0x02be SET
-21 0x027d PHM TherapyRunMeter
+u16 member_count
+member_count x { char short_tag[4]; u32 raw_value; }
+u16 CRC16-CCITT-FALSE
+u16 0x1234
 ```
 
-PDL is the `SettingsUnit` persistent data list -- a device-state var list. It
-is not a therapy visibility table, and it is not the EDF schema (see
-[g[16]](#g16----edf-stream-file-schemas) for that). In vid03 the bytes after
-the PDL header are referenced by other structures and pack:
+The CRC covers the count and DataItem records. Records are resolved by short
+tag, so their serialized order is not required and unknown tags are skipped.
+The writer appends `0x1234`, but the normal loader does not validate it. The
+unused tail of the `0x400`-byte window is left unchanged. This object describes
+one backup-SRAM window, not the complete 4 KiB backup SRAM area.
 
-```text
-+0x0c  CSL event-label pointer table (used by g[17])
-+0x18  short-name bucket K payload (used by g[8])
-+0x24  short-name bucket N payload (used by g[8])
-+0x30  string/unit pool ("min.", "Mode", "cmH2O", "S.Mask", ...)
-```
+| Backup SRAM offset | Size | Owner |
+|-------------------:|-----:|-------|
+| `0x000` | `0x400` | PDL snapshot selected by g[7] |
+| `0x400` | `0x080` | fatal-error state |
+| `0x480` | `0x134` | power-up auxiliary state |
+| `0xc00` | `0x400` | PowerUpState snapshot with its own length, magic, and CRC |
 
-Strings such as `seconds`, `Ti.50`, `Ti.95`, `Ti.Max`, `Ti.2s` that appear
-near g[7] are string-pool entries referenced by other tables and are not part
-of the PDL object itself.
+The PDL list does not overlap any g[6] SettingsGroup list in the documented
+releases. PowerUpState restoration can copy a PDL payload into the live PDL
+window.
+
+PDL membership and order are identical among the available variants of each
+release. Cells contain the zero-based member index; `--` means absent.
+
+| Tag | 11.8.0.1 | 14.8.3.0 | 15.8.4.0 | 16.8.5.0 | 17.8.6.0 |
+|-----|----------:|---------:|---------:|---------:|---------:|
+| **Members** | **59** | **60** | **43** | **49** | **49** |
+| `REM` | 0 | 0 | 0 | 0 | 0 |
+| `ZSE` | 1 | 1 | 1 | 1 | 1 |
+| `ZDT` | 2 | 2 | 2 | 2 | 2 |
+| `ZDD` | 3 | 3 | 3 | 3 | 3 |
+| `FW0` | 4 | 4 | 4 | 4 | 4 |
+| `FW1` | 5 | 5 | 5 | 5 | 5 |
+| `FWC` | 6 | 6 | 6 | 6 | 6 |
+| `FE0` | 7 | 7 | 7 | 7 | 7 |
+| `FE1` | 8 | 8 | 8 | 8 | 8 |
+| `FE2` | 9 | 9 | 9 | 9 | 9 |
+| `BTU` | 10 | 10 | 10 | 10 | 10 |
+| `BUC` | 11 | 11 | 11 | 11 | 11 |
+| `XSS` | 12 | 12 | 12 | 12 | 12 |
+| `LRE` | 13 | 13 | 13 | 13 | 13 |
+| `RFP` | 14 | 14 | 14 | 14 | 14 |
+| `ZFE` | 15 | 15 | 15 | 15 | 15 |
+| `ILS` | 16 | 16 | 16 | 16 | 16 |
+| `PST` | 17 | 17 | -- | -- | -- |
+| `PSS` | 18 | 18 | -- | -- | -- |
+| `PAH` | 19 | 19 | -- | -- | -- |
+| `PL7` | 20 | 20 | -- | -- | -- |
+| `PL9` | 21 | 21 | -- | -- | -- |
+| `PPI` | 22 | 22 | -- | -- | -- |
+| `PPE` | 23 | 23 | -- | -- | -- |
+| `PAT` | 24 | 24 | -- | -- | -- |
+| `PRR` | 25 | 25 | -- | -- | -- |
+| `PVT` | 26 | 26 | -- | -- | -- |
+| `PMT` | 27 | 27 | -- | -- | -- |
+| `PIS` | 28 | 28 | -- | -- | -- |
+| `PIE` | 29 | 29 | -- | -- | -- |
+| `PVS` | 30 | 30 | -- | -- | -- |
+| `PVC` | 31 | 31 | -- | -- | -- |
+| `PAS` | 32 | 32 | -- | -- | -- |
+| `POS` | 33 | 33 | -- | -- | -- |
+| `PCI` | 34 | 34 | -- | -- | -- |
+| `SMN` | 35 | 35 | 17 | 17 | 17 |
+| `SVN` | 36 | 36 | 18 | 18 | 18 |
+| `CUD` | 37 | 37 | 19 | 19 | 19 |
+| `CED` | 38 | 38 | 20 | 20 | 20 |
+| `PHM` | 39 | 39 | 21 | 21 | 21 |
+| `MHR` | 40 | 40 | 22 | 22 | 22 |
+| `MHS` | 41 | 41 | 23 | 23 | 23 |
+| `MHU` | 42 | 42 | 24 | 24 | 24 |
+| `LMS` | 43 | 43 | 25 | 25 | 25 |
+| `LPD` | 44 | 44 | 26 | 26 | 26 |
+| `LI9` | 45 | 45 | 27 | 27 | 27 |
+| `PTF` | 46 | 46 | 28 | 28 | 28 |
+| `RCM` | 47 | 47 | 29 | 29 | 29 |
+| `MDM` | 48 | 48 | 30 | 30 | 30 |
+| `RCT` | 49 | 49 | 31 | 31 | 31 |
+| `MDT` | 50 | 50 | 32 | 32 | 32 |
+| `RCH` | 51 | 51 | 33 | 33 | 33 |
+| `MDW` | 52 | 52 | 34 | 34 | 34 |
+| `RCF` | 53 | 53 | 35 | 35 | 35 |
+| `MDF` | 54 | 54 | 36 | 36 | 36 |
+| `DTU` | 55 | 55 | 37 | 37 | 37 |
+| `DTD` | 56 | 56 | 38 | 38 | 38 |
+| `CCT` | 57 | 57 | 39 | 39 | 39 |
+| `ABU` | -- | 58 | 40 | 40 | 40 |
+| `AUP` | 58 | 59 | 41 | 41 | 41 |
+| `SET` | -- | -- | 42 | 42 | 42 |
+| `BMS` | -- | -- | -- | 43 | 43 |
+| `ZBM` | -- | -- | -- | 44 | 44 |
+| `DME` | -- | -- | -- | 45 | 45 |
+| `MTP` | -- | -- | -- | 46 | 46 |
+| `TOC` | -- | -- | -- | 47 | 47 |
+| `GBE` | -- | -- | -- | 48 | 48 |
 
 ---
 
 ## g[8] -- short-name bucket headers
 
-26-entry A-Z bucket header table. `var_tag3_to_id` at `0x0806a878` selects the
-bucket from the first character, then scans 4-byte entries.
+26-entry A-Z bucket header table. Short-tag lookup selects the bucket from the
+first character, then scans 4-byte entries.
 
 Bucket header (8 bytes):
 
 | Offset | Size | Field |
 |--------|------|-------|
 | +0x00 | 4 | entries pointer |
-| +0x04 | 4 | count |
+| +0x04 | 1 | count |
+| +0x05 | 3 | reserved, zero |
 
 Each entry (4 bytes):
 
@@ -872,6 +867,11 @@ Each entry (4 bytes):
 |--------|------|-------|
 | +0x00 | 2 | suffix (chars 2 and 3) |
 | +0x02 | 2 | var_id |
+
+Firmware uses this table only for four-character names of the form `_TAG`.
+The first tag character must be `A..Z`; the remaining two may be `A..Z` or
+`0..9`; the fourth input byte must be NUL or space. The selected bucket is
+scanned linearly and returns `0x7fff` when no entry matches.
 
 Example -- resolving `MOP` in 16.8.5.0:
 
@@ -886,16 +886,20 @@ Example -- resolving `MOP` in 16.8.5.0:
 
 ## g[9] -- short-name reverse table
 
-Linear var_id -> 3-char short tag pool. Functions at `0x08071086` and
-`0x080710ba` use `g[9] + var_id * 3`. It contains the A-Z bucket names plus
-four underscore-prefixed internal tags (`_UD`, `_HU`, `_HR`, `_HS`) and a
-zero tail.
+Linear var_id -> 3-char short tag pool, indexed as `g[9] + var_id * 3`. Its
+extent is exactly `(maximum var_id + 1) * 3` bytes. It contains the A-Z bucket
+names plus four reverse-only internal tags (`_UD`, `_HU`, `_HR`, `_HS`).
+
+Its consumers copy or compare exactly three case-sensitive bytes. They reject
+only var ID `0x7fff`; callers are responsible for supplying an in-range ID.
 
 | Version | A-Z names | Internal names | Indexed slots |
 |---------|----------:|---------------:|--------------:|
+| 11.8.0.1 | 1078 | 4 | 1082 |
 | 14.8.3.0 | 1143 | 4 | 1147 |
 | 15.8.4.0 | 1180 | 4 | 1184 |
 | 16.8.5.0 | 1198 | 4 | 1202 |
+| 17.8.6.0 | 1205 | 4 | 1209 |
 
 Example -- `MOP` in 16.8.5.0:
 
@@ -905,19 +909,22 @@ Example -- `MOP` in 16.8.5.0:
 
 ---
 
-## g[10] -- per-mode variable registration
+## g[10] -- per-mode baseline visibility
 
 **Record stride:** 14 bytes
 
 | Offset | Size | Field |
 |--------|------|-------|
 | +0x00 | 2 | var_id |
-| +0x02 | 11 | per-mode membership bytes |
+| +0x02 | 11 | per-mode visibility bytes |
 | +0x0d | 1 | reserved / zero |
 
-The mode membership fields are bytes, not a packed bitmask. A non-zero byte
-means the row's var_id belongs to that therapy mode, so each row stores eleven
-membership bytes instead of a compact u16 mode mask.
+The visibility fields are bytes, not a packed bitmask. During an MOP write,
+firmware stores the new enum value and synchronously runs the MOP data rule.
+That rule copies the active-mode byte into each listed DataItem's runtime
+visibility field, then applies feature-specific visibility postprocessors.
+The normal DataItem change notification and final value reload follow the
+rule callback.
 
 | Byte offset | Mode |
 |------------:|------|
@@ -938,207 +945,397 @@ Example -- `Cpap-SetPressure` in 16.8.5.0:
 | Offset | Raw bytes | Field | Decoded value |
 |-------:|-----------|-------|---------------|
 | `+0x00` | `0C 01` | var_id | `0x010c` (`Cpap-SetPressure`) |
-| `+0x02` | `01 00 00 00 00 00 00 00 00 00 00` | membership | CPAP only |
+| `+0x02` | `01 00 00 00 00 00 00 00 00 00 00` | visibility | visible in CPAP |
 | `+0x0d` | `00` | reserved | 0 |
 
-g[10] is a mode-membership registry, not the product-variant mode gate. The
-active mode set is controlled by descriptor activity bits, enum option masks,
-and SummaryRecord activation.
+g[10] defines the baseline visibility applied during mode changes. It does not
+activate a descriptor, enable an enum option, or define EDF output.
 
 ---
 
 ## g[11] -- record count for g[10]
 
-Not a pointer. Its scalar value is the number of g[10] records.
+g[11] stores the number of g[10] records as a scalar value.
 
 | Version | g[10] records | g[11] value |
 |---------|--------------:|------------:|
+| 11.8.0.1 | 103 | `0x67` |
 | 14.8.3.0 | 103 | `0x67` |
 | 15.8.4.0 | 103 | `0x67` |
 | 16.8.5.0 | 101 | `0x65` |
+| 17.8.6.0 | 101 | `0x65` |
 
 ---
 
-## g[12] -- event/log definitions
+## g[12] -- event spool definitions
 
-Begins with 23 36-byte event/log records:
+**Record stride:** 36 bytes
+
+Each record defines one event family from producer admission through live RPC
+delivery and persistent spool storage. The same record supplies the selector
+name, two in-memory FIFO geometries, the circular-file geometry, erase class,
+and producer gate.
 
 | Offset | Size | Field | Description |
 |--------|------|-------|-------------|
-| +0x00 | 4 | name_ptr | event/log collection name |
-| +0x04 | 4 | code_ptr | 3-char code string (`ASE`, `APE`, etc.) |
-| +0x08 | 4 | event_class | small class/enable mask; powers of two and `0x40` observed |
-| +0x0c | 4 | period_or_limit | scheduler/reporting period or record limit, interpretation depends on class |
-| +0x10 | 4 | record_kind | emitter record family; values match storage/event payload families, not var type |
-| +0x14 | 4 | flags_a | packed flags; high bytes often `0x0100..0x0101` |
-| +0x18 | 4 | buffer_or_mask | buffer/route mask style value |
-| +0x1c | 4 | retention_or_batch | small emitter parameter; `4`, `10`, and `20` observed |
-| +0x20 | 4 | packed_ref | high16 source/ref (`0x7fff` = none); low16 event/report family id |
+| +0x00 | 4 | name_ptr | selector accepted by `SubscribeEvent` and `StartSpool`; lookup returns the g[12] row index |
+| +0x04 | 4 | code_ptr | 3-character stem of `nor:1:\\DATALOG\\<code>.EVN` |
+| +0x08 | 4 | fifo_slots | requested capacity of both runtime event FIFOs |
+| +0x0c | 4 | retained_record_target | logical record count used to size the circular file; not an exact capacity |
+| +0x10 | 4 | event_record_bytes | fixed persisted record width and maximum producer-submitted record size |
+| +0x14 | 1 | record_kind | generic event-code width or special spool-record format |
+| +0x15 | 1 | default_json_payload_type | default handling of bytes following a generic event code; see [g[13]](#g13----eventnotification-payload-overrides) |
+| +0x16 | 1 | erase_class | `EraseData` class: `0` = `Logs`, `1` = `SleepData` |
+| +0x17 | 1 | logger_enabled | `1` enables draining, live notification, and persistence for this family |
+| +0x18 | 4 | file_record_bytes | physical `.EVN` block width, including the block length and CRC fields |
+| +0x1c | 4 | allocation_group_blocks | block-count rounding and extension quantum |
+| +0x20 | 2 | file_init_flag_bit | bit in `FIF` representing successful initialization of this file |
+| +0x22 | 2 | gate_g5_index | optional g[5] descriptor index controlling producer admission; `0x7fff` means unconditional |
 
-Examples:
+### Queue and live-event path
 
-| Tag | Name |
-|-----|------|
-| ASE | `_ACOUSTIC_SIGNATURE_EVENT` |
-| APE | `DiagnosticExceptionEvents-AlarmAppErrors` |
-| ADE | `alarmDiagnosticEvents` |
-| AAE | `alarmEvents` |
-| SHE | `_SETTINGS_HISTORY_EVENT` |
-| BAT | `_TOUCH_ACTIVITY_EVENT` |
+Producers submit records using a g[12] index supplied by compiled code or by a
+DataItem descriptor's `change_event_queue_index`. `name_ptr` is used by
+`SubscribeEvent` to resolve a selector to that index and by the event-file
+writer registry to associate a writer with the same event family.
 
-Bytes after the 23 records contain short-name bucket storage and packed
-code/id data. Do not treat all of g[12] as homogeneous 36-byte event records.
+Before accepting a produced record, firmware applies `gate_g5_index`: a
+missing gate accepts the record, while a configured gate accepts it only when
+that `EnumDataItem` has a nonzero raw value. The gate affects newly produced
+records; it does not hide records already present in the `.EVN` file.
 
-The first two pointers enumerate event families. The remaining words are
-stable scheduler/emitter parameters:
+The producer rejects a submitted record longer than `event_record_bytes`.
+Generic helpers prepend the six-byte firmware timestamp before queuing the
+record. Each event family has two FIFOs:
 
-| Field | Observed values / pattern |
-|-------|---------------------------|
-| event_class | `1`, `4`, `8`, `16`, `64`; behaves like a broad event/storage class |
-| period_or_limit | values such as `10`, `90`, `200`, `365`, `1000`, `2000`, `4000`, `6000`, `8000`, `16000` |
-| record_kind | `7`, `8`, `9`, `11`, `51`, and `2044`; groups payload layout families |
-| flags_a | packed little-endian flag words such as `0x01000002`, `0x01000201`, `0x01010101` |
-| buffer_or_mask | `0x80`, `0x100`, `0x200`, `0x400`, `0x800` |
-| retention_or_batch | mostly `10`; `4` on alarm/app diagnostic rows; `20` on GUI activity |
-| packed_ref | usually `0x7fff00NN`; `_RPC_ACTIVITY_EVENT` and `_TOUCH_ACTIVITY_EVENT` use non-`0x7fff` high halves |
+1. a thread-safe producer FIFO
+2. a pending-file FIFO used between live delivery and the file writer
 
-Preserve these fields byte-for-byte during patching until all event emitter
-consumers are traced.
+Both request `fifo_slots` elements of `event_record_bytes + 4` bytes. The FIFO
+implementation rounds a non-power-of-two capacity up to the next power of two.
+When a FIFO lacks a free slot, the new record is not inserted; existing queued
+records are retained.
+
+The additional four bytes are RAM-only completion metadata. A producer may
+place a pointer immediately after the persisted record bytes. The file writer
+keeps these pointers outside the file block and writes `1` through each
+non-null pointer after the containing batch completes.
+
+The logger drains the producer FIFO only when `logger_enabled` is `1` and the
+shared logged-data gate is active. For each accepted record it places the
+record in the pending-file FIFO and publishes the live `EventNotification`.
+Live delivery therefore does not imply that the corresponding `.EVN` write has
+completed.
+
+### Record formats
+
+Generic records begin with a six-byte timestamp. `record_kind` determines what
+follows it:
+
+| Kind | Record interpretation |
+|-----:|-----------------------|
+| 1 | u8 event value followed by the payload selected by g[12]/g[13] |
+| 2 | u16 event value followed by the payload selected by g[12]/g[13] |
+| 3 | Settings History record (`SHE`) |
+| 4 | Acoustic Signature record (`ASE`) |
+| 5 | Sound Check record (`SCE`) |
+| 6 | Cellular Activity String record (`CAS`, from 8.6.0) |
+
+Kinds 1 and 2 use the generic `EventNotification` JSON formatter. Kinds 3
+through 6 have selector-specific spool serializers and are not generic live
+event records. `default_json_payload_type` applies only to kinds 1 and 2. The
+formatter first searches g[13] for a matching `(g[12] index, event value)` and
+uses the g[12] default only when no override matches.
+
+Every on-disk slot is exactly `event_record_bytes` bytes. The writer copies
+that complete width even when the producer populated a shorter prefix.
+
+### Circular-file geometry
+
+Each `.EVN` block contains:
+
+```text
+u16 used_record_bytes
+fixed-width event records
+unused block space
+u16 crc16
+```
+
+The usable block payload is therefore `file_record_bytes - 4`. Firmware sizes
+the file as:
+
+```text
+records_per_block = floor((file_record_bytes - 4) / event_record_bytes)
+required_blocks = ceil(retained_record_target / records_per_block)
+file_blocks = allocation_group_blocks
+    * (ceil(required_blocks / allocation_group_blocks) + 2)
+file_size = file_blocks * file_record_bytes
+```
+
+`retained_record_target` is consequently a lower sizing target. Rounding to
+`allocation_group_blocks` and the two additional groups make the physical
+record capacity larger. Once the circular block index wraps, newly written
+blocks replace the oldest blocks.
+
+For example, 8.6.0 `CellularActivityEvents` (`CAV`) uses 11-byte records,
+512-byte blocks, a target of 2000 records, and ten-block allocation groups:
+
+```text
+records_per_block = 46
+required_blocks = 44
+file_blocks = 70
+file_size = 35840 bytes
+physical_capacity = 3220 records
+```
+
+`StartSpool` reads this block format and uses `file_record_bytes` as the event
+spool transfer granularity.
+
+### Initialization and erase
+
+During startup the file initialiser opens or creates each `.EVN`, verifies its
+size, scans valid CRC-protected blocks, and recovers the next circular write
+index. It then sets `file_init_flag_bit` in `FIF`. Resetting that file clears
+the bit. The logged-data service becomes ready only after the initialization
+bits for every g[12] row are set.
+
+`erase_class` selects which `EraseData` request resets the file. Class 0 files
+belong to `Logs`; class 1 files belong to `SleepData`. This classification
+affects deletion only and does not alter record encoding or retention.
+
+| Release | Records |
+|---------|--------:|
+| 11.8.0.1 | 22 |
+| 14.8.3.0 | 22 |
+| 15.8.4.0 | 23 |
+| 16.8.5.0 | 23 |
+| 17.8.6.0 | 24 |
+
+The count is a literal APPX loop bound and the return value for an unknown
+selector. The same value is stored as the `change_event_queue_index` no-queue
+sentinel in g[1], g[2], g[3], and g[5] descriptors; lower values select a
+g[12] record. Firmware 8.4 adds `APE`; firmware 8.6 adds `CAS`.
+
+Examples include `CellularActivityEvents` (`CAV`),
+`TherapyEvents-RespiratoryEvents` (`RNV`),
+`DiagnosticExceptionEvents-AppErrors` (`APE`), and
+`_SETTINGS_HISTORY_EVENT` (`SHE`).
 
 ---
 
-## g[13] -- event route table
+## g[13] -- EventNotification payload overrides
 
-The g[13] root points to an event route table. In the checked 15.8.4.0
-images, the table occupies 21 6-byte route records (`0x7e` bytes), followed
-by 2 bytes of zero padding to the next `0x80` boundary.
-
-Route record (6 bytes):
-
-| Offset | Size | Field |
-|--------|------|-------|
-| +0x00 | 2 | event_index (into g[12]) |
-| +0x02 | 2 | subindex |
-| +0x04 | 2 | route |
-
-Consumed alongside g[12] via `FUN_0816a5f4` ->
-`FUN_0816ac18(ctx, g[12], 0x17, g[13], 0x15)`.
-
-Observed routes:
-
-| Event | Tag | Name | Sub | Route |
-|------:|-----|------|-----|------:|
-| 5 | CAV | CellularActivityEvents | 0 | 6 |
-| 11 | GAE | GUIActivityEvents | 0..4 | 6 |
-| 16 | RNV | TherapyEvents-RespiratoryEvents | 2..4 | 3 |
-| 16 | RNV | (cont.) | 6..7 | 4 |
-| 17 | RAE | `_RPC_ACTIVITY_EVENT` | 0 | 6 |
-| 22 | BAT | `_TOUCH_ACTIVITY_EVENT` | 0..5 | 6 |
-
-At `g[13]+0x80`, the 64-entry `DDO` var-id list payload begins. That payload
-is not identified by the g[13] route table; it is identified by the `DDO`
-header in g[6], whose `list_ptr` points to `g[13]+0x80`.
-
-Across the checked 15.8.4.0 variants, g[13] spans `0x100` bytes and
-g[6].`DDO.list_ptr - g[13] == 0x80`.
-
----
-
-## g[14] -- periodic/session collections
-
-**Record stride:** 0x34 bytes, **Entry count:** 7.
-
-| Offset | Size | Field |
-|--------|------|-------|
-| +0x00 | 4 | tag string ptr |
-| +0x04 | 4 | period_ms |
-| +0x08 | 4 | window_or_period |
-| +0x0c | 4 | buffer_size |
-| +0x10 | 4 | record_size |
-| +0x14 | 4 | collection_param_a |
-| +0x18 | 4 | collection_param_b |
-| +0x1c | 4 | collection_kind |
-| +0x20 | 4 | flags |
-| +0x24 | 2 | active_bit |
-| +0x26 | 2 | reserved_zero |
-| +0x28 | 1 | signal_count |
-| +0x29 | 3 | reserved_zero |
-| +0x2c | 4 | signal_var_ids ptr (u16[]) |
-| +0x30 | 4 | signal_metadata ptr (signal_count x 0x30) |
-
-Signal metadata record (0x30 bytes):
+g[13] contains six-byte rules used when a stored event is rendered as an RPC
+`EventNotification`. The rule controls how bytes following the event value are
+consumed and whether they become an additional JSON property.
 
 | Offset | Size | Field | Description |
 |--------|------|-------|-------------|
-| +0x00 | 8 | min_value (f64) | lower reporting/source bound |
-| +0x08 | 8 | max_value (f64) | upper reporting/source bound |
-| +0x10 | 8 | resolution (f64) | reporting/source quantization; often but not always equal to descriptor step |
-| +0x18 | 8 | scale (f64) | source/report scale; `1.0` in most rows |
-| +0x20 | 4 | class_flags | small class/packing flags (`2`, `4`, `8` observed) |
-| +0x24 | 4 | reserved_zero | always zero in checked rows |
-| +0x28 | 4 | transform | small transform/filter id (`0`, `1`, `2`, `0x101`, `0x102` observed) |
-| +0x2c | 4 | reserved_zero | always zero in checked rows |
+| +0x00 | 1 | event_spool_index | g[12] record index |
+| +0x01 | 1 | padding | zero in the documented releases |
+| +0x02 | 2 | event_value | event value within the selected spool; `0xffff` matches every value |
+| +0x04 | 1 | json_payload_type | replacement trailing-payload rule |
+| +0x05 | 1 | padding | zero in the documented releases |
 
-Code support:
+The formatter searches g[13] in table order for the first row whose
+`event_spool_index` matches and whose `event_value` is either exact or
+`0xffff`. If no row matches, it uses `default_json_payload_type` from the
+corresponding g[12] record.
 
-| Function | Behavior |
-|----------|----------|
-| `FUN_0818c8ce` | iterates 7 records, skips byte +0x28 == 0, reads var_ids from `*(record+0x2c)` |
-| `FUN_081742d0` | checks byte +0x28 and a disable/active bit derived from +0x24 |
+| Type | Trailing value | Additional JSON property |
+|-----:|----------------|--------------------------|
+| 0 | none | none |
+| 1 | u16 | none |
+| 2 | u32 | none |
+| 3 | u16 | `durationSeconds` |
+| 4 | u16 | `backdateSeconds` |
+| 5 | u32 | `address` |
+| 6 | u32 | `uint32Data` |
 
-Decoded rows (common to vid03/07/10/12):
+Types outside `0..6` make event formatting fail. Types `0..2` occur as g[12]
+defaults; g[13] uses types `3..6`.
 
-| Tag | period_ms | window | buffer | record_size | param_a | param_b | kind | flags | active_bit | signals |
-|-----|----------:|-------:|-------:|------------:|--------:|--------:|-----:|------:|-----------:|--------:|
-| CSF | 600000 | 600 | 2048 | 200 | 10 | 10 | 4 | `0x00ca0001` | 24 | 4 |
-| TIP | 2000 | 600 | 512 | 40 | 1 | 10 | 3 | `0x00210101` | 27 | 1 |
-| MLK | 2000 | 600 | 512 | 40 | 1 | 10 | 3 | `0x00210101` | 11 | 1 |
-| MPD | 160 | 600 | 512 | 40 | 1 | 10 | 3 | `0x00210101` | 12 | 1 |
-| RFD | 160 | 600 | 512 | 40 | 1 | 10 | 3 | `0x00210101` | 10 | 1 |
-| NRF | 60000 | 600 | 2048 | 300 | 20 | 10 | 3 | `0x00210101` | 9 | 11 |
-| APD | 600000 | 600 | 512 | 300 | 1 | 2 | 4 | `0x7fff0001` | 28 | 1 |
+For example, `TherapyEvents-RespiratoryEvents` (`RNV`, g[12] index 16 in
+16.8.5.0) has default type 1. Its g[13] rules select type 3 for
+`CentralApneaEnd`, `ObstructiveApneaEnd`, and `ApneaEnd`, producing records
+such as:
 
-This table is not the EDF file schema. It describes runtime periodic/session
-collections that feed reporting and cloud/DDO paths. The pointed var-id lists
-name source DataItems; the 0x30-byte records at `signal_metadata ptr` are
-per-signal runtime metadata.
+```json
+{"reportTime":"2026-06-13T22:47:49.765Z","event":"ObstructiveApneaEnd","durationSeconds":15}
+```
 
-`collection_param_a`, `collection_param_b`, and `collection_kind` are stable
-across the downloaded 15.8.4.0 variants. `reserved_zero` bytes are zero in
-every checked row.
+`CsrStart` and `CsrEnd` select type 4 instead:
+
+```json
+{"reportTime":"2026-06-13T22:47:49.765Z","event":"CsrStart","backdateSeconds":42}
+```
+
+Other `RNV` values use the default type and therefore expose no extra JSON
+property.
+
+---
+
+## g[14] -- periodic collections
+
+**Record stride:** 0x34 bytes
+
+Each row defines one periodic collection stored in the circular NOR file
+`nor:1:\\DATALOG\\<tag>.seg` and exposed through `StartSpool`.
+
+| Offset | Size | Field | Description |
+|--------|------|-------|-------------|
+| +0x00 | 4 | tag string ptr | collection/file tag |
+| +0x04 | 4 | sample_interval_ms | sampling period |
+| +0x08 | 4 | max_block_duration_seconds | time limit for one encoded block |
+| +0x0c | 4 | file_record_bytes | physical circular-file record size |
+| +0x10 | 4 | retention_hours | requested retained duration |
+| +0x14 | 4 | blocks_per_file_record | encoded sample blocks packed in one file record |
+| +0x18 | 4 | file_allocation_granularity | file records in one allocation group |
+| +0x1c | 4 | compression_ratio_estimate | assumed ratio of uncompressed i16 sample bytes to encoded bytes, used to size the circular file |
+| +0x20 | 1 | initializer_byte | common logged-data initializer value; `1` in the documented releases |
+| +0x21 | 1 | reset_request_class | `0` selects the log reset request; `1` selects the periodic-data reset request |
+| +0x22 | 2 | gate_g5_index | g[5] descriptor index used as the collection gate; `0x7fff` means no gate |
+| +0x24 | 2 | file_init_flag_bit | bit in `FIF` (`File Initialization Flags`) |
+| +0x26 | 2 | reserved | zero |
+| +0x28 | 1 | signal_count | zero disables the collection |
+| +0x29 | 3 | reserved | zero |
+| +0x2c | 4 | signal_var_ids ptr (u16[]) | ordered source DataItems |
+| +0x30 | 4 | signal_metadata ptr | parallel codec metadata table |
+
+Signal metadata record (0x30 bytes, 14.8.3.0 and later):
+
+| Offset | Size | Field | Description |
+|--------|------|-------|-------------|
+| +0x00 | 8 | clamp_min (f64) | lower encoded source bound |
+| +0x08 | 8 | clamp_max (f64) | upper encoded source bound |
+| +0x10 | 8 | quantization_step (f64) | encoded sample step |
+| +0x18 | 8 | multiplier_numerator (f64) | numerator applied before DataItem scale and quantization-step division |
+| +0x20 | 1 | rice_modulus | Rice-coding modulus `M`; must be a power of two |
+| +0x21 | 3 | reserved | zero |
+| +0x24 | 4 | codec_revision | `0` = `RC03`, `1` = `RC04` |
+| +0x28 | 1 | precision | precision parameter stored in the optional prefix |
+| +0x29 | 1 | parameter_prefix | nonzero emits codec parameters before sample data |
+| +0x2a | 2 | reserved | zero |
+| +0x2c | 4 | reserved | zero |
+
+Firmware 11.8.0.1 uses a 0x28-byte legacy record. Its first four `f64` fields
+are identical; the tail is:
+
+| Offset | Size | Field | Description |
+|--------|------|-------|-------------|
+| +0x20 | 1 | rice_modulus | Rice-coding modulus `M` |
+| +0x21 | 7 | reserved | zero |
+
+The legacy record does not carry codec revision, precision, or parameter-prefix
+fields. Firmware 14.8.3.0 and later use the 0x30-byte layout.
+
+| Release | Count | Metadata | Collections and spool selectors |
+|---------|------:|---------:|---------------------------------|
+| 11.8.0.1 | 2 | 0x28 | `CSF` = `DiagnosticTenMinutePeriodic`; `NRF` = `TherapyOneMinutePeriodic` |
+| 14.8.3.0 | 6 | 0x30 | above plus `TIP` = `InspiratoryPressure0p5Hz`, `MLK` = `Leak0p5Hz`, `MPD` = `MaskPressure6p25Hz`, `RFD` = `RespiratoryFlow6p25Hz` |
+| 15.8.4.0 and later | 7 | 0x30 | above plus `APD` = `atmosphericPressure10min` |
+
+The number of g[14] collection rows is compiled into the APPX loops that
+construct, register, and reset the collection pipelines. Each row separately
+stores its own `signal_count` at `+0x28`.
+
+The pointed var-id lists name the source DataItems. `gate_g5_index` is relative
+to the first g[5] var ID:
+`CSF` resolves to `QNC`, the therapy collections resolve to `ZLE`, and `APD`
+has no gate.
+
+A collection samples when its signal count is nonzero, its optional gate is
+nonzero, and at least one source DataItem is available. The collector snapshots
+which sources are available for the current block. A change in that set closes
+the block so the channel list remains constant within one encoded block. A
+block also closes at its time limit, when the destination has insufficient
+space, when the gate closes, or when every source becomes unavailable.
+
+The writer sets `file_init_flag_bit` after its file has been initialized or
+scanned. Resetting the row's request class clears that bit, resets sampling and
+compression state, and invalidates the source-availability snapshot.
+
+For each collection, retained-sample demand is:
+
+```text
+ceil(3600000 * retention_hours / sample_interval_ms)
+```
+
+The estimated encoded capacity of one file record is:
+
+```text
+floor(compression_ratio_estimate
+      * (file_record_bytes - 3 * blocks_per_file_record - 14)
+      / (2 * blocks_per_file_record))
+```
+
+The circular file allocation is:
+
+```text
+file_record_count = file_allocation_granularity
+    * (ceil(retained_samples
+            / (file_allocation_granularity * samples_per_record)) + 2)
+```
+
+The `+2` is a two-allocation-group capacity margin added by the periodic
+logger. The filesystem receives the resulting record count and does not add
+this margin itself.
+
+Each source sample is quantized as:
+
+```text
+multiplier = multiplier_numerator / (DataItem scale * quantization_step)
+q = clamp_i16(
+    round_away_from_zero(raw * multiplier),
+    round(clamp_min / quantization_step),
+    round(clamp_max / quantization_step))
+```
+
+The first two quantized samples are signed 16-bit predictor seeds. Subsequent
+samples use the second-order delta `q[n] - 2*q[n-1] + q[n-2]`, signed zigzag
+mapping, and Rice coding with `k = log2(rice_modulus)`. When
+`parameter_prefix` is set, the block begins with its parameter-body length,
+the `RC03` or `RC04` tag, and zigzag-ULEB128 parameters for step, exponent,
+quantized bounds, Rice modulus, and precision.
 
 ---
 
 ## g[15] -- STR.edf SummaryRecord schema
 
-The `STR.edf` literal file name lives in application code (`sdc:0:\STR.edf` at
-`0x081859c0`), referenced from `FUN_0818568e` and `FUN_08185838`. The schema
-itself comes from g[15]: `FUN_08185a20` reads g[15] and feeds it into the
-SummarySync/EDF construction path.
+g[15] defines the persistent per-day Summary record, the `Summary` spool
+projection, and the signal rows written to `STR.edf`.
 
 ### Header
 
-| Offset | Size | Field |
-|--------|------|-------|
-| +0x00 | 2 | `0x016d` |
-| +0x02 | 2 | `0x0014` |
-| +0x04 | 2 | record_count |
-| +0x06 | 2 | special_key_count |
-| +0x08 | 4 | `SummaryRecord*` |
-| +0x0c | 4 | special_key_table_ptr |
+| Offset | Size | Field | Description |
+|--------|------|-------|-------------|
+| +0x00 | 2 | retention_days | maximum number of therapy-day records retained by the long-term Summary reader/writer |
+| +0x02 | 2 | usage_interval_capacity | maximum mask-on/off intervals stored in one therapy-day record |
+| +0x04 | 2 | record_count | number of 36-byte SummaryRecord rows |
+| +0x06 | 2 | ignored_input_field_count | number of ignored input-field rows |
+| +0x08 | 4 | `SummaryRecord*` | SummaryRecord table pointer |
+| +0x0c | 4 | ignored_input_field_table_ptr | ignored input-field table pointer |
 
-| Version | Records | SummaryRecord file offset | Key count | Special keys |
-|---------|--------:|--------------------------:|----------:|--------------|
+| Version | Records | SummaryRecord file offset | Ignored field count | Ignored fields |
+|---------|--------:|--------------------------:|--------------------:|----------------|
+| 11.8.0.1 | 142 | varies | 3 | `XA5`, `XB3`, `ZZ6` |
 | 14.8.3.0 | 190 | `0x025408` | 3 | `XA5`, `XB3`, `ZZ6` |
 | 15.8.4.0 | 192 | `0x025688` | 3 | `XA5`, `XB3`, `ZZ6` |
 | 16.8.5.0 | 190 | `0x025768` | 5 | `XA5`, `XB3`, `ZZ6`, `XB9`, `XBA` |
+| 17.8.6.0 | 190 | varies | 5 | `XA5`, `XB3`, `ZZ6`, `XB9`, `XBA` |
 
-The `SummaryRecord` and special-key tables are reached through the header
-pointers and are not physically required to follow g[15]. The bytes
-immediately after the 16-byte g[15] header are a small inline auxiliary key
-map. In 15.8.4.0 vid03 it contains four two-letter code plus var_id pairs
-(`PA`/`WPA`, `PM`/`WPM`, `UC`/`WUC`, `UP`/`WUP`), followed by EDF label
-strings referenced by SummaryRecord rows.
+`retention_days` is 365 and `usage_interval_capacity` is 20 in these releases.
+
+Each ignored input-field record is eight bytes:
+
+| Offset | Size | Field | Description |
+|--------|------|-------|-------------|
+| +0x00 | 4 | short_tag | NUL-terminated three-character input tag |
+| +0x04 | 4 | kind | value layout code using the same word-count rules as a SummaryRecord kind |
+
+The summary reader checks this table before ordinary short-tag resolution. A
+matching field is skipped according to `kind`. All listed fields use kind `0`,
+which skips one value word after the tag.
 
 ### SummaryRecord layout
 
@@ -1146,77 +1343,86 @@ strings referenced by SummaryRecord rows.
 
 | Offset | Size | Field | Description |
 |--------|------|-------|-------------|
-| +0x00 | 4 | field_id | output/order id |
-| +0x04 | 4 | kind | controls record interpretation |
-| +0x08 | 2 | var_a | selected when `kind >= 3` |
-| +0x0a | 2 | var_b | selected when `kind < 3` |
-| +0x0c | 2 | selector_a | usually `0x7fff` in checked rows |
-| +0x0e | 2 | selector_b | statistic/filter selector (`0`, `5`, `50`, `70`, `95`, `100`, ...) |
-| +0x10 | 4 | logical_scale (f32) | raw -> logical value scale |
-| +0x14 | 1 | record_class | 0 = setting/snapshot, 1 = summary/status/measurement |
-| +0x15 | 1 | active | SummarySync counts and writes only when non-zero |
-| +0x16 | 2 | reserved16 | always 0 in active rows |
+| +0x00 | 4 | field_id | field number in the `Summary` protobuf; table order controls persistent and EDF order |
+| +0x04 | 4 | kind | selects the accumulator implementation and stored word count |
+| +0x08 | 2 | var_a | output var for derived rows; auxiliary output for kind 2 |
+| +0x0a | 2 | var_b | direct/source var; persistent short tag for kinds 0..2 |
+| +0x0c | 2 | var_c | second source for kind 5; otherwise `0x7fff` |
+| +0x0e | 1 | percentile | percentile for kinds 6 and 7; zero otherwise |
+| +0x0f | 1 | reserved | zero |
+| +0x10 | 4 | summary_spool_multiplier (f32) | multiplier applied when encoding the integer value into the `Summary` protobuf |
+| +0x14 | 1 | spool_enabled | non-zero includes the row in the `Summary` spool |
+| +0x15 | 1 | edf_enabled | non-zero includes the row in `STR.edf` |
+| +0x16 | 2 | reserved | zero |
 | +0x18 | 4 | edf_label | ASCII string ptr -> EDF signal label |
 | +0x1c | 4 | edf_unit | ASCII string ptr -> EDF physical unit |
-| +0x20 | 4 | edf_output_scale (f32) | logical -> EDF int16 packing scale |
+| +0x20 | 4 | edf_physical_divisor (f32) | raw-to-physical divisor represented by the EDF signal header |
 
-`logical_scale` and `edf_output_scale` are independent: firmware applies
-`logical_scale` for runtime value handling and `edf_output_scale` when packing
-int16 EDF samples.
+The stored Summary value remains a signed 32-bit raw DataItem value. The spool
+encoder multiplies it by `summary_spool_multiplier` and rounds to an integer.
+Before writing a non-interval STR row, firmware tests the row's `var_b`
+DataItem type. Enum-backed rows dispatch by `field_id` to an APPL mapper that
+re-reads a version-local source DataItem and converts its zero-based option
+index through an APPL byte table. These maps are not stored in g[15] or
+elsewhere in CONF. Rows in the documented releases keep `field_id` equal to
+the table index and pair `var_b` with the source expected by that mapper.
 
-`record_class` is meaningful for active rows and for inactive rows after their
-metadata is hydrated from an official active variant. Do not infer semantics
-from stale inactive-row tails alone. `0x00` marks setting/snapshot rows:
-mostly `S.*` one-shot settings plus `Mode` / `ActiveTherapyProfile`. `0x01`
-marks summary/status/measurement rows: duration, AHI/HI/AI/OAI/CAI/UAI/RIN/CSR,
-percentile tuples for SpO2, MaskPress, Leak, MinVent, RespRate, TidVol,
-IERatio, Ti, SpO2Thresh, the `HeatedTube`/`Humidifier` connectivity flags, and
-the n/a placeholder at `field_id=0`. The flag is an emitter hint for
-snapshot-setting vs. session-aggregate output.
+`INT32_MIN` bypasses remapping and is written as digital `-1` without a
+diagnostic. Any other resulting value outside `-32768..32767` is written as
+`-1` and reports an application error. `edf_physical_divisor` affects the EDF
+header and does not rescale the digital sample.
+The conversion tables are listed in
+[STR enum export maps](edf_signals.md#str-enum-export-maps).
 
-Important exception: `record_class` is not derived from `kind`. `HeatedTube`
-and `Humidifier` are `kind=0` rows but have `record_class=1`.
+Kinds select these accumulator forms:
 
-Code support:
+| Kind | Stored words | Operation |
+|-----:|-------------:|-----------|
+| 0 | 1 | snapshot `var_b`; an unavailable source leaves the previous value unchanged |
+| 1 | 1 | direct `var_b` value with output availability maintained by the accumulator |
+| 2 | 1 | accumulate the interval value into `var_b` and publish the interval value through `var_a` |
+| 3 | `usage_interval_capacity + 1` | mask interval count followed by `(start_minute, duration_minute)` pairs packed into 32-bit words |
+| 4 | 2 | rate in `var_a`, derived from counter `var_b` and elapsed duration |
+| 5 | 3 | percentage in `var_a`, derived as `var_b / (var_b + var_c)` |
+| 6 | 1 | percentile output `var_a` calculated from source `var_b`, gated by `ZLE` |
+| 7 | 1 | percentile output `var_a` calculated from source `var_b`, gated by `ZTE` |
 
-| Function | Behavior |
-|----------|----------|
-| `FUN_081468a6` | if `kind < 3`, uses u16 at +0x0a; else u16 at +0x08 |
-| `FUN_081829d4` | iterates and counts only records where byte +0x15 is non-zero |
-| `summary_record_populate_values` | populates output from active set |
+The first SummaryRecord is kind 3. The STR writer uses its usage intervals to
+emit the fixed `Date`, `MaskOn`, `MaskOff`, and `MaskEvents` fields before the
+configured g[15] signal rows.
 
-Active SummaryRecord counts:
+For kinds 6 and 7, `percentile` is passed directly to the histogram lookup.
+The two kinds use the same percentile algorithm and differ in the runtime gate
+that enables sample collection.
 
-| Version | VID | Active | Total |
-|---------|----:|-------:|------:|
-| 14.8.3.0 | 3 | 74 | 190 |
-| 15.8.4.0 | 3 | 74 | 192 |
-| 15.8.4.0 | 7 | 92 | 192 |
-| 15.8.4.0 | 10 | 93 | 192 |
-| 15.8.4.0 | 12 | 70 | 192 |
-| 16.8.5.0 | 3 | 74 | 190 |
-| 16.8.5.0 | 6 | 90 | 190 |
+`spool_enabled` and `edf_enabled` are independent. Setting rows are commonly
+excluded from the `Summary` spool while remaining enabled in STR; summary
+metrics are commonly enabled in both. `HeatedTube` and `Humidifier` are kind 0
+snapshots enabled in both outputs.
 
-Representative active families in 15.8.4.0:
+Enabled SummaryRecord counts:
+
+| Version | VID | Summary spool | STR EDF | Total |
+|---------|----:|--------------:|--------:|------:|
+| 11.8.0.1 | 13 | 62 | 129 | 142 |
+| 14.8.3.0 | 3 | 51 | 74 | 190 |
+| 15.8.4.0 | 3 | 53 | 74 | 192 |
+| 15.8.4.0 | 7 | 59 | 92 | 192 |
+| 15.8.4.0 | 10 | 56 | 93 | 192 |
+| 15.8.4.0 | 12 | 51 | 70 | 192 |
+| 16.8.5.0 | 3 | 53 | 74 | 190 |
+| 16.8.5.0 | 6 | 58 | 90 | 190 |
+| 17.8.6.0 | 3 | 53 | 74 | 190 |
+| 17.8.6.0 | 6 | 58 | 90 | 190 |
+
+Active families in 15.8.4.0:
 
 | VID | Family |
 |----:|--------|
-| 3 | AutoSet-*, HerAuto-*, AutoSetComfort, Summary-ReraIndex, CSD/CSR-ish |
+| 3 | AutoSet-*, HerAuto-*, AutoSetComfort, Summary-ReraIndex, central-apnea and CSR summaries |
 | 7 | Spont-*, VAuto-*, SpontTriggerPercentage, SpontCyclePercentage, IeRatio-*, InspiratoryDuration-* |
 | 10 | Spont-*, ST-*, Timed-*, IeRatio-*, InspiratoryDuration-* |
 | 12 | ASV-*, ASVAuto-* |
-
-Matching EDF label strings in nearby pools:
-
-```text
-S.VA.StartPress  S.VA.MaxIPAP  S.VA.MinEPAP  S.VA.PS  S.VA.TiMax  S.VA.TiMin
-S.VA.Trigger     S.VA.Cycle
-S.S.StartPress   S.S.IPAP      S.S.EPAP      S.S.EasyBreathe
-S.S.RespRateEn   S.S.RiseEnable S.S.RiseTime  S.S.TiMax  S.S.TiMin
-S.S.Trigger      S.S.Cycle
-IERatio.50  IERatio.95  IERatio.Max  Ti.50  Ti.95  Ti.Max
-SpontTrig%  SpontCyc%
-```
 
 ---
 
@@ -1225,25 +1431,50 @@ SpontTrig%  SpontCyc%
 Firmware through 8.5.0 contains three stream/file headers (`BRP`, `SA2`, and
 `PLD`). Firmware 8.6.0 adds `TCV` as a fourth header.
 
+| APPX | Header count |
+|------|-------------:|
+| 8.0.1 through 8.5.0 | 3 |
+| 8.6.0 | 4 |
+
+The count is compiled into the APPX sampled-EDF pipeline; it is not stored in
+the CONF rows.
+
 
 ### StreamFileHeader
 
-| Offset | Size | Field |
-|--------|------|-------|
-| +0x00 | 2 | period_ms |
-| +0x02 | 2 | samples_per_60s |
-| +0x04 | 4 | signal_count |
-| +0x08 | 4 | tag_string_ptr |
-| +0x0c | 4 | signal_record_ptr |
+| Offset | Size | Field | Description |
+|--------|------|-------|-------------|
+| +0x00 | 2 | period_ms | collection period for each signal sample |
+| +0x02 | 2 | samples_per_record | samples of each signal in one EDF data record |
+| +0x04 | 2 | signal_count | zero disables the file schema |
+| +0x06 | 2 | reserved | zero |
+| +0x08 | 4 | tag_string_ptr | EDF file-class tag |
+| +0x0c | 4 | signal_record_ptr | StreamSignal table pointer |
 
 ### StreamSignal
 
-| Offset | Size | Field |
-|--------|------|-------|
-| +0x00 | 4 | id |
-| +0x04 | 4 | name ptr |
-| +0x08 | 4 | unit ptr |
-| +0x0c | 4 | scale (f32) |
+| Offset | Size | Field | Description |
+|--------|------|-------|-------------|
+| +0x00 | 2 | var_id | source DataItem |
+| +0x02 | 2 | reserved | zero |
+| +0x04 | 4 | name ptr | EDF signal label |
+| +0x08 | 4 | unit ptr | EDF physical unit |
+| +0x0c | 4 | physical_scale (f32) | EDF physical scaling metadata |
+
+At each `period_ms` tick, the collector reads the current raw value of every
+source DataItem. An unavailable value is recorded as digital `-1`; available
+values are stored as signed 16-bit raw samples. Names, units, and
+`physical_scale` populate the EDF signal headers and do not rescale samples
+during collection.
+
+The collector produces chunks containing one tenth of an EDF data record. The
+writer combines ten chunks into one record. In stock schemas,
+`period_ms * samples_per_record` is 60000 ms, so each record spans one minute.
+The record contains
+`(signal_count * samples_per_record + 1) * 2` bytes; the final i16 is its CRC.
+A partial record is discarded when the recording gate closes rather than
+padded. Recording is enabled while `ZLE` is 1, SD logging is enabled by `SDS`
+bit 4, and `CDT` is 1.
 
 ### Stable signals (all variants)
 
@@ -1254,11 +1485,12 @@ Firmware through 8.5.0 contains three stream/file headers (`BRP`, `SA2`, and
 
 ### TCV content
 
-`TCV` is present from firmware 8.6.0.
+The `TCV` header is present from firmware 8.6.0. It has no signal in the stock
+vid03 schema and one signal in the vid06 schema.
 
 | File | period_ms | samples | count | Signals |
 |------|----------:|--------:|------:|---------|
-| TCV | 40 | 1500 | 1 | TrigCycEvt.40ms (--, scale 1; source g[5] `BYV`) |
+| TCV | 40 | 1500 | 0 or 1 | TrigCycEvt.40ms (--, scale 1; source g[5] `BYV`) when active |
 
 ### Variable PLD content
 
@@ -1276,94 +1508,140 @@ Snore.2s       --      scale 50
 FlowLim.2s     --      scale 100
 ```
 
-| VID | PLD count | Delta from vid03 |
-|----:|----------:|------------------|
-| 3 | 9 | -- |
-| 7 | 11 | + IERatio.2s (%, 1), Ti.2s (s, 50) |
-| 10 | 10 | drops FlowLim.2s; + IERatio.2s, Ti.2s |
-| 12 | 10 | + TgtVent.2s (L/min, 8) |
-
-EDF/signal differences are not limited to STR.edf -- PLD metadata also varies.
+| Release / VID | PLD count | Delta from vid03 base set |
+|---------------|----------:|---------------------------|
+| 11.8.0.1 vid13 | 12 | + TgtVent.2s, IERatio.2s, Ti.2s |
+| 14.8.3.0 through 17.8.6.0 vid03 | 9 | -- |
+| 15.8.4.0 vid07; 16.8.5.0/17.8.6.0 vid06 | 11 | + IERatio.2s, Ti.2s |
+| 15.8.4.0 vid10 | 10 | drops FlowLim.2s; + IERatio.2s, Ti.2s |
+| 15.8.4.0 vid12 | 10 | + TgtVent.2s |
 
 ---
 
 ## g[17] -- event label tables
 
-Three 28-byte label table headers. Labels are semantically identical across
-the four-dump set; only pointers and one CSL flag bit differ.
+These headers bind event values to EDF annotation labels and configure the
+annotation writer.
+
+| APPX | Schema count | Layout |
+|------|-------------:|--------|
+| 8.0.1 | 2 | 20-byte legacy records |
+| 8.3.0 and later | 3 | 28-byte current records |
+
+The count and record layout are selected by the APPX annotation-writer
+pipeline; neither is stored in a separate CONF header.
+
+### 28-byte layout
+
+Firmware from 14.8.3.0 uses 28-byte records:
+
+| Offset | Size | Field | Description |
+|--------|------|-------|-------------|
+| +0x00 | 2 | event_record_bytes | maximum source event record size |
+| +0x02 | 2 | label_count | number of annotation-label pointers |
+| +0x04 | 2 | edf_record_bytes | complete annotation-channel record size |
+| +0x06 | 2 | reserved | zero |
+| +0x08 | 4 | fifo_capacity | number of source event records |
+| +0x0c | 1 | writer_enabled | nonzero constructs the writer |
+| +0x0d | 1 | subtract_duration_from_onset | treats the u16 event value as onset backdate |
+| +0x0e | 2 | reserved | zero |
+| +0x10 | 4 | tag_ptr (`EVE`, `AEV`, or `CSL`) | EDF annotation file-class tag |
+| +0x14 | 4 | constant_14 | `1` |
+| +0x18 | 4 | label_table_ptr (`char **`) | annotation-label pointer table |
+
+### Legacy layout
+
+11.8.0.1 uses two 20-byte records (`EVE` and `CSL`):
 
 | Offset | Size | Field |
 |--------|------|-------|
-| +0x00 | 2 | event_bound (EventQueue bounds check) |
-| +0x02 | 2 | label_count |
-| +0x04 | 4 | record_size |
-| +0x08 | 4 | label_ptr_stride |
-| +0x0c | 4 | flags |
-| +0x10 | 4 | tag (`EVE` / `AEV` / `CSL`) |
-| +0x14 | 4 | enabled_constant |
-| +0x18 | 4 | label_table (char**) |
+| +0x00 | 2 | label_count |
+| +0x02 | 2 | edf_record_bytes |
+| +0x04 | 4 | fifo_capacity |
+| +0x08 | 1 | writer_enabled |
+| +0x09 | 1 | subtract_duration_from_onset |
+| +0x0a | 2 | reserved |
+| +0x0c | 4 | tag_ptr |
+| +0x10 | 4 | label_table_ptr (`char **`) |
 
-`label_ptr_stride` is `4` in all three tables, matching the 32-bit entries in
-the `char**` label table. `enabled_constant` is `1` in all observed rows.
+Schemas:
 
-Observed tables:
+| Tag | Event bytes | EDF bytes | FIFO | Labels |
+|-----|------------:|----------:|-----:|--------|
+| EVE | 9 | 64 | 4 | 6: "", Hypopnea, Central Apnea, Obstructive Apnea, Apnea, Arousal |
+| AEV | 11 | 64 | 4 | 37 alarm and system-error labels |
+| CSL | 9 | 64 | 4 | 3: "", CSR Start, CSR End |
 
-| Tag | Labels |
-|-----|--------|
-| EVE | 6: "", Hypopnea, Central Apnea, Obstructive Apnea, Apnea, Arousal |
-| AEV | 37: High Leak, Non Vented Mask, Low Min Ventilation, Apnea, Blocked Tube, Tube Disconnected, Tub Disconnected, Alarm Module Comms Error, Motor Stall HW, Slow Over Pressure, Fast Over Pressure, Over Temperature, Over Voltage, Motor Stall SW, Motor HW Fault, Motor Sticky, Motor FETs, Motor ESD, Motor HW Mitigation IC, No Flow Data, Settings Reset, Calibration Reset, Pressure Stuck High/Low/Mid, Flow Sensor Stuck Low/High, Pressure Sensor Drift, Pressure Sensors Plausibility, Implausible Supply Voltage, HW Fault Detection Circuitry, Self Test Initiated, Indicator Self Test Pass/Fail, Supercapacitor Self Test Pass/Fail, Alarm Mute |
-| CSL | 3: "", CSR Start, CSR End |
+`event_record_bytes` is absent from the legacy layout. `AEV` is absent from
+11.8.0.1.
 
-CSL flags:
+The source event record begins with a six-byte timestamp. `EVE` and `CSL`
+append an event-label index and a u16 duration/backdate value, producing a
+nine-byte record. `AEV` appends an event-label index and a u32 payload,
+producing an eleven-byte record. Producers may submit a shorter record, but
+the reported size may not exceed `event_record_bytes`.
 
-| VID | Flags |
-|----:|------|
-| 3 | `0x0101` |
-| 7,10,12 | `0x0100` |
+`writer_enabled` controls construction of the corresponding annotation writer.
+For `EVE` and `CSL`, `subtract_duration_from_onset` changes the u16 value from
+an EDF annotation duration into a backdate: the writer subtracts it from the
+onset and emits zero duration. When the flag is clear, onset remains unchanged
+and the value is emitted as the annotation duration. `AEV` uses its dedicated
+u32 payload formatter.
+
+`edf_record_bytes` is the complete annotation-channel record size, including
+its CRC field. The 28-byte schemas use 64 bytes.
+
+CSL writer configuration:
+
+| Firmware | writer_enabled | subtract_duration_from_onset |
+|----------|---------------:|---------------:|
+| 11.8.0.1 vid13 | 1 | 1 |
+| 14.8.3.0 vid03 | 1 | 1 |
+| 15.8.4.0 vid03 | 1 | 1 |
+| 15.8.4.0 vid07/10/12 | 0 | 1 |
+| 16.8.5.0 vid03 | 1 | 1 |
+| 16.8.5.0 vid06 | 0 | 1 |
+| 17.8.6.0 vid03 | 1 | 1 |
+| 17.8.6.0 vid06 | 0 | 1 |
 
 ---
 
 ## g[18] -- RPC JSON node permission table
 
-Begins with the RPC JSON node permission table. Direct code at
-`0x0814e814` loads `g[18] + node_id * 2` and reads the low byte as the
-permission/visibility flag.
+Each RPC JSON node has a two-byte permission record:
 
 ```text
 permission_offset = g[18] + node_id * 2
 ```
 
-The permission vector is indexed by the node IDs declared in APPL metadata.
-The highest declared node ID varies by release:
-
-| Version | Highest node ID |
-|---------|----------------:|
-| 14.8.3.0 | `0x8b` (139) |
-| 15.8.4.0 | `0x8d` (141) |
-| 16.8.5.0 | `0x8e` (142) |
-
-Permission values are 16-bit records:
+The low byte controls whether the node may be returned/read. The high byte
+blocks writes when nonzero. These are independent gates.
 
 | Value | Meaning |
 |-------|---------|
-| `0x0000` | hidden |
-| `0x0001` | visible (low byte = 1) |
-| `0x0100` | hidden, high byte set |
-| `0x0101` | visible, high byte set |
+| `0x0000` | read disabled; write not blocked by this table |
+| `0x0001` | read enabled; write not blocked by this table |
+| `0x0100` | read disabled; write blocked |
+| `0x0101` | read enabled; write blocked |
 
 Profile and feature RPC JSON nodes such as `TherapyProfiles`, individual therapy
-profiles, and feature nodes become visible when their low byte is set to `1`.
-This is a separate gate from descriptor ACT bits and enum option masks.
+profiles, and feature nodes become readable when their low byte is set to `1`.
+This table is separate from DataItem flags and enum option masks.
 
-After the permission table, the same physical interval contains g[8]
-short-name bucket payloads (`M`, `R`, `H`, and `C` in vid03). Those payloads
-are reached through the g[8] bucket headers, not through the g[18] permission
-table.
+The APPX `!NN` schema-reference resolver supplies the table's node count.
 
-### Discovering node IDs
+| Release | Permission records |
+|---------|-------------------:|
+| 11.8.0.1 | 135 |
+| 14.8.3.0 | 141 |
+| 15.8.4.0 | 143 |
+| 16.8.5.0 | 144 |
+| 17.8.6.0 | 144 |
 
-Node IDs are not stable across Air11 firmware versions. They are discovered from
-RPC metadata triples:
+### RPC node metadata
+
+Node IDs are release-specific. RPC metadata stores each name and node ID as a
+12-byte record:
 
 | Offset | Size | Field |
 |--------|------|-------|
@@ -1373,39 +1651,39 @@ RPC metadata triples:
 
 ### Therapy profile node IDs
 
-| Node | 14.8.3.0 | 15.8.4.0 | 16.8.5.0 |
-|------|---------:|---------:|---------:|
-| ASVAutoProfile | `0x61` | `0x63` | `0x64` |
-| ASVProfile | `0x62` | `0x64` | `0x65` |
-| AutoSetForHerProfile | `0x63` | `0x65` | `0x66` |
-| AutoSetProfile | `0x64` | `0x66` | `0x67` |
-| CpapProfile | `0x65` | `0x67` | `0x68` |
-| PACProfile | `0x66` | `0x68` | `0x69` |
-| STProfile | `0x67` | `0x69` | `0x6a` |
-| SpontProfile | `0x68` | `0x6a` | `0x6b` |
-| TimedProfile | `0x69` | `0x6b` | `0x6c` |
-| VAutoProfile | `0x6a` | `0x6c` | `0x6d` |
-| iVAPSProfile | `0x6b` | `0x6d` | `0x6e` |
+| Node | 14.8.3.0 | 15.8.4.0 | 16.8.5.0 | 17.8.6.0 |
+|------|---------:|---------:|---------:|---------:|
+| ASVAutoProfile | `0x61` | `0x63` | `0x64` | `0x64` |
+| ASVProfile | `0x62` | `0x64` | `0x65` | `0x65` |
+| AutoSetForHerProfile | `0x63` | `0x65` | `0x66` | `0x66` |
+| AutoSetProfile | `0x64` | `0x66` | `0x67` | `0x67` |
+| CpapProfile | `0x65` | `0x67` | `0x68` | `0x68` |
+| PACProfile | `0x66` | `0x68` | `0x69` | `0x69` |
+| STProfile | `0x67` | `0x69` | `0x6a` | `0x6a` |
+| SpontProfile | `0x68` | `0x6a` | `0x6b` | `0x6b` |
+| TimedProfile | `0x69` | `0x6b` | `0x6c` | `0x6c` |
+| VAutoProfile | `0x6a` | `0x6c` | `0x6d` | `0x6d` |
+| iVAPSProfile | `0x6b` | `0x6d` | `0x6e` | `0x6e` |
 
 ### Feature profile node IDs
 
-| Node | 14.8.3.0 | 15.8.4.0 | 16.8.5.0 |
-|------|---------:|---------:|---------:|
-| ConfirmStopFeature | `0x4d` | `0x4f` | `0x50` |
-| HeightFeature | `0x51` | `0x53` | `0x54` |
-| RampDownFeature | `0x55` | `0x57` | `0x58` |
-| TherapyLEDFeature | `0x5d` | `0x5f` | `0x60` |
+| Node | 14.8.3.0 | 15.8.4.0 | 16.8.5.0 | 17.8.6.0 |
+|------|---------:|---------:|---------:|---------:|
+| ConfirmStopFeature | `0x4d` | `0x4f` | `0x50` | `0x50` |
+| HeightFeature | `0x51` | `0x53` | `0x54` | `0x54` |
+| RampDownFeature | `0x55` | `0x57` | `0x58` | `0x58` |
+| TherapyLEDFeature | `0x5d` | `0x5f` | `0x60` | `0x60` |
 
-### Alarm profile nodes (kept disabled)
+### Alarm profile node IDs
 
-| Node | 14.8.3.0 | 15.8.4.0 | 16.8.5.0 |
-|------|---------:|---------:|---------:|
-| AlarmProfiles | `0x40` | `0x42` | `0x43` |
-| AlarmVolume | `0x41` | `0x43` | `0x44` |
-| ApneaAlarm | `0x42` | `0x44` | `0x45` |
-| HighLeakAlarm | `0x43` | `0x45` | `0x46` |
-| LowMinuteVentAlarm | `0x44` | `0x46` | `0x47` |
-| NonVentedMaskAlarm | `0x45` | `0x47` | `0x48` |
+| Node | 14.8.3.0 | 15.8.4.0 | 16.8.5.0 | 17.8.6.0 |
+|------|---------:|---------:|---------:|---------:|
+| AlarmProfiles | `0x40` | `0x42` | `0x43` | `0x43` |
+| AlarmVolume | `0x41` | `0x43` | `0x44` | `0x44` |
+| ApneaAlarm | `0x42` | `0x44` | `0x45` | `0x45` |
+| HighLeakAlarm | `0x43` | `0x45` | `0x46` | `0x46` |
+| LowMinuteVentAlarm | `0x44` | `0x46` | `0x47` | `0x47` |
+| NonVentedMaskAlarm | `0x45` | `0x47` | `0x48` | `0x48` |
 
 Example -- `AutoSetProfile` in 16.8.5.0:
 
@@ -1414,41 +1692,70 @@ Example -- `AutoSetProfile` in 16.8.5.0:
 | APPL metadata value | `!103` |
 | node_id | `103` / `0x67` |
 | Permission offset | `g[18] + 0x67 * 2` = file offset `0x02b5de` |
-| Permission value | `0x0001` (visible) |
+| Permission value | `0x0001` (read enabled) |
 
 ---
 
-## g[19] -- DDO/reporting source list
+## g[19] -- ConfigurationProfiles change-watch list
 
-Reporting/DDO source header and reporting code/string pool. Startup at
-`0x08167dcc` caches g[19]; consumer at
-`0x08167eca` reads:
+g[19] selects the DDO settings watched by the configuration-profile change
+tracker. The list contains the profile-source fields `CP1` and `CP2` plus the
+data-delivery controls that enable or disable individual spool families.
+
+The DDO settings group uses the list as follows:
+
+1. After loading DDO, firmware records the current values as its baseline.
+2. Before a DDO write, it serializes every active g[19] DataItem and compares
+   the resulting CRC with the baseline CRC.
+3. A changed CRC sets `CP3` to the current time and marks the configuration
+   profile dirty.
+4. Completion of the DDO write increments `CCC`.
+5. The data-collection/send manager observes `CCC` as one of its wake-up
+   triggers.
+
+`ConfigurationProfilesCollection` uses `CP3` as `AppliedDateTime`, `CP1` as
+the source string, and `CP2` as the transaction value. Its
+`DataDeliveryControlV2` body contains 25 delivery-control states selected by
+the APPL formatter. The formatter's 25-field layout is defined separately in
+APPL.
+
+For example, changing `DDP`, the delivery state for
+`TherapyOneMinutePeriodic`, changes the g[19] snapshot. The completed DDO write
+records the change time in `CP3`, advances `CCC`, and wakes the data-collection
+manager. A subsequent `ConfigurationProfilesCollection` record reports the
+new `TherapyOneMinutePeriodic` state.
 
 | Offset | Size | Field |
 |--------|------|-------|
-| +0x00 | 4 | var_id_list ptr (u16[]) |
+| +0x00 | 4 | var_id_list_ptr (`u16[]`) |
 | +0x04 | 1 | count |
+| +0x05 | 3 | reserved |
 
-Iterates those var ids, constructs `DataItem`s, checks visibility, emits
-current values. In vid03 the count is 29 and the list maps event/collection
-codes to internal DDO variables:
+For change comparison, active volatile-text DataItems are serialized as text
+and the other active DataItems as raw values. The serializer finalizes a
+zero-filled `0x7fa`-byte buffer, and firmware compares its CRC-32/ISO-HDLC
+(`0xedb88320` reflected polynomial, init and xorout `0xffffffff`).
+
+| Release | Source count |
+|---------|-------------:|
+| 11.8.0.1 | absent |
+| 14.8.3.0 | 28 |
+| 15.8.4.0 | 29 |
+| 16.8.5.0 | 29 |
+| 17.8.6.0 | 29 |
+
+The ordered 14.8.3.0 source list is:
 
 ```text
-ASE -> CP1   AEE -> DOP   ELV -> DTE   GAE -> DDS   REE -> SVA   SCE -> DAV
-APE -> CP2   CAV -> DMM   FAE -> DDE   HEE -> DAS   RNV -> DSV   DAE -> DUC
-ADE -> DDN   SCV -> DUE   XSE -> DDY   HEV -> DCA   RAE -> DMA   SRE -> DEG
-AAE -> DDP   DAF -> DEE   MEV -> DGA   SHE -> DTP   BAT -> DEI   CSF -> DRF
-TIP -> DMP   MLK -> DML   MPD -> DIP   RFD -> ADP   NRF -> DCP
+CP1 CP2 DDN DDP DOP DMM DUE DTE DDE DDY DEE DDS DAS DCA DGA SVA DSV
+DMA DTP DAV DUC DEG DEI DRF DMP DML DIP DCP
 ```
 
-After the 8-byte header, g[19]'s own pool contains 4-byte code tags (`ASE`,
-`APE`, `ADE`, ...), units, and reporting strings (`L/s`, `bpm`, `AHI`, `BRP`,
-`SA2`, `PLD`, `EVE`, `AEV`, `CSL`, ...). In the checked 15.8.4.0 images this
-string pool ends at g[19] + `0x104`.
+Firmware 15.8.4.0 and later insert `ADP` immediately before `DCP`; the other
+source tags retain their order. Var IDs are release-specific.
 
-The next 14 bytes are pointer-owned u16 list payloads: g[14].`TIP`,
-g[14].`MLK`, g[14].`MPD`, g[14].`RFD`, g[14].`APD`, g[6].`MCA`, and
-g[6].`MCF`. The long erased run begins after those lists. Treat it as
-allocation space only if the CONF CRC and all pointers are updated carefully.
+`ADP` is source entry 27 (`0x038a` in 16.8.5.0 and `0x0390` in 17.8.6.0) and
+provides the `DataDeliveryControlV2.atmosphericPressure10min` state (protobuf
+field 26). It is inactive in vid03 and vid06.
 
 ---

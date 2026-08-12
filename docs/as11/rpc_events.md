@@ -64,8 +64,11 @@ selector that delivers them.
 - `ReraEnd`
 - `CsrStart`, `CsrEnd`
 
-The apnea, hypopnea, and RERA labels are completion events. Their
-`reportTime` is the end of the event; payloads carry `durationSeconds`.
+The apnea, hypopnea, and RERA labels are completion events. Their `reportTime`
+is the end of the event. `CentralApneaEnd`, `ObstructiveApneaEnd`, and
+`ApneaEnd` include `durationSeconds`; `CsrStart` and `CsrEnd` include
+`backdateSeconds`. `HypopneaEnd` and `ReraEnd` expose no additional JSON
+property.
 
 ### System activity
 
