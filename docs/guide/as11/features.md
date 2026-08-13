@@ -22,6 +22,12 @@ The mode and clinical-setting patch exposes:
 Mode-specific pressure, timing, trigger, cycle, and comfort settings are made
 editable where the firmware provides a supported setting path.
 
+## Therapy Screen
+
+The therapy-screen patch adds leak, minute ventilation, respiratory rate,
+tidal volume, and I:E ratio to the CPAP, AutoSet, and AutoSet for Her therapy
+screens. It also adds inspiratory time to ASV and ASVAuto.
+
 ## ASV Pressure-Support Range
 
 The ASV range patch removes the stock 5 cmH2O minimum separation between

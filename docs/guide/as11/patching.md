@@ -67,6 +67,7 @@ instead of producing that reduced result.
 | Patch | What it does | Switch |
 |-------|--------------|--------|
 | ASV backup rate | Allows automatic backup breaths to be disabled in ASV and ASVAuto; the Backup Rate setting controls the behavior | `--patch-asv-backup-rate` |
+| Therapy screen | Shows additional respiratory statistics in CPAP, AutoSet, AutoSet For Her, ASV, and ASVAuto | `--patch-therapy-screen` |
 | [Custom settings](../../as11/custom_settings.md) | Adds clinical-menu settings used by other patches and preserves their values across restarts | `--patch-custom-settings` |
 
 ### Therapy Data and Reporting

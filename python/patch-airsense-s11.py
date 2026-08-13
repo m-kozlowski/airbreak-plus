@@ -260,6 +260,7 @@ class S11Firmware(object):
     G2_STRIDE = 32
     G3_STRIDE = 20
     G5_STRIDE = 16
+    G10_STRIDE = 14
 
     DESCRIPTOR_FIELDS = {
         "g1": {
@@ -1487,6 +1488,47 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             return PatchOutcome.warn("language configuration not found")
         return PatchOutcome.ok()
 
+    def therapy_screen(self):
+        """Show respiratory statistics hidden from compatible therapy modes."""
+        visibility_plan = {
+            "ZLF": (0, 1, 2),  # Leak: CPAP, AutoSet, HerAuto
+            "MV5": (0, 1, 2),  # Minute ventilation
+            "RRR": (0, 1, 2),  # Respiratory rate
+            "ZTD": (0, 1, 2),  # Tidal volume
+            "IER": (0, 1, 2),  # I:E ratio
+            "IN5": (7, 8),     # Ti: ASV, ASVAuto
+        }
+        # SPONT CYC (RCR) and SPONT TRIG (RTR) are gated outside g[10].
+        g10_base = self.asf.globals_offset(10)
+        g10_count = self.asf.globals[11]["value"]
+        rows_by_var = {
+            self.asf.u16(g10_base + index * self.asf.G10_STRIDE):
+                g10_base + index * self.asf.G10_STRIDE
+            for index in range(g10_count)
+        }
+
+        changed = 0
+        already_visible = 0
+        for tag, mode_indexes in visibility_plan.items():
+            descriptors = self.asf.find_descriptors_by_name(tag, ("g2",))
+            if not descriptors:
+                raise ValueError("therapy screen: %s descriptor not found" % tag)
+            row_off = rows_by_var.get(descriptors[0]["var_id"])
+            if row_off is None:
+                raise ValueError("therapy screen: %s has no mode visibility row" % tag)
+            for mode_index in mode_indexes:
+                visibility_off = row_off + 2 + mode_index
+                if self.asf.u8(visibility_off):
+                    already_visible += 1
+                else:
+                    self.asf.write_u8(visibility_off, 1)
+                    changed += 1
+
+        print(
+            "Patching therapy screen... %d visibility flags enabled, "
+            "%d already enabled" % (changed, already_visible)
+        )
+
     def fix_ivaps_patient_height_range(self):
         """Replace the stripped metric-height descriptor with usable bounds."""
         pht_rows = self.asf.find_descriptors_by_name("PHT", ("g2",))
@@ -2068,6 +2110,12 @@ PATCH_LIST = [
         "desc": "Unlock ASV/ASVAuto pressure support range.",
         "default": True,
         "function": "asv_pressure_support_range",
+    },
+    {
+        "arg": "patch-therapy-screen",
+        "desc": "Show additional respiratory statistics in compatible therapy modes.",
+        "default": True,
+        "function": "therapy_screen",
     },
     {
         "arg": "patch-asv-backup-rate",
