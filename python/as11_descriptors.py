@@ -708,10 +708,7 @@ CONF_DATA_MODEL_OFF = CONF_BASE + 0x72
 CONF_DATA_MODEL_SIZE = 0x0B
 CONF_DATA_MODEL_HASH_OFF = CONF_BASE + 0x7D
 CONF_DATA_MODEL_HASH_SIZE = 0x0B
-ENUM_SYMBOL_SEARCH_BASE = 0x100000
-OLD_ENUM_SYMBOL_SEARCH_BASE = 0xF0000
-OLD_ENUM_SYMBOL_SEARCH_END = 0x100000
-OLD_ENUM_SYMBOL_MAX_DATA_VERSION = 13
+ENUM_SYMBOL_SEARCH_BASE = 0xF0000
 LONG_NAME_PRIMARY_RUN_MIN = 500
 ENUM_SYMBOL_PRIMARY_RUN_MIN = 500
 
@@ -1076,8 +1073,6 @@ class AS11Firmware:
         self.opt_table_count = 0
         self.opt_entries = None
         self.opt_by_type = {}
-        self.opt_symbol_ptrs = []
-        self.opt_first_by_type = {}
         self.gui_text_cache = {}
         self.gui_text_pool_addr = None
         self.gui_text_record_base = None
@@ -1623,224 +1618,106 @@ class AS11Firmware:
         return tags
 
     def _build_option_table(self):
-        """Locate and parse the enum option symbol stream.
+        """Locate and parse the enum symbol table used by RPC formatters.
 
         Layout: 12-byte entries, each
-            +0  u32  symbol_ptr  (flash address of a NUL-terminated symbol)
-            +4  u32  type_id     (g5 index boundary marker)
-            +8  u32  option      (symbol slot inside that type)
+            +0  u32  enum_index  (g[5] descriptor index)
+            +4  u32  raw_value
+            +8  u32  symbol_ptr  (flash address of a NUL-terminated symbol)
 
-        Returns (offset, count, flat_entries, by_type_dict, symbol_ptrs).
+        Raw values can be sparse, so entries must retain their explicit value.
+        Returns (offset, count, flat_entries, by_type_dict).
         """
 
         data = self.data
         data_len = len(data)
         unpack_entry = struct.Struct("<III").unpack_from
+        option_counts = [
+            data[self.g[5] + idx * G5_STRIDE + 0x09]
+            for idx in range(self.g5_count)
+        ]
+        string_cache = {}
 
-        def string_at_ptr(ptr, max_len=96, allow_empty=False):
+        def string_at_ptr(ptr, max_len=96):
+            if ptr in string_cache:
+                return string_cache[ptr]
             off = ptr - FLASH_BASE
             if off < 0 or off >= data_len:
+                string_cache[ptr] = None
                 return None
             end = data.find(b"\x00", off)
-            if end < 0 or end - off > max_len:
-                return None
-            if end == off and not allow_empty:
+            if end <= off or end - off > max_len:
+                string_cache[ptr] = None
                 return None
             raw = data[off:end]
             if any(b < 0x20 or b > 0x7E for b in raw):
+                string_cache[ptr] = None
                 return None
-            return raw.decode("ascii")
+            string_cache[ptr] = raw.decode("ascii")
+            return string_cache[ptr]
 
-        def valid_entry(off):
+        def valid_entry(off, previous=None):
             if off + 12 > data_len:
                 return None
-            symbol_ptr, typ, opt = unpack_entry(data, off)
+            typ, raw_value, symbol_ptr = unpack_entry(data, off)
+            if not (0 <= typ < self.g5_count):
+                return None
+            if not (0 <= raw_value < option_counts[typ]):
+                return None
+            if previous is not None and (typ, raw_value) <= previous:
+                return None
             symbol = string_at_ptr(symbol_ptr)
             if symbol is None:
                 return None
-            if not (0 <= typ < 0x200):
-                return None
-            if not (0 <= opt < 0x40):
-                return None
-            return symbol_ptr, typ, opt, symbol
+            return typ, raw_value, symbol
 
-        # Scan for the longest run of valid entries. The table moves between
-        # firmware builds; older 8.0.x images place it just below 1 MiB.
-        best = (0, 0)  # (count, start_offset)
+        # The table moves between builds; 8.0.x places it just below 1 MiB.
+        best_start = None
+        best_entries = []
         off = ENUM_SYMBOL_SEARCH_BASE
         while off + 12 <= data_len:
             if valid_entry(off) is None:
                 off += 4
                 continue
             start = off
-            count = 0
-            while valid_entry(off) is not None:
-                count += 1
-                off += 12
-            if count > best[0]:
-                best = (count, start)
-            if count >= ENUM_SYMBOL_PRIMARY_RUN_MIN:
-                break
-        count, start = best
-        if count < 50:
-            return (None, 0, [], {}, [])
-
-        entries = []
-        by_type = {}
-        for i in range(count):
-            o = start + i * 12
-            _symbol_ptr, typ, opt, symbol = valid_entry(o)
-            entries.append((typ, opt, symbol))
-            by_type.setdefault(typ, []).append((opt, symbol))
-        for typ in by_type:
-            by_type[typ].sort()
-
-        symbol_ptrs = []
-        i = 0
-        while start + i * 12 + 4 <= data_len:
-            ptr = struct.unpack_from("<I", data, start + i * 12)[0]
-            if string_at_ptr(ptr) is None:
-                break
-            symbol_ptrs.append(ptr)
-            i += 1
-        return (start, count, entries, by_type, symbol_ptrs)
-
-    def _option_symbols_from_window(self, idx, n_options, start, end):
-        data = self.data
-        data_len = len(data)
-        end = min(end, data_len)
-        unpack_entry = struct.Struct("<III").unpack_from
-
-        def string_at_ptr(ptr, max_len=96):
-            off = ptr - FLASH_BASE
-            if off < 0 or off >= data_len:
-                return None
-            nul = data.find(b"\x00", off)
-            if nul < 0 or nul - off > max_len or nul == off:
-                return None
-            raw = data[off:nul]
-            if any(b < 0x20 or b > 0x7E for b in raw):
-                return None
-            return raw.decode("ascii")
-
-        def valid_entry(off):
-            if off + 12 > end:
-                return None
-            ptr, typ, opt = unpack_entry(data, off)
-            if string_at_ptr(ptr) is None:
-                return None
-            if not (0 <= typ < 0x200):
-                return None
-            if not (0 <= opt < 0x40):
-                return None
-            return ptr, typ, opt
-
-        off = start
-        while off + 12 <= end:
-            entry = valid_entry(off)
-            if entry is None:
-                off += 4
-                continue
-            run_start = off
+            entries = []
+            previous = None
             while True:
-                entry = valid_entry(off)
+                entry = valid_entry(off, previous)
                 if entry is None:
                     break
-                _ptr, typ, _opt = entry
-                if typ == idx:
-                    symbols = []
-                    slot = off + 12
-                    for _ in range(n_options):
-                        next_entry = valid_entry(slot)
-                        if next_entry is None:
-                            break
-                        ptr = next_entry[0]
-                        symbols.append(string_at_ptr(ptr))
-                        slot += 12
-                    return symbols
+                entries.append(entry)
+                previous = entry[:2]
                 off += 12
-            off = max(off + 4, run_start + 4)
-        return []
-
-    def _old_option_symbols_for_g5_index(self, idx, n_options):
-        data = self.data
-        data_len = len(data)
-        unpack_entry = struct.Struct("<III").unpack_from
-        symbols = {}
-
-        def string_at_ptr(ptr, max_len=96):
-            off = ptr - FLASH_BASE
-            if off < 0 or off >= data_len:
-                return None
-            nul = data.find(b"\x00", off)
-            if nul < 0 or nul - off > max_len or nul == off:
-                return None
-            raw = data[off:nul]
-            if any(b < 0x20 or b > 0x7E for b in raw):
-                return None
-            return raw.decode("ascii")
-
-        end = min(OLD_ENUM_SYMBOL_SEARCH_END, data_len)
-        for off in range(OLD_ENUM_SYMBOL_SEARCH_BASE, end - 12 + 1, 4):
-            key, opt, ptr = unpack_entry(data, off)
-            if key != idx or not (0 <= opt < n_options):
-                continue
-            symbol = string_at_ptr(ptr)
-            if symbol is None:
-                continue
-            symbols[opt] = symbol
-            if len(symbols) == n_options:
+            if len(entries) > len(best_entries):
+                best_start = start
+                best_entries = entries
+            if len(entries) >= ENUM_SYMBOL_PRIMARY_RUN_MIN:
                 break
+            off = max(off + 4, start + 4)
+        if len(best_entries) < 50:
+            return (None, 0, [], {})
 
-        return [symbols.get(opt) for opt in range(n_options)]
+        by_type = {}
+        for typ, raw_value, symbol in best_entries:
+            by_type.setdefault(typ, {})[raw_value] = symbol
+        return (best_start, len(best_entries), best_entries, by_type)
 
     def _ensure_option_table(self):
         if self.opt_entries is not None:
             return
         (
             self.opt_table_off, self.opt_table_count, self.opt_entries,
-            self.opt_by_type, self.opt_symbol_ptrs,
+            self.opt_by_type,
         ) = self._build_option_table()
-        self.opt_first_by_type = {}
-        for pos, entry in enumerate(self.opt_entries):
-            self.opt_first_by_type.setdefault(entry[0], pos)
 
     def option_symbols_for_g5_index(self, idx, n_options):
-        """Return decoded option symbols for g5[idx], if the flat table covers it."""
+        """Return RPC enum symbols indexed by their explicit raw values."""
         if n_options <= 0:
             return []
-        use_old_primary = self.data_version <= OLD_ENUM_SYMBOL_MAX_DATA_VERSION
-        if use_old_primary:
-            old_symbols = self._old_option_symbols_for_g5_index(idx, n_options)
-            if any(sym is not None for sym in old_symbols):
-                return old_symbols
-        symbols = self._option_symbols_from_window(
-            idx, n_options, OLD_ENUM_SYMBOL_SEARCH_BASE,
-            OLD_ENUM_SYMBOL_SEARCH_END)
-        if len(symbols) >= n_options:
-            return symbols
         self._ensure_option_table()
-        pos = self.opt_first_by_type.get(idx)
-        if pos is None:
-            return self._option_symbols_from_window(
-                idx, n_options, OLD_ENUM_SYMBOL_SEARCH_BASE,
-                OLD_ENUM_SYMBOL_SEARCH_END)
-
-        # The table is a flat enum-symbol stream. The first row carrying a g5
-        # index is the previous enum's tail; the current enum starts at the
-        # following row and may continue into the next index boundary row.
-        symbols = []
-        for slot in range(pos + 1, pos + 1 + n_options):
-            if slot >= len(self.opt_symbol_ptrs):
-                break
-            symbols.append(self._string_at_ptr(self.opt_symbol_ptrs[slot]))
-        if len(symbols) < n_options:
-            fallback = self._option_symbols_from_window(
-                idx, n_options, OLD_ENUM_SYMBOL_SEARCH_BASE,
-                OLD_ENUM_SYMBOL_SEARCH_END)
-            if len(fallback) > len(symbols):
-                return fallback
-        return symbols
+        symbols = self.opt_by_type.get(idx, {})
+        return [symbols.get(raw_value) for raw_value in range(n_options)]
 
     def dispatch_var_id(self, vid):
         if self.g1_id_base <= vid < self.g2_id_base:
