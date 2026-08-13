@@ -1,10 +1,11 @@
 # Air11 RPC Event Reference
 
 This document lists the live event-profile selectors accepted by
-`SubscribeEvent` and the payload labels each selector carries. Protocol
-mechanics, request fields, response shape, and the returned `subscriptionId`
-are described in [Air11 RPC Protocol](rpc_protocol.md#event-rpc). Historical
-event spools live in [Air11 RPC Spool Reference](rpc_spools.md).
+`SubscribeEvent` and the payload labels each selector carries. `SubscribeEvent`
+also accepts ordinary DataItem names and reports their changes as
+`ValueChange`; that form is described in
+[Air11 RPC Protocol](rpc_protocol.md#event-rpc). Historical event spools live
+in [Air11 RPC Spool Reference](rpc_spools.md).
 
 ## Contents
 
@@ -18,7 +19,8 @@ event spools live in [Air11 RPC Spool Reference](rpc_spools.md).
 
 ## Subscription selectors
 
-Live selectors accepted by `SubscribeEvent.params.dataIds` on 15.8.4.0.
+Live event-family selectors accepted by `SubscribeEvent.params.dataIds` on
+15.8.4.0.
 
 | Selector | Labels | Notes |
 |----------|--------|-------|

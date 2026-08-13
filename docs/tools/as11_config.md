@@ -88,6 +88,7 @@ as11_config.py -d can:can0 stream --edf BRP,PLD --sample-ms 40
 as11_config.py -d ble:as11 stream --data-ids Leak-50hz,RespiratoryRate-50hz --duration 60
 as11_config.py -d ble:as11 subscribe --duration 60
 as11_config.py -d ble:as11 subscribe UsageEvents-TherapyStatusEvents --duration 60
+as11_config.py -d ble:as11 subscribe _ROP --duration 60
 as11_config.py -d ble:as11 subscribe --events PressureStart --duration 60
 ```
 
@@ -95,9 +96,11 @@ EDF stream aliases (`BRP`, `PLD`, `SA2`, `TCV`) and their raw data IDs are
 listed in [AS11 RPC Stream Reference](../as11/rpc_streams.md).
 Event subscription selectors and payload event families are listed in
 [AS11 RPC Event Reference](../as11/rpc_events.md). Positional `subscribe`
-arguments are exact selectors. `subscribe --events` accepts payload event
-labels and expands them to the selector or selectors that carry those events.
-`--event` is accepted as an alias for `--events`.
+arguments accept exact event-family selectors or DataItem names. DataItems
+produce an initial value followed by `ValueChange` notifications.
+`subscribe --events` accepts payload event labels and expands them to the
+selector or selectors that carry those events. `--event` is accepted as an
+alias for `--events`.
 
 StartStream interval limits verified so far: minimum sample interval is `10 ms`,
 intervals are rounded down to a `10 ms` boundary, and `reportIntervalMs` must
@@ -225,6 +228,7 @@ Offline listing of known variables, groups, streams, events, and spool types.
 as11_config.py known
 as11_config.py known vars
 as11_config.py known vars groups
+as11_config.py known vars subtrees
 as11_config.py known streams
 as11_config.py known streams BRP
 as11_config.py known streams BRP,SA2
@@ -235,6 +239,9 @@ as11_config.py known events --selector SystemActivityEvents-FrequentActivityEven
 as11_config.py known spools
 ```
 
+`known vars subtrees` prints the named non-DataItem selectors accepted by
+`Get`; their semantics and release-scoped catalog are documented in the
+[Air11 RPC Get Input Reference](../as11/rpc_get_inputs.md).
 `known streams <EDF>` prints the data IDs behind an EDF stream alias.
 `known events` prints `SubscribeEvent` selectors and event label counts.
 `known events <text>` resolves payload event labels to the selector that

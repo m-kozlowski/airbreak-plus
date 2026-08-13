@@ -1049,7 +1049,7 @@ def cmd_known(args: argparse.Namespace) -> int:
     `known`               list registries (vars, streams, events, spools, ...)
     `known <reg> [pat]`   list one registry, optionally filtered
     `known vars groups`   summary of var groupings
-    `known vars subtrees` aggregate-Get target list
+    `known vars subtrees` named non-DataItem Get targets
     `known vars <group>`  members of a firmware subtree group
     `known vars <pat>`    filter known name/tag pairs by mode/topic/substring
     """
@@ -1060,7 +1060,7 @@ def cmd_known(args: argparse.Namespace) -> int:
         print()
         print("  hint: `known vars groups` lists subgroupings "
               "(therapy modes, topics, subtree groups)")
-        print("  hint: `known subtrees` aggregate-Get targets "
+        print("  hint: `known vars subtrees` non-DataItem Get targets "
               "(SettingProfiles, CpapProfile, ...)")
         return 0
 
@@ -1445,11 +1445,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub_p = sub.add_parser(
         "subscribe", parents=[common],
-        help="subscribe to device events (NDJSON to stdout)",
+        help="subscribe to events or DataItem changes (NDJSON to stdout)",
     )
     add_rpc_args(sub_p)
     sub_p.add_argument("selectors", nargs="*",
-                       help="SubscribeEvent selector names")
+                       help="event-family selectors or DataItem names")
     sub_p.add_argument("--events", "--event", default=None,
                        help="comma-separated payload event labels to resolve "
                             "to SubscribeEvent selectors")
@@ -1539,7 +1539,7 @@ def build_parser() -> argparse.ArgumentParser:
                "  known                      list registries\n"
                "  known vars                 list every known variable\n"
                "  known vars groups          summary of var groupings\n"
-               "  known vars subtrees        aggregate-Get target list\n"
+               "  known vars subtrees        named non-DataItem Get targets\n"
                "  known vars autoset         filter by therapy-mode prefix\n"
                "  known vars cellular        filter by topic keyword\n"
                "  known vars Pressure        substring filter\n"

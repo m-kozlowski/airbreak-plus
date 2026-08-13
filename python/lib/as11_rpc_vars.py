@@ -15,7 +15,7 @@ Contents:
     STREAM_DATA_IDS              StartStream valid data_ids
     EVENT_IDS                    SubscribeEvent selector names
     VAR_NAMES                    confirmed (long_name, short_tag) pairs
-    VAR_SUBTREES                 names that Get accepts as aggregate-subtree targets
+    VAR_SUBTREES                 named non-DataItem targets accepted by Get
     VAR_MODE_PREFIXES            human-friendly therapy-mode prefix groupings
     VAR_TOPIC_KEYWORDS           human-friendly topic substring groupings
     REGISTRIES                   {action: (data, description)} for `known`
@@ -853,11 +853,15 @@ EVENT_FAMILIES: dict[str, tuple[str, ...]] = {
 
 EVENT_IDS = list(EVENT_FAMILIES)
 
-# Names the device's `Get` RPC accepts as aggregate-subtree targets
-# passing one of these returns the whole subtree in one call.
+# Named non-DataItem targets accepted by `Get`. Most return an aggregate
+# object; the two underscored roots and manufacturing targets use dedicated
+# formatters.
 VAR_SUBTREES: frozenset[str] = frozenset({
+    "_ActiveFeatureProfiles",
+    "_CurrentDateTime",
     "ActiveProfiles",
     "AlarmProfiles",
+    "AlarmProfilesConfiguration",
     "ASVAutoProfile",
     "ASVProfile",
     "AutoRampFeature",
@@ -874,26 +878,33 @@ VAR_SUBTREES: frozenset[str] = frozenset({
     "CpapProfile",
     "DataDeliveryControl",
     "DeviceConfigurationSettings",
+    "DeviceControl",
     "DeviceRegistration",
+    "DynamicMessage",
     "EprFeature",
     "FeatureProfiles",
+    "FeatureProfilesConfiguration",
     "IdentificationProfiles",
     "iVAPSProfile",
     "MachineMetrics",
+    "ManufacturingData",
+    "ManufacturingTestRecord",
     "PACProfile",
     "RampDownFeature",
+    "RealTimeDataConfiguration",
     "SettingProfiles",
     "SmartStartStopFeature",
     "SpontProfile",
     "StoredDataDeliveryControl",
     "STProfile",
     "TherapyProfiles",
+    "TherapyProfilesConfiguration",
     "TimedProfile",
     "VAutoProfile",
 })
 
-# Short->path name map found in firmware (table at 0x08144cbc).
-# NOT Get-able. Kept for documentation / future use.
+# Firmware object aliases. Some resolve through a top-level `Get` formatter;
+# others only name nested stream, event, cellular, or module paths.
 VAR_PATH_ALIASES = {
     "alarmEvents":                                      "FlowGenerator.eventProfiles.alarmEvents",
     "alarmDiagnosticEvents":                            "FlowGenerator.eventProfiles.alarmDiagnosticEvents",
@@ -1028,6 +1039,7 @@ VAR_NAMES = [
     ("DeviceIdStatus", "DIS"),
     ("DisplayAHI", "DAH"),
     ("DownloadBytesDelta", "DDD"),
+    ("DynamicMessageToggle", "BBE"),
     ("EndCapDetection", "ECD"),
     ("EprEnable", "EPX"),
     ("EprEnablePatientAccess", "EPA"),
@@ -1112,6 +1124,9 @@ VAR_NAMES = [
     ("MaskType", "MSK"),
     ("MaxRampDownTime", "MRD"),
     ("MaxRampTime", "MRT"),
+    ("Message", "DBM"),
+    ("MessageExpiryDate", "DME"),
+    ("MessageType", "MTP"),
     ("MicrophoneEnabled", "MIC"),
     ("MinuteVentilation", "MV6"),
     ("MinuteVentilation-50hz", "MVH"),
@@ -1362,7 +1377,7 @@ VAR_NAMES = [
 REGISTRIES = {
     "vars":     (VAR_NAMES,                   "variable names (for `get` / `set`)"),
     "subtrees": (sorted(VAR_SUBTREES, key=str.lower),
-                 "aggregate `get` targets (whole-subtree names, verified)"),
+                 "named non-DataItem `Get` targets"),
 #    "reserved": (VAR_RESERVED,               "reserved `_NAME` specials"),
     "streams":  (STREAM_DATA_IDS,            "stream data IDs (for `stream --data-ids`)"),
     "edf":      (sorted(STREAM_EDF_ALIASES),  "EDF stream aliases (for `stream --edf`)"),
