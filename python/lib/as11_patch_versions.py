@@ -36,11 +36,25 @@ AS11_PATCH_VERSIONS = {
             "writeback": 0x0806E070,
             "vtable_slot": 0x081925E8,
         },
+        "header_clock": {
+            "draw_call": 0x08061860,
+            "root_ctor_call": 0x0807D4BC,
+            "timer_callback_slot": 0x08197264,
+            "home_text_id": 0x0070,
+            "empty_text_id": 0x0068,
+        },
     },
     "8_3_0": {
         "mop_callback_dispatcher": {
             "writeback": 0x0806E928,
             "vtable_slot": 0x0819EA20,
+        },
+        "header_clock": {
+            "draw_call": 0x08061F52,
+            "root_ctor_call": 0x0809D554,
+            "timer_callback_slot": 0x081A3AC0,
+            "home_text_id": 0x0072,
+            "empty_text_id": 0x006A,
         },
         "custom_settings": {
             "menu": {
@@ -66,6 +80,13 @@ AS11_PATCH_VERSIONS = {
             "writeback": 0x08070998,
             "vtable_slot": 0x081A332C,
         },
+        "header_clock": {
+            "draw_call": 0x0806393E,
+            "root_ctor_call": 0x0809FA98,
+            "timer_callback_slot": 0x081A8604,
+            "home_text_id": 0x0075,
+            "empty_text_id": 0x0068,
+        },
         "custom_settings": {
             "menu": {
                 "scroller_call": 0x0805E014,
@@ -89,6 +110,13 @@ AS11_PATCH_VERSIONS = {
         "mop_callback_dispatcher": {
             "writeback": 0x08070EFC,
             "vtable_slot": 0x081A52E0,
+        },
+        "header_clock": {
+            "draw_call": 0x08063B1A,
+            "root_ctor_call": 0x080A001C,
+            "timer_callback_slot": 0x081AA5C0,
+            "home_text_id": 0x0078,
+            "empty_text_id": 0x006A,
         },
         "custom_settings": {
             "menu": {
@@ -117,6 +145,13 @@ AS11_PATCH_VERSIONS = {
         "mop_callback_dispatcher": {
             "writeback": 0x08071570,
             "vtable_slot": 0x081A6190,
+        },
+        "header_clock": {
+            "draw_call": 0x08064076,
+            "root_ctor_call": 0x080A0864,
+            "timer_callback_slot": 0x081AB534,
+            "home_text_id": 0x0078,
+            "empty_text_id": 0x006A,
         },
         "custom_settings": {
             "menu": {

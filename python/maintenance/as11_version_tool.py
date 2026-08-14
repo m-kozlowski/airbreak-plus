@@ -74,6 +74,12 @@ class MopCandidates:
 
 
 @dataclass
+class HeaderClockCandidates:
+    sites: dict[str, AddressResult]
+    text_ids: dict[str, int | None]
+
+
+@dataclass
 class CustomSettingsCandidates:
     sites: dict[str, AddressResult]
     row_constructor: AddressResult
@@ -104,6 +110,7 @@ class OtaDescriptorCandidates:
 class PortCandidates:
     stubs: dict[str, AddressResult]
     mop: MopCandidates
+    header_clock: HeaderClockCandidates
     custom_settings: CustomSettingsCandidates
     asv: AsvCandidates
     ota_descriptor: OtaDescriptorCandidates
@@ -214,7 +221,7 @@ class AddressMatcher:
                 start = source_off + relative
                 if start < APPX_BASE or start + width > len(self.source):
                     continue
-                chunk = self.source[start:start + width]
+                chunk = bytes(self.source[start:start + width])
                 if not self._useful(chunk):
                     continue
                 found = self._unique_find(chunk)
@@ -394,6 +401,31 @@ def thumb2_bl_target(data: bytes, address: int) -> int | None:
     return address + 4 + immediate
 
 
+def thumb2_bw_target(data: bytes, address: int) -> int | None:
+    """Decode an unconditional Thumb-2 B.W target."""
+    off = address - FLASH_BASE
+    if off < 0 or off + 4 > len(data):
+        return None
+    first, second = struct.unpack_from("<HH", data, off)
+    if (first & 0xF800) != 0xF000 or (second & 0xD000) != 0x9000:
+        return None
+    sign = (first >> 10) & 1
+    j1 = (second >> 13) & 1
+    j2 = (second >> 11) & 1
+    i1 = (~(j1 ^ sign)) & 1
+    i2 = (~(j2 ^ sign)) & 1
+    immediate = (
+        (sign << 24)
+        | (i1 << 23)
+        | (i2 << 22)
+        | ((first & 0x03FF) << 12)
+        | ((second & 0x07FF) << 1)
+    )
+    if immediate & (1 << 24):
+        immediate -= 1 << 25
+    return address + 4 + immediate
+
+
 def unique_pointer(data: bytes, value: int) -> tuple[int | None, tuple[int, ...]]:
     needle = struct.pack("<I", value)
     matches = []
@@ -540,6 +572,105 @@ def resolve_mop_candidates(
             data, writeback.address | 1
         )
     return MopCandidates(writeback, vtable_slot, pointer_refs)
+
+
+def find_exact_gui_text_id(fw: AS11Firmware, value: str) -> int | None:
+    """Return the unique English GUI text ID for an exact string."""
+    if not fw._ensure_gui_text_decoder():
+        return None
+    matches = []
+    for text_id in range(fw.gui_text_count):
+        try:
+            text = fw.decode_gui_text(text_id, 0)
+        except (ValueError, UnicodeError, IndexError, struct.error):
+            continue
+        if text == value:
+            matches.append(text_id)
+    return matches[0] if len(matches) == 1 else None
+
+
+def resolve_header_clock_candidates(
+        fw: AS11Firmware,
+        matcher: AddressMatcher,
+        stubs: dict[str, AddressResult],
+        reference: dict) -> HeaderClockCandidates:
+    """Locate the title draw, root constructor, and owned-timer callback."""
+    data = fw.data
+    sites = {
+        name: matcher.site(reference[name])
+        for name in ("draw_call", "root_ctor_call", "timer_callback_slot")
+    }
+
+    draw_stub = stubs["GuiPaint_DrawLocalizedTextById"]
+    ctor_stub = stubs["user_interface_root_widget_ctor"]
+    sites["draw_call"] = resolve_callsite(
+        data, sites["draw_call"], draw_stub, "GuiPaint_DrawLocalizedTextById"
+    )
+    sites["root_ctor_call"] = resolve_callsite(
+        data, sites["root_ctor_call"], ctor_stub, "root-widget constructor"
+    )
+
+    callback_name = (
+        "user_interface_root_widget_status_blink_timer_callback_adjustor"
+    )
+    callback = stubs[callback_name]
+    if callback.address is not None:
+        slot, refs = unique_pointer(data, callback.address | 1)
+        if slot is not None:
+            sites["timer_callback_slot"] = AddressResult(
+                reference["timer_callback_slot"],
+                slot,
+                "strong",
+                "unique pointer to transferred root-widget timer callback",
+                tuple(value for value in refs if value != slot),
+            )
+
+        branches = [
+            target
+            for address in range(callback.address, callback.address + 0x50, 2)
+            if (target := thumb2_bw_target(data, address)) is not None
+        ]
+        if len(branches) == 1:
+            old = stubs[
+                "thunk_gui_timer_handle_reschedule_with_optional_delay"
+            ]
+            stubs[
+                "thunk_gui_timer_handle_reschedule_with_optional_delay"
+            ] = AddressResult(
+                old.source_address,
+                branches[0],
+                "strong",
+                "tail branch from transferred root-widget timer callback",
+                old.alternatives,
+            )
+
+    localized = stubs["GuiPaint_DrawLocalizedTextById"]
+    raw_draw = stubs["GuiPaint_DrawStringInRect"]
+    if localized.address is not None and raw_draw.address is not None:
+        calls = [
+            (address, target)
+            for address in range(localized.address, localized.address + 0x60, 2)
+            if (target := thumb2_bl_target(data, address)) is not None
+        ]
+        raw_calls = [
+            index for index, (_address, target) in enumerate(calls)
+            if target == raw_draw.address
+        ]
+        if len(raw_calls) == 1 and raw_calls[0] > 0:
+            old = stubs["gui_localized_text_font_slot_for_id"]
+            stubs["gui_localized_text_font_slot_for_id"] = AddressResult(
+                old.source_address,
+                calls[raw_calls[0] - 1][1],
+                "strong",
+                "call immediately before localized text reaches raw drawing",
+                old.alternatives,
+            )
+
+    text_ids = {
+        "home_text_id": find_exact_gui_text_id(fw, "Home"),
+        "empty_text_id": find_exact_gui_text_id(fw, ""),
+    }
+    return HeaderClockCandidates(sites, text_ids)
 
 
 def resolve_custom_settings_candidates(
@@ -798,6 +929,7 @@ def resolve_port_candidates(
         )
     required = (
         ("MOP dispatcher", "mop_callback_dispatcher"),
+        ("header clock", "header_clock"),
         ("custom settings", "custom_settings"),
         ("ASV backup rate", "asv_backup_rate"),
     )
@@ -816,6 +948,9 @@ def resolve_port_candidates(
     mop = resolve_mop_candidates(
         target_fw.data, matcher, reference["mop_callback_dispatcher"]
     )
+    header_clock = resolve_header_clock_candidates(
+        target_fw, matcher, stubs, reference["header_clock"]
+    )
     custom_settings = resolve_custom_settings_candidates(
         target_fw.data, matcher, stubs, reference["custom_settings"]
     )
@@ -828,7 +963,9 @@ def resolve_port_candidates(
         matcher,
         reference_release,
     )
-    return PortCandidates(stubs, mop, custom_settings, asv, ota_descriptor)
+    return PortCandidates(
+        stubs, mop, header_clock, custom_settings, asv, ota_descriptor
+    )
 
 
 # Inputs generated directly from target firmware layout and descriptor data.
@@ -999,6 +1136,28 @@ def self_check_candidates(
             ),
         ))
 
+    header_clock_expected = expected_version.get("header_clock")
+    if header_clock_expected is not None:
+        for name in ("draw_call", "root_ctor_call", "timer_callback_slot"):
+            expected = header_clock_expected[name]
+            result = candidates.header_clock.sites[name]
+            checks.append(compare_candidate(
+                "header_clock.%s" % name,
+                expected,
+                CandidateValue(result.address, result.quality, result.evidence),
+            ))
+        for name in ("home_text_id", "empty_text_id"):
+            value = candidates.header_clock.text_ids[name]
+            checks.append(compare_candidate(
+                "header_clock.%s" % name,
+                header_clock_expected[name],
+                CandidateValue(
+                    value,
+                    "strong" if value is not None else "missing",
+                    "unique exact English GUI text match",
+                ),
+            ))
+
     custom_expected = expected_version.get("custom_settings")
     if custom_expected is not None:
         sites = candidates.custom_settings.sites
@@ -1120,6 +1279,10 @@ def format_address(value: int | None) -> str:
     return "TODO" if value is None else "0x%08X" % value
 
 
+def format_text_id(value: int | None) -> str:
+    return "TODO" if value is None else "0x%04X" % value
+
+
 def format_check_value(value: object | None) -> str:
     if value is None:
         return ""
@@ -1195,6 +1358,7 @@ def prepare(args) -> int:
     mop_writeback = candidates.mop.writeback
     mop_vtable = candidates.mop.vtable_slot
     mop_vtable_matches = candidates.mop.pointer_refs
+    header_clock_sites = candidates.header_clock.sites
     custom_site_results = candidates.custom_settings.sites
     row_ctor_result = candidates.custom_settings.row_constructor
     scheduler_target_result = candidates.custom_settings.scheduler_target
@@ -1210,6 +1374,10 @@ def prepare(args) -> int:
         ("mop", "writeback", mop_writeback),
         ("ota", "descriptor_words", ota_descriptor.table),
     ]
+    address_rows.extend(
+        ("header_clock", name, result)
+        for name, result in header_clock_sites.items()
+    )
     address_rows.extend(
         ("custom_settings", name, result)
         for name, result in custom_site_results.items()
@@ -1289,6 +1457,23 @@ def prepare(args) -> int:
         "    \"mop_callback_dispatcher\": {",
         "        \"writeback\": %s," % format_address(mop_writeback.address),
         "        \"vtable_slot\": %s," % format_address(mop_vtable),
+        "    },",
+        "    \"header_clock\": {",
+        "        \"draw_call\": %s," % format_address(
+            header_clock_sites["draw_call"].address
+        ),
+        "        \"root_ctor_call\": %s," % format_address(
+            header_clock_sites["root_ctor_call"].address
+        ),
+        "        \"timer_callback_slot\": %s," % format_address(
+            header_clock_sites["timer_callback_slot"].address
+        ),
+        "        \"home_text_id\": %s," % format_text_id(
+            candidates.header_clock.text_ids["home_text_id"]
+        ),
+        "        \"empty_text_id\": %s," % format_text_id(
+            candidates.header_clock.text_ids["empty_text_id"]
+        ),
         "    },",
         "    \"custom_settings\": {",
         "        \"menu\": {",

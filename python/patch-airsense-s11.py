@@ -241,6 +241,8 @@ AS11_ASV_BACKUP_RATE_PAYLOAD = "as11_asv_backup_rate"
 
 AS11_CUSTOM_SETTINGS_PAYLOAD = "as11_custom_settings"
 
+AS11_HEADER_CLOCK_PAYLOAD = "as11_header_clock"
+
 
 class S11Firmware(object):
 
@@ -2042,6 +2044,67 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             return PatchOutcome.warn("%d permission rows missing" % missing)
         return PatchOutcome.ok()
 
+    def header_clock(self):
+        """Show local time in the dashboard and therapy-screen title bar."""
+        data, ver = self._load_versioned_bin(AS11_HEADER_CLOCK_PAYLOAD)
+        if data is None:
+            return PatchOutcome.skip("compiled payload unavailable")
+
+        anchors = AS11_PATCH_VERSIONS.get(ver, {}).get("header_clock")
+        if anchors is None:
+            raise ValueError("header_clock: no anchors for APPX %s" % ver)
+
+        elf_path = self._versioned_artifact_path(
+            AS11_HEADER_CLOCK_PAYLOAD, "elf", ver
+        )
+        draw_wrapper = self._elf_symbol_addr(elf_path, "start")
+        ctor_wrapper = self._elf_symbol_addr(
+            elf_path, "header_clock_root_widget_ctor"
+        )
+        timer_callback = self._elf_symbol_addr(
+            elf_path, "header_clock_timer_callback"
+        )
+        text_ids = self._elf_symbol_addr(
+            elf_path, "header_clock_text_ids"
+        )
+        stock_draw = self._elf_symbol_addr(
+            elf_path, "GuiPaint_DrawLocalizedTextById"
+        )
+        stock_ctor = self._elf_symbol_addr(
+            elf_path, "user_interface_root_widget_ctor"
+        )
+        stock_timer_callback = self._elf_symbol_addr(
+            elf_path,
+            "user_interface_root_widget_status_blink_timer_callback_adjustor",
+        )
+
+        draw_call = self.asf.ptr_to_off(anchors["draw_call"])
+        ctor_call = self.asf.ptr_to_off(anchors["root_ctor_call"])
+        timer_slot = self.asf.ptr_to_off(anchors["timer_callback_slot"])
+        if (draw_call is None or
+                self.asf.read_thumb2_bl_target(draw_call) != stock_draw):
+            raise ValueError("header_clock: title-bar draw call does not match")
+        if (ctor_call is None or
+                self.asf.read_thumb2_bl_target(ctor_call) != stock_ctor):
+            raise ValueError("header_clock: root-widget constructor call does not match")
+        if (timer_slot is None or
+                self.asf.u32(timer_slot) != (stock_timer_callback | 1)):
+            raise ValueError("header_clock: root-widget timer callback does not match")
+
+        flash, _off = self._inject_payload(AS11_HEADER_CLOCK_PAYLOAD, data)
+        text_ids_off = text_ids - self.asf.FLASH_BASE
+        self.asf.write_u16(text_ids_off, anchors["home_text_id"])
+        self.asf.write_u16(text_ids_off + 2, anchors["empty_text_id"])
+        self.asf.write_thumb2_bl_target(draw_call, draw_wrapper)
+        self.asf.write_thumb2_bl_target(ctor_call, ctor_wrapper)
+        self.asf.write_u32(timer_slot, timer_callback | 1)
+
+        print(
+            "Patching header clock... build/%s_%s.bin (%dB) at 0x%08X" %
+            (AS11_HEADER_CLOCK_PAYLOAD, ver, len(data), flash)
+        )
+        return PatchOutcome.ok()
+
     def vid_spoof(self):
         """Set VID from MOP after the stock writeback completes."""
         data, ver = self._load_versioned_bin(AS11_VID_SPOOF_PAYLOAD)
@@ -2116,6 +2179,12 @@ PATCH_LIST = [
         "desc": "Show additional respiratory statistics in compatible therapy modes.",
         "default": True,
         "function": "therapy_screen",
+    },
+    {
+        "arg": "patch-header-clock",
+        "desc": "Show local time in the dashboard and therapy-screen headers.",
+        "default": False,
+        "function": "header_clock",
     },
     {
         "arg": "patch-asv-backup-rate",

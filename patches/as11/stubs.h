@@ -26,5 +26,33 @@ extern void *GuiScroller_ctor(
     unsigned int arg10,
     unsigned int arg11,
     unsigned int arg12);
+extern void GuiPaint_DrawLocalizedTextById(
+    unsigned int text_id,
+    void *rect,
+    unsigned int text_size,
+    unsigned int font,
+    int clip,
+    unsigned int alignment);
+extern void GuiPaint_DrawStringInRect(
+    const char *text,
+    void *rect,
+    unsigned int text_size,
+    unsigned int font,
+    int clip,
+    unsigned int alignment,
+    int font_slot);
+extern int gui_localized_text_font_slot_for_id(unsigned int text_id);
+extern unsigned int datetime_current_local_milliseconds_of_day(void);
+extern void *user_interface_root_widget_ctor(
+    void *root,
+    unsigned int arg2,
+    unsigned int arg3,
+    unsigned int arg4);
+extern void user_interface_root_widget_status_blink_timer_callback_adjustor(
+    void *callback_self);
+extern void thunk_gui_timer_handle_reschedule_with_optional_delay(
+    void *timer,
+    unsigned int delay_ms);
+extern void gui_owned_object_invalidate(void *object);
 
 #endif

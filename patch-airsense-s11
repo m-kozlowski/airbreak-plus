@@ -40,6 +40,7 @@ PATCHES=(
     patch-motor-nagscreen
     patch-asv-ps-range
     patch-therapy-screen
+    #patch-header-clock
     patch-asv-backup-rate
     patch-custom-settings
     patch-rpc-permissions

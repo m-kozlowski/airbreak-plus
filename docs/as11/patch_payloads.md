@@ -12,11 +12,11 @@ The APPL build matrix is defined by `AS11_PAYLOADS_<version>` in
 
 | APPX key | Payloads |
 |----------|----------|
-| `8_0_1` | `as11_mop_callback_dispatcher`, `as11_vid_spoof` |
-| `8_3_0` | `as11_mop_callback_dispatcher`, `as11_vid_spoof`, `as11_asv_backup_rate`, `as11_custom_settings` |
-| `8_4_0` | `as11_mop_callback_dispatcher`, `as11_vid_spoof`, `as11_asv_backup_rate`, `as11_custom_settings` |
-| `8_5_0` | `as11_mop_callback_dispatcher`, `as11_vid_spoof`, `as11_asv_backup_rate`, `as11_custom_settings` |
-| `8_6_0` | `as11_mop_callback_dispatcher`, `as11_vid_spoof`, `as11_asv_backup_rate`, `as11_custom_settings` |
+| `8_0_1` | `as11_mop_callback_dispatcher`, `as11_vid_spoof`, `as11_header_clock` |
+| `8_3_0` | `as11_mop_callback_dispatcher`, `as11_vid_spoof`, `as11_header_clock`, `as11_asv_backup_rate`, `as11_custom_settings` |
+| `8_4_0` | `as11_mop_callback_dispatcher`, `as11_vid_spoof`, `as11_header_clock`, `as11_asv_backup_rate`, `as11_custom_settings` |
+| `8_5_0` | `as11_mop_callback_dispatcher`, `as11_vid_spoof`, `as11_header_clock`, `as11_asv_backup_rate`, `as11_custom_settings` |
+| `8_6_0` | `as11_mop_callback_dispatcher`, `as11_vid_spoof`, `as11_header_clock`, `as11_asv_backup_rate`, `as11_custom_settings` |
 
 The patcher derives the key from the first three components of the application
 version. For example, APPX `8.5.0.9cd562102` selects `8_5_0`.
@@ -150,6 +150,7 @@ handler. Its table reserves space for four feature handlers.
 |---------|-----------|-------------|
 | `as11_mop_callback_dispatcher` | `8_0_1`, `8_3_0`, `8_4_0`, `8_5_0`, `8_6_0` | owns the shared enum-writeback vtable slot and calls registered MOP handlers |
 | `as11_vid_spoof` | `8_0_1`, `8_3_0`, `8_4_0`, `8_5_0`, `8_6_0` | MOP handler; reads `MOP` and writes `VID` through native DataItem functions |
+| `as11_header_clock` | `8_0_1`, `8_3_0`, `8_4_0`, `8_5_0`, `8_6_0` | replaces the dashboard and therapy-screen title labels and reuses the root-widget timer for minute updates |
 | `as11_asv_backup_rate` | `8_3_0`, `8_4_0`, `8_5_0`, `8_6_0` | wraps the ASV feature update callback through its own vtable slot |
 | `as11_custom_settings` | `8_3_0`, `8_4_0`, `8_5_0`, `8_6_0` | appends persistent controls to selected clinical menu sections and updates their runtime visibility after MOP changes |
 

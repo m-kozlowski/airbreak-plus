@@ -90,6 +90,7 @@ instead of producing that reduced result.
 |-------|--------------|--------|
 | Unlock languages | Enables all configured language choices | `--patch-unlock-languages` |
 | Defaults | Changes the initial values of selected settings without replacing values already saved on the device | `--patch-defaults` |
+| Header clock | Shows local time in the dashboard and therapy-screen headers | `--patch-header-clock` |
 | Motor nag removal | Removes the design-life warning while preserving the runtime counter | `--patch-motor-nagscreen` |
 
 ### Miscellaneous
