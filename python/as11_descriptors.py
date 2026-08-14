@@ -1085,6 +1085,7 @@ class AS11Firmware:
         self.gui_text_lang_stride = None
         self.gui_text_count = None
         self.gui_text_available = None
+        self._gui_text_language_count = None
         self._edf_schema_layout = None
         self._data_rule_registrations = None
         self._dynamic_bounds_count = None
@@ -1233,6 +1234,15 @@ class AS11Firmware:
             self.gui_text_available = self._init_gui_text_decoder()
         return self.gui_text_available
 
+    def gui_text_language_count(self):
+        if self._gui_text_language_count is None:
+            language_config = self._descriptor_for_tag("LNC", "g3")
+            self._gui_text_language_count = (
+                len(LANGUAGE_NAMES)
+                if language_config is None else language_config["bit_count"]
+            )
+        return self._gui_text_language_count
+
     def _discover_gui_text_tables(self):
         best = None
         data = self.data
@@ -1318,6 +1328,7 @@ class AS11Firmware:
         data = self.data
         data_len = len(data)
         unpack_u32 = struct.Struct("<I").unpack_from
+        language_count = self.gui_text_language_count()
 
         def first_record_value(stride, lang):
             off = record_base + lang * stride - FLASH_BASE
@@ -1328,13 +1339,13 @@ class AS11Firmware:
         viable = []
         max_stride = min(
             0x10000,
-            (FLASH_BASE + data_len - record_base) // (len(LANGUAGE_NAMES) - 1),
+            (FLASH_BASE + data_len - record_base) // (language_count - 1),
         )
         for stride in range(0x80, max_stride):
             try:
                 first_values = [
                     first_record_value(stride, lang)
-                    for lang in range(min(5, len(LANGUAGE_NAMES)))
+                    for lang in range(min(5, language_count))
                 ]
             except (ValueError, IndexError, struct.error):
                 continue
@@ -1343,7 +1354,7 @@ class AS11Firmware:
             try:
                 values = [
                     first_record_value(stride, lang)
-                    for lang in range(len(LANGUAGE_NAMES))
+                    for lang in range(language_count)
                 ]
             except (ValueError, IndexError, struct.error):
                 continue
@@ -1455,9 +1466,10 @@ class AS11Firmware:
         if not 0 <= text_id < self.gui_text_count:
             raise ValueError("GUI text id 0x%X is outside 0x000..0x%03X" %
                              (text_id, self.gui_text_count - 1))
-        if not 0 <= lang < len(LANGUAGE_NAMES):
+        language_count = self.gui_text_language_count()
+        if not 0 <= lang < language_count:
             raise ValueError("language index %d is outside 0..%d" %
-                             (lang, len(LANGUAGE_NAMES) - 1))
+                             (lang, language_count - 1))
         if self.gui_text_pool_addr is None:
             raise ValueError("GUI text decoder is not available")
 
@@ -3552,9 +3564,10 @@ class AS11Firmware:
     def cmd_text_search(self, query, lang=0):
         if not self._ensure_gui_text_decoder():
             raise ValueError("GUI text decoder is not available for this image")
-        if not 0 <= lang < len(LANGUAGE_NAMES):
+        language_count = self.gui_text_language_count()
+        if not 0 <= lang < language_count:
             raise ValueError("language index %d is outside 0..%d" %
-                             (lang, len(LANGUAGE_NAMES) - 1))
+                             (lang, language_count - 1))
         q = query.lower()
         found = []
         for text_id in range(self.gui_text_count):
