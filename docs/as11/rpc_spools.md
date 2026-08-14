@@ -16,11 +16,13 @@ caveat are described in
   - [Summary records](#summary-records)
   - [Event records](#event-records)
     - [GUIActivityEvents](#guiactivityevents)
+    - [SurveyEvents](#surveyevents)
     - [Diagnostic error events](#diagnostic-error-events)
     - [CellularActivityEvents](#cellularactivityevents)
   - [TherapyOneMinutePeriodic records](#therapyoneminuteperiodic-records)
   - [Metric snapshot records](#metric-snapshot-records)
   - [DiagnosticTenMinutePeriodic records](#diagnostictenminuteperiodic-records)
+  - [Atmospheric pressure records](#atmospheric-pressure-records)
   - [RC03 archived-signal records](#rc03-archived-signal-records)
   - [SoundcheckVector records](#soundcheckvector-records)
   - [Blob and audio records](#blob-and-audio-records)
@@ -38,52 +40,54 @@ caveat are described in
 | `config` | `ConfigurationProfilesCollection` | Configuration snapshot (single record). |
 | `event` | `UsageEvents-TherapyStatusEvents`, `TherapyEvents-RespiratoryEvents`, `SystemActivityEvents-FrequentActivityEvents`, `SystemActivityEvents-SporadicActivityEvents`, `SystemExceptionEvents-SystemErrors`, `SystemExceptionEvents-RecoverableErrors`, `SystemExceptionEvents-HumidifierErrors`, `SystemExceptionEvents-HeatedTubeErrors`, `DiagnosticExceptionEvents-AppErrors`, `DiagnosticExceptionEvents-FatalErrors`, `DiagnosticExceptionEvents-ResettableErrors`, `DiagnosticExceptionEvents-AlarmAppErrors`, `GUIActivityEvents`, `SurveyEvents`, `alarmEvents`, `alarmDiagnosticEvents`, `CellularActivityEvents` | Repeated event records; most use type/start/end/duration, while GUI and survey records have dedicated layouts. |
 | `periodic` | `TherapyOneMinutePeriodic` | Periodic measurement protobuf. |
-| `periodic_compressed` | `DiagnosticTenMinutePeriodic`, `atmosphericPressure10min` | Two interleaved signal streams per record, each with its own compressed sample blob (not RC03). |
+| `periodic_compressed` | `DiagnosticTenMinutePeriodic`, `atmosphericPressure10min` | Headerless delta/Rice periodic signals. Diagnostic records can contain four signals; atmospheric records contain one. |
 | `metric` | `MachineMetrics`, `MemoryMetrics`, `CellularDataUsage` | Single-record metric snapshot. |
 | `rc03` | `RespiratoryFlow6p25Hz`, `MaskPressure6p25Hz`, `InspiratoryPressure0p5Hz`, `Leak0p5Hz` | Archived signal: protobuf wrapper around an RC03 compressed sample block. |
 | `diag_vector` | `SoundcheckVector` | Multi-record diagnostic vector. |
-| `diag_blob` | `AcousticSignatureV2` | Diagnostic blob; `AcousticSignatureV2` needs `maxFragmentSize >= 4096`. |
+| `diag_blob` | `AcousticSignatureV2` | Diagnostic byte payload. |
 | `audio` | `RecordedSound` | Audio recording, gated by `SoundDownloadAllowed`. |
 
 ### Full enumeration
 
-Known spool types accepted by `StartSpool`.
+The firmware accepts these 33 spool selectors. `Outer field` is the field in
+the DataDelivery protobuf envelope; selectors for one event collection share
+the same field. `RecordedSound` is a raw payload without that envelope.
 
-| Spool type | Family | Gate | Group |
-|------------|--------|------|-------|
-| `Summary` | `summary` | -- | session/profile data |
-| `SettingProfilesCollection` | `profile` | -- | session/profile data |
-| `ConfigurationProfilesCollection` | `config` | -- | session/profile data |
-| `UsageEvents-TherapyStatusEvents` | `event` | -- | therapy data |
-| `TherapyEvents-RespiratoryEvents` | `event` | -- | therapy data |
-| `TherapyOneMinutePeriodic` | `periodic` | -- | therapy data |
-| `SystemActivityEvents-FrequentActivityEvents` | `event` | -- | system and diagnostic events |
-| `SystemActivityEvents-SporadicActivityEvents` | `event` | -- | system and diagnostic events |
-| `SystemExceptionEvents-SystemErrors` | `event` | -- | system and diagnostic events |
-| `SystemExceptionEvents-RecoverableErrors` | `event` | -- | system and diagnostic events |
-| `SystemExceptionEvents-HumidifierErrors` | `event` | -- | system and diagnostic events |
-| `SystemExceptionEvents-HeatedTubeErrors` | `event` | -- | system and diagnostic events |
-| `DiagnosticExceptionEvents-AppErrors` | `event` | -- | system and diagnostic events |
-| `DiagnosticExceptionEvents-FatalErrors` | `event` | -- | system and diagnostic events |
-| `DiagnosticExceptionEvents-ResettableErrors` | `event` | -- | system and diagnostic events |
-| `DiagnosticExceptionEvents-AlarmAppErrors` | `event` | -- | system and diagnostic events |
-| `GUIActivityEvents` | `event` | -- | system and diagnostic events |
-| `SurveyEvents` | `event` | -- | system and diagnostic events |
-| `alarmEvents` | `event` | -- | system and diagnostic events |
-| `alarmDiagnosticEvents` | `event` | -- | system and diagnostic events |
-| `DiagnosticTenMinutePeriodic` | `periodic_compressed` | -- | periodic metrics |
-| `MachineMetrics` | `metric` | -- | periodic metrics |
-| `MemoryMetrics` | `metric` | -- | periodic metrics |
-| `CellularActivityEvents` | `event` | -- | periodic metrics |
-| `CellularDataUsage` | `metric` | -- | periodic metrics |
-| `atmosphericPressure10min` | `periodic_compressed` | -- | archived signals |
-| `RespiratoryFlow6p25Hz` | `rc03` | -- | archived signals |
-| `MaskPressure6p25Hz` | `rc03` | -- | archived signals |
-| `InspiratoryPressure0p5Hz` | `rc03` | -- | archived signals |
-| `Leak0p5Hz` | `rc03` | -- | archived signals |
-| `SoundcheckVector` | `diag_vector` | -- | diagnostic blobs |
-| `AcousticSignatureV2` | `diag_blob` | -- | diagnostic blobs |
-| `RecordedSound` | `audio` | `SoundDownloadAllowed` | diagnostic blobs |
+| Spool type | Family | Outer field | Gate | Group |
+|------------|--------|------------:|------|-------|
+| `Summary` | `summary` | `2` | -- | session/profile data |
+| `SettingProfilesCollection` | `profile` | `3` | -- | session/profile data |
+| `ConfigurationProfilesCollection` | `config` | `23` | -- | session/profile data |
+| `UsageEvents-TherapyStatusEvents` | `event` | `6` | -- | therapy data |
+| `TherapyEvents-RespiratoryEvents` | `event` | `4` | -- | therapy data |
+| `TherapyOneMinutePeriodic` | `periodic` | `5` | -- | therapy data |
+| `SystemActivityEvents-FrequentActivityEvents` | `event` | `10` | -- | system and diagnostic events |
+| `SystemActivityEvents-SporadicActivityEvents` | `event` | `10` | -- | system and diagnostic events |
+| `SystemExceptionEvents-SystemErrors` | `event` | `7` | -- | system and diagnostic events |
+| `SystemExceptionEvents-RecoverableErrors` | `event` | `7` | -- | system and diagnostic events |
+| `SystemExceptionEvents-HumidifierErrors` | `event` | `7` | -- | system and diagnostic events |
+| `SystemExceptionEvents-HeatedTubeErrors` | `event` | `7` | -- | system and diagnostic events |
+| `DiagnosticExceptionEvents-AppErrors` | `event` | `9` | -- | system and diagnostic events |
+| `DiagnosticExceptionEvents-FatalErrors` | `event` | `9` | -- | system and diagnostic events |
+| `DiagnosticExceptionEvents-ResettableErrors` | `event` | `9` | -- | system and diagnostic events |
+| `DiagnosticExceptionEvents-AlarmAppErrors` | `event` | `9` | -- | system and diagnostic events |
+| `GUIActivityEvents` | `event` | `13` | -- | system and diagnostic events |
+| `SurveyEvents` | `event` | `14` | -- | system and diagnostic events |
+| `alarmEvents` | `event` | `24` | -- | system and diagnostic events |
+| `alarmDiagnosticEvents` | `event` | `25` | -- | system and diagnostic events |
+| `DiagnosticTenMinutePeriodic` | `periodic_compressed` | `17` | -- | periodic metrics |
+| `MachineMetrics` | `metric` | `8` | -- | periodic metrics |
+| `MemoryMetrics` | `metric` | `16` | -- | periodic metrics |
+| `CellularActivityEvents` | `event` | `12` | -- | cellular data |
+| `CellularDataUsage` | `metric` | `22` | -- | cellular data |
+| `atmosphericPressure10min` | `periodic_compressed` | `27` | -- | archived signals |
+| `RespiratoryFlow6p25Hz` | `rc03` | `18` | -- | archived signals |
+| `MaskPressure6p25Hz` | `rc03` | `19` | -- | archived signals |
+| `InspiratoryPressure0p5Hz` | `rc03` | `21` | -- | archived signals |
+| `Leak0p5Hz` | `rc03` | `20` | -- | archived signals |
+| `SoundcheckVector` | `diag_vector` | `15` | -- | diagnostic blobs |
+| `AcousticSignatureV2` | `diag_blob` | `11` | -- | diagnostic blobs |
+| `RecordedSound` | `audio` | -- | `SoundDownloadAllowed` | diagnostic blobs |
 
 <!-- spool-registry: end -->
 
@@ -99,21 +103,98 @@ Known spool types accepted by `StartSpool`.
 | `2` | active therapy profile and active feature-profile IDs |
 | `3` | therapy profile snapshots |
 | `4` | feature profile snapshots |
+| `5` | alarm profile snapshots |
 
 The active therapy profile uses the exported mode code, not the local
 `ActiveTherapyProfile` option index. Feature-profile IDs `8..12` have no named
 entries in the firmware formatter and remain numeric if encountered.
 
-Known therapy-profile subrecords include `CpapProfile`, `AutoSetProfile`,
-`VAutoProfile`, and `ASVProfile`. Feature-profile subrecords include
-`EprFeature`, `AutoRampFeature`, `ClimateFeature`, and `DisplayFeature`.
-Numeric pressure and time fields use profile-specific scales. Enum fields are
-wire integers and require the corresponding firmware option mapping.
+Field `3` uses these subrecord fields:
+
+| Field | Profile | Decoded members |
+|------:|---------|-----------------|
+| `1` | `AutoSetProfile` | mode, start/min/max pressure |
+| `2` | `AutoSetForHerProfile` | mode, start/min/max pressure |
+| `3` | `CpapProfile` | mode, set/start pressure, trigger sensitivity |
+| `4` | `SpontProfile` | pressure, EasyBreathe, respiratory-rate enable, inspiratory-time limits, rise/fall time, trigger/cycle sensitivity |
+| `5` | `STProfile` | pressure, set and target respiratory rates, inspiratory-time limits, intelligent backup rate, rise/fall time, trigger/cycle sensitivity |
+| `6` | `TimedProfile` | pressure, respiratory rate, inspiratory time, rise time |
+| `7` | `ASVProfile` | start/expiratory pressure and pressure-support range |
+| `8` | `ASVAutoProfile` | start/expiratory pressure ranges and pressure-support range |
+| `9` | `VAutoProfile` | start/max inspiratory/min expiratory pressure, pressure support, inspiratory-time limits, trigger/cycle sensitivity |
+| `10` | `PACProfile` | pressure, respiratory rate, inspiratory time, rise/fall time, trigger sensitivity |
+| `11` | `iVAPSProfile` | pressure ranges, patient height, AutoEPAP, target alveolar ventilation and respiratory rate, inspiratory-time limits, rise/fall time, trigger/cycle sensitivity |
+| `12` | internal profile | Numeric members are preserved; their setting semantics are not identified. |
+
+Pressure values are encoded in hundredths of `cmH2O`. Respiratory rates and
+target alveolar ventilation use hundredths of their displayed units. Most
+durations use milliseconds; `PACProfile.SetInspiratoryTime` uses hundredths
+of a second. Rise and fall times are encoded directly in milliseconds;
+`iVAPSProfile.PatientHeight` is encoded in centimeters.
+
+Field `4` contains these feature subrecords:
+
+| Field | Feature |
+|------:|---------|
+| `1` | `ComfortFeature` |
+| `2` | `EprFeature` |
+| `3` | `AutoRampFeature` |
+| `4` | `SmartStartStopFeature` |
+| `5` | `CircuitFeature` |
+| `6` | `ClimateFeature` |
+| `7` | `LanguageFeature` |
+| `8` | `UserSolutionFeature` |
+| `9` | `TemperatureFeature` |
+| `10` | `CareCheckFeature` |
+| `11` | `TimeZoneFeature` |
+| `12` | `DeviceHealthFeature` |
+| `13` | `PatientViewFeature` |
+| `14` | `ReminderFeature` |
+| `15` | `DisplayFeature` |
+| `16` | `ConfirmStopFeature` |
+| `17` | `TherapyLEDFeature` |
+| `18` | `RampDownFeature` |
+| `19` | `HeightFeature` |
+| `20` | `MaskSenseFeature` |
+
+The feature subrecord field numbers are not the feature IDs listed in
+`ActiveProfiles`. Enum members remain raw integers; numeric pressure,
+temperature, ramp-time, and timezone members are converted to their displayed
+units.
+
+Field `5` contains the alarm profile subrecords below. Alarm fields `6` and
+`7` are preserved numerically because their setting semantics are not
+identified.
+
+| Field | Profile | Members |
+|------:|---------|---------|
+| `1` | `AlarmVolumeProfile` | volume level |
+| `2` | `HighLeakAlarmProfile` | enable |
+| `3` | `NonVentedMaskAlarmProfile` | enable |
+| `4` | `LowMinuteVentAlarmProfile` | enable, threshold in L/min |
+| `5` | `ApneaAlarmProfile` | enable, threshold in seconds |
 
 `ConfigurationProfilesCollection` contains attributes plus
-`DataDeliveryControlV2`, whose fields map to spool families such as
-`Summary`, `TherapyOneMinutePeriodic`, `RespiratoryFlow6p25Hz`, and
-`CellularDataUsage`.
+`DataDeliveryControlV2`. Its enum values are `1` for off and `2` for on:
+
+| Field | Delivery control | Field | Delivery control |
+|------:|------------------|------:|------------------|
+| `1` | `ConfigurationProfilesCollection` | `14` | `SurveyEvents` |
+| `2` | `SettingProfilesCollection` | `15` | `SoundcheckVector` |
+| `3` | `TherapyOneMinutePeriodic` | `16` | `MemoryMetrics` |
+| `4` | `MachineMetrics` | `17` | `DiagnosticTenMinutePeriodic` |
+| `5` | `UsageEvents` | `18` | `RespiratoryFlow6p25Hz` |
+| `6` | `TherapyEvents` | `19` | `MaskPressure6p25Hz` |
+| `7` | `SystemExceptionEvents` | `20` | `Leak0p5Hz` |
+| `8` | `SystemActivityEvents` | `21` | `InspiratoryPressure0p5Hz` |
+| `9` | `DiagnosticExceptionEvents` | `22` | `CellularDataUsage` |
+| `10` | `Summary` | `23` | `AcousticSignatureV2` |
+| `11` | reserved | `24` | `alarmEvents` |
+| `12` | `CellularActivityEvents` | `25` | `alarmDiagnosticEvents` |
+| `13` | `GUIActivityEvents` | `26` | `atmosphericPressure10min` |
+
+These are fields inside the configuration record, not the outer DataDelivery
+field numbers shown in the spool registry.
 
 ### Summary records
 
@@ -230,6 +311,8 @@ Field `1` stores the firmware enum value. Enum values may contain gaps:
 `UsageEvents-TherapyStatusEvents` uses `10` and `11` for `LearnTargetsStart`
 and `LearnTargetsStop`, while respiratory CSR boundaries use `8` and `9`.
 The decoder therefore uses an explicit code map for each event family.
+The selector-to-event vocabulary is listed in the
+[Air11 RPC Event Reference](rpc_events.md).
 
 #### GUIActivityEvents
 
@@ -240,6 +323,13 @@ GUI records use a different inner shape:
 | `1` | record kind: `1` ActiveScreen, `2` TouchItem, `3` Swipe, `4` Multitouch, `5` ScreenState |
 | `2` | timestamp, UTC milliseconds |
 | `3` | kind-specific value |
+
+#### SurveyEvents
+
+`SurveyEvents` uses outer field `14`. Its record schema contains integer
+fields `1`, `2`, `4`, and `5`, plus a byte/message field `3`. The meanings of
+these five members are not identified, so the decoder preserves their field
+numbers and wire values.
 
 #### Diagnostic error events
 
@@ -314,7 +404,7 @@ Other event codes and their additional fields remain numeric. The
 ### TherapyOneMinutePeriodic records
 
 `TherapyOneMinutePeriodic` records contain one or more per-signal messages,
-plus field `15`, which has been observed as the sample interval in minutes.
+plus field `15`, the record interval in minutes.
 
 Each per-signal message has this shape:
 
@@ -324,9 +414,10 @@ Each per-signal message has this shape:
 | `2` | start timestamp, UTC milliseconds |
 | `3` | sample block |
 
-The sample block is an int16 series. Fields `1..7` and `21` are headerless
-second-difference/Rice streams using the same reconstruction formula as RC03.
-Fields `8` and `9`, when present, are raw little-endian int16 arrays.
+The sample block is an int16 series. Fields `1..7`, `18`, and `21` are
+headerless second-difference/Rice streams using the same reconstruction
+formula as RC03. Fields `8` and `9`, when present, are raw little-endian int16
+arrays.
 
 Decoded fields:
 
@@ -335,16 +426,20 @@ Decoded fields:
 | `1` | Leak | `leak_l_min` | `raw * 1.2` L/min |
 | `2` | InspiratoryPressure | `insp_pressure_cmH2O` | `raw / 5` cmH2O |
 | `3` | ExpiratoryPressure | `exp_pressure_cmH2O` | `raw / 5` cmH2O |
-| `4` | MinuteVentilation | `minute_vent_l_min` | `raw / 8` L/min |
-| `5` | InspiratoryDuration | `insp_duration_s` | `raw / 50` seconds |
-| `6` | RespiratoryRate | `resp_rate_bpm` | `raw` bpm |
+| `4` | RespiratoryRate | `resp_rate_bpm` | `raw / 4` bpm |
+| `5` | InspiratoryDuration | `insp_duration_s` | `raw / 25` seconds |
+| `6` | MinuteVentilation | `minute_vent_l_min` | `raw * 0.4` L/min |
 | `7` | IeRatio | `ie_ratio_pct` | `raw * 4` percent |
 | `8` | SpO2 | `spo2_pct` | `raw` percent |
 | `9` | HeartRate | `heart_rate_bpm` | `raw` bpm |
-| `21` | MIS | `mis` | `raw / 50` |
+| `18` | AlveolarMinuteVentilation | `alveolar_minute_vent_l_min` | `raw * 0.4` L/min |
+| `21` | MeanInspiratoryTime (`MIS`) | `mean_inspiratory_time_s` | `raw / 10` seconds |
 
-The field mapping and scales are verified against `Summary` percentile
-records and observed oximetry samples.
+`MeanInspiratoryTime` is the 60-sample average of the internal inspiratory-time
+signal.
+
+The signal assignment, quantization, and Rice parameters are defined by the
+firmware's `TherapyOneMinutePeriodic` collection schema.
 
 ### Metric snapshot records
 
@@ -403,7 +498,7 @@ more signal subrecords. Each signal subrecord contains:
 | `2` | start timestamp, UTC milliseconds |
 | `3` | headerless signed int16 second-difference/Rice sample block |
 
-Observed signal fields:
+Signal fields:
 
 | Field | Name |
 |-------|------|
@@ -412,10 +507,24 @@ Observed signal fields:
 | `4` | `CellularSignalQuality3G` |
 | `5` | `CellularSignalQualityLTE` |
 
+### Atmospheric pressure records
+
+`atmosphericPressure10min` uses outer field `27`. Each record contains:
+
+| Field | Meaning |
+|------:|---------|
+| `1` | record marker |
+| `2` | sample interval in minutes |
+| `3` | start timestamp, UTC milliseconds |
+| `4` | headerless signed int16 second-difference/Rice sample block |
+
+The collection interval is ten minutes. The decoded value is `raw * 2`; the
+physical unit is not identified.
+
 ### RC03 archived-signal records
 
 The RC03 signal records are protobuf wrappers around a compressed sample
-block. The inner record fields observed so far are:
+block. The inner records contain:
 
 | Field | Meaning |
 |-------|---------|

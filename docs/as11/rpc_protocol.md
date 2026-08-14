@@ -909,7 +909,7 @@ Request:
   "id": 1,
   "params": {
     "spoolId": 12,
-    "maxFragmentSize": 4096,
+    "maxFragmentSize": 3000,
     "maxNotifications": 0
   }
 }
@@ -918,11 +918,13 @@ Request:
 | Field | Requirement |
 |-------|-------------|
 | `spoolId` | ID returned by `StartSpool` |
-| `maxFragmentSize` | requested maximum fragment size |
-| `maxNotifications` | maximum notifications in this pull; `0` applies no explicit count limit |
+| `maxFragmentSize` | positive maximum raw bytes in one fragment notification; firmware clamps values above `3576` bytes |
+| `maxNotifications` | non-negative notification count; `0` removes the count limit for this pull |
 
-All three fields are required and parsed as integers. The immediate result
-echoes the active spool ID:
+All three fields are required and parsed as integers. A positive
+`maxNotifications` value pauses delivery after that many notifications; call
+`PullSpoolFragments` again with the same active `spoolId` to continue.
+The immediate result echoes the active spool ID:
 
 ```json
 {"spoolId":12}
@@ -1142,12 +1144,13 @@ Request:
 |-------|-------------|
 | `spoolAddress` | object whose member name selects the spool type |
 | `spoolAddress.<type>.fromDateTime` | optional ISO 8601 starting timestamp; records before this time are skipped |
-| `maxSpoolSize` | maximum unencoded payload bytes returned in this spool round |
+| `maxSpoolSize` | round-wide limit for unencoded payload bytes; parsed as a positive signed 32-bit integer |
 
 One `StartSpool` request selects one spool type. If `spoolAddress` contains
 multiple members, the parser retains only the last member. When
 `fromDateTime` is omitted, the selected spool reader uses its default starting
-position.
+position. `maxSpoolSize` limits the complete round, while
+`PullSpoolFragments.maxFragmentSize` limits each fragment notification.
 
 Result:
 
@@ -1421,8 +1424,10 @@ For a subscribed DataItem:
 | `SPOOL_COMPLETE_NO_MORE_DATA` | this round is complete and no continuation remains |
 | `ERROR_DATA_UNAVAILABLE` | requested spool data is unavailable |
 
-`seq` orders fragments within a round. `spoolHash` appears on the terminal
-fragment and covers the concatenated decoded `data` bytes.
+`data` is Base64 text. Data-bearing `seq` values start at zero for each round
+and increase without gaps. `spoolHash` appears on the terminal fragment and
+covers the concatenated decoded `data` bytes for that round. A terminal
+fragment for an empty round can contain no `data`.
 
 <a id="rpc-permission-selectors"></a>
 

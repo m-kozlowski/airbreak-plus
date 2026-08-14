@@ -23,6 +23,7 @@ import base64
 import hashlib
 import json
 import logging
+import math
 import os
 import sys
 import time
@@ -64,6 +65,7 @@ from as11_rpc_vars import (  # noqa: E402
     filter_vars, var_groups_summary, print_var_pairs,
 )
 from as11_spool import (  # noqa: E402
+    SPOOL_FRAGMENT_SIZE, SPOOL_FRAGMENT_SIZE_LIMIT,
     SpoolError, spool_one_round,
     proto_pretty, summary_pretty,
     print_spool_legend, print_spool_summary,
@@ -81,6 +83,27 @@ log = logging.getLogger("as11.config")
 
 def eprint(*a, **kw):
     print(*a, file=sys.stderr, **kw)
+
+
+def positive_int_arg(value: str) -> int:
+    parsed = int(value, 0)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
+
+
+def spool_size_arg(value: str) -> int:
+    parsed = positive_int_arg(value)
+    if parsed > 0x7FFFFFFF:
+        raise argparse.ArgumentTypeError("must not exceed 2147483647")
+    return parsed
+
+
+def positive_float_arg(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed) or parsed <= 0:
+        raise argparse.ArgumentTypeError("must be a positive number")
+    return parsed
 
 
 SESSION_COMMANDS = (
@@ -779,7 +802,7 @@ def cmd_spool_probe(args: argparse.Namespace) -> int:
 
     For each known (or single requested) spool type, do one StartSpool +
     PullSpoolFragments round. Pre-checks `gate_var` from SPOOL_REGISTRY
-    and skips closed gates without round-tripping. Reports verifies the
+    and skips closed gates without round-tripping. Verifies the
     observed outer protobuf field against `SPOOL_REGISTRY[name].wire_field`.
     """
     names = ([args.spool_type] if getattr(args, "spool_type", None)
@@ -1481,16 +1504,19 @@ def build_parser() -> argparse.ArgumentParser:
                          "bytes > 0; default 'all'")
     sp.add_argument("--from-dt", default=None,
                     help="from datetime (ISO 8601); default 2000-01-01")
-    sp.add_argument("--max-size", type=int, default=4096,
+    sp.add_argument("--max-size", type=spool_size_arg, default=4096,
                     help="maxSpoolSize per round")
-    sp.add_argument("--max-rounds", type=int, default=100,
+    sp.add_argument("--max-rounds", type=positive_int_arg, default=100,
                     help="cap on continuation rounds")
     sp.add_argument("--no-follow", action="store_true",
                     help="stop after first round; do not follow continuations")
-    sp.add_argument("--fragment-timeout", type=float, default=30.0,
+    sp.add_argument("--fragment-timeout", type=positive_float_arg,
+                    default=30.0,
                     help="seconds to wait for all fragments of one round")
-    sp.add_argument("--fragment-max", type=int, default=4096,
-                    help="maxFragmentSize passed to PullSpoolFragments")
+    sp.add_argument("--fragment-max", type=positive_int_arg,
+                    default=SPOOL_FRAGMENT_SIZE,
+                    help="maxFragmentSize passed to PullSpoolFragments "
+                         f"(firmware caps it at {SPOOL_FRAGMENT_SIZE_LIMIT})")
     sp.add_argument("--decode", action="store_true",
                     help="decode protobuf payload to stdout")
     sp.add_argument("--raw-proto", action="store_true",

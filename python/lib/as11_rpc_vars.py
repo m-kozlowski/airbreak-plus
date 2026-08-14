@@ -259,10 +259,9 @@ def expand_groups(group_names: list[str]) -> list[str]:
 #               (one of: summary, profile, config, event, periodic,
 #                periodic_compressed, metric, rc03, diag_vector,
 #                diag_blob, audio)
-#   wire_field  outer protobuf field number observed on a populated
-#               spool, or None when the spool has not yet been seen
-#               with data on a test device. Multiple spools may share
-#               a wire_field (event subfamilies do).
+#   wire_field  outer DataDelivery protobuf field number. Multiple spool
+#               selectors may share a field when they select subfamilies of
+#               the same event collection. None denotes a raw payload.
 #   gate_var    name of the firmware setting that must be enabled for
 #               the dispatcher to accept this spool. Optional.
 #   sources     internal selectors combined under this StartSpool type.
@@ -328,7 +327,7 @@ SPOOL_REGISTRY: dict[str, dict] = {
         "group": "system and diagnostic events",
         "format": "error event protobuf",
         "family": "event",
-        "wire_field": None,
+        "wire_field": 7,
     },
     "SystemExceptionEvents-RecoverableErrors": {
         "group": "system and diagnostic events",
@@ -340,13 +339,13 @@ SPOOL_REGISTRY: dict[str, dict] = {
         "group": "system and diagnostic events",
         "format": "error event protobuf",
         "family": "event",
-        "wire_field": None,
+        "wire_field": 7,
     },
     "SystemExceptionEvents-HeatedTubeErrors": {
         "group": "system and diagnostic events",
         "format": "error event protobuf",
         "family": "event",
-        "wire_field": None,
+        "wire_field": 7,
     },
     "DiagnosticExceptionEvents-AppErrors": {
         "group": "system and diagnostic events",
@@ -358,19 +357,19 @@ SPOOL_REGISTRY: dict[str, dict] = {
         "group": "system and diagnostic events",
         "format": "error event protobuf",
         "family": "event",
-        "wire_field": None,
+        "wire_field": 9,
     },
     "DiagnosticExceptionEvents-ResettableErrors": {
         "group": "system and diagnostic events",
         "format": "error event protobuf",
         "family": "event",
-        "wire_field": None,
+        "wire_field": 9,
     },
     "DiagnosticExceptionEvents-AlarmAppErrors": {
         "group": "system and diagnostic events",
         "format": "error event protobuf",
         "family": "event",
-        "wire_field": None,
+        "wire_field": 9,
     },
     "GUIActivityEvents": {
         "group": "system and diagnostic events",
@@ -382,25 +381,25 @@ SPOOL_REGISTRY: dict[str, dict] = {
         "group": "system and diagnostic events",
         "format": "event protobuf",
         "family": "event",
-        "wire_field": None,
+        "wire_field": 14,
     },
     "alarmEvents": {
         "group": "system and diagnostic events",
         "format": "event protobuf",
         "family": "event",
-        "wire_field": None,
+        "wire_field": 24,
     },
     "alarmDiagnosticEvents": {
         "group": "system and diagnostic events",
         "format": "event protobuf",
         "family": "event",
-        "wire_field": None,
+        "wire_field": 25,
     },
 
     # periodic metrics
     "DiagnosticTenMinutePeriodic": {
         "group": "periodic metrics",
-        "format": "periodic compressed (two-stream)",
+        "format": "compressed periodic signals",
         "family": "periodic_compressed",
         "wire_field": 17,
     },
@@ -416,8 +415,9 @@ SPOOL_REGISTRY: dict[str, dict] = {
         "family": "metric",
         "wire_field": 16,
     },
+    # cellular data
     "CellularActivityEvents": {
-        "group": "periodic metrics",
+        "group": "cellular data",
         "format": "event protobuf (includes string events from 8.6.0)",
         "family": "event",
         "wire_field": 12,
@@ -427,7 +427,7 @@ SPOOL_REGISTRY: dict[str, dict] = {
         ),
     },
     "CellularDataUsage": {
-        "group": "periodic metrics",
+        "group": "cellular data",
         "format": "metric snapshot",
         "family": "metric",
         "wire_field": 22,
@@ -436,9 +436,9 @@ SPOOL_REGISTRY: dict[str, dict] = {
     # archived signals
     "atmosphericPressure10min": {
         "group": "archived signals",
-        "format": "periodic compressed (two-stream)",
+        "format": "compressed periodic signal",
         "family": "periodic_compressed",
-        "wire_field": None,
+        "wire_field": 27,
     },
     "RespiratoryFlow6p25Hz": {
         "group": "archived signals",
@@ -476,7 +476,7 @@ SPOOL_REGISTRY: dict[str, dict] = {
         "group": "diagnostic blobs",
         "format": "diagnostic acoustic blob",
         "family": "diag_blob",
-        "wire_field": 24,
+        "wire_field": 11,
     },
     "RecordedSound": {
         "group": "diagnostic blobs",

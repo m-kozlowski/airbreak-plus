@@ -6,9 +6,9 @@ Protocol dance plus protobuf payload decoders.
 from __future__ import annotations
 
 import base64
+import binascii
 from collections import Counter
 import hashlib
-import logging
 import sys
 from typing import Iterator
 
@@ -26,11 +26,12 @@ except ModuleNotFoundError as exc:
     summarize_diagnostic_code = None
 
 
-log = logging.getLogger("as11.spool")
+SPOOL_FRAGMENT_SIZE = 3000
+SPOOL_FRAGMENT_SIZE_LIMIT = 3576
 
 
 class SpoolError(Exception):
-    """StartSpool failed before any fragment notifications could arrive.
+    """A spool RPC round failed or returned an invalid fragment sequence.
 
     The original JSON-RPC response (when applicable) is exposed as
     `.response`, with the device's error code/message split out as
@@ -49,7 +50,7 @@ class SpoolError(Exception):
 
 def spool_one_round(transport, spool_address: dict, max_size: int,
                     *, fragment_timeout: float = 30.0,
-                    fragment_max: int = 2808,
+                    fragment_max: int = SPOOL_FRAGMENT_SIZE,
                     verbose: bool = True,
                     ) -> tuple[bytes, str, dict | None, int]:
     """Run one StartSpool -> PullSpoolFragments cycle against `transport`.
@@ -57,30 +58,61 @@ def spool_one_round(transport, spool_address: dict, max_size: int,
     Returns (data_bytes, status, next_spool_address_or_None, frag_count).
     Verifies per-round SHA256 against spoolHash reported by the device.
 
-    Raises `SpoolError` when `StartSpool` returns a JSON-RPC error or a
-    zero spoolId. Callers that want best-effort probing should catch it.
+    Raises `SpoolError` for rejected RPC calls, incomplete or malformed
+    fragment sequences, and hash mismatches.
 
     `transport` must implement the as11_rpc.Transport protocol with a
     working `listen_for_notifications`.
     """
+    if not isinstance(max_size, int) or isinstance(max_size, bool):
+        raise SpoolError("maxSpoolSize must be an integer")
+    if max_size <= 0 or max_size > 0x7FFFFFFF:
+        raise SpoolError("maxSpoolSize must be in range 1..2147483647")
+    if not isinstance(fragment_max, int) or isinstance(fragment_max, bool):
+        raise SpoolError("maxFragmentSize must be an integer")
+    if fragment_max <= 0:
+        raise SpoolError("maxFragmentSize must be positive")
+
     fragments: list[tuple[int, bytes]] = []
-    state = {"status": "", "hash": "", "next": None, "done": False}
+    state = {
+        "status": "", "hash": "", "next": None, "done": False,
+        "error": None, "spool_id": None,
+    }
 
     def on_notify(msg: dict):
         if msg.get("method") != "SpoolFragment":
             return None
         params = msg.get("params", {})
+        if not isinstance(params, dict):
+            state["error"] = "SpoolFragment params is not an object"
+            state["done"] = True
+            return True
+        notify_spool_id = params.get("spoolId")
+        if (state["spool_id"] is not None
+                and notify_spool_id != state["spool_id"]):
+            return None
         seq = params.get("seq", -1)
         data_b64 = params.get("data", "")
         status = params.get("status", "")
+        raw = b""
         if data_b64:
+            if not isinstance(seq, int) or isinstance(seq, bool) or seq < 0:
+                state["error"] = f"invalid fragment sequence number {seq!r}"
+                state["done"] = True
+                return True
+            if not isinstance(data_b64, str):
+                state["error"] = f"fragment {seq} data is not Base64 text"
+                state["done"] = True
+                return True
             try:
-                fragments.append((seq, base64.b64decode(data_b64)))
-            except Exception as exc:
-                log.warning("SpoolFragment seq=%d base64 decode failed: %s",
-                            seq, exc)
+                raw = base64.b64decode(data_b64, validate=True)
+            except (ValueError, binascii.Error) as exc:
+                state["error"] = f"fragment {seq} Base64 decode failed: {exc}"
+                state["done"] = True
+                return True
+            fragments.append((seq, raw))
         if verbose:
-            print(f"  fragment seq={seq} len={len(data_b64)} status={status}",
+            print(f"  fragment seq={seq} len={len(raw)} status={status}",
                   file=sys.stderr, flush=True)
         state["status"] = status
         state["hash"] = params.get("spoolHash", "")
@@ -109,31 +141,57 @@ def spool_one_round(transport, spool_address: dict, max_size: int,
             print(f"StartSpool: spoolId={spool_id}", file=sys.stderr)
         if spool_id == 0:
             raise SpoolError("StartSpool returned spoolId=0", response=resp)
+        state["spool_id"] = spool_id
 
-        transport.rpc("PullSpoolFragments", {
+        pull_resp = transport.rpc("PullSpoolFragments", {
             "spoolId": spool_id,
             "maxFragmentSize": fragment_max,
             "maxNotifications": 0,
         }, timeout=5.0)
+        pull_err = (pull_resp.get("error")
+                    if isinstance(pull_resp, dict) else None)
+        if pull_err:
+            code = pull_err.get("code")
+            msg = pull_err.get("message", "")
+            raise SpoolError(
+                f"PullSpoolFragments refused: "
+                f"{msg or 'unknown error'} (code {code})",
+                response=pull_resp, code=code,
+            )
 
-        transport.listen_for_notifications(duration=fragment_timeout)
+        if not state["done"]:
+            transport.listen_for_notifications(duration=fragment_timeout)
     finally:
         transport.set_notification_handler(None)
 
+    if state["error"]:
+        raise SpoolError(str(state["error"]))
+    if not state["done"]:
+        raise SpoolError(
+            f"no terminal fragment received within {fragment_timeout:g}s"
+        )
+
     fragments.sort(key=lambda x: x[0])
+    seqs = [seq for seq, _data in fragments]
+    if seqs != list(range(len(seqs))):
+        raise SpoolError(f"invalid fragment sequence: {seqs}")
     data = b"".join(f[1] for f in fragments)
 
     expected = state["hash"]
-    if expected:
-        actual = hashlib.sha256(data).hexdigest().upper()
-        ok = "OK" if actual == expected.upper() else "MISMATCH"
-        if verbose:
-            print(f"  SHA256: {ok} ({len(data)} bytes, {len(fragments)} fragments)",
-                  file=sys.stderr)
-    elif not state["done"] and verbose:
-        print(f"  warning: no terminal fragment received within "
-              f"{fragment_timeout:.0f}s; got {len(fragments)} fragments "
-              f"({len(data)} bytes)", file=sys.stderr)
+    if not isinstance(expected, str) or len(expected) != 64:
+        raise SpoolError("terminal fragment did not contain a valid SHA256")
+    try:
+        bytes.fromhex(expected)
+    except ValueError as exc:
+        raise SpoolError("terminal fragment contained an invalid SHA256") from exc
+    actual = hashlib.sha256(data).hexdigest().upper()
+    if actual != expected.upper():
+        raise SpoolError(
+            f"spool SHA256 mismatch: expected {expected.upper()}, got {actual}"
+        )
+    if verbose:
+        print(f"  SHA256: OK ({len(data)} bytes, {len(fragments)} fragments)",
+              file=sys.stderr)
 
     return data, state["status"], state["next"], len(fragments)
 
@@ -603,6 +661,40 @@ THERAPY_PROFILE_FIELDS: dict[int, tuple[str, tuple[tuple[int, str, str], ...]]] 
         (8, "TriggerSensitivityRaw", "raw"),
         (9, "CycleSensitivityRaw", "raw"),
     )),
+    10: ("PACProfile", (
+        (1, "TherapyModeRaw", "raw"),
+        (2, "StartPressure", "pressure"),
+        (3, "TargetInspiratoryPressure", "pressure"),
+        (4, "TargetExpiratoryPressure", "pressure"),
+        (5, "SetRespiratoryRate", "bpm_scaled"),
+        (6, "SetInspiratoryTime", "centiseconds"),
+        (7, "RiseTimeEnableRaw", "raw"),
+        (8, "RiseTime", "milliseconds"),
+        (9, "TriggerSensitivityRaw", "raw"),
+        (10, "FallTimeEnableRaw", "raw"),
+        (11, "FallTime", "milliseconds"),
+    )),
+    11: ("iVAPSProfile", (
+        (1, "TherapyModeRaw", "raw"),
+        (2, "StartPressure", "pressure"),
+        (3, "PatientHeight", "centimeters"),
+        (4, "AutoEPAPEnableRaw", "raw"),
+        (5, "MaxExpiratoryPressure", "pressure"),
+        (6, "MinExpiratoryPressure", "pressure"),
+        (7, "TargetExpiratoryPressure", "pressure"),
+        (8, "MaxPressureSupport", "pressure"),
+        (9, "MinPressureSupport", "pressure"),
+        (10, "TargetAlveolarVentilation", "l_min_scaled"),
+        (11, "TargetRespiratoryRate", "bpm_scaled"),
+        (12, "SetMaxInspiratoryTime", "seconds"),
+        (13, "SetMinInspiratoryTime", "seconds"),
+        (14, "RiseTimeEnableRaw", "raw"),
+        (15, "RiseTime", "milliseconds"),
+        (16, "TriggerSensitivityRaw", "raw"),
+        (17, "CycleSensitivityRaw", "raw"),
+        (18, "FallTimeEnableRaw", "raw"),
+        (19, "FallTime", "milliseconds"),
+    )),
 }
 
 FEATURE_PROFILE_FIELDS: dict[int, tuple[str, tuple[tuple[int, str, str], ...]]] = {
@@ -657,7 +749,6 @@ FEATURE_PROFILE_FIELDS: dict[int, tuple[str, tuple[tuple[int, str, str], ...]]] 
     )),
     12: ("DeviceHealthFeature", (
         (1, "SoundcheckFeatureToggleRaw", "raw"),
-        (2, "SoundcheckRunFrequencyRaw", "raw"),
     )),
     13: ("PatientViewFeature", (
         (1, "DisplayAHIRaw", "raw"),
@@ -678,6 +769,15 @@ FEATURE_PROFILE_FIELDS: dict[int, tuple[str, tuple[tuple[int, str, str], ...]]] 
     17: ("TherapyLEDFeature", (
         (1, "TherapyLEDAlwaysOnRaw", "raw"),
     )),
+    18: ("RampDownFeature", (
+        (1, "RampDownEnableRaw", "raw"),
+        (2, "RampDownTime", "minutes_scaled"),
+        (3, "RampDownEnablePatientAccessRaw", "raw"),
+        (4, "MaxRampDownTime", "minutes_scaled"),
+    )),
+    19: ("HeightFeature", (
+        (1, "HeightDisplayUnitRaw", "raw"),
+    )),
     20: ("MaskSenseFeature", (
         (1, "MaskSenseToggleRaw", "raw"),
     )),
@@ -690,31 +790,55 @@ REMINDER_FIELDS: dict[int, str] = {
     4: "ReminderHumidifier",
 }
 
+ALARM_PROFILE_FIELDS: dict[int, tuple[str, tuple[tuple[int, str, str], ...]]] = {
+    1: ("AlarmVolumeProfile", (
+        (1, "AlarmVolumeLevelRaw", "raw"),
+    )),
+    2: ("HighLeakAlarmProfile", (
+        (1, "HighLeakAlarmEnableRaw", "raw"),
+    )),
+    3: ("NonVentedMaskAlarmProfile", (
+        (1, "NonVentedMaskAlarmEnableRaw", "raw"),
+    )),
+    4: ("LowMinuteVentAlarmProfile", (
+        (1, "LowMinuteVentAlarmEnableRaw", "raw"),
+        (2, "LowMinuteVentAlarmThreshold", "l_min_scaled"),
+    )),
+    5: ("ApneaAlarmProfile", (
+        (1, "ApneaAlarmEnableRaw", "raw"),
+        (2, "ApneaAlarmThreshold", "seconds"),
+    )),
+}
+
 
 THERAPY_1MINUTE_FIELDS: dict[int, dict] = {
-    # The payload carries per-field int16 series. Fields 1..7 are compressed
-    # with the same second-difference/Rice scheme used by RC03, but without an
-    # explicit header. Fields 8/9 are raw packed int16 when oximetry exists.
+    # The payload carries per-field int16 series. Fields 1..7, 18, and 21 use
+    # headerless second-difference/Rice compression. Fields 8/9 are raw packed
+    # int16 when oximetry exists.
     1:  {"name": "Leak", "column": "leak_l_min", "unit": "L/min",
          "scale": 60.0 / 50.0, "rice_m": 4},
     2:  {"name": "InspiratoryPressure", "column": "insp_pressure_cmH2O",
          "unit": "cmH2O", "scale": 1.0 / 5.0, "rice_m": 4},
     3:  {"name": "ExpiratoryPressure", "column": "exp_pressure_cmH2O",
          "unit": "cmH2O", "scale": 1.0 / 5.0, "rice_m": 2},
-    4:  {"name": "MinuteVentilation", "column": "minute_vent_l_min",
-         "unit": "L/min", "scale": 1.0 / 8.0, "rice_m": 8},
+    4:  {"name": "RespiratoryRate", "column": "resp_rate_bpm",
+         "unit": "bpm", "scale": 1.0 / 4.0, "rice_m": 4},
     5:  {"name": "InspiratoryDuration", "column": "insp_duration_s",
-         "unit": "s", "scale": 1.0 / 50.0, "rice_m": 4},
-    6:  {"name": "RespiratoryRate", "column": "resp_rate_bpm",
-         "unit": "bpm", "scale": 1.0, "rice_m": 4},
+         "unit": "s", "scale": 1.0 / 25.0, "rice_m": 4},
+    6:  {"name": "MinuteVentilation", "column": "minute_vent_l_min",
+         "unit": "L/min", "scale": 2.0 / 5.0, "rice_m": 8},
     7:  {"name": "IeRatio", "column": "ie_ratio_pct",
          "unit": "%", "scale": 4.0, "rice_m": 4},
     8:  {"name": "SpO2", "column": "spo2_pct",
          "unit": "%", "scale": 1.0, "rice_m": None},
     9:  {"name": "HeartRate", "column": "heart_rate_bpm",
          "unit": "bpm", "scale": 1.0, "rice_m": None},
-    21: {"name": "MIS", "column": "mis",
-         "unit": "raw/50", "scale": 1.0 / 50.0, "rice_m": 4},
+    18: {"name": "AlveolarMinuteVentilation",
+         "column": "alveolar_minute_vent_l_min", "unit": "L/min",
+         "scale": 2.0 / 5.0, "rice_m": 8},
+    21: {"name": "MeanInspiratoryTime",
+         "column": "mean_inspiratory_time_s", "unit": "s",
+         "scale": 1.0 / 10.0, "rice_m": 4},
 }
 
 METRIC_SPOOL_DEFS: dict[str, dict] = {
@@ -771,6 +895,13 @@ DIAG_10MIN_FIELDS: dict[int, dict] = {
         "rice_m": 2, "scale": 1.0},
     5: {"name": "CellularSignalQualityLTE", "column": "signal_quality_lte",
         "rice_m": 2, "scale": 1.0},
+}
+
+ATMOSPHERIC_PRESSURE_FIELD = {
+    "name": "AtmosphericPressure",
+    "column": "atmospheric_pressure",
+    "rice_m": 4,
+    "scale": 2.0,
 }
 
 
@@ -864,14 +995,20 @@ def _format_profile_value(value: int, kind: str) -> str:
         return f"{value / 100.0:.8g} cmH2O"
     if kind == "seconds":
         return f"{value / 1000.0:.8g} s"
+    if kind == "centiseconds":
+        return f"{value / 100.0:.8g} s"
     if kind == "milliseconds":
         return f"{value} ms"
     if kind == "minutes_scaled":
         return f"{value / 100.0:.8g} min"
     if kind == "celsius":
         return f"{value / 100.0:.8g} C"
+    if kind == "centimeters":
+        return f"{value} cm"
     if kind == "bpm_scaled":
         return f"{value / 100.0:.8g} bpm"
+    if kind == "l_min_scaled":
+        return f"{value / 100.0:.8g} L/min"
     return str(value)
 
 
@@ -1058,6 +1195,20 @@ def _print_feature_profiles(data: bytes, out, *, details: bool) -> None:
         print(f"    {name}: {body}", file=out)
 
 
+def _print_alarm_profiles(data: bytes, out, *, details: bool) -> None:
+    print("  AlarmProfiles:", file=out)
+    for field, wire, value in proto_decode(data):
+        if wire != 2:
+            if details:
+                print(f"    f{field}/{_PROTO_WIRE.get(wire, wire)}", file=out)
+            continue
+        name, defs = ALARM_PROFILE_FIELDS.get(
+            field, (f"AlarmProfile{field}", ())
+        )
+        body = _format_named_message(value, defs, details=details or not defs)
+        print(f"    {name}: {body}", file=out)
+
+
 def setting_profiles_pretty(spool_type: str, data: bytes, out=None,
                             *, details: bool = False) -> bool:
     """Print SettingProfilesCollection records."""
@@ -1096,6 +1247,8 @@ def setting_profiles_pretty(spool_type: str, data: bytes, out=None,
                 _print_therapy_profiles(value, out, details=details)
             elif field == 4 and wire == 2:
                 _print_feature_profiles(value, out, details=details)
+            elif field == 5 and wire == 2:
+                _print_alarm_profiles(value, out, details=details)
             elif details:
                 print(f"  f{field}/{_PROTO_WIRE.get(wire, wire)}", file=out)
     return True
@@ -1427,6 +1580,91 @@ def _periodic_compressed_signal(field: int, data: bytes) -> dict:
     }
 
 
+def _atmospheric_pressure_record(data: bytes) -> dict:
+    marker = None
+    interval = None
+    start_ms = None
+    blob = None
+    extras = []
+    for field, wire, value in proto_decode(data):
+        if field == 1 and wire == 0:
+            marker = value
+        elif field == 2 and wire == 0:
+            interval = value
+        elif field == 3 and wire == 0:
+            start_ms = value
+        elif field == 4 and wire == 2:
+            blob = value
+        else:
+            extras.append((field, wire, value))
+    if blob is None:
+        raise ValueError("missing atmospheric-pressure sample blob")
+    raw = _therapy_1minute_decode_values(
+        blob, ATMOSPHERIC_PRESSURE_FIELD["rice_m"]
+    )
+    scale = float(ATMOSPHERIC_PRESSURE_FIELD["scale"])
+    return {
+        "marker": marker,
+        "interval_ms": _periodic_compressed_interval_ms(interval),
+        "start_ms": start_ms,
+        "blob": blob,
+        "raw": raw,
+        "values": [value * scale for value in raw],
+        "extras": extras,
+    }
+
+
+def _atmospheric_pressure_pretty(data: bytes, out, *, samples: bool,
+                                 details: bool) -> None:
+    records = _wrapped_records(data, 27)
+    if samples:
+        print("record,signal,index,time_ms,time_utc,value_raw,value", file=out)
+    else:
+        print("# atmosphericPressure10min compressed periodic spool", file=out)
+
+    for record_index, record in enumerate(records):
+        try:
+            decoded = _atmospheric_pressure_record(record)
+        except (ValueError, IndexError) as exc:
+            if not samples:
+                print(f"record {record_index}: invalid protobuf: {exc}",
+                      file=out)
+            continue
+
+        if samples:
+            for sample_index, (raw, value) in enumerate(
+                    zip(decoded["raw"], decoded["values"])):
+                timestamp = ""
+                timestamp_text = ""
+                if decoded["start_ms"] is not None:
+                    timestamp = str(
+                        decoded["start_ms"]
+                        + sample_index * decoded["interval_ms"]
+                    )
+                    timestamp_text = _fmt_utc_ms(int(timestamp))
+                print(f"{record_index},AtmosphericPressure,{sample_index},"
+                      f"{timestamp},{timestamp_text},{raw},"
+                      f"{_fmt_number(value)}", file=out)
+            continue
+
+        start = decoded["start_ms"]
+        start_text = _fmt_utc_ms(start) if start is not None else "n/a"
+        raw = decoded["raw"]
+        values = decoded["values"]
+        print(f"record {record_index}: marker={decoded['marker']} "
+              f"start={start_text} interval_ms={decoded['interval_ms']} "
+              f"samples={len(values)}", file=out)
+        if raw:
+            print(f"  AtmosphericPressure: raw_min={min(raw)} "
+                  f"raw_max={max(raw)} "
+                  f"value_min={_fmt_number(min(values))} "
+                  f"value_max={_fmt_number(max(values))}", file=out)
+            print(f"    first_values={_rc03_preview(values[:8])}", file=out)
+            print(f"    last_values={_rc03_preview(values[-8:])}", file=out)
+        if details and decoded["extras"]:
+            print(f"  extras={decoded['extras']}", file=out)
+
+
 def periodic_compressed_pretty(spool_type: str, data: bytes, out=None,
                                *, samples: bool = False,
                                details: bool = False) -> bool:
@@ -1437,6 +1675,14 @@ def periodic_compressed_pretty(spool_type: str, data: bytes, out=None,
         return False
     if not data:
         print(f"# {spool_type} spool is empty", file=out)
+        return True
+    if spool_type == "atmosphericPressure10min":
+        try:
+            _atmospheric_pressure_pretty(
+                data, out, samples=samples, details=details
+            )
+        except (ValueError, IndexError) as exc:
+            print(f"# cannot decode {spool_type} protobuf: {exc}", file=out)
         return True
 
     expected = SPOOL_REGISTRY.get(spool_type, {}).get("wire_field")
@@ -1806,7 +2052,7 @@ def soundcheck_vector_pretty(spool_type: str, data: bytes, out=None,
 
 def diagnostic_blob_pretty(spool_type: str, data: bytes, out=None,
                            *, details: bool = False) -> bool:
-    """Print currently unresolved diagnostic blob spools conservatively."""
+    """Print AcousticSignatureV2 records without interpreting blob contents."""
     if out is None:
         out = sys.stdout
     if spool_type != "AcousticSignatureV2":
@@ -1815,14 +2061,21 @@ def diagnostic_blob_pretty(spool_type: str, data: bytes, out=None,
     if not data:
         print("empty", file=out)
         return True
-    print(f"bytes={len(data)} hex={_hex_preview(data)}", file=out)
     try:
-        fields = proto_decode(data)
+        records = _wrapped_records(data, 11)
     except (ValueError, IndexError):
+        print(f"bytes={len(data)} hex={_hex_preview(data)}", file=out)
         return True
-    if details:
-        proto_pretty(data, indent=1, out=out)
-    else:
+    for index, record in enumerate(records):
+        print(f"record {index}: bytes={len(record)} "
+              f"hex={_hex_preview(record)}", file=out)
+        try:
+            fields = proto_decode(record)
+        except (ValueError, IndexError):
+            continue
+        if details:
+            proto_pretty(record, indent=1, out=out)
+            continue
         parts = []
         for field, wire, value in fields:
             if wire == 2:
@@ -1830,7 +2083,7 @@ def diagnostic_blob_pretty(spool_type: str, data: bytes, out=None,
             else:
                 parts.append(f"f{field}/{_PROTO_WIRE.get(wire, wire)}")
         if parts:
-            print("fields=" + " ".join(parts), file=out)
+            print("  fields=" + " ".join(parts), file=out)
     return True
 
 
@@ -1918,27 +2171,51 @@ _SUMMARY_SCALAR_SCALES = {
 }
 
 _SUMMARY_SUBFIELDS = {
-    14: {2: (50, 2.0), 3: (70, 2.0), 4: (95, 2.0), 5: (100, 2.0)},  # Leak
-    15: {2: (50, 2.0), 3: (95, 2.0), 4: (100, 2.0)},
-    20: {2: (50, 2.0), 3: (95, 2.0), 4: (100, 2.0)},
-    21: {2: (50, 2.0), 3: (95, 2.0), 4: (100, 2.0)},
-    22: {2: (50, 2.0), 3: (95, 2.0), 4: (100, 2.0)},
-    23: {2: (50, 8.0), 3: (95, 8.0), 4: (100, 8.0)},
-    24: {2: (50, 1.0), 3: (95, 1.0), 4: (100, 1.0)},
-    25: {2: (50, 5.0), 3: (95, 5.0), 4: (100, 5.0)},
-    26: {2: (50, 1.0), 3: (95, 1.0), 4: (100, 1.0)},
-    27: {2: (50, 1.0), 3: (95, 1.0), 4: (100, 1.0)},
-    28: {2: (50, 1.0), 3: (95, 1.0), 4: (100, 1.0)},
-    29: {2: (50, 10.0)},
-    30: {2: (50, 10.0)},
-    31: {2: (50, 10.0)},
-    32: {2: (50, 10.0)},
-    33: {2: (50, 10.0)},
-    36: {1: (5, 2.0),  3: (95, 2.0)},
-    37: {1: (5, 0.2),  3: (95, 0.2)},
-    38: {2: (50, 0.2)},
-    41: {2: (50, 1.0), 3: (95, 1.0), 4: (100, 1.0)},
-    42: {2: (50, 1.0), 3: (95, 1.0), 4: (100, 1.0)},
+    14: {2: 50, 3: 70, 4: 95, 5: 100},
+    15: {2: 50, 3: 95, 4: 100},
+    20: {2: 50, 3: 95, 4: 100},
+    21: {2: 50, 3: 95, 4: 100},
+    22: {2: 50, 3: 95, 4: 100},
+    23: {2: 50, 3: 95, 4: 100},
+    24: {2: 50, 3: 95, 4: 100},
+    25: {2: 50, 3: 95, 4: 100},
+    26: {2: 50, 3: 95, 4: 100},
+    27: {2: 50, 3: 95, 4: 100},
+    28: {2: 50, 3: 95, 4: 100},
+    29: {2: 50},
+    30: {2: 50},
+    31: {2: 50},
+    32: {2: 50},
+    33: {2: 50},
+    36: {1: 5, 3: 95},
+    37: {1: 5, 3: 95},
+    38: {2: 50},
+    41: {2: 50, 3: 95, 4: 100},
+    42: {2: 50, 3: 95, 4: 100},
+}
+
+_SUMMARY_METRIC_SCALES = {
+    14: (0.01, "L/s"),
+    15: (0.01, "cmH2O"),
+    20: (0.01, "cmH2O"),
+    21: (0.01, "cmH2O"),
+    22: (0.01, "L"),
+    23: (0.01, "L/min"),
+    24: (0.01, "L/min"),
+    25: (0.01, "bpm"),
+    26: (0.001, "s"),
+    27: (0.01, "%"),
+    28: (0.01, "%"),
+    29: (0.01, "mg/L"),
+    30: (0.01, "C"),
+    31: (0.01, "C"),
+    32: (0.01, "%"),
+    33: (0.01, "%"),
+    36: (0.01, "cmH2O"),
+    37: (0.01, "L/s"),
+    38: (0.01, "L/s"),
+    41: (0.01, "bpm"),
+    42: (0.01, "L/min"),
 }
 
 
@@ -1955,8 +2232,10 @@ def _summary_record_pretty(data: bytes, out) -> None:
                 submap = _SUMMARY_SUBFIELDS.get(field, {})
                 for sf, sw, sv in subs:
                     if sf in submap:
-                        pct, mult = submap[sf]
-                        tail = f"  # p{pct}, mult={mult}x (wire=raw*mult)"
+                        pct = submap[sf]
+                        scale, unit = _SUMMARY_METRIC_SCALES[field]
+                        decoded = _fmt_number(sv * scale)
+                        tail = f"  # p{pct}, value={decoded} {unit}"
                     else:
                         tail = ""
                     print(f"  sub_f{sf} ({_PROTO_WIRE.get(sw, sw)}): {sv}{tail}",
@@ -2032,11 +2311,15 @@ def _summary_record_stats(data: bytes) -> dict:
                     subs = []
                 for sf, sw, sv in subs:
                     if sw == 0 and sf in submap:
-                        pct, _mult = submap[sf]
-                        cols[pct] = sv
+                        pct = submap[sf]
+                        scale, _unit = _SUMMARY_METRIC_SCALES[field]
+                        cols[pct] = sv * scale
                     else:
                         extras.append(f"f{sf}/{_PROTO_WIRE.get(sw, sw)}")
-                stats["metrics"].append((_summary_metric_name(label), cols, extras))
+                unit = _SUMMARY_METRIC_SCALES[field][1]
+                stats["metrics"].append(
+                    (_summary_metric_name(label), unit, cols, extras)
+                )
             else:
                 stats["scalars"].append((_summary_metric_name(label),
                                          f"{len(value)}B"))
@@ -2123,13 +2406,14 @@ def _summary_record_compact(index: int, data: bytes, out) -> None:
             print(line.rstrip(), file=out)
 
     if stats["metrics"]:
-        print("  metrics (wire values):", file=out)
-        for name, cols, extras in stats["metrics"]:
-            parts = [f"p{pct}={cols[pct]}" for pct in (5, 50, 70, 95, 100)
+        print("  metrics:", file=out)
+        for name, unit, cols, extras in stats["metrics"]:
+            parts = [f"p{pct}={_fmt_number(cols[pct])}"
+                     for pct in (5, 50, 70, 95, 100)
                      if pct in cols]
             if extras:
                 parts.append("extra=" + ",".join(extras))
-            print(f"    {name}: " + " ".join(parts), file=out)
+            print(f"    {name} ({unit}): " + " ".join(parts), file=out)
 
 
 def summary_pretty(data: bytes, out=None, *, details: bool = False) -> None:
@@ -2506,6 +2790,7 @@ def detect_spool_type(data: bytes) -> tuple[str | None, list[str]]:
 
 
 __all__ = [
+    "SPOOL_FRAGMENT_SIZE", "SPOOL_FRAGMENT_SIZE_LIMIT",
     "SPOOL_LEGENDS",
     "SpoolError",
     "spool_one_round",

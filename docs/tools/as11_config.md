@@ -143,14 +143,19 @@ The confirmed spool-address selector is `fromDateTime`. The returned
 `nextSpoolAddress` uses the same shape and is followed automatically unless
 `--no-follow` is passed.
 
+Each round validates the fragment sequence and the terminal SHA-256 before
+accepting its payload. `--max-size` controls the unencoded payload ceiling per
+round. `--fragment-max` defaults to `3000`; the device clamps larger requests
+to `3576` bytes.
+
 For archived signal spools such as `RespiratoryFlow6p25Hz`, `--decode`
 prints record metadata and decoded RC03 ranges. Add `--samples` to print the
 decoded samples as CSV with `record,index,time_ms,value_raw,value` columns.
 
-For `SettingProfilesCollection`, `--decode` prints historical therapy and
-feature profile snapshots. Pressures and time values are scaled into human
-units. Enum-like settings are left as `Raw` values until their labels are
-verified.
+For `SettingProfilesCollection`, `--decode` prints historical active-profile,
+therapy-profile, feature-profile, and alarm-profile snapshots. Pressures and
+time values are scaled into human units. Enum-like settings remain `Raw`
+values.
 
 For `ConfigurationProfilesCollection`, `--decode` prints the configuration
 attributes and `DataDeliveryControlV2` spool on/off mask.
@@ -168,6 +173,10 @@ the `SETTINGS`, `DATALOG`, and `UPGRADE` volumes in external NOR flash.
 For `DiagnosticTenMinutePeriodic`, `--decode` prints ten-minute cellular
 diagnostic signal ranges. Add `--samples` to print CSV samples for signal
 strength and signal-quality streams.
+
+For `atmosphericPressure10min`, `--decode` prints ten-minute atmospheric
+pressure ranges. Add `--samples` for CSV output. The archive scale is decoded;
+the physical unit is not identified.
 
 For `SoundcheckVector`, `--decode` prints soundcheck vector bins and peak
 pairs. Add `--samples` for CSV rows.
@@ -195,11 +204,10 @@ and mapped backend status. Codes with more than one candidate are marked
 
 For `Summary`, `--decode` prints a compact record header plus scalar and
 percentile metric lines. The compact header includes the period range,
-`duration_min`, timezone offset, session count, and decoded session mode
-entry codes when present. Those session entry codes are not yet proven to be
-the same enum as `ActiveTherapyProfile`. Add `--details` to print the older
-field-by-field view with subfield annotations and still-unresolved internal
-fields.
+`duration_min`, timezone offset, session count, and session entries when
+present. Each entry contains its start timestamp and duration in minutes. Add
+`--details` to print the field-by-field wire view with decoded percentile
+annotations.
 
 Use `--decode --raw-proto` to bypass the spool-specific pretty-printers and
 inspect the generic protobuf wire structure.
