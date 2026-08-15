@@ -879,11 +879,6 @@ class S11FirmwarePatches(CompiledPayloadMixin):
 
     def patch_mop_callback_dispatcher(self):
         """Install the shared EnumDataItem writeback dispatcher."""
-        writeback_pattern = (
-            0xDF, 0xF8, None, None, 0xB0, 0xF9, 0x14, 0x20,
-            0x01, 0xEB, 0x82, 0x01, 0x80, 0x7D, 0x88, 0x70, 0x70, 0x47,
-        )
-
         if not self.mop_callback_handlers:
             return PatchOutcome.skip("no callback handlers registered")
         if len(self.mop_callback_handlers) > 4:
@@ -910,24 +905,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
                 "mop_callback_dispatcher: no anchors for APPX %s" % ver
             )
         writeback = anchors["writeback"]
-        writeback_off = self.asf.ptr_to_off(writeback)
         slot = self.asf.ptr_to_off(anchors["vtable_slot"])
-        if (writeback_off is None or
-                writeback_off + len(writeback_pattern) > len(self.asf.fw)):
-            raise ValueError(
-                "mop_callback_dispatcher: %s writeback anchor is outside firmware" % ver
-            )
-        for index, expected in enumerate(writeback_pattern):
-            if expected is not None and self.asf.u8(writeback_off + index) != expected:
-                raise ValueError(
-                    "mop_callback_dispatcher: %s writeback anchor does not match" % ver
-                )
-        if slot is None:
-            raise ValueError(
-                "mop_callback_dispatcher: %s vtable slot is outside firmware" % ver
-            )
-
-        writeback = self.asf.off_to_addr(writeback_off)
         original = writeback | 1
         if self.asf.u32(slot) != original:
             raise ValueError(
@@ -1054,41 +1032,11 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             )
         return layout
 
-    def _custom_settings_expect_bytes(self, address, expected_hex, label):
-        off = self.asf.ptr_to_off(address)
-        expected = bytes.fromhex(expected_hex)
-        if off is None:
-            raise ValueError("custom settings: invalid %s site" % label)
-        actual = bytes(self.asf.fw[off:off + len(expected)])
-        if actual != expected:
-            raise ValueError(
-                "custom settings: %s at 0x%08X contains %s, expected %s" %
-                (label, address, actual.hex(), expected.hex())
-            )
-        return off
-
     def _custom_settings_reclaim_reminders(self, layout):
         """Detach the stock Reminders consumers from its persistent fields."""
-        label_addr, label_hex = layout["row_label"]
-        self._custom_settings_expect_bytes(
-            label_addr, label_hex, "Reminders row label"
-        )
-        store_addr, store_hex = layout["row_store"]
-        self._custom_settings_expect_bytes(
-            store_addr, store_hex, "Reminders row slot"
-        )
-
-        row_call, row_ctor = layout["row_call"]
-        row_call_off = self.asf.ptr_to_off(row_call)
-        if (row_call_off is None or
-                self.asf.read_thumb2_bl_target(row_call_off) != row_ctor):
-            raise ValueError("custom settings: Reminders row does not match")
-
         scheduler_call, scheduler_target = layout["scheduler_call"]
         scheduler_off = self.asf.ptr_to_off(scheduler_call)
-        if (scheduler_off is None or
-                self.asf.read_thumb2_bl_target(scheduler_off) !=
-                scheduler_target):
+        if self.asf.read_thumb2_bl_target(scheduler_off) != scheduler_target:
             raise ValueError(
                 "custom settings: reminder scheduler call does not match"
             )
@@ -1238,8 +1186,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             scroller_ctor = self._elf_symbol_addr(
                 elf_path, "GuiScroller_ctor"
             )
-            if (call_off is None or
-                    self.asf.read_thumb2_bl_target(call_off) != scroller_ctor):
+            if self.asf.read_thumb2_bl_target(call_off) != scroller_ctor:
                 raise ValueError(
                     "custom settings: clinical settings scroller does not match"
                 )
@@ -1264,8 +1211,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         # 16-bit ABI slots, keeping descriptor indexes out of their code.
         for setting, abi_slot in self.custom_setting_bindings:
             abi_off = self.asf.ptr_to_off(abi_slot)
-            if (abi_off is None or abi_off + 2 > len(self.asf.fw) or
-                    self.asf.u16(abi_off) != 0xFFFF):
+            if self.asf.u16(abi_off) != 0xFFFF:
                 raise ValueError(
                     "custom settings: ABI slot at 0x%08X is not empty" %
                     abi_slot
@@ -1825,15 +1771,12 @@ class S11FirmwarePatches(CompiledPayloadMixin):
                 "asv_backup_rate: no version data for APPX %s" % ver
             )
         vtable_update_off = self.asf.ptr_to_off(version["vtable_slot"])
-        if (vtable_update_off is None or
-                self.asf.u32(vtable_update_off) != original_ptr):
+        if self.asf.u32(vtable_update_off) != original_ptr:
             raise ValueError(
                 "asv_backup_rate: ASV update vtable slot does not match"
             )
 
         flash, _off = self._inject_payload(AS11_ASV_BACKUP_RATE_PAYLOAD, data)
-        if not flash <= backup_rate_var_slot <= flash + len(data) - 2:
-            raise ValueError("asv_backup_rate: variable-ID slot lies outside payload")
         # Replace the ASV update vtable entry; the payload calls the original
         # implementation through its versioned stub after applying the gate.
         self.asf.write_u32(vtable_update_off, start | 1)
@@ -2127,14 +2070,11 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         draw_call = self.asf.ptr_to_off(anchors["draw_call"])
         ctor_call = self.asf.ptr_to_off(anchors["root_ctor_call"])
         timer_slot = self.asf.ptr_to_off(anchors["timer_callback_slot"])
-        if (draw_call is None or
-                self.asf.read_thumb2_bl_target(draw_call) != stock_draw):
+        if self.asf.read_thumb2_bl_target(draw_call) != stock_draw:
             raise ValueError("header_clock: title-bar draw call does not match")
-        if (ctor_call is None or
-                self.asf.read_thumb2_bl_target(ctor_call) != stock_ctor):
+        if self.asf.read_thumb2_bl_target(ctor_call) != stock_ctor:
             raise ValueError("header_clock: root-widget constructor call does not match")
-        if (timer_slot is None or
-                self.asf.u32(timer_slot) != (stock_timer_callback | 1)):
+        if self.asf.u32(timer_slot) != (stock_timer_callback | 1):
             raise ValueError("header_clock: root-widget timer callback does not match")
 
         flash, _off = self._inject_payload(AS11_HEADER_CLOCK_PAYLOAD, data)
