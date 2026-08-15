@@ -30,6 +30,8 @@ AS11_FGBL_PATCH_VERSIONS = {
 }
 
 
+# A missing feature key means that the patch has not been ported to that APPX.
+# An explicit None means that the patch does not apply to that APPX.
 AS11_PATCH_VERSIONS = {
     "8_0_1": {
         "timezone_write": {

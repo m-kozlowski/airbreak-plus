@@ -35,6 +35,12 @@ except ImportError:
     crcmod = None
 
 
+class PatchVersionUnavailable(ValueError):
+    def __init__(self, status, summary):
+        super().__init__(summary)
+        self.status = status
+
+
 def crc16_ccitt_false(data, crc=0xFFFF):
     for byte in data:
         crc ^= byte << 8
@@ -508,6 +514,22 @@ class S11Firmware(object):
             raise ValueError("Appears data in section you want me to patch! Bailing out...")
         self.fw[addr:addr + len(patchdata)] = patchdata
 
+    def patch_exact(self, address, before, after):
+        """Replace one fixed-size site when its current bytes are known."""
+        before = bytes.fromhex(before) if isinstance(before, str) else bytes(before)
+        after = bytes.fromhex(after) if isinstance(after, str) else bytes(after)
+        off = address - self.FLASH_BASE
+        current = bytes(self.fw[off:off + len(before)])
+        if current not in (before, after):
+            raise ValueError(
+                "patch site 0x%08X contains %s, expected %s" %
+                (address, current.hex(), before.hex())
+            )
+        if current == before:
+            self.fw[off:off + len(after)] = after
+            return True
+        return False
+
     def globals_addr(self):
         # Master table: trampoline at CONF+0x100, pointer at CONF+0x104.
         ptr = self.u32(self.CONF_OFF + self.GLOBALS_REL)
@@ -851,6 +873,21 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             return start, start + self.asf.FGBL_SIZE
         raise ValueError("cannot select %s payload range" % region)
 
+    def _patch_version_data(self, feature, ver=None):
+        """Return version data or report why this patch cannot run."""
+        ver = self._payload_version_key() if ver is None else ver
+        version = AS11_PATCH_VERSIONS.get(ver)
+        if version is None or feature not in version:
+            raise PatchVersionUnavailable(
+                "WARN", "%s is not ported to APPX %s" % (feature, ver)
+            )
+        data = version[feature]
+        if data is None:
+            raise PatchVersionUnavailable(
+                "SKIP", "%s does not apply to APPX %s" % (feature, ver)
+            )
+        return data
+
     def patch_fgbl_service(self):
         """Add bootloader support for firmware dump and restore over CAN."""
         version = self._payload_version_key("FGBL")
@@ -887,7 +924,9 @@ class S11FirmwarePatches(CompiledPayloadMixin):
                 len(self.mop_callback_handlers)
             )
 
-        data, ver = self._load_versioned_bin(
+        ver = self._payload_version_key()
+        anchors = self._patch_version_data("mop_callback_dispatcher", ver)
+        data, _ = self._load_versioned_bin(
             AS11_MOP_CALLBACK_DISPATCHER_PAYLOAD, required=True
         )
         elf_path = self._versioned_artifact_path(
@@ -898,21 +937,8 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             elf_path, "mop_callback_handler_table"
         )
 
-        version = AS11_PATCH_VERSIONS.get(ver, {})
-        anchors = version.get("mop_callback_dispatcher")
-        if anchors is None:
-            raise ValueError(
-                "mop_callback_dispatcher: no anchors for APPX %s" % ver
-            )
         writeback = anchors["writeback"]
-        slot = self.asf.ptr_to_off(anchors["vtable_slot"])
         original = writeback | 1
-        if self.asf.u32(slot) != original:
-            raise ValueError(
-                "mop_callback_dispatcher: vtable slot 0x%08X contains "
-                "0x%08X, expected 0x%08X" %
-                (self.asf.off_to_addr(slot), self.asf.u32(slot), original)
-            )
 
         flash, _off = self._inject_payload(
             AS11_MOP_CALLBACK_DISPATCHER_PAYLOAD, data
@@ -924,7 +950,10 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         self.asf.write_u32(
             table_off + (len(self.mop_callback_handlers) + 1) * 4, 0xFFFFFFFF
         )
-        self.asf.write_u32(slot, start | 1)
+        self.asf.patch_exact(
+            anchors["vtable_slot"], struct.pack("<I", original),
+            struct.pack("<I", start | 1),
+        )
 
         print(
             "  MOP callback dispatcher: build/%s_%s.bin (%dB) at 0x%08X" %
@@ -1023,15 +1052,6 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         setting = self._custom_setting_key(setting)
         self.custom_setting_bindings.append((setting, abi_slot))
 
-    def custom_settings_layout(self, ver):
-        """Return stock clinical-menu anchors for one APPX version."""
-        layout = AS11_PATCH_VERSIONS.get(ver, {}).get("custom_settings")
-        if layout is None:
-            raise ValueError(
-                "custom settings: no UI layout for APPX %s" % ver
-            )
-        return layout
-
     def _custom_settings_reclaim_reminders(self, layout):
         """Detach the stock Reminders consumers from its persistent fields."""
         scheduler_call, scheduler_target = layout["scheduler_call"]
@@ -1049,11 +1069,10 @@ class S11FirmwarePatches(CompiledPayloadMixin):
     def finalize_custom_settings(self):
         """Resolve queued feature requests and install their shared support."""
         if not self.custom_settings_enabled:
-            return
+            return PatchOutcome.skip("custom settings disabled")
         if not (self.custom_setting_claims or self.custom_menu_entries or
                 self.custom_setting_bindings):
-            print("  custom settings: skipped (no active features)")
-            return
+            return PatchOutcome.skip("no active features")
 
         ver = self._payload_version_key()
 
@@ -1084,7 +1103,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             claim["pool"] for claim in self.custom_setting_claims.values()
         })
         layout = (
-            self.custom_settings_layout(ver)
+            self._patch_version_data("custom_settings", ver)
             if pools or self.custom_menu_entries else None
         )
         for pool in pools:
@@ -1210,13 +1229,10 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         # Compiled feature payloads receive resolved var_ids through explicit
         # 16-bit ABI slots, keeping descriptor indexes out of their code.
         for setting, abi_slot in self.custom_setting_bindings:
-            abi_off = self.asf.ptr_to_off(abi_slot)
-            if self.asf.u16(abi_off) != 0xFFFF:
-                raise ValueError(
-                    "custom settings: ABI slot at 0x%08X is not empty" %
-                    abi_slot
-                )
-            self.asf.write_u16(abi_off, setting_rows[setting]["var_id"])
+            self.asf.patch_exact(
+                abi_slot, b"\xFF\xFF",
+                struct.pack("<H", setting_rows[setting]["var_id"]),
+            )
 
         # Remove the original consumers only after their replacement resources
         # and payload bindings have been installed.
@@ -1752,7 +1768,9 @@ class S11FirmwarePatches(CompiledPayloadMixin):
 
     def asv_backup_rate(self):
         """Install an ASV/ASVAuto update wrapper that inhibits backup breaths."""
-        data, ver = self._load_versioned_bin(AS11_ASV_BACKUP_RATE_PAYLOAD)
+        ver = self._payload_version_key()
+        version = self._patch_version_data("asv_backup_rate", ver)
+        data, _ = self._load_versioned_bin(AS11_ASV_BACKUP_RATE_PAYLOAD)
         if data is None:
             return PatchOutcome.skip("compiled payload unavailable")
 
@@ -1765,11 +1783,6 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         )
         original_update = self._elf_symbol_addr(elf_path, "AsvFeature_update")
         original_ptr = original_update | 1
-        version = AS11_PATCH_VERSIONS.get(ver, {}).get("asv_backup_rate")
-        if version is None:
-            raise ValueError(
-                "asv_backup_rate: no version data for APPX %s" % ver
-            )
         vtable_update_off = self.asf.ptr_to_off(version["vtable_slot"])
         if self.asf.u32(vtable_update_off) != original_ptr:
             raise ValueError(
@@ -1816,14 +1829,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
 
     def timezone_write(self):
         """Keep time-zone writes available after summary history exists."""
-        version_key = self.asf.appx_version_key()
-        version = AS11_PATCH_VERSIONS.get(version_key, {}).get(
-            "timezone_write"
-        )
-        if version is None:
-            raise ValueError(
-                "timezone_write: no anchors for APPX %s" % version_key
-            )
+        version = self._patch_version_data("timezone_write")
 
         # r4 >> 31 is the firmware's (FTS == 0) boolean. At metadata_gate:
         #   e10f       lsrs  r1, r4, #31  ->  0121      movs r1, #1
@@ -1832,29 +1838,12 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         #   16ead47f   tst.w r6, r4, lsr #31  ->  002e00bf  cmp r6, #0; nop
         # This preserves the TZG test while removing only the FTS == 0 term.
         # menu_warning_action replaces its version-specific BL with two NOPs.
-        def patch_site(name):
-            site = version[name]
-            off = self.asf.ptr_to_off(site["address"])
-            before = bytes.fromhex(site["before"])
-            after = bytes.fromhex(site["after"])
-            current = bytes(self.asf.fw[off:off + len(before)])
-            if current == after:
-                return False
-            if current != before:
-                raise ValueError(
-                    "timezone_write: %s at 0x%08X is %s, expected %s" %
-                    (name, site["address"], current.hex(), before.hex())
-                )
-            self.asf.patch(after, addr=off, verbose=False)
-            return True
-
         changed = []
-        if patch_site("metadata_gate"):
-            changed.append("metadata_gate")
-        if patch_site("data_rule_gate"):
-            changed.append("data_rule_gate")
-        if patch_site("menu_warning_action"):
-            changed.append("menu_warning_action")
+        for name in ("metadata_gate", "data_rule_gate", "menu_warning_action"):
+            site = version[name]
+            if self.asf.patch_exact(
+                    site["address"], site["before"], site["after"]):
+                changed.append(name)
 
         if changed:
             return PatchOutcome.ok("enabled: %s" % ", ".join(changed))
@@ -2035,13 +2024,11 @@ class S11FirmwarePatches(CompiledPayloadMixin):
 
     def header_clock(self):
         """Show local time in the dashboard and therapy-screen title bar."""
-        data, ver = self._load_versioned_bin(AS11_HEADER_CLOCK_PAYLOAD)
+        ver = self._payload_version_key()
+        anchors = self._patch_version_data("header_clock", ver)
+        data, _ = self._load_versioned_bin(AS11_HEADER_CLOCK_PAYLOAD)
         if data is None:
             return PatchOutcome.skip("compiled payload unavailable")
-
-        anchors = AS11_PATCH_VERSIONS.get(ver, {}).get("header_clock")
-        if anchors is None:
-            raise ValueError("header_clock: no anchors for APPX %s" % ver)
 
         elf_path = self._versioned_artifact_path(
             AS11_HEADER_CLOCK_PAYLOAD, "elf", ver
@@ -2299,6 +2286,8 @@ def apply_reported_patch(option, method, args, detail_log=None):
             outcome = method()
         if not isinstance(outcome, PatchOutcome):
             outcome = PatchOutcome.ok()
+    except PatchVersionUnavailable as exc:
+        outcome = PatchOutcome(exc.status, str(exc))
     except Exception as exc:
         print("PATCH: %s [ERROR]" % option)
         stream = None if args.verbose or detail_log is None else detail_log
@@ -2346,15 +2335,13 @@ def run_patcher(args, detail_log=None):
                 args, detail_log,
             )
 
-    # Feature patches queue controls; resolve them before building the shared
-    # mode-change dispatcher that refreshes their visibility.
-    def finalize_payloads():
-        patches.finalize_custom_settings()
-        return patches.patch_mop_callback_dispatcher()
-
     print("\n=== Finalization")
     apply_reported_patch(
-        "patch-mop-callback-dispatcher", finalize_payloads,
+        "finalize-custom-settings", patches.finalize_custom_settings,
+        args, detail_log,
+    )
+    apply_reported_patch(
+        "patch-mop-callback-dispatcher", patches.patch_mop_callback_dispatcher,
         args, detail_log,
     )
 

@@ -1143,8 +1143,13 @@ def resolve_port_candidates(
     for label, feature in required:
         if feature not in reference:
             raise ValueError(
-                "%s has no data for reference APPX %s" %
+                "%s is not ported to reference APPX %s" %
                 (label, reference_key)
+            )
+        if reference[feature] is None:
+            raise ValueError(
+                "%s does not apply to reference APPX %s; use another "
+                "reference image" % (label, reference_key)
             )
 
     matcher = AddressMatcher(reference_fw.data, target_fw.data)
