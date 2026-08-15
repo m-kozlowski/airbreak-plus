@@ -45,6 +45,7 @@ import argparse
 import binascii
 import hashlib
 import hmac
+import io
 import json
 import logging
 import os
@@ -486,13 +487,10 @@ def resolve_target_from_args(args) -> TargetRegion:
 
     source_set = frozenset(region.code for _label, _path, region in sources)
     if "FGCB" in source_set:
-        # A full image keeps the legacy safe default. For `flash`, the
-        # bootloader acknowledgement also opts into the complete FGCB target.
+        # A full image defaults to the application update range. Explicitly
+        # acknowledging the bootloader promotes it to the complete image.
         target_code = (
-            "FGCB"
-            if args.cmd == "flash"
-            and getattr(args, "include_bootloader", False)
-            else "APCX"
+            "FGCB" if getattr(args, "include_bootloader", False) else "APCX"
         )
     else:
         target_code = TARGET_BY_SOURCE_SET.get(source_set)
@@ -1463,8 +1461,50 @@ def cmd_targets(_args) -> int:
     return 0
 
 
-def cmd_service(args) -> int:
+def _prepare_service_flash(args) -> tuple[TargetRegion, bytes]:
+    target = resolve_target_from_args(args)
+    check_danger_ack(args, target)
+    payload = load_payload(args, target)
+    payload = check_and_maybe_fix_hw_crcs(
+        payload, target,
+        fix=args.fix_crc,
+        force=args.force,
+        label="firmware image",
+    )
+    return target, payload
+
+
+def _connect_service_or_enter(args, *, entry_timeout: float):
     client, transport = build_service_client(args)
+    try:
+        info = client.info(timeout=min(args.timeout, 1.0))
+    except (TimeoutError, TransportError) as exc:
+        log.debug("service INFO probe failed: %s", exc)
+        transport.close()
+        client, transport = build_service_client(args)
+        try:
+            _service_enter(client, transport, entry_timeout=entry_timeout)
+        except Exception:
+            transport.close()
+            raise
+    else:
+        print("Service mode already active.")
+        _print_service_identity(info)
+    return client, transport
+
+
+def cmd_service(args) -> int:
+    service_flash = None
+    if args.service_cmd == "flash":
+        service_flash = _prepare_service_flash(args)
+
+    if args.service_cmd in ("enter", "flash"):
+        entry_timeout = args.timeout if args.service_cmd == "enter" else 30.0
+        client, transport = _connect_service_or_enter(
+            args, entry_timeout=entry_timeout
+        )
+    else:
+        client, transport = build_service_client(args)
     try:
         if args.service_cmd == "info":
             info = client.info(timeout=args.timeout)
@@ -1472,7 +1512,28 @@ def cmd_service(args) -> int:
             return 0
 
         if args.service_cmd == "enter":
-            _service_enter(client, transport, args)
+            return 0
+
+        if args.service_cmd == "flash":
+            from as11_service import MAX_WRITE_DATA
+
+            target_region, payload = service_flash
+            (service_target, _target_name, target_start, target_size,
+             erase_size, program_size) = _service_storage("flash")
+            _service_write(
+                client, service_target, target_region.code,
+                target_region.flash_start, target_region.size,
+                payload,
+                target_start=target_start,
+                target_size=target_size,
+                erase_size=erase_size,
+                program_size=program_size,
+                max_write_data=MAX_WRITE_DATA,
+                timeout=args.timeout,
+            )
+            client.reset(timeout=args.timeout)
+            time.sleep(0.1)
+            print("Reset requested.")
             return 0
 
         if args.service_cmd == "reset":
@@ -1499,7 +1560,7 @@ def cmd_service(args) -> int:
                 args.service_cmd.removeprefix("write-"), args.selection
             )
 
-            _service_write_file(
+            _service_write(
                 client, target, target_name, offset, length,
                 Path(args.file), target_start=target_start,
                 target_size=target_size, erase_size=erase_size,
@@ -1520,11 +1581,11 @@ def _print_service_identity(info) -> None:
     print(f"FGBL:    {info.fgbl_build_id}")
 
 
-def _service_enter(client, transport, args) -> None:
+def _service_enter(client, transport, *, entry_timeout: float) -> None:
     from as11_can_common import CanTxBufferFull
 
     if not hasattr(client, "raw_can"):
-        info = client.enter(timeout=max(args.timeout, 30.0) + 5.0)
+        info = client.enter(timeout=entry_timeout + 5.0)
         _print_service_identity(info)
         return
 
@@ -1552,8 +1613,8 @@ def _service_enter(client, transport, args) -> None:
                 continue
             time.sleep(0.0005)
 
-    print(f"CAN entry burst (up to {args.timeout:g} s)...")
-    info = client.info_during_activity(burst, timeout=args.timeout)
+    print(f"CAN entry burst (up to {entry_timeout:g} s)...")
+    info = client.info_during_activity(burst, timeout=entry_timeout)
     _print_service_identity(info)
 
 
@@ -1596,14 +1657,21 @@ def _service_read_to_file(client, target: int, target_name: str,
     )
 
 
-def _service_write_file(client, target: int, target_name: str,
-                        offset: int, length: int, input_path: Path, *,
-                        target_start: int, target_size: int,
-                        erase_size: int, program_size: int,
-                        max_write_data: int, timeout: float) -> None:
-    if not input_path.is_file():
-        raise SystemExit(f"write input is not a file: {input_path}")
-    input_size = input_path.stat().st_size
+def _service_write(client, target: int, target_name: str,
+                   offset: int, length: int, input_source: Path | bytes, *,
+                   target_start: int, target_size: int,
+                   erase_size: int, program_size: int,
+                   max_write_data: int, timeout: float) -> None:
+    if isinstance(input_source, bytes):
+        input_size = len(input_source)
+        input_label = "firmware image"
+        stream = io.BytesIO(input_source)
+    else:
+        if not input_source.is_file():
+            raise SystemExit(f"write input is not a file: {input_source}")
+        input_size = input_source.stat().st_size
+        input_label = str(input_source)
+        stream = input_source.open("rb")
     if input_size == length:
         input_offset = 0
     elif input_size == target_size:
@@ -1611,7 +1679,7 @@ def _service_write_file(client, target: int, target_name: str,
     else:
         raise SystemExit(
             f"{target_name} write requires a {length}-byte range image or a "
-            f"{target_size}-byte complete target image; {input_path} has "
+            f"{target_size}-byte complete target image; {input_label} has "
             f"{input_size} bytes"
         )
     if erase_size and (offset % erase_size or length % erase_size):
@@ -1649,7 +1717,7 @@ def _service_write_file(client, target: int, target_name: str,
             flush=True,
         )
 
-    with input_path.open("rb") as stream:
+    with stream:
         stream.seek(input_offset)
         for sector_relative in range(0, length, unit_size):
             sector_length = unit_size
@@ -1673,7 +1741,8 @@ def _service_write_file(client, target: int, target_name: str,
                 data = stream.read(write_length)
                 if len(data) != write_length:
                     raise SystemExit(
-                        f"write input ended at {sector_relative + sector_done} bytes"
+                        f"write input ended at "
+                        f"{sector_relative + sector_done} bytes"
                     )
                 client.write(
                     target, sector_offset + sector_done, data,
@@ -2222,6 +2291,32 @@ def main(argv=None) -> int:
     p_s_reset = service_sub.add_parser("reset", help="leave service mode and reset")
     _add_device_args(p_s_reset, show_help=False)
     _add_service_link_args(p_s_reset, defaults=False)
+
+    p_s_flash = service_sub.add_parser(
+        "flash", help="enter service mode, program firmware, and reset"
+    )
+    _add_device_args(p_s_flash, show_help=False)
+    _add_service_link_args(p_s_flash, defaults=False)
+    _add_input_args(p_s_flash)
+    p_s_flash.add_argument(
+        "--block", metavar="NAME",
+        help="select CONF, APPL, APCX, FGBL, or FGCB from the supplied "
+             "firmware regions",
+    )
+    p_s_flash.add_argument(
+        "--include-bootloader", action="store_true",
+        help="include FGBL; with --full and no --block, select the complete "
+             "FGCB target",
+    )
+    p_s_flash.add_argument(
+        "--fix-crc", action="store_true",
+        help="recompute and patch CRC16-CCITT footers in memory before "
+             "programming",
+    )
+    p_s_flash.add_argument(
+        "--force", action="store_true",
+        help="override local image validation failures",
+    )
 
     for command, selection_help in (
             ("read-flash", "optional REGION or absolute OFFSET LENGTH"),

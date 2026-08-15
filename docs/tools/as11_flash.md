@@ -21,6 +21,7 @@ determine the target flash range.
 - [Bootloader service](#bootloader-service)
   - [Install and enter service mode](#install-and-enter-service-mode)
   - [Service identity and reset](#service-identity-and-reset)
+  - [Flash firmware](#flash-firmware)
   - [Read storage](#read-storage)
   - [Write storage](#write-storage)
   - [Transport options](#transport-options)
@@ -235,6 +236,32 @@ Start/Stop button is released.
 ```
 as11_flash.py -d can:/dev/ttyACM0 service reset
 ```
+
+### Flash firmware
+
+`service flash` enters service mode if necessary, programs the selected
+internal-flash range, and resets the device. If service mode already responds,
+the command uses the active session without resetting it first. A failed write
+leaves the device in service mode for another attempt.
+
+Firmware inputs and `--block` follow the same rules as the normal `flash`
+command; see [Firmware inputs](#firmware-inputs).
+
+```
+as11_flash.py -d can:/dev/ttyACM0 service flash -f patched.bin
+as11_flash.py -d can:/dev/ttyACM0 service flash -f patched.bin --block APPL
+as11_flash.py -d can:/dev/ttyACM0 service flash \
+  --conf conf.bin --appl appl.bin
+```
+
+A complete image passed with `-f` selects `APCX` by default. Add
+`--include-bootloader` to program the complete `FGCB` image. Any target that
+contains `FGBL` requires this flag.
+
+The command checks the firmware CRC footers before connecting. `--fix-crc`
+repairs mismatched footers in memory before programming; `--force` permits
+programming an image that still fails local validation. Each programmed
+fragment is read back and verified by the service.
 
 ### Read storage
 
