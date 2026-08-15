@@ -2,9 +2,9 @@
 
 Firmware upgrade and bootloader service tool for Air11 devices.
 
-Push a raw firmware image to the device, target a specific flash block,
-optionally apply the upgrade. Builds the `.abc` OTA container internally and
-sends it over the same RPC path the device's own updater uses.
+Build an `.abc` OTA container from one or more firmware regions, upload it to
+the device, and optionally apply the upgrade. The selected firmware inputs
+determine the target flash range.
 
 ## Contents
 
@@ -15,7 +15,7 @@ sends it over the same RPC path the device's own updater uses.
   - [`info`](#info)
   - [`apply`](#apply)
   - [`targets`](#targets)
-- [Flash specific blocks](#flash-specific-blocks)
+- [Firmware inputs](#firmware-inputs)
 - [Apply modes](#apply-modes)
   - [Apply over BLE](#apply-over-ble)
 - [Bootloader service](#bootloader-service)
@@ -33,33 +33,31 @@ Build the OTA container from a raw firmware image and upload it in one step.
 This is the primary path -- start here.
 
 ```
-as11_flash.py flash -d ble:as11 -f patched.bin --block conf+app
-as11_flash.py flash -d ble:AA:BB:CC:DD:EE:FF -f patched.bin --block conf+app
-as11_flash.py flash -d can:/dev/ttyACM0 -f patched.bin --block conf+app
-as11_flash.py flash -d can:can0 --can-flavour socketcan -f patched.bin --block conf+app
+as11_flash.py flash -d ble:as11 -f patched.bin
+as11_flash.py flash -d ble:AA:BB:CC:DD:EE:FF -f patched.bin
+as11_flash.py flash -d can:/dev/ttyACM0 -f patched.bin
+as11_flash.py flash -d can:can0 --can-flavour socketcan -f patched.bin
 as11_flash.py flash -d ble:as11 -f patched.bin --block config --apply-plain
-as11_flash.py flash -d ble:as11 -f patched.bin --block full --include-full-flash --apply
+as11_flash.py flash -d ble:as11 -f patched.bin --block full --include-bootloader --apply
 ```
 
-`-f` accepts a full internal flash image (the patcher's output), an APPL/CONF
-extract, or any block payload. The tool auto-detects the layout and packages
-the requested `--block` slice. If `--block` is omitted, `flash` guesses a
-safe non-bootloader target from the input size when possible.
+`--fgbl`, `--conf`, and `--appl` accept either the corresponding raw region or
+a complete 2 MiB internal image. The tool extracts each selected region and
+infers the OTA target from their combination. See [Firmware inputs](#firmware-inputs).
 
 By default `flash` applies after `CheckUpgradeFile`: authenticated apply on
-BLE, plain `ApplyUpgrade` on CAN/TCP. Use `--verify-only` to upload and verify
-without rebooting or writing flash.
+BLE, plain `ApplyUpgrade` on CAN/TCP. Use separate `build` and `upload`
+commands when the staged image should not be applied immediately.
 
 ### upload
 
 Push a pre-built `.abc` container without rebuilding it. Useful when the
 container was produced ahead of time or by a separate workflow. Unlike
-`flash`, `upload` is verify-only by default.
+`flash`, `upload` stops after `CheckUpgradeFile` by default.
 
 ```
 as11_flash.py upload -d ble:as11 patched.abc
 as11_flash.py upload -d ble:as11 patched.abc --apply
-as11_flash.py upload -d ble:as11 patched.abc --fix-crc
 ```
 
 ### build
@@ -67,9 +65,14 @@ as11_flash.py upload -d ble:as11 patched.abc --fix-crc
 Offline: assemble an `.abc` container from a raw image without touching a device.
 
 ```
-as11_flash.py build -f patched.bin --block firmware -o patched.abc
-as11_flash.py build -f patched.bin --block full --include-full-flash -o full.abc
+as11_flash.py build --appl patched.bin --fingerprint-preset 16.8.5.0 -o patched.abc
+as11_flash.py build --full patched.bin --block fgcb -o full.abc
 ```
+
+For targets that use release-specific compatibility fingerprints, select the
+preset matching the input image. An offline build does not require an
+additional confirmation flag. `flash` retains explicit confirmation for the
+FGBL and FGCB targets.
 
 ### info
 
@@ -81,37 +84,65 @@ as11_flash.py info patched.abc
 
 ### apply
 
-Apply a previously uploaded and verified container. The command can use a
-saved `.abc`, a raw firmware image that rebuilds to the same `.abc`, or the
-known SHA-256 hash from an earlier successful upload.
+Apply a previously uploaded and verified container. Pass the same `.abc` file
+or its SHA-256 hash from the successful upload.
 
 ```
 as11_flash.py apply -d can:/dev/ttyACM0 --hash HASH64
-as11_flash.py apply -d can:/dev/ttyACM0 -f patched.bin --block conf+app
-as11_flash.py apply -d ble:as11 --abc-file patched.abc
+as11_flash.py apply -d ble:as11 patched.abc
+as11_flash.py apply -d can:/dev/ttyACM0 --hash HASH64 \
+    --authentication HMAC64
 ```
 
 ### targets
 
-List the supported `--block` names and what they cover.
+List the base firmware input combinations and their inferred OTA targets.
 
 ```
 as11_flash.py targets
 ```
 
-## Flash specific blocks
+## Firmware inputs
 
-| Block | Content | Extra flag |
-|-------|---------|-----------|
-| `config` | `CONF` config/aux block | -- |
-| `firmware` / `app` | `APPL` main application image | -- |
-| `conf+app` | `APCX` combined config + application range | -- |
-| `bootloader` | `FGBL` bootloader / low updater region | `--include-bootloader` |
-| `full` / `all` | `FGCB` complete internal flash image | `--include-full-flash` |
+| Inputs | OTA target | Content | `flash` confirmation |
+|--------|------------|---------|--------------------------------|
+| `--fgbl PATH` | `FGBL` | bootloader and lower updater | `--include-bootloader` |
+| `--conf PATH` | `CONF` | configuration and product data | -- |
+| `--appl PATH` | `APPL` | application | -- |
+| `--conf PATH --appl PATH` | `APCX` | configuration and application | -- |
+| `--fgbl PATH --conf PATH --appl PATH` | `FGCB` | complete internal flash | `--include-bootloader` |
+| `-f PATH` / `--full PATH` | `APCX` | configuration and application from a complete image | -- |
+| `-f PATH --include-bootloader` | `FGCB` | complete internal flash | `--include-bootloader` |
+
+Each regional argument accepts either an exact raw region or a complete 2 MiB
+internal image. The same full image can therefore be supplied to more than one
+regional argument. `-f` is shorthand for `--full`; both require a complete
+2 MiB image. For `flash`, they select `APCX` by default and `FGCB` when
+`--include-bootloader` is present. A regional argument used together with
+`--full` replaces that region from the full image.
+
+With `flash`, `--block NAME` selects a target from the supplied regions. The
+inputs must cover the selected target; additional regions are ignored. Block
+names and aliases are case-insensitive.
+
+The release preset supplies the CONF/APPL and FGBL/APPL compatibility
+fingerprints. They can be overridden with
+`--conf-appl-fingerprint` and `--fgbl-appl-fingerprint`.
+
+Unless `--fg-security-fingerprint` is supplied, `flash` reads `_SBA` and
+`_SKF` for the descriptor's FG security fingerprint. If `_SBA` is `No`, the
+field is written as zero. An offline `build` defaults to zero when no override
+is supplied.
+
+Without `--block`, regional inputs must match one of the combinations listed
+above. Offline `build` defaults a complete image to `APCX`; use `--block FGCB`
+to build a complete-image container. The updater erases the whole selected
+target before programming it, so the supplied inputs must cover that target
+without gaps.
 
 ```
-as11_flash.py flash -d ble:as11 -f patched.bin --block firmware
-as11_flash.py flash -d ble:as11 -f patched.bin --block conf+app --apply
+as11_flash.py flash -d ble:as11 --appl patched.bin
+as11_flash.py flash -d ble:as11 --conf patched.bin --appl patched.bin --apply
 ```
 
 ## Apply modes
@@ -121,13 +152,18 @@ as11_flash.py flash -d ble:as11 -f patched.bin --block conf+app --apply
 | no apply flag on `upload` | Verify only; stop after `CheckUpgradeFile` |
 | no apply flag on BLE `flash`/`apply` | authenticated apply |
 | no apply flag on CAN/TCP `flash`/`apply` | plain `ApplyUpgrade` |
-| `--verify-only` | Verify only; stop after `CheckUpgradeFile` |
-| `--apply` | Verify, then `ApplyAuthenticatedUpgrade` |
+| `--apply` | Use `ApplyAuthenticatedUpgrade` |
 | `--apply-authenticated` | Synonym for `--apply` |
-| `--apply-plain` | Verify, then `ApplyUpgrade` (unauthenticated) |
+| `--apply-plain` | Use `ApplyUpgrade` (unauthenticated) |
+| `--authentication HEX64` | Use a precomputed authentication value with standalone `apply` |
+
+`upload` and `flash` always run `CheckUpgradeFile` before an apply method.
+Standalone `apply` addresses a container that was uploaded and verified
+earlier; it does not repeat `CheckUpgradeFile`.
 
 Authenticated apply resolves the OTA signing key from `--key`, `--key-file`,
-`$AS11_OTA_KEY`, or a stored BLE device `otaKey`.
+`$AS11_OTA_KEY`, or a stored BLE device `otaKey`. The standalone `apply`
+command can instead receive the resulting HMAC through `--authentication`.
 
 ### Apply over BLE
 

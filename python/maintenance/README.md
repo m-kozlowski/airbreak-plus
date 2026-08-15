@@ -8,7 +8,8 @@ and one already supported reference image, then writes a review bundle under
 - a complete `vars_<version>.h`
 - candidate `stubs_<version>.S`
 - candidate entries for `python/lib/as11_patch_versions.py`
-- candidate OTA descriptor words recovered from the firmware verifier table
+- candidate OTA compatibility fingerprints recovered from the firmware
+  verifier table
 - a code-cave candidate and Makefile integration snippets
 - an address-transfer report with unresolved alternatives
 

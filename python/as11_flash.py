@@ -12,12 +12,12 @@ devices. Works over BLE, CAN, and AirCANnect TCP; transport selected with
     -p/--port <x>               same as -d can:<target>
 
 Offline subcommands (no device needed):
-    targets    list known block regions
+    targets    list base firmware input combinations and inferred targets
     build      assemble a .abc container from firmware bytes
     info       inspect a .abc container
 
 Device-touching subcommands:
-    upload     push a pre-built .abc; verify-only unless --apply / --apply-plain
+    upload     push and verify a pre-built .abc; apply only when requested
     flash      build .abc from firmware, upload, and apply by transport default
     apply      apply a previously uploaded and verified .abc by file or hash
     service    use the bootloader service over CAN or AirCANnect TCP
@@ -26,16 +26,15 @@ Apply-mode flags, highest precedence first:
     --apply-plain          ApplyUpgrade (unauthenticated)
     --apply-authenticated  ApplyAuthenticatedUpgrade (+HMAC)
     --apply                alias for --apply-authenticated
-    --verify-only          stop after CheckUpgradeFile
 
 When no apply-mode flag is given:
-    upload                 verify-only
+    upload                 stop after CheckUpgradeFile
     flash on BLE           authenticated apply (uses stored otaKey)
     flash on CAN / TCP     plain ApplyUpgrade
     apply on BLE           authenticated apply (uses stored otaKey)
     apply on CAN / TCP     plain ApplyUpgrade
 
-Authenticated apply key resolution: --key HEX32, --key-file PATH, $AS11_OTA_KEY,
+Authenticated apply key resolution: --key HEX64, --key-file PATH, $AS11_OTA_KEY,
 or stored BLE device otaKey.
 
 """
@@ -80,24 +79,21 @@ from as11_rpc import (  # noqa: E402
     Transport, TransportError, FramingError, build_request,
 )
 from lib.as11_patch_versions import (  # noqa: E402
-    AS11_OTA_DESCRIPTOR_PRESETS,
+    AS11_OTA_COMPATIBILITY_FINGERPRINT_PRESETS,
 )
 
 
 log = logging.getLogger("as11.flash")
 
 
-_FORCE_HELP = ("override local validation warnings (input image HW CRC "
-               "mismatch, descriptor CRC mismatch, unexpected payload size)")
+_FORCE_HELP = "override local container and image validation failures"
 
 
 MAGIC          = b"OTA!"
 FORMAT_0005    = b"0005"
-FORMAT_0006    = b"0006"
 PRIMARY_SIZE   = 0x58
 DESCRIPTOR_SIZE = 0x50
 PAYLOAD_OFFSET_0005 = PRIMARY_SIZE + DESCRIPTOR_SIZE   # 0xa8
-PAYLOAD_OFFSET_0006 = PRIMARY_SIZE                     # 0x58
 SEGMENT_ENTRY_SIZE = 8
 
 OFF_MAGIC      = 0x00
@@ -106,7 +102,6 @@ OFF_COMPONENT  = 0x48
 COMPONENT_LEN  = 0x10
 
 DEFAULT_COMPONENT_0005 = "PacificFG"
-COMPONENTS_0006 = ("PacificFG", "AlarmModule")
 
 XFER_RAW_BYTES    = 500
 LONG_RPC_TIMEOUT  = 120.0
@@ -122,8 +117,8 @@ class TargetRegion:
     code: str
     flash_start: int
     size: int
-    desc2_required: bool = False
-    desc3_required: bool = False
+    conf_appl_compatibility_fingerprint_required: bool = False
+    fgbl_appl_compatibility_fingerprint_required: bool = False
     danger_flag: str | None = None
     notes: str = ""
     # True for primitive HW regions that each carry their own CRC16-CCITT
@@ -157,27 +152,28 @@ class SegmentEntry:
 TARGETS: dict[str, TargetRegion] = {
     "APPL": TargetRegion(
         "APPL", flash_start=0x08040000, size=0x001C0000,
-        desc2_required=True, desc3_required=True,
+        conf_appl_compatibility_fingerprint_required=True,
+        fgbl_appl_compatibility_fingerprint_required=True,
         atomic=True,
         notes="main app image"),
     "CONF": TargetRegion(
         "CONF", flash_start=0x08020000, size=0x00020000,
-        desc2_required=True,
+        conf_appl_compatibility_fingerprint_required=True,
         atomic=True,
         notes="config/aux block before app"),
     "APCX": TargetRegion(
         "APCX", flash_start=0x08020000, size=0x001E0000,
-        desc3_required=True,
+        fgbl_appl_compatibility_fingerprint_required=True,
         notes="combined CONF+APPL range"),
     "FGBL": TargetRegion(
         "FGBL", flash_start=0x08000000, size=0x00020000,
-        desc3_required=True,
+        fgbl_appl_compatibility_fingerprint_required=True,
         atomic=True,
         danger_flag="include_bootloader",
         notes="bootloader / low updater region"),
     "FGCB": TargetRegion(
         "FGCB", flash_start=0x08000000, size=0x00200000,
-        danger_flag="include_full_flash",
+        danger_flag="include_bootloader",
         notes="complete internal flash image"),
 }
 
@@ -196,10 +192,9 @@ BLOCK_ALIASES: dict[str, str] = {
     "all":             "FGCB",
 }
 
-# Per-firmware descriptor presets for 0005 containers.
-# Only CONF/APPL/APCX/FGBL targets need them. FGCB (and all of format 0006)
-# ignores these fields.
-DESC_PRESETS = AS11_OTA_DESCRIPTOR_PRESETS
+# Per-firmware compatibility fingerprint presets for 0005 containers.
+# Only CONF/APPL/APCX/FGBL targets need them. FGCB ignores these fields.
+COMPATIBILITY_FINGERPRINT_PRESETS = AS11_OTA_COMPATIBILITY_FINGERPRINT_PRESETS
 
 BLE_CRED_FILE = Path.home() / ".as11_ble.json"
 
@@ -369,32 +364,34 @@ def normalize_version(raw: str | None) -> str | None:
     return m.group(1) if m else None
 
 
-def fetch_pci(t: Transport) -> int | None:
-    """Query the device's PCI value. Returns None on any failure.
-
-    Also queries `_PRI` for log context. If PRI==0 the device doesn't
-    actually check PCI, so the fallback to 0 is harmless on that device.
-    """
+def fetch_fg_security_fingerprint(t: Transport) -> int | None:
+    """Resolve descriptor offset 0x10 through the public RPC tags."""
     try:
-        resp = t.rpc("Get", ["_PCI", "_PRI"], timeout=10.0)
+        resp = t.rpc("Get", ["_SBA", "_SKF"], timeout=10.0)
     except Exception as e:
-        log.warning("Get(_PCI,_PRI) failed: %s", e)
+        log.warning("Get(_SBA,_SKF) failed: %s", e)
         return None
     result = resp.get("result")
     if not isinstance(result, dict):
-        log.warning("Get(_PCI,_PRI) returned unexpected shape: %r", result)
+        log.warning("Get(_SBA,_SKF) returned unexpected shape: %r", result)
         return None
 
-    pri = result.get("_PRI")
-    pci = result.get("_PCI")
-    log.info("device reports _PRI=%r  _PCI=%r", pri, pci)
+    enabled = result.get("_SBA")
+    fingerprint = result.get("_SKF")
+    log.info("device reports _SBA=%r  _SKF=%r", enabled, fingerprint)
 
-    if pci is None:
+    if enabled == "No":
+        return 0
+    if enabled != "Yes" or fingerprint is None:
+        log.warning("unexpected FG security values: _SBA=%r _SKF=%r",
+                    enabled, fingerprint)
         return None
     try:
-        return int(pci) & 0xFFFFFFFF
+        value = (int(fingerprint, 0) if isinstance(fingerprint, str)
+                 else int(fingerprint))
+        return value & 0xFFFFFFFF
     except (TypeError, ValueError):
-        log.warning("Get(_PCI) returned %r; can't coerce to int", pci)
+        log.warning("Get(_SKF) returned %r; can't coerce to int", fingerprint)
         return None
 
 
@@ -424,75 +421,91 @@ def resolve_block(raw: str) -> TargetRegion:
     return TARGETS[code]
 
 
-INPUT_SOURCE_ARGS = (
-    ("from_full", "--from-full"),
-    ("payload",   "--payload"),
-    ("file",      "-f/--file"),
+FIRMWARE_SOURCE_ARGS = (
+    ("fgbl", "--fgbl", "FGBL"),
+    ("conf", "--conf", "CONF"),
+    ("appl", "--appl", "APPL"),
+    ("full", "--full", "FGCB"),
 )
 
-
-def input_sources(args) -> list[tuple[str, str, str]]:
-    return [(attr, label, value) for attr, label in INPUT_SOURCE_ARGS
-            if (value := getattr(args, attr, None))]
-
-
-def selected_input_source(args) -> tuple[str, str, str]:
-    sources = input_sources(args)
-    if len(sources) == 0:
-        raise SystemExit(
-            "source file required: pass -f/--file, --from-full, or --payload")
-    if len(sources) > 1:
-        raise SystemExit("conflicting source args: %s; pick one" %
-                         ", ".join(label for _attr, label, _path in sources))
-    return sources[0]
+TARGET_BY_SOURCE_SET = {
+    frozenset(("FGBL",)): "FGBL",
+    frozenset(("CONF",)): "CONF",
+    frozenset(("APPL",)): "APPL",
+    frozenset(("CONF", "APPL")): "APCX",
+    frozenset(("FGBL", "CONF", "APPL")): "FGCB",
+    # A full image defaults to the normal application update range. `flash`
+    # can promote it to FGCB with --include-bootloader.
+    frozenset(("FGCB",)): "APCX",
+}
 
 
-def infer_target_from_input(args) -> TargetRegion:
-    """Infer a safe non-bootloader target from firmware input size."""
-    if getattr(args, "format", "0005") == "0006":
-        raise SystemExit(
-            "format 0006 is a full-flash shortcut; pass --block full and "
-            "--include-full-flash explicitly")
+def firmware_source_set_label(source_set: frozenset[str]) -> str:
+    return " + ".join(
+        label for _attr, label, code in FIRMWARE_SOURCE_ARGS
+        if code in source_set
+    )
 
-    source_attr, source_label, path = selected_input_source(args)
-    try:
-        size = Path(path).stat().st_size
-    except OSError as exc:
-        raise SystemExit(f"{path}: {exc}") from exc
 
-    if source_attr == "from_full":
-        code = "APCX"
-        detail = "forced full image"
-    elif source_attr == "file" and size == FULL_FLASH_SIZE:
-        code = "APCX"
-        detail = "full image"
-    elif size == TARGETS["APCX"].size:
-        code = "APCX"
-        detail = "APCX-sized payload"
-    elif size == TARGETS["APPL"].size:
-        code = "APPL"
-        detail = "APPL-sized payload"
-    elif size == TARGETS["CONF"].size:
-        code = "CONF"
-        detail = "CONF-sized payload"
-    else:
-        raise SystemExit(
-            f"{path}: cannot infer --block from {size} bytes. "
-            "Pass --block explicitly.")
+def firmware_sources(args) -> list[tuple[str, str, TargetRegion]]:
+    return [
+        (label, value, TARGETS[code])
+        for attr, label, code in FIRMWARE_SOURCE_ARGS
+        if (value := getattr(args, attr, None))
+    ]
 
-    target = TARGETS[code]
-    print(f"[auto] inferred --block {target.code} from {detail} "
-          f"({source_label} {path})")
-    return target
+
+def contained_region_codes(region: TargetRegion) -> tuple[str, ...]:
+    return tuple(name for name, _off, _size in regions_in_payload(region))
 
 
 def resolve_target_from_args(args) -> TargetRegion:
-    raw = getattr(args, "block", None)
-    if raw:
-        return resolve_block(raw)
-    target = infer_target_from_input(args)
-    args.block = target.code
-    return target
+    sources = firmware_sources(args)
+    if not sources:
+        raise SystemExit(
+            "firmware source required: pass --fgbl, --conf, --appl, or --full")
+
+    if (block := getattr(args, "block", None)) is not None:
+        target = resolve_block(block)
+        required = set(contained_region_codes(target))
+        available = {
+            code
+            for _label, _path, source_region in sources
+            for code in contained_region_codes(source_region)
+        }
+        missing = required - available
+        if missing:
+            labels = {
+                code: label for _attr, label, code in FIRMWARE_SOURCE_ARGS
+                if code != "FGCB"
+            }
+            missing_args = ", ".join(labels[code] for code in sorted(missing))
+            raise SystemExit(
+                f"--block {target.code} needs additional input: {missing_args}")
+        return target
+
+    source_set = frozenset(region.code for _label, _path, region in sources)
+    if "FGCB" in source_set:
+        # A full image keeps the legacy safe default. For `flash`, the
+        # bootloader acknowledgement also opts into the complete FGCB target.
+        target_code = (
+            "FGCB"
+            if args.cmd == "flash"
+            and getattr(args, "include_bootloader", False)
+            else "APCX"
+        )
+    else:
+        target_code = TARGET_BY_SOURCE_SET.get(source_set)
+    if target_code is None:
+        selected = " + ".join(label for label, _path, _region in sources)
+        supported = ", ".join(
+            firmware_source_set_label(combination)
+            for combination in TARGET_BY_SOURCE_SET
+        )
+        raise SystemExit(
+            f"unsupported firmware source combination: {selected}. "
+            f"Use one of {supported}")
+    return TARGETS[target_code]
 
 
 def normalize_key_hex(text: str, *, source: str) -> bytes:
@@ -594,113 +607,135 @@ def parse_key(key_hex: str | None, key_file: str | None,
 
 
 def load_payload(args, target: TargetRegion) -> bytes:
-    """Resolve the firmware input per args.from_full / args.payload / args.file.
+    """Load the selected regions and assemble the inferred target range."""
+    sources = firmware_sources(args)
+    required = contained_region_codes(target)
+    cache: dict[str, bytes] = {}
+    pieces: dict[str, bytes] = {}
 
-    - --from-full: treat the file as a 2 MiB full internal dump and slice
-      the target region out.
-    - --payload: treat the file as already the target region's bytes.
-    - -f/--file (auto): inspect file size, choose full-dump vs pre-sliced.
-    """
-    sources = [name for name, v in (
-        ("--from-full", getattr(args, "from_full", None)),
-        ("--payload",   getattr(args, "payload", None)),
-        ("-f/--file",   getattr(args, "file", None)),
-    ) if v]
-    if len(sources) == 0:
-        raise SystemExit("source file required: pass -f/--file, --from-full, or --payload")
-    if len(sources) > 1:
-        raise SystemExit(f"conflicting source args: {', '.join(sources)}; pick one")
+    def read_source(path: str) -> bytes:
+        try:
+            if path not in cache:
+                cache[path] = Path(path).read_bytes()
+            return cache[path]
+        except OSError as exc:
+            raise SystemExit(f"{path}: {exc}") from exc
 
-    allow_mismatch = getattr(args, "force", False)
-
-    if getattr(args, "from_full", None):
-        full = Path(args.from_full).read_bytes()
-        start, end = target.full_image_offset, target.full_image_offset + target.size
-        if len(full) < end:
-            raise SystemExit(f"{args.from_full}: too short for {target.code}; "
-                             f"need at least 0x{end:x} bytes, got 0x{len(full):x}")
-        if len(full) != FULL_FLASH_SIZE:
-            print(f"warning: {args.from_full} is {len(full)} bytes, "
-                  f"expected {FULL_FLASH_SIZE} for a full internal flash image",
-                  file=sys.stderr)
-        return full[start:end]
-
-    if getattr(args, "payload", None):
-        data = Path(args.payload).read_bytes()
-        if len(data) != target.size and not allow_mismatch:
+    # A full image supplies every region not replaced by an explicit source.
+    for label, path, region in sources:
+        if region.code != "FGCB":
+            continue
+        data = read_source(path)
+        if len(data) != FULL_FLASH_SIZE:
             raise SystemExit(
-                f"{args.payload}: {target.code} payload must be {target.size} "
-                f"bytes (got {len(data)}). Pass --force to override.")
-        return data
+                f"{path}: {label} expects a {FULL_FLASH_SIZE}-byte full "
+                f"internal image; got {len(data)} bytes")
+        for code in required:
+            part = TARGETS[code]
+            start = part.full_image_offset
+            pieces[code] = data[start:start + part.size]
 
-    # auto-detect from -f/--file
-    path = args.file
-    data = Path(path).read_bytes()
-    if len(data) == target.size:
-        return data
-    if len(data) == FULL_FLASH_SIZE:
-        start, end = target.full_image_offset, target.full_image_offset + target.size
-        return data[start:end]
-    if allow_mismatch:
-        print(f"warning: {path} is {len(data)} bytes - neither {target.size} "
-              f"nor {FULL_FLASH_SIZE}; --force in effect", file=sys.stderr)
-        return data
-    raise SystemExit(
-        f"{path}: cannot auto-detect source for {target.code}; got {len(data)} bytes. "
-        f"Expected a {target.size}-byte {target.code} payload or a "
-        f"{FULL_FLASH_SIZE}-byte full internal dump. Use --from-full or "
-        f"--payload to force non-standard interpretation.")
+    # Regional arguments override the corresponding slice from --full.
+    for label, path, region in sources:
+        if region.code == "FGCB" or region.code not in required:
+            continue
+        data = read_source(path)
+        if len(data) == region.size:
+            pieces[region.code] = data
+            continue
+        if len(data) == FULL_FLASH_SIZE:
+            start = region.full_image_offset
+            pieces[region.code] = data[start:start + region.size]
+            continue
+
+        expected = (f"a {region.size}-byte raw {region.code} region or "
+                    f"a {FULL_FLASH_SIZE}-byte full internal image")
+        raise SystemExit(
+            f"{path}: {label} expects {expected}; got {len(data)} bytes")
+
+    return b"".join(pieces[code] for code in required)
 
 
 def _auto_preset_needed(args, target: TargetRegion) -> bool:
     """
-    False when the target ignores desc2/desc3 (FGCB), when the format is 0006
-    (no secondary descriptor at all), or when the user already supplied
-    explicit overrides for every required slot.
+    False when the target ignores both compatibility fingerprints, or when
+    the user supplied explicit overrides for every required fingerprint.
     """
-    if getattr(args, "format", "0005") != "0005":
+    if (not target.conf_appl_compatibility_fingerprint_required
+            and not target.fgbl_appl_compatibility_fingerprint_required):
         return False
-    if not target.desc2_required and not target.desc3_required:
-        return False
-    have_desc2 = parse_u32(getattr(args, "desc2", None), name="desc2") is not None
-    have_desc3 = parse_u32(getattr(args, "desc3", None), name="desc3") is not None
-    if target.desc2_required and not have_desc2: return True
-    if target.desc3_required and not have_desc3: return True
+    have_conf_appl = parse_u32(
+        getattr(args, "conf_appl_compatibility_fingerprint", None),
+        name="conf_appl_compatibility_fingerprint",
+    ) is not None
+    have_fgbl_appl = parse_u32(
+        getattr(args, "fgbl_appl_compatibility_fingerprint", None),
+        name="fgbl_appl_compatibility_fingerprint",
+    ) is not None
+    if (target.conf_appl_compatibility_fingerprint_required
+            and not have_conf_appl):
+        return True
+    if (target.fgbl_appl_compatibility_fingerprint_required
+            and not have_fgbl_appl):
+        return True
     return False
 
 
-def resolve_descriptor_words(args, target: TargetRegion,
-                             *, detected_preset: str | None = None
-                             ) -> tuple[int, int, int]:
-    """Combine --desc-preset with explicit --desc2/--desc3/--pci"""
+def resolve_descriptor_fingerprints(
+        args, target: TargetRegion, *, detected_preset: str | None = None
+        ) -> tuple[int, int, int]:
+    """Combine a release preset with explicit fingerprint overrides."""
 
-    desc2     = parse_u32(args.desc2,     name="desc2")
-    desc3     = parse_u32(args.desc3,     name="desc3")
-    pci = parse_u32(getattr(args, "pci", None), name="pci")
+    conf_appl_compatibility_fingerprint = parse_u32(
+        args.conf_appl_compatibility_fingerprint,
+        name="conf_appl_compatibility_fingerprint",
+    )
+    fgbl_appl_compatibility_fingerprint = parse_u32(
+        args.fgbl_appl_compatibility_fingerprint,
+        name="fgbl_appl_compatibility_fingerprint",
+    )
+    fg_security_fingerprint = parse_u32(
+        getattr(args, "fg_security_fingerprint", None),
+        name="fg_security_fingerprint",
+    )
 
-    preset_key = args.desc_preset
+    preset_key = args.fingerprint_preset
     if preset_key == "auto":
         preset_key = detected_preset
 
-    if preset_key and preset_key != "none" and preset_key in DESC_PRESETS:
-        p = DESC_PRESETS[preset_key]
-        if desc2 is None: desc2 = p["desc2"]
-        if desc3 is None: desc3 = p["desc3"]
+    if (preset_key and preset_key != "none"
+            and preset_key in COMPATIBILITY_FINGERPRINT_PRESETS):
+        preset = COMPATIBILITY_FINGERPRINT_PRESETS[preset_key]
+        if conf_appl_compatibility_fingerprint is None:
+            conf_appl_compatibility_fingerprint = preset[
+                "conf_appl_compatibility_fingerprint"]
+        if fgbl_appl_compatibility_fingerprint is None:
+            fgbl_appl_compatibility_fingerprint = preset[
+                "fgbl_appl_compatibility_fingerprint"]
 
-    if desc2 is None:     desc2 = 0
-    if desc3 is None:     desc3 = 0
-    if pci is None: pci = 0
+    if conf_appl_compatibility_fingerprint is None:
+        conf_appl_compatibility_fingerprint = 0
+    if fgbl_appl_compatibility_fingerprint is None:
+        fgbl_appl_compatibility_fingerprint = 0
+    if fg_security_fingerprint is None:
+        fg_security_fingerprint = 0
 
     missing = []
-    if target.desc2_required and desc2 == 0: missing.append("--desc2")
-    if target.desc3_required and desc3 == 0: missing.append("--desc3")
+    if (target.conf_appl_compatibility_fingerprint_required
+            and conf_appl_compatibility_fingerprint == 0):
+        missing.append("--conf-appl-fingerprint")
+    if (target.fgbl_appl_compatibility_fingerprint_required
+            and fgbl_appl_compatibility_fingerprint == 0):
+        missing.append("--fgbl-appl-fingerprint")
     if missing:
-        known = ", ".join(sorted(DESC_PRESETS))
+        known = ", ".join(sorted(COMPATIBILITY_FINGERPRINT_PRESETS))
         raise SystemExit(
-            f"{target.code} needs descriptor word(s) {', '.join(missing)}. "
-            f"Use --desc-preset (one of {known}) or pass explicit "
-            f"--desc2/--desc3.")
-    return desc2, desc3, pci
+            f"{target.code} needs {', '.join(missing)}. "
+            f"Use --fingerprint-preset (one of {known}) or pass explicit "
+            "compatibility fingerprints.")
+    return (conf_appl_compatibility_fingerprint,
+            fgbl_appl_compatibility_fingerprint,
+            fg_security_fingerprint)
 
 
 
@@ -717,7 +752,9 @@ def build_primary_header(*, fmt: bytes, component: str) -> bytes:
 
 def build_descriptor(target: TargetRegion, rest: bytes,
                      *, primary_header: bytes,
-                     desc2: int, desc3: int, pci: int,
+                     conf_appl_compatibility_fingerprint: int,
+                     fgbl_appl_compatibility_fingerprint: int,
+                     fg_security_fingerprint: int,
                      segment_count: int) -> bytes:
     if len(primary_header) != PRIMARY_SIZE:
         raise ValueError(f"primary header must be {PRIMARY_SIZE} bytes")
@@ -727,9 +764,9 @@ def build_descriptor(target: TargetRegion, rest: bytes,
     desc = bytearray(DESCRIPTOR_SIZE)
     put_u32(desc, 0x00, 1)
     desc[0x04:0x08] = target.code.encode("ascii")
-    put_u32(desc, 0x08, desc2)
-    put_u32(desc, 0x0C, desc3)
-    put_u32(desc, 0x10, pci)    # PCI (var 0x232); enforced when PRI (var 0x111) == 1
+    put_u32(desc, 0x08, conf_appl_compatibility_fingerprint)
+    put_u32(desc, 0x0C, fgbl_appl_compatibility_fingerprint)
+    put_u32(desc, 0x10, fg_security_fingerprint)
     put_u32(desc, 0x40, len(rest))
     put_u32(desc, 0x44, crc32_final(rest))
     put_u32(desc, 0x48, segment_count)
@@ -739,38 +776,29 @@ def build_descriptor(target: TargetRegion, rest: bytes,
 
 
 def build_0005(target: TargetRegion, payload: bytes,
-               *, desc2: int, desc3: int, pci: int = 0,
+               *, conf_appl_compatibility_fingerprint: int,
+               fgbl_appl_compatibility_fingerprint: int,
+               fg_security_fingerprint: int = 0,
                ) -> bytes:
     primary = build_primary_header(fmt=FORMAT_0005,
                                    component=DEFAULT_COMPONENT_0005)
     rest, segments = build_0005_rest(target, payload)
-    descriptor = build_descriptor(target, rest,
-                                  primary_header=primary,
-                                  desc2=desc2, desc3=desc3,
-                                  pci=pci,
-                                  segment_count=len(segments))
+    descriptor = build_descriptor(
+        target, rest,
+        primary_header=primary,
+        conf_appl_compatibility_fingerprint=conf_appl_compatibility_fingerprint,
+        fgbl_appl_compatibility_fingerprint=fgbl_appl_compatibility_fingerprint,
+        fg_security_fingerprint=fg_security_fingerprint,
+        segment_count=len(segments),
+    )
     return primary + descriptor + rest
 
 
 def target_for_container(info: dict) -> TargetRegion | None:
-    """Return the TargetRegion this container targets, or None if it can't
-    be inferred. 0005 reads it from the descriptor's `code` field; 0006 is
-    implicitly a full-flash (FGCB) payload per the app verifier's marker=5
-    path."""
+    """Return the target named by a 0005 container descriptor."""
     if info["format"] == FORMAT_0005:
         return TARGETS.get(info.get("code"))
-    if info["format"] == FORMAT_0006:
-        return TARGETS["FGCB"]
     return None
-
-
-def build_0006(payload: bytes, component: str) -> bytes:
-    if component not in COMPONENTS_0006:
-        raise SystemExit(f"format 0006: component must be one of "
-                         f"{list(COMPONENTS_0006)}; got {component!r}")
-    primary = build_primary_header(fmt=FORMAT_0006, component=component)
-    return primary + payload
-
 
 
 def inspect_container(data: bytes) -> dict:
@@ -791,49 +819,44 @@ def inspect_container(data: bytes) -> dict:
         "sha256":     hashlib.sha256(data).hexdigest().upper(),
     }
 
-    if fmt == FORMAT_0005:
-        if len(data) < PAYLOAD_OFFSET_0005:
-            raise ValueError(f"0005 container too short: {len(data)} bytes")
-        descriptor = data[PRIMARY_SIZE:PAYLOAD_OFFSET_0005]
-        rest       = data[PAYLOAD_OFFSET_0005:]
-        exp_payload_len = get_u32(descriptor, 0x40)
-        exp_payload_crc = get_u32(descriptor, 0x44)
-        exp_desc_crc    = get_u32(descriptor, 0x4C)
-        act_payload_crc = crc32_final(rest)
-        act_desc_crc    = crc32_final(primary + descriptor[:0x4C])
-        seg_info = parse_0005_segments(descriptor, rest)
-        info.update({
-            "payload_offset":     PAYLOAD_OFFSET_0005,
-            "payload_size":       len(rest),
-            "rest_size":          len(rest),
-            "code":               descriptor[0x04:0x08].decode("ascii", "replace"),
-            "marker":             get_u32(descriptor, 0x00),
-            "desc2":              get_u32(descriptor, 0x08),
-            "desc3":              get_u32(descriptor, 0x0C),
-            "pci":                get_u32(descriptor, 0x10),
-            "payload_len_ok":     len(rest) == exp_payload_len,
-            "expected_payload_len": exp_payload_len,
-            "payload_crc":        act_payload_crc,
-            "expected_payload_crc": exp_payload_crc,
-            "payload_crc_ok":     act_payload_crc == exp_payload_crc,
-            "descriptor_crc":     act_desc_crc,
-            "expected_desc_crc":  exp_desc_crc,
-            "descriptor_crc_ok":  act_desc_crc == exp_desc_crc,
-        })
-        info.update(seg_info)
-        if (seg_info["segment_count"] == 1
-                and seg_info["segment_table_ok"]
-                and seg_info["segment_data_len_ok"]):
-            seg = seg_info["segments"][0]
-            info["target_payload_offset"] = seg["data_offset"]
-            info["target_payload_size"] = seg["length"]
-    elif fmt == FORMAT_0006:
-        info.update({
-            "payload_offset":     PAYLOAD_OFFSET_0006,
-            "payload_size":       len(data) - PAYLOAD_OFFSET_0006,
-            "target_payload_offset": PAYLOAD_OFFSET_0006,
-            "target_payload_size": len(data) - PAYLOAD_OFFSET_0006,
-        })
+    if fmt != FORMAT_0005:
+        raise ValueError(
+            f"unsupported OTA format {fmt!r}; expected {FORMAT_0005!r}")
+    if len(data) < PAYLOAD_OFFSET_0005:
+        raise ValueError(f"0005 container too short: {len(data)} bytes")
+    descriptor = data[PRIMARY_SIZE:PAYLOAD_OFFSET_0005]
+    rest       = data[PAYLOAD_OFFSET_0005:]
+    exp_payload_len = get_u32(descriptor, 0x40)
+    exp_payload_crc = get_u32(descriptor, 0x44)
+    exp_desc_crc    = get_u32(descriptor, 0x4C)
+    act_payload_crc = crc32_final(rest)
+    act_desc_crc    = crc32_final(primary + descriptor[:0x4C])
+    seg_info = parse_0005_segments(descriptor, rest)
+    info.update({
+        "payload_offset":     PAYLOAD_OFFSET_0005,
+        "payload_size":       len(rest),
+        "rest_size":          len(rest),
+        "code":               descriptor[0x04:0x08].decode("ascii", "replace"),
+        "marker":             get_u32(descriptor, 0x00),
+        "conf_appl_compatibility_fingerprint": get_u32(descriptor, 0x08),
+        "fgbl_appl_compatibility_fingerprint": get_u32(descriptor, 0x0C),
+        "fg_security_fingerprint": get_u32(descriptor, 0x10),
+        "payload_len_ok":     len(rest) == exp_payload_len,
+        "expected_payload_len": exp_payload_len,
+        "payload_crc":        act_payload_crc,
+        "expected_payload_crc": exp_payload_crc,
+        "payload_crc_ok":     act_payload_crc == exp_payload_crc,
+        "descriptor_crc":     act_desc_crc,
+        "expected_desc_crc":  exp_desc_crc,
+        "descriptor_crc_ok":  act_desc_crc == exp_desc_crc,
+    })
+    info.update(seg_info)
+    if (seg_info["segment_count"] == 1
+            and seg_info["segment_table_ok"]
+            and seg_info["segment_data_len_ok"]):
+        seg = seg_info["segments"][0]
+        info["target_payload_offset"] = seg["data_offset"]
+        info["target_payload_size"] = seg["length"]
 
     # HW-region CRC check inside the target image bytes, not the 0005
     # segment table that precedes them.
@@ -859,10 +882,12 @@ def print_info(info: dict, path: str | None = None) -> None:
     print(f"Payload size:  {info.get('payload_size', '?')}")
     if info["format"] == FORMAT_0005:
         print(f"Code:          {info['code']}  marker={info['marker']}")
-        print(f"Descriptor:    desc2=0x{info['desc2']:08X}  "
-              f"desc3=0x{info['desc3']:08X}  "
-              f"pci=0x{info['pci']:08X}  "
-              f"segments={info['segment_count']}")
+        print("Compatibility: "
+              f"CONF/APPL=0x{info['conf_appl_compatibility_fingerprint']:08X}  "
+              f"FGBL/APPL=0x{info['fgbl_appl_compatibility_fingerprint']:08X}")
+        print("FG security:   "
+              f"0x{info['fg_security_fingerprint']:08X}")
+        print(f"Segment count: {info['segment_count']}")
         table_tag = "ok" if info["segment_table_ok"] else "INVALID"
         data_tag = "ok" if info["segment_data_len_ok"] else "MISMATCH"
         print(f"Segments:      table={info['segment_table_size']} B {table_tag}; "
@@ -927,19 +952,16 @@ def resolve_apply_mode(args, *, default: ApplyMode = APPLY_NONE) -> ApplyMode:
     """Pick an apply disposition:
         --apply-plain               -> PLAIN   (ApplyUpgrade)
         --apply / --apply-authenticated -> AUTHENTICATED (ApplyAuthenticatedUpgrade + HMAC)
-        --verify-only               -> NONE    (stop after CheckUpgradeFile)
         (nothing)                   -> caller-supplied default
     """
     want_auth = bool(getattr(args, "apply", False)
-                     or getattr(args, "apply_authenticated", False))
+                     or getattr(args, "apply_authenticated", False)
+                     or getattr(args, "authentication", None))
     want_plain = bool(getattr(args, "apply_plain", False))
-    want_none = bool(getattr(args, "verify_only", False))
-    if sum(1 for v in (want_auth, want_plain, want_none) if v) > 1:
+    if want_auth and want_plain:
         raise SystemExit(
             "pass only one of --apply / --apply-authenticated / "
-            "--apply-plain / --verify-only")
-    if want_none:
-        return APPLY_NONE
+            "--apply-plain")
     if want_plain:
         return APPLY_PLAIN
     if want_auth:
@@ -1101,13 +1123,30 @@ def _service_range(kind: str, selection: list[str]):
     )
 
 
+def _explicit_device_spec(args) -> str | None:
+    explicit = [
+        ("-d/--device", getattr(args, "device", None)),
+        ("--addr", getattr(args, "addr", None)),
+        ("-p/--port", getattr(args, "port", None)),
+    ]
+    selected = [(name, value) for name, value in explicit if value]
+    if len(selected) > 1:
+        names = ", ".join(name for name, _ in selected)
+        raise SystemExit(f"conflicting device selectors: {names}; pass one")
+    if selected:
+        name, value = selected[0]
+        if name == "--addr":
+            return f"ble:{value}"
+        if name == "-p/--port":
+            return f"can:{value}"
+        return value
+    return None
+
+
 def _resolve_device_spec(args) -> str:
-    if getattr(args, "device", None):
-        return args.device
-    if getattr(args, "addr", None):
-        return f"ble:{args.addr}"
-    if getattr(args, "port", None):
-        return f"can:{args.port}"
+    explicit = _explicit_device_spec(args)
+    if explicit:
+        return explicit
     if os.environ.get("AS11_ADDR"):
         return f"ble:{os.environ['AS11_ADDR']}"
     if os.environ.get("AS11_CAN_PORT"):
@@ -1176,9 +1215,7 @@ def phase_initiate(t: Transport, total: int) -> int:
     return raw_block
 
 
-def phase_stream(t: Transport, abc: bytes,
-                 raw_block: int, *,
-                 block_delay_s: float) -> None:
+def phase_stream(t: Transport, abc: bytes, raw_block: int) -> None:
     """UpgradeDataBlock loop with progress bar."""
     total = len(abc)
     n_blocks = (total + raw_block - 1) // raw_block
@@ -1204,9 +1241,6 @@ def phase_stream(t: Transport, abc: bytes,
                 t,
                 {"fileOffset": off, "encoding": "AsciiHex",
                  "data": chunk.hex().upper()})
-            if block_delay_s > 0:
-                time.sleep(block_delay_s)
-
             now = time.monotonic()
             if now - last_print >= 1.0 or i == n_blocks - 1:
                 done = min(off + raw_block, total)
@@ -1233,34 +1267,42 @@ def phase_check(t: Transport, file_hash: str,
     resp = t.rpc("CheckUpgradeFile",
                  {"upgradeFileHash": file_hash},
                  timeout=verify_timeout)
-    print(f"  result: {resp.get('result')!r}")
+    result = resp.get("result")
+    print(f"  result: {result!r}")
+    if result is not True:
+        raise SystemExit(
+            f"CheckUpgradeFile rejected the staged file (result={result!r})")
 
 
 def phase_apply(t: Transport, *,
                 mode: ApplyMode,
                 file_hash: str, file_hash_bytes: bytes,
                 key: bytes,
+                authentication: str | None,
                 reset_settings: bool,
-                verify_timeout: float) -> None:
+                timeout: float) -> None:
     """ApplyUpgrade or ApplyAuthenticatedUpgrade."""
     if mode == APPLY_PLAIN:
         params = {
             "upgradeFileHash": file_hash,
             "resetSettingsToDefault": bool(reset_settings),
         }
-        print(f"[apply] ApplyUpgrade  (timeout {verify_timeout:.0f}s)")
-        resp = t.rpc("ApplyUpgrade", params, timeout=verify_timeout)
+        print(f"[apply] ApplyUpgrade  (timeout {timeout:.0f}s)")
+        resp = t.rpc("ApplyUpgrade", params, timeout=timeout)
         print(f"  result: {resp.get('result')!r}")
         return
 
     if mode == APPLY_AUTHENTICATED:
-        tag = hmac.new(key, file_hash_bytes, hashlib.sha256).hexdigest().upper()
+        tag = authentication
+        if tag is None:
+            tag = hmac.new(
+                key, file_hash_bytes, hashlib.sha256).hexdigest().upper()
         print(f"[apply] ApplyAuthenticatedUpgrade tag={tag[:16]}...  "
-              f"(timeout {verify_timeout:.0f}s)")
+              f"(timeout {timeout:.0f}s)")
         resp = t.rpc("ApplyAuthenticatedUpgrade",
                      {"upgradeFileHash": file_hash,
                       "authentication":  tag},
-                     timeout=verify_timeout)
+                     timeout=timeout)
         print(f"  result: {resp.get('result')!r}")
         print("Device should reboot and hand off to the bootloader/apply stage.")
         return
@@ -1272,7 +1314,6 @@ def run_upload(t: Transport, abc: bytes, *,
                apply_mode: ApplyMode,
                reset_settings: bool,
                key: bytes,
-               block_delay_s: float,
                verify_timeout: float) -> int:
 
     total = len(abc)
@@ -1280,22 +1321,23 @@ def run_upload(t: Transport, abc: bytes, *,
     file_hash = file_hash_bytes.hex().upper()
 
     raw_block = phase_initiate(t, total)
-    phase_stream(t, abc, raw_block, block_delay_s=block_delay_s)
+    phase_stream(t, abc, raw_block)
     phase_check(t, file_hash, verify_timeout=verify_timeout)
 
     if apply_mode == APPLY_NONE:
         print()
         print("CheckUpgradeFile succeeded. Not committing.")
-        print("Use `apply -f ... --block ...`,")
-        print("`apply --abc-file`, or `apply --hash` once you're ready to reboot.")
+        print("Use `apply FILE.abc` or `apply --hash HASH` once you're ready "
+              "to reboot.")
         return 0
 
     phase_apply(t,
                 mode=apply_mode,
                 file_hash=file_hash,
                 file_hash_bytes=file_hash_bytes,
-                key=key, reset_settings=reset_settings,
-                verify_timeout=verify_timeout)
+                key=key, authentication=None,
+                reset_settings=reset_settings,
+                timeout=verify_timeout)
     return 0
 
 
@@ -1341,8 +1383,8 @@ def check_and_maybe_fix_hw_crcs(payload: bytes, target: TargetRegion,
     if force:
         return payload
     raise SystemExit(
-        f"CRC mismatch in {label}. Use --fix-crc to patch CRCs "
-        f"in memory, or --force to proceed with the bad CRCs as-is.")
+        f"CRC mismatch in {label}. Use `build` or `flash --fix-crc` to "
+        f"repair the image, or --force to proceed with the bad CRCs as-is.")
 
 
 def _build_container(args, *,
@@ -1353,59 +1395,46 @@ def _build_container(args, *,
 
     if target is None:
         target = resolve_target_from_args(args)
-    check_danger_ack(args, target)
     payload = load_payload(args, target)
     payload = check_and_maybe_fix_hw_crcs(
         payload, target,
         fix=getattr(args, "fix_crc", False),
         force=getattr(args, "force", False))
 
-    fmt = args.format.encode("ascii")
-    if fmt == FORMAT_0006:
-        # 0006 is implicitly a full-image shortcut; only FGCB makes semantic sense
-        if target.code != "FGCB":
-            raise SystemExit(
-                f"format 0006 is a full-image shortcut; --block must resolve "
-                f"to FGCB (e.g. --block full). Got --block {args.block} "
-                f"({target.code}).")
-        component = getattr(args, "component_0006", "PacificFG")
-        abc = build_0006(payload, component)
-        return abc, target, FORMAT_0006
-
-    # 0005
-    desc2, desc3, pci = resolve_descriptor_words(args, target,
-                                                 detected_preset=detected_preset)
-    abc = build_0005(target, payload,
-                     desc2=desc2, desc3=desc3,
-                     pci=pci)
+    (conf_appl_compatibility_fingerprint,
+     fgbl_appl_compatibility_fingerprint,
+     fg_security_fingerprint) = resolve_descriptor_fingerprints(
+         args, target, detected_preset=detected_preset)
+    abc = build_0005(
+        target, payload,
+        conf_appl_compatibility_fingerprint=conf_appl_compatibility_fingerprint,
+        fgbl_appl_compatibility_fingerprint=fgbl_appl_compatibility_fingerprint,
+        fg_security_fingerprint=fg_security_fingerprint,
+    )
     return abc, target, FORMAT_0005
 
 
-def build_container_with_live_defaults(args, t: Transport | None
+def build_container_with_live_defaults(args, t: Transport,
+                                       target: TargetRegion
                                        ) -> tuple[bytes, TargetRegion, bytes]:
-    target = resolve_target_from_args(args)
-
-    need_detect = (args.desc_preset == "auto"
+    need_detect = (args.fingerprint_preset == "auto"
                    and _auto_preset_needed(args, target))
-    pci_fetch_needed = (args.format == "0005" and args.pci is None)
+    fg_security_fetch_needed = args.fg_security_fingerprint is None
 
     detected_preset = None
     if need_detect:
-        if t is None:
-            known = "/".join(sorted(DESC_PRESETS))
-            raise SystemExit(
-                f"descriptor auto-detect needs a device. Pass "
-                f"--desc-preset {known} (or --desc2/--desc3) explicitly.")
-        detected_preset = detect_preset_for_descriptor(t)
+        detected_preset = detect_compatibility_fingerprint_preset(t)
 
-    if pci_fetch_needed and t is not None:
-        print("[auto] querying device _PCI (and _PRI for context)...")
-        pci_val = fetch_pci(t)
-        if pci_val is None:
-            log.warning("could not read _PCI from device; falling back to 0")
-        else:
-            print(f"[auto] using _PCI=0x{pci_val:08X} in descriptor")
-            args.pci = f"0x{pci_val:08X}"
+    if fg_security_fetch_needed:
+        print("[auto] querying device _SBA and _SKF...")
+        fingerprint = fetch_fg_security_fingerprint(t)
+        if fingerprint is None:
+            raise SystemExit(
+                "could not resolve the device FG security fingerprint; "
+                "pass --fg-security-fingerprint explicitly")
+        print("[auto] using FG security fingerprint "
+              f"0x{fingerprint:08X} in descriptor")
+        args.fg_security_fingerprint = f"0x{fingerprint:08X}"
 
     abc, target, fmt = _build_container(
         args, target=target, detected_preset=detected_preset)
@@ -1416,18 +1445,21 @@ def build_container_with_live_defaults(args, t: Transport | None
 
 
 def cmd_targets(_args) -> int:
-    print(f"{'Code':5s} {'Range':26s} {'Size':>12s}  Notes")
-    for t in TARGETS.values():
+    print(f"{'Input':30s} {'Target':6s} {'Range':26s} {'Size':>12s}")
+    for source_set, code in TARGET_BY_SOURCE_SET.items():
+        source = firmware_source_set_label(source_set)
+        t = TARGETS[code]
         flag = ""
-        if t.danger_flag == "include_bootloader":
-            flag = "  (needs --include-bootloader)"
-        elif t.danger_flag == "include_full_flash":
-            flag = "  (needs --include-full-flash)"
-        print(f"{t.code:5s} {t.flash_start:#010x}..{t.flash_end:#010x}  "
-              f"{t.size:>10d} B  {t.notes}{flag}")
-    print()
-    print("Block aliases: config->CONF, firmware/app->APPL, conf+app->APCX,")
-    print("               bootloader->FGBL, full/all->FGCB")
+        if t.danger_flag:
+            option = t.danger_flag.replace("_", "-")
+            flag = f"  (flash needs --{option})"
+        print(f"{source:30s} {code:6s} "
+              f"{t.flash_start:#010x}..{t.flash_end:#010x}  "
+              f"{t.size:>10d} B{flag}")
+    t = TARGETS["FGCB"]
+    print(f"{'--full + --include-bootloader':30s} {'FGCB':6s} "
+          f"{t.flash_start:#010x}..{t.flash_end:#010x}  "
+          f"{t.size:>10d} B")
     return 0
 
 
@@ -1664,13 +1696,13 @@ def _service_write_file(client, target: int, target_name: str,
 def cmd_build(args) -> int:
     # auto-detect is a runtime (device-query) concept and doesn't apply to
     # offline builds. Error early if the target actually needs a preset.
-    tgt = resolve_block(args.block)
-    if args.desc_preset == "auto" and _auto_preset_needed(args, tgt):
-        known = "/".join(sorted(DESC_PRESETS))
+    tgt = resolve_target_from_args(args)
+    if args.fingerprint_preset == "auto" and _auto_preset_needed(args, tgt):
+        known = "/".join(sorted(COMPATIBILITY_FINGERPRINT_PRESETS))
         raise SystemExit(
-            f"{tgt.code} needs descriptor preset, and `build` can't query a "
-            f"device. Pass --desc-preset {known} (or --desc2/--desc3), or use "
-            f"the `flash` subcommand which can auto-detect.")
+            f"{tgt.code} needs compatibility fingerprints, and `build` "
+            f"can't query a device. Pass --fingerprint-preset {known} or explicit "
+            "compatibility fingerprints, or use `flash` for auto-detection.")
     abc, target, fmt = _build_container(args, target=tgt)
     out = Path(args.output)
     out.write_bytes(abc)
@@ -1681,27 +1713,37 @@ def cmd_build(args) -> int:
 
 
 def cmd_info(args) -> int:
-    data = Path(args.file).read_bytes()
-    print_info(inspect_container(data), path=args.file)
+    _data, info = read_container(args.file)
+    print_info(info, path=args.file)
     return 0
 
 
-def detect_preset_for_descriptor(t: Transport) -> str:
-    """Query the device's ApplicationIdentifier and map it to DESC_PRESETS.
-    Raises SystemExit with a clean message on any failure path."""
+def read_container(path: str) -> tuple[bytes, dict]:
+    try:
+        data = Path(path).read_bytes()
+    except OSError as exc:
+        raise SystemExit(f"{path}: {exc}") from exc
+    try:
+        return data, inspect_container(data)
+    except ValueError as exc:
+        raise SystemExit(f"{path}: {exc}") from exc
+
+
+def detect_compatibility_fingerprint_preset(t: Transport) -> str:
+    """Map the device's ApplicationIdentifier to a reviewed preset."""
     print("[auto] querying device firmware version...")
     detected = fetch_firmware_version(t)
     if detected is None:
         raise SystemExit(
             "auto-detect failed: device didn't return ApplicationIdentifier. "
-            "Pass --desc-preset or --desc2/--desc3 explicitly.")
-    if detected not in DESC_PRESETS:
-        known = ", ".join(sorted(DESC_PRESETS))
+            "Pass --fingerprint-preset or explicit compatibility fingerprints.")
+    if detected not in COMPATIBILITY_FINGERPRINT_PRESETS:
+        known = ", ".join(sorted(COMPATIBILITY_FINGERPRINT_PRESETS))
         raise SystemExit(
             f"device reports firmware {detected!r} which isn't in "
-            f"DESC_PRESETS ({known}). Pass --desc-preset explicitly, or "
-            f"extract the new version's desc2/desc3 constants "
-            f"(see docs/s11_ota.md).")
+            f"the compatibility presets ({known}). Pass explicit "
+            "compatibility fingerprints or add a reviewed preset; see "
+            "docs/as11/ota_protocol.md.")
     print(f"[auto] device reports {detected}; using matching preset")
     return detected
 
@@ -1723,47 +1765,27 @@ def _upload_kwargs_from_args(args, *,
         apply_mode=apply_mode,
         reset_settings=bool(getattr(args, "reset_settings", False)),
         key=key,
-        block_delay_s=args.block_delay,
         verify_timeout=args.verify_timeout,
     )
 
 
-def parse_upgrade_hash_arg(hash_hex: str) -> tuple[str, bytes]:
-    clean = re.sub(r"[^0-9A-Fa-f]", "", hash_hex or "")
-    if len(clean) != 64:
-        raise SystemExit(
-            f"--hash must be a SHA-256 digest as 64 hex chars, got {len(clean)}"
-        )
-    try:
-        raw = bytes.fromhex(clean)
-    except ValueError as exc:
-        raise SystemExit(f"--hash is not valid hex: {exc}") from exc
+def parse_sha256_arg(value: str, option: str) -> tuple[str, bytes]:
+    clean = (value or "").strip()
+    if re.fullmatch(r"[0-9A-Fa-f]{64}", clean) is None:
+        raise SystemExit(f"{option} must be exactly 64 hex chars")
+    raw = bytes.fromhex(clean)
     return clean.upper(), raw
 
 
 def apply_hash_from_args(args) -> tuple[str, bytes]:
-    file_arg = getattr(args, "file", None)
-    has_abc_file = bool(getattr(args, "abc_file", None))
+    has_abc_file = bool(getattr(args, "file", None))
     has_hash = bool(getattr(args, "hash", None))
-    has_build_input = (
-        bool(getattr(args, "from_full", None))
-        or bool(getattr(args, "payload", None))
-        or bool(file_arg)
-    )
-    if sum(1 for v in (has_abc_file, has_hash, has_build_input) if v) != 1:
-        raise SystemExit(
-            "pass exactly one source: --abc-file, --hash, or firmware input"
-        )
+    if has_abc_file == has_hash:
+        raise SystemExit("pass either an .abc file or --hash")
     if has_hash:
-        return parse_upgrade_hash_arg(args.hash)
-    if has_build_input:
-        resolve_target_from_args(args)
-        return "", b""
+        return parse_sha256_arg(args.hash, "--hash")
 
-    try:
-        data = Path(args.abc_file).read_bytes()
-    except OSError as exc:
-        raise SystemExit(f"{args.abc_file}: {exc}") from exc
+    data, _info = read_container(args.file)
     digest = hashlib.sha256(data).digest()
     return digest.hex().upper(), digest
 
@@ -1772,17 +1794,27 @@ def _apply_kwargs_from_args(args, *,
                             apply_mode: ApplyMode | None = None) -> dict:
     if apply_mode is None:
         apply_mode = resolved_apply_mode_for_command(args)
+    authentication = None
     if apply_mode == APPLY_AUTHENTICATED:
-        key = parse_key(getattr(args, "key", None),
-                        getattr(args, "key_file", None),
-                        stored_key=stored_ota_key_for_device(args))
+        if getattr(args, "authentication", None):
+            if getattr(args, "key", None) or getattr(args, "key_file", None):
+                raise SystemExit(
+                    "--authentication cannot be combined with --key or --key-file")
+            authentication, _ = parse_sha256_arg(
+                args.authentication, "--authentication")
+            key = b""
+        else:
+            key = parse_key(getattr(args, "key", None),
+                            getattr(args, "key_file", None),
+                            stored_key=stored_ota_key_for_device(args))
     else:
         key = b""
     return dict(
         mode=apply_mode,
         key=key,
+        authentication=authentication,
         reset_settings=bool(getattr(args, "reset_settings", False)),
-        verify_timeout=args.verify_timeout,
+        timeout=LONG_RPC_TIMEOUT,
     )
 
 
@@ -1793,11 +1825,6 @@ def cmd_apply(args) -> int:
 
     t = build_transport_for_flash(args)
     with t:
-        if not file_hash:
-            abc, _, _ = build_container_with_live_defaults(args, t)
-            file_hash_bytes = hashlib.sha256(abc).digest()
-            file_hash = file_hash_bytes.hex().upper()
-            print(f"Staged file hash: {file_hash}")
         phase_apply(t,
                     file_hash=file_hash,
                     file_hash_bytes=file_hash_bytes,
@@ -1808,17 +1835,12 @@ def cmd_apply(args) -> int:
 def cmd_upload(args) -> int:
     resolve_apply_mode(args)
 
-    abc = Path(args.file).read_bytes()
-    info = inspect_container(abc)
+    abc, info = read_container(args.file)
     path = args.file
 
     if not info["magic_ok"]:
         raise SystemExit(f"{path}: bad magic {info['magic']!r}, "
                          f"expected {MAGIC!r}")
-    if info["format"] not in (FORMAT_0005, FORMAT_0006):
-        raise SystemExit(f"{path}: unknown format {info['format']!r}; "
-                         f"expected {FORMAT_0005!r} or {FORMAT_0006!r}")
-
     def _soft(msg: str) -> None:
         if args.force:
             log.warning("ignoring: %s (--force)", msg)
@@ -1826,103 +1848,59 @@ def cmd_upload(args) -> int:
             raise SystemExit(
                 f"{path}: {msg} (pass --force to upload anyway)")
 
-    known_components = {DEFAULT_COMPONENT_0005, *COMPONENTS_0006, "PacificBT"}
-    if info["component"] not in known_components:
+    if info["component"] != DEFAULT_COMPONENT_0005:
         _soft(f"unknown component string {info['component']!r}; "
-              f"known: {sorted(known_components)}")
+              f"expected {DEFAULT_COMPONENT_0005!r}")
 
-    if info["format"] == FORMAT_0005:
-        if info.get("code") not in TARGETS:
-            _soft(f"0005 descriptor code {info.get('code')!r} not in "
-                  f"TARGETS ({sorted(TARGETS)})")
-        if info.get("marker") != 1:
-            _soft(f"0005 descriptor marker={info.get('marker')} "
-                  f"(verifier requires 1)")
-        legacy_raw_0005 = (info.get("segment_count") == 0
-                           and args.fix_crc
-                           and info.get("code") in TARGETS)
-        if not legacy_raw_0005:
-            if not 1 <= info.get("segment_count", 0) <= 0xFF:
-                _soft(f"0005 descriptor segment_count="
-                      f"{info.get('segment_count')} "
-                      f"(bootloader requires 1..255)")
-            if not info.get("segment_table_ok", False):
-                _soft("0005 segment table is missing or truncated")
-            if not info.get("segment_data_len_ok", False):
-                _soft("0005 segment data length doesn't match the "
-                      "descriptor segment table")
+    if info.get("code") not in TARGETS:
+        _soft(f"0005 descriptor code {info.get('code')!r} not in "
+              f"TARGETS ({sorted(TARGETS)})")
+    if info.get("marker") != 1:
+        _soft(f"0005 descriptor marker={info.get('marker')} "
+              f"(verifier requires 1)")
+    if not 1 <= info.get("segment_count", 0) <= 0xFF:
+        _soft(f"0005 descriptor segment_count={info.get('segment_count')} "
+              f"(bootloader requires 1..255)")
+    if not info.get("segment_table_ok", False):
+        _soft("0005 segment table is missing or truncated")
+    if not info.get("segment_data_len_ok", False):
+        _soft("0005 segment data length doesn't match the descriptor segment table")
 
-        target = target_for_container(info)
-        if target is not None and info.get("segments"):
-            total = 0
-            for seg in info["segments"]:
-                total += seg["length"]
-                if seg["flash_start"] < target.flash_start:
-                    _soft(f"segment {seg['index']} starts before "
-                          f"{target.code}: 0x{seg['flash_start']:08X}")
-                if seg["flash_end"] > target.flash_end:
-                    _soft(f"segment {seg['index']} ends after "
-                          f"{target.code}: 0x{seg['flash_end']:08X}")
-            if total != target.size:
-                _soft(f"0005 segment data totals {total} bytes, "
-                      f"but {target.code} target size is {target.size} bytes")
-
-        if not info.get("payload_len_ok", True) and not args.fix_crc:
-            _soft("descriptor rest length field doesn't match "
-                  "actual payload size")
-
-        if not info.get("payload_crc_ok", True) and not args.fix_crc:
-            _soft("descriptor rest CRC mismatch "
-                  "(pass --fix-crc to recompute)")
-        if not info.get("descriptor_crc_ok", True) and not args.fix_crc:
-            _soft("descriptor CRC mismatch (pass --fix-crc to recompute)")
-
-    if info["format"] == FORMAT_0006 and resolve_apply_mode(args) != APPLY_NONE:
-        _soft("format 0006 can pass the app verifier, but the SRAM updater "
-              "path found so far only applies OTA!0005 containers")
-
-    # HW-region CRC check inside the target image bytes. May return a patched
-    # image when --fix-crc repaired a broken footer.
     target = target_for_container(info)
-    if info["format"] == FORMAT_0006 and target is not None:
-        if info.get("payload_size") != target.size:
-            _soft(f"0006 payload is {info.get('payload_size')} bytes, "
+    if target is not None and info.get("segments"):
+        total = 0
+        for seg in info["segments"]:
+            total += seg["length"]
+            if seg["flash_start"] < target.flash_start:
+                _soft(f"segment {seg['index']} starts before "
+                      f"{target.code}: 0x{seg['flash_start']:08X}")
+            if seg["flash_end"] > target.flash_end:
+                _soft(f"segment {seg['index']} ends after "
+                      f"{target.code}: 0x{seg['flash_end']:08X}")
+        if total != target.size:
+            _soft(f"0005 segment data totals {total} bytes, "
                   f"but {target.code} target size is {target.size} bytes")
+
+    if not info.get("payload_len_ok", True):
+        _soft("descriptor rest length field doesn't match actual payload size")
+    if not info.get("payload_crc_ok", True):
+        _soft("descriptor rest CRC mismatch")
+    if not info.get("descriptor_crc_ok", True):
+        _soft("descriptor CRC mismatch")
+
+    # HW-region CRC check inside the target image bytes.
     target_slice = target_payload_slice(info)
     if target_slice is not None:
         off, size = target_slice
         payload = abc[off:off + size]
-    elif (info["format"] == FORMAT_0005 and args.fix_crc
-          and info.get("segment_count") == 0 and target is not None):
-        # Repair older app-verifier-valid containers that omitted the
-        # bootloader segment table and stored raw image bytes directly.
-        payload = abc[PAYLOAD_OFFSET_0005:]
-        print("  treating legacy 0005 raw payload as one bootloader segment")
     else:
         payload = None
 
     if target is not None and payload is not None:
-        payload = check_and_maybe_fix_hw_crcs(
+        check_and_maybe_fix_hw_crcs(
             payload, target,
-            fix=args.fix_crc, force=args.force,
+            fix=False, force=args.force,
             label=f"{args.file} target image")
-
-    if args.fix_crc and target is not None:
-        if info["format"] == FORMAT_0005:
-            desc = abc[PRIMARY_SIZE:PAYLOAD_OFFSET_0005]
-            desc2 = get_u32(desc, 0x08)
-            desc3 = get_u32(desc, 0x0C)
-            pci = get_u32(desc, 0x10)
-            if payload is None:
-                raise SystemExit(
-                    f"{path}: cannot --fix-crc because this 0005 container "
-                    "does not expose a single target-image payload")
-            abc = build_0005(target, payload,
-                             desc2=desc2, desc3=desc3, pci=pci)
-            print("  rebuilt 0005 descriptor + segment table "
-                  "(rest-len / rest-CRC / descriptor-CRC refreshed)")
-        elif info["format"] == FORMAT_0006:
-            abc = abc[:PRIMARY_SIZE] + payload
 
     if args.dry_run:
         print("dry-run: validated container, not contacting device")
@@ -1939,16 +1917,18 @@ def cmd_upload(args) -> int:
 
 
 def cmd_flash(args) -> int:
+    target = resolve_target_from_args(args)
+    check_danger_ack(args, target)
+
     if args.dry_run:
-        target = resolve_target_from_args(args)
-        check_danger_ack(args, target)
         # dry-run can't query the device, so auto-detect isn't possible.
-        if args.desc_preset == "auto" and _auto_preset_needed(args, target):
-            known = "/".join(sorted(DESC_PRESETS))
+        if (args.fingerprint_preset == "auto"
+                and _auto_preset_needed(args, target)):
+            known = "/".join(sorted(COMPATIBILITY_FINGERPRINT_PRESETS))
             raise SystemExit(
                 f"--dry-run can't query the device. For auto-detect, remove "
-                f"--dry-run, or pass --desc-preset {known} (or "
-                f"--desc2/--desc3) explicitly.")
+                f"--dry-run, or pass --fingerprint-preset {known} or explicit "
+                "compatibility fingerprints.")
         abc, _, fmt = _build_container(args, target=target)
         print(f"Built {fmt.decode('ascii')} container for {target.code}  "
               f"({target.flash_start:#010x}..{target.flash_end:#010x}, "
@@ -1966,7 +1946,7 @@ def cmd_flash(args) -> int:
 
     t = build_transport_for_flash(args)
     try:
-        abc, _, _ = build_container_with_live_defaults(args, t)
+        abc, _, _ = build_container_with_live_defaults(args, t, target)
         if args.save_abc:
             Path(args.save_abc).write_bytes(abc)
             print(f"Saved built container to {args.save_abc}")
@@ -1978,65 +1958,38 @@ def cmd_flash(args) -> int:
 
 
 def _add_input_args(p: argparse.ArgumentParser) -> None:
-    """-f/--file + optional --from-full / --payload force-overrides."""
-    p.add_argument("-f", "--file", metavar="PATH",
-                   help="firmware input (full 2 MiB flash dump or pre-sliced "
-                        "block payload; auto-detected by size)")
-    p.add_argument("--from-full", metavar="PATH",
-                   help="force: treat this file as a full 2 MiB flash dump "
-                        "and slice the selected block out of it")
-    p.add_argument("--payload", metavar="PATH",
-                   help="force: treat this file as the already-sliced payload "
-                        "for the selected block")
+    """Firmware sources. Their combination determines the OTA target."""
+    p.add_argument("--fgbl", metavar="PATH",
+                   help="FGBL source: raw region or full 2 MiB image")
+    p.add_argument("--conf", metavar="PATH",
+                   help="CONF source: raw region or full 2 MiB image")
+    p.add_argument("--appl", metavar="PATH",
+                   help="APPL source: raw region or full 2 MiB image")
+    p.add_argument("-f", "--full", metavar="PATH",
+                   help="complete 2 MiB internal image")
 
 
-def _add_build_args(p: argparse.ArgumentParser, *,
-                    block_required: bool = True) -> None:
-    """All build-side options: block, format, descriptor."""
-    block_help = ("target block (aliases: config, firmware/app, conf+app, "
-                  "bootloader, full/all; or raw codes CONF, APPL, APCX, "
-                  "FGBL, FGCB)")
-    if not block_required:
-        block_help += (". `flash` and `apply -f` can infer a safe "
-                       "non-bootloader target from input size when this "
-                       "is omitted")
-    p.add_argument("--block", required=block_required, metavar="NAME",
-                   help=block_help)
-    p.add_argument("--format", default="0005", choices=("0005", "0006"),
-                   help="container format (default: 0005). 0006 is only "
-                        "valid for --block full and is the PacificFG/AlarmModule "
-                        "full-image shortcut.")
-    p.add_argument("--component-0006", default="PacificFG",
-                   choices=list(COMPONENTS_0006),
-                   help="(format 0006 only) primary header component string "
-                        "(default: PacificFG)")
+def _add_build_args(p: argparse.ArgumentParser) -> None:
+    """Descriptor and image-validation options."""
     # 0005 descriptor knobs
-    p.add_argument("--desc-preset", default="auto",
-                   choices=["auto"] + sorted(DESC_PRESETS) + ["none"],
-                   help="fill 0005 descriptor words from a known firmware "
+    p.add_argument("--fingerprint-preset", default="auto",
+                   choices=(["auto"] +
+                            sorted(COMPATIBILITY_FINGERPRINT_PRESETS) +
+                            ["none"]),
+                   help="fill compatibility fingerprints from a known firmware "
                         "preset (default: auto). With `auto`, `flash` queries "
                         "the device's ApplicationIdentifier and matches it to "
-                        "DESC_PRESETS; `build` requires an explicit version.")
-    p.add_argument("--desc2", metavar="U32",
-                   help="0005 descriptor word at offset 0x08 (hex or decimal); "
-                        "overrides preset")
-    p.add_argument("--desc3", metavar="U32",
-                   help="0005 descriptor word at offset 0x0c; overrides preset")
-    p.add_argument("--pci", default=None, metavar="U32",
-                   help="0005 descriptor word at offset 0x10: the device's "
-                        "PCI code (firmware var 0x0232). The app verifier "
-                        "checks it only when PRI (var 0x0111) == 1 - a "
-                        "runtime gate. To fetch from a live device: "
-                        "`as11_config.py --addr <dev> get _PCI _PRI`. "
-                        "`flash` auto-fetches _PCI (and logs _PRI for "
-                        "context) when this is omitted; `build` defaults "
-                        "to 0 since it can't query a device.")
-    # safety
-    p.add_argument("--include-bootloader", action="store_true",
-                   help="permit building/uploading FGBL (bootloader region)")
-    p.add_argument("--include-full-flash", action="store_true",
-                   help="permit building/uploading FGCB (complete 2 MiB flash)")
-    # CRC handling (resmed_flash-style)
+                        "the preset table; `build` requires an explicit version.")
+    p.add_argument("--conf-appl-fingerprint",
+                   dest="conf_appl_compatibility_fingerprint", metavar="U32",
+                   help="override the CONF/APPL compatibility fingerprint")
+    p.add_argument("--fgbl-appl-fingerprint",
+                   dest="fgbl_appl_compatibility_fingerprint", metavar="U32",
+                   help="override the FGBL/APPL compatibility fingerprint")
+    p.add_argument("--fg-security-fingerprint", default=None, metavar="U32",
+                   help="override the FG security fingerprint normally "
+                        "resolved from _SBA and _SKF; offline build defaults "
+                        "to 0")
     p.add_argument("--fix-crc", action="store_true",
                    help="recompute and patch CRC16-CCITT footers in memory "
                         "before building (for hand-edited payloads where "
@@ -2045,9 +1998,6 @@ def _add_build_args(p: argparse.ArgumentParser, *,
 
 def _add_upload_args(p: argparse.ArgumentParser) -> None:
     """Upload + apply options."""
-    p.add_argument("--verify-only", action="store_true",
-                   help="stop after CheckUpgradeFile; for `flash`, this "
-                        "overrides the transport default apply step")
     p.add_argument("--apply", action="store_true",
                    help="after CheckUpgradeFile succeeds, call "
                         "ApplyAuthenticatedUpgrade (uses --key, "
@@ -2060,13 +2010,10 @@ def _add_upload_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--reset-settings", action="store_true",
                    help="send resetSettingsToDefault=true with plain ApplyUpgrade "
                         "(default sends false to preserve settings)")
-    p.add_argument("--key", metavar="HEX32",
+    p.add_argument("--key", metavar="HEX64",
                    help="K_ota as 64 hex chars")
     p.add_argument("--key-file", metavar="PATH",
                    help="K_ota as a 32-byte binary file or a hex-text file")
-    p.add_argument("--block-delay", type=float, default=0.0, metavar="SECONDS",
-                   help="optional delay after each UpgradeDataBlock "
-                        "(default: 0)")
     p.add_argument("--verify-timeout", type=float, default=LONG_RPC_TIMEOUT,
                    metavar="SECONDS",
                    help=(f"timeout for CheckUpgradeFile and Apply* "
@@ -2091,16 +2038,13 @@ def _add_apply_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--reset-settings", action="store_true",
                    help="send resetSettingsToDefault=true with plain ApplyUpgrade "
                         "(default sends false to preserve settings)")
-    p.add_argument("--key", metavar="HEX32",
+    p.add_argument("--key", metavar="HEX64",
                    help="K_ota as 64 hex chars")
     p.add_argument("--key-file", metavar="PATH",
                    help="K_ota as a 32-byte binary file or a hex-text file")
-    p.add_argument("--force", action="store_true",
-                   help=_FORCE_HELP)
-    p.add_argument("--verify-timeout", type=float, default=LONG_RPC_TIMEOUT,
-                   metavar="SECONDS",
-                   help=(f"timeout for Apply* (default: "
-                         f"{int(LONG_RPC_TIMEOUT)})"))
+    p.add_argument("--authentication", metavar="HEX64",
+                   help="precomputed ApplyAuthenticatedUpgrade authentication; "
+                        "implies authenticated apply")
 
 
 def _add_debug_arg(p: argparse.ArgumentParser) -> None:
@@ -2166,10 +2110,11 @@ def _service_timeout(text: str) -> float:
 
 
 def _add_service_link_args(p: argparse.ArgumentParser, *, defaults: bool,
-                           timeout_help: str = "service response timeout") -> None:
+                           timeout_help: str =
+                           "service response timeout (default: 5)") -> None:
     p.add_argument(
         "--timeout", type=_service_timeout,
-        default=5.0 if defaults else argparse.SUPPRESS,
+        default=None if defaults else argparse.SUPPRESS,
         metavar="SECONDS", help=timeout_help,
     )
     p.add_argument(
@@ -2190,7 +2135,8 @@ def main(argv=None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     # targets
-    p_t = sub.add_parser("targets", help="list block targets")
+    p_t = sub.add_parser(
+        "targets", help="list base firmware input combinations")
     _add_debug_arg(p_t)
     p_t.set_defaults(func=cmd_targets)
 
@@ -2198,6 +2144,9 @@ def main(argv=None) -> int:
     p_b = sub.add_parser("build", help="build an .abc container locally")
     _add_debug_arg(p_b)
     _add_input_args(p_b)
+    p_b.add_argument("--block", metavar="NAME",
+                     help="select CONF, APPL, APCX, FGBL, or FGCB from the "
+                          "supplied firmware regions")
     _add_build_args(p_b)
     p_b.add_argument("-o", "--output", required=True,
                      help="output .abc path")
@@ -2214,14 +2163,9 @@ def main(argv=None) -> int:
     # upload
     p_u = sub.add_parser("upload",
                          help="push a pre-built .abc; CheckUpgradeFile only "
-                              "unless --apply / --apply-plain is given")
+                              "unless an apply mode is selected")
     _add_device_args(p_u, show_help=False)
     p_u.add_argument("file", help=".abc file to upload")
-    p_u.add_argument("--fix-crc", action="store_true",
-                     help="recompute and patch CRC16-CCITT HW-region footers "
-                          "in the target image; for 0005, also refresh the "
-                          "descriptor and add the bootloader segment table "
-                          "when repairing an older raw-payload container")
     _add_upload_args(p_u)
     p_u.set_defaults(func=cmd_upload)
 
@@ -2229,9 +2173,7 @@ def main(argv=None) -> int:
     p_a = sub.add_parser("apply",
                          help="apply a previously uploaded and verified .abc")
     _add_device_args(p_a, show_help=False)
-    _add_input_args(p_a)
-    _add_build_args(p_a, block_required=False)
-    p_a.add_argument("--abc-file", metavar="ABC",
+    p_a.add_argument("file", nargs="?", metavar="ABC",
                      help="matching .abc file; SHA-256 is computed locally")
     p_a.add_argument("--hash", metavar="HEX64",
                      help="SHA-256 reported by the earlier upload/flash run")
@@ -2241,11 +2183,17 @@ def main(argv=None) -> int:
     # flash (build + upload)
     p_f = sub.add_parser("flash",
                          help="build .abc from firmware and upload in one step; "
-                              "applies by default (BLE authenticated, "
-                              "CAN plain) unless --verify-only is given")
+                               "applies by default (BLE authenticated, "
+                              "CAN/TCP plain)")
     _add_device_args(p_f, show_help=False)
     _add_input_args(p_f)
-    _add_build_args(p_f, block_required=False)
+    p_f.add_argument("--block", metavar="NAME",
+                     help="select CONF, APPL, APCX, FGBL, or FGCB from the "
+                          "supplied firmware regions")
+    _add_build_args(p_f)
+    p_f.add_argument("--include-bootloader", action="store_true",
+                     help="include FGBL; with --full and no --block, select "
+                          "the complete FGCB target")
     p_f.add_argument("--save-abc", metavar="PATH",
                      help="also write the built .abc to this path")
     _add_upload_args(p_f)
@@ -2271,8 +2219,6 @@ def main(argv=None) -> int:
         p_s_enter, defaults=False,
         timeout_help="CAN entry window (default: 30)",
     )
-    p_s_enter.set_defaults(timeout=30.0)
-
     p_s_reset = service_sub.add_parser("reset", help="leave service mode and reset")
     _add_device_args(p_s_reset, show_help=False)
     _add_service_link_args(p_s_reset, defaults=False)
@@ -2309,12 +2255,12 @@ def main(argv=None) -> int:
     p_s.set_defaults(func=cmd_service)
 
     args = ap.parse_args(argv)
+    _explicit_device_spec(args)
+    if args.cmd == "service" and args.timeout is None:
+        args.timeout = 30.0 if args.service_cmd == "enter" else 5.0
     if getattr(args, "debug", False):
         logging.getLogger().setLevel(logging.DEBUG)
 
-    # shared arg validation
-    if getattr(args, "block_delay", 0.0) < 0:
-        raise SystemExit("--block-delay must be non-negative")
     validate_reset_settings(args)
     # apply-mode mutual exclusion is enforced inside resolve_apply_mode() now.
 

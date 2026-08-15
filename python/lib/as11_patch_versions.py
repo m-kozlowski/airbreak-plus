@@ -1,22 +1,22 @@
 """Reviewed Air11 firmware-version metadata."""
 
 
-AS11_OTA_DESCRIPTOR_PRESETS = {
+AS11_OTA_COMPATIBILITY_FINGERPRINT_PRESETS = {
     "14.8.3.0": {
-        "desc2": 0x2D89E58F,
-        "desc3": 0xBEB37EE2,
+        "conf_appl_compatibility_fingerprint": 0x2D89E58F,
+        "fgbl_appl_compatibility_fingerprint": 0xBEB37EE2,
     },
     "15.8.4.0": {
-        "desc2": 0xD785ABA6,
-        "desc3": 0xBEB37EE2,
+        "conf_appl_compatibility_fingerprint": 0xD785ABA6,
+        "fgbl_appl_compatibility_fingerprint": 0xBEB37EE2,
     },
     "16.8.5.0": {
-        "desc2": 0x7862CBA7,
-        "desc3": 0xBEB37EE2,
+        "conf_appl_compatibility_fingerprint": 0x7862CBA7,
+        "fgbl_appl_compatibility_fingerprint": 0xBEB37EE2,
     },
     "17.8.6.0": {
-        "desc2": 0xBECBC5BC,
-        "desc3": 0xBEB37EE2,
+        "conf_appl_compatibility_fingerprint": 0xBECBC5BC,
+        "fgbl_appl_compatibility_fingerprint": 0xBEB37EE2,
     },
 }
 

@@ -20,7 +20,7 @@ sys.path.insert(0, str(PYTHON_DIR))
 
 from as11_descriptors import APPX_BASE, AS11Firmware, FLASH_BASE  # noqa: E402
 from lib.as11_patch_versions import (  # noqa: E402
-    AS11_OTA_DESCRIPTOR_PRESETS,
+    AS11_OTA_COMPATIBILITY_FINGERPRINT_PRESETS,
     AS11_PATCH_VERSIONS,
 )
 
@@ -105,10 +105,10 @@ class AsvCandidates:
 
 
 @dataclass(frozen=True)
-class OtaDescriptorCandidates:
+class OtaCompatibilityCandidates:
     table: AddressResult
-    desc2: int | None
-    desc3: int | None
+    conf_appl_compatibility_fingerprint: int | None
+    fgbl_appl_compatibility_fingerprint: int | None
 
 
 @dataclass
@@ -119,7 +119,7 @@ class PortCandidates:
     header_clock: HeaderClockCandidates
     custom_settings: CustomSettingsCandidates
     asv: AsvCandidates
-    ota_descriptor: OtaDescriptorCandidates
+    ota_compatibility: OtaCompatibilityCandidates
 
 
 @dataclass(frozen=True)
@@ -863,43 +863,47 @@ def resolve_asv_candidates(
     )
 
 
-def resolve_ota_descriptor_candidates(
+def resolve_ota_compatibility_candidates(
         target_data: bytes,
         reference_data: bytes,
         matcher: AddressMatcher,
-        reference_release: str) -> OtaDescriptorCandidates:
-    """Recover desc2/desc3 from the application upgrade-verifier table."""
-    preset = AS11_OTA_DESCRIPTOR_PRESETS.get(reference_release)
+        reference_release: str) -> OtaCompatibilityCandidates:
+    """Recover compatibility fingerprints from the upgrade-verifier table."""
+    preset = AS11_OTA_COMPATIBILITY_FINGERPRINT_PRESETS.get(reference_release)
     if preset is None:
-        return OtaDescriptorCandidates(
+        return OtaCompatibilityCandidates(
             AddressResult(
                 0, None, "missing",
-                "reference release has no reviewed OTA descriptor preset",
+                "reference release has no reviewed compatibility fingerprint preset",
             ),
             None,
             None,
         )
 
-    # The verifier table stores the reviewed words in memory order desc3,desc2.
-    # Their values change with the release, so the unchanged table suffix is a
-    # better anchor than either value. Generic address transfer is the fallback.
-    pair = struct.pack("<II", preset["desc3"], preset["desc2"])
+    # The verifier table stores FGBL/APPL before CONF/APPL. Their values change
+    # with the release, so the unchanged table suffix is a better anchor than
+    # either value. Generic address transfer is the fallback.
+    pair = struct.pack(
+        "<II",
+        preset["fgbl_appl_compatibility_fingerprint"],
+        preset["conf_appl_compatibility_fingerprint"],
+    )
     source_off = reference_data.find(pair, APPX_BASE)
     if source_off < 0:
-        return OtaDescriptorCandidates(
+        return OtaCompatibilityCandidates(
             AddressResult(
                 0, None, "missing",
-                "reviewed descriptor pair not found in reference firmware",
+                "reviewed fingerprint pair not found in reference firmware",
             ),
             None,
             None,
         )
     source_address = FLASH_BASE + source_off
     if reference_data.find(pair, source_off + 1) >= 0:
-        return OtaDescriptorCandidates(
+        return OtaCompatibilityCandidates(
             AddressResult(
                 source_address, None, "missing",
-                "reviewed descriptor pair is not unique in reference firmware",
+                "reviewed fingerprint pair is not unique in reference firmware",
             ),
             None,
             None,
@@ -926,20 +930,26 @@ def resolve_ota_descriptor_candidates(
     if table is None:
         table = matcher.site(source_address)
     if table.address is None:
-        return OtaDescriptorCandidates(table, None, None)
+        return OtaCompatibilityCandidates(table, None, None)
     target_off = table.address - FLASH_BASE
     if target_off < APPX_BASE or target_off + 8 > len(target_data):
-        return OtaDescriptorCandidates(
+        return OtaCompatibilityCandidates(
             AddressResult(
                 source_address, None, "missing",
-                "transferred descriptor pair lies outside APPX",
+                "transferred fingerprint pair lies outside APPX",
                 table.alternatives,
             ),
             None,
             None,
         )
-    desc3, desc2 = struct.unpack_from("<II", target_data, target_off)
-    return OtaDescriptorCandidates(table, desc2, desc3)
+    (fgbl_appl_compatibility_fingerprint,
+     conf_appl_compatibility_fingerprint) = struct.unpack_from(
+         "<II", target_data, target_off)
+    return OtaCompatibilityCandidates(
+        table,
+        conf_appl_compatibility_fingerprint,
+        fgbl_appl_compatibility_fingerprint,
+    )
 
 
 def resolve_timezone_menu_warning_action(
@@ -1172,7 +1182,7 @@ def resolve_port_candidates(
     asv = resolve_asv_candidates(
         target_fw, reference_fw, stubs, reference["asv_backup_rate"]
     )
-    ota_descriptor = resolve_ota_descriptor_candidates(
+    ota_compatibility = resolve_ota_compatibility_candidates(
         target_fw.data,
         reference_fw.data,
         matcher,
@@ -1180,7 +1190,7 @@ def resolve_port_candidates(
     )
     return PortCandidates(
         stubs, mop, timezone_write, header_clock, custom_settings, asv,
-        ota_descriptor
+        ota_compatibility
     )
 
 
@@ -1484,12 +1494,15 @@ def self_check_candidates(
             ),
         ))
 
-    ota_expected = AS11_OTA_DESCRIPTOR_PRESETS.get(target_id.firmware_release)
+    ota_expected = AS11_OTA_COMPATIBILITY_FINGERPRINT_PRESETS.get(
+        target_id.firmware_release)
     if ota_expected is not None:
-        ota = candidates.ota_descriptor
-        for field in ("desc2", "desc3"):
+        ota = candidates.ota_compatibility
+        for field in (
+                "conf_appl_compatibility_fingerprint",
+                "fgbl_appl_compatibility_fingerprint"):
             checks.append(compare_candidate(
-                "ota_descriptor.%s" % field,
+                "ota_compatibility.%s" % field,
                 ota_expected[field],
                 derived_candidate(
                     getattr(ota, field),
@@ -1595,11 +1608,11 @@ def prepare(args) -> int:
     reference_label = candidates.asv.reference_label
     target_label_ids = candidates.asv.label_ids
     target_label_id = candidates.asv.label_id
-    ota_descriptor = candidates.ota_descriptor
+    ota_compatibility = candidates.ota_compatibility
 
     address_rows: list[tuple[str, str, AddressResult]] = [
         ("mop", "writeback", mop_writeback),
-        ("ota", "descriptor_words", ota_descriptor.table),
+        ("ota", "compatibility_fingerprints", ota_compatibility.table),
     ]
     address_rows.extend(
         ("timezone_write", name, result)
@@ -1789,15 +1802,17 @@ def prepare(args) -> int:
         [] if target_id.appx_key in versions else [target_id.appx_key]
     )
     ota_ready = (
-        ota_descriptor.table.quality == "strong"
-        and ota_descriptor.desc2 is not None
-        and ota_descriptor.desc3 is not None
+        ota_compatibility.table.quality == "strong"
+        and ota_compatibility.conf_appl_compatibility_fingerprint is not None
+        and ota_compatibility.fgbl_appl_compatibility_fingerprint is not None
     )
-    ota_desc2 = (
-        "0x%08X" % ota_descriptor.desc2 if ota_ready else "TODO"
+    ota_conf_appl_compatibility_fingerprint = (
+        "0x%08X" % ota_compatibility.conf_appl_compatibility_fingerprint
+        if ota_ready else "TODO"
     )
-    ota_desc3 = (
-        "0x%08X" % ota_descriptor.desc3 if ota_ready else "TODO"
+    ota_fgbl_appl_compatibility_fingerprint = (
+        "0x%08X" % ota_compatibility.fgbl_appl_compatibility_fingerprint
+        if ota_ready else "TODO"
     )
     integration = [
         "Generated integration snippets; review before applying.",
@@ -1815,9 +1830,13 @@ def prepare(args) -> int:
         "%s\tappl\t0x%08X\t0x%08X\t0x%08X\t0x%08X" %
         (target_id.appx_key, cave_start, cave_end, FLASH_BASE, FLASH_BASE),
         "",
-        "python/lib/as11_patch_versions.py AS11_OTA_DESCRIPTOR_PRESETS:",
-        "%r: {\"desc2\": %s, \"desc3\": %s}," %
-        (target_id.firmware_release, ota_desc2, ota_desc3),
+        "python/lib/as11_patch_versions.py "
+        "AS11_OTA_COMPATIBILITY_FINGERPRINT_PRESETS:",
+        ("%r: {\"conf_appl_compatibility_fingerprint\": %s, "
+         "\"fgbl_appl_compatibility_fingerprint\": %s},") %
+        (target_id.firmware_release,
+         ota_conf_appl_compatibility_fingerprint,
+         ota_fgbl_appl_compatibility_fingerprint),
         "",
         "Copy after review:",
         "  %s -> patches/as11/%s" % (vars_path.name, vars_path.name),
@@ -1911,10 +1930,10 @@ def prepare(args) -> int:
             ", ".join("0x%04X" % value for value in target_label_ids)
             or "not found",
         ),
-        "  OTA descriptor words: %s -> desc2=%s desc3=%s" % (
-            format_address(ota_descriptor.table.address),
-            ota_desc2,
-            ota_desc3,
+        "  OTA compatibility fingerprints: %s -> CONF/APPL=%s FGBL/APPL=%s" % (
+            format_address(ota_compatibility.table.address),
+            ota_conf_appl_compatibility_fingerprint,
+            ota_fgbl_appl_compatibility_fingerprint,
         ),
     ]
     if self_checks:
@@ -1937,7 +1956,8 @@ def prepare(args) -> int:
         "  - confirm every native function entry and ABI",
         "  - confirm each hook/callsite and expected stock bytes",
         "  - confirm the erased APPL tail is unused by the release",
-        "  - confirm desc2/desc3 at the transferred verifier table",
+        "  - confirm both compatibility fingerprints at the transferred "
+        "verifier table",
         "  - build all payloads and run the patcher against a disposable copy",
         "",
     ))

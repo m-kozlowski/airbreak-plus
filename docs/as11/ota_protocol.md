@@ -16,7 +16,7 @@ formats.
 - [Common primary header](#common-primary-header)
 - [Format 0005](#format-0005)
 - [0005 targets](#0005-targets)
-- [0005 descriptor presets](#0005-descriptor-presets)
+- [0005 compatibility fingerprints](#0005-compatibility-fingerprints)
 - [Format 0006](#format-0006)
 - [Format selection](#format-selection)
 - [Error codes](#error-codes)
@@ -147,10 +147,10 @@ identified.
 The helper refuses all-00/all-ff reads as suspicious. Treat the printed value
 as device secret material; do not paste it into logs or public docs.
 
-`python/as11_config.py devices ota-key <alias> --key-file <path>` can store
+`python/as11_config.py devices ota-key <alias> --key-file <path>` can store the
 device's OTA key in the existing BLE credential record; see
 [as11_config devices](../tools/as11_config.md#devices).  
-`python/as11_flash.py` uses stored BLE `otaKey` values for authenticated apply 
+`python/as11_flash.py` uses stored BLE `otaKey` values for authenticated apply
 when `--key`, `--key-file`, and `AS11_OTA_KEY` are not set.  
 Explicit command-line keys still take precedence.
 
@@ -191,9 +191,9 @@ Secondary descriptor:
 |--------|------|---------|
 | `0x00` | 4 | marker, must be `1` |
 | `0x04` | 4 | target code: `CONF`, `APPL`, `APCX`, `FGBL`, or `FGCB` |
-| `0x08` | 4 | `desc2`, firmware-version-specific |
-| `0x0c` | 4 | `desc3`, firmware-version-specific |
-| `0x10` | 4 | PCI value, checked when `_PRI == 1` |
+| `0x08` | 4 | CONF/APPL compatibility fingerprint |
+| `0x0c` | 4 | FGBL/APPL compatibility fingerprint |
+| `0x10` | 4 | flow-generator security fingerprint; checked against `_SKF` when `_SBA` is `Yes` |
 | `0x40` | 4 | rest length |
 | `0x44` | 4 | CRC32 over rest |
 | `0x48` | 4 | segment count, required `1..0xff` for apply |
@@ -235,24 +235,50 @@ Primitive hardware regions carry CRC16-CCITT at the end of the region:
 When building partial containers, update the target region CRC16 before
 wrapping it in the OTA container.
 
-## 0005 descriptor presets
+## 0005 compatibility fingerprints
 
-`desc2` and `desc3` are version-specific constructor constants for several
-targets.
+The secondary descriptor carries compatibility fingerprints for the two
+internal-flash component boundaries:
 
-| Firmware | `desc2` | `desc3` |
-|----------|---------|---------|
+| CLI override | Boundary |
+|--------------|----------|
+| `--conf-appl-fingerprint` | CONF/APPL |
+| `--fgbl-appl-fingerprint` | FGBL/APPL |
+
+The application verifier checks a boundary fingerprint when an update replaces
+only one side of that boundary. A target that replaces both sides does not need
+that fingerprint.
+
+| Target | CONF/APPL fingerprint | FGBL/APPL fingerprint |
+|--------|-----------------------|-----------------------|
+| `CONF` | checked | ignored |
+| `APPL` | checked | checked |
+| `APCX` | ignored | checked |
+| `FGBL` | ignored | checked |
+| `FGCB` | ignored | ignored |
+
+The boundary fingerprints are compared with constants compiled into the
+running APPL. They are independent of the payload and descriptor CRCs. The
+SRAM updater does not repeat these checks.
+
+The flow-generator security fingerprint at descriptor offset `0x10` is checked
+separately. When `_SBA` is `Yes`, it must equal `_SKF`; a mismatch rejects the
+container and emits `FgUpgradeFileFingerprintMismatch`. When `_SBA` is `No`,
+the field is ignored. `_SBE` is populated from the same firmware security
+record but does not participate in this comparison.
+
+Known values:
+
+| Firmware | CONF/APPL | FGBL/APPL |
+|----------|-----------|-----------|
 | 14.8.3.0 | `0x2D89E58F` | `0xBEB37EE2` |
 | 15.8.4.0 | `0xD785ABA6` | `0xBEB37EE2` |
 | 16.8.5.0 | `0x7862CBA7` | `0xBEB37EE2` |
 | 17.8.6.0 | `0xBECBC5BC` | `0xBEB37EE2` |
 
-`FGCB` does not require these descriptor fields. `CONF`, `APPL`, `APCX`, and
-`FGBL` do.
-
 ## Format 0006
 
-`0006` is a simplified app-verifier path seen in 15.8.4.0.
+`0006` carries a component payload directly after the primary header.
 
 Layout:
 
@@ -263,26 +289,30 @@ Layout:
 
 There is no secondary descriptor and no segment table.
 
-Observed 15.8.4.0 component handling:
+Component handling:
 
-| Component | App verifier marker | Result |
-|-----------|---------------------|--------|
-| `PacificFG` | 5 | accepted by app verifier |
-| `AlarmModule` | 7 | accepted if platform gate passes |
-| `PacificBT` | none | rejected |
+| Component | Target code | Result |
+|-----------|------------:|--------|
+| `PacificFG` | 5 | accepted for staging, but rejected by the local SRAM updater |
+| `AlarmModule` | 7 | forwarded to the external alarm module when its platform gate is enabled |
+| `PacificBT` | none | rejected for `0006` |
 
-Important caveat: 15.8.4.0 app-side `CheckUpgradeFile` and
-`ApplyAuthenticatedUpgrade` can accept a minimal `0006/PacificFG` container,
-but the low updater region found so far contains `OTA!0005` strings and no
-nearby `0006` string. Treat `0006` as app-verifier-proven, not apply-proven.
+The application can stage a `0006/PacificFG` container and successfully
+validate its supplied SHA-256. The local SRAM updater accepts only
+`0005/PacificFG` with a complete descriptor and segment table, and rejects the
+`0006` file before erasing or programming internal flash.
+
+For `AlarmModule`, Air11 forwards the staged file through the module upgrade
+RPC sequence: `InitiateUpgrade`, `UpgradeDataBlock`, `CheckUpgradeFile`, and
+`ApplyUpgrade`.
 
 ## Format selection
 
 Use `0005` for real partial or full firmware flashing. It carries explicit
 target information and the segment table consumed by the lower apply path.
 
-Use `0006` only for verifier experiments unless the lower updater has been
-traced or a flash readback proves it applied correctly.
+Format `0006` is not an Air11 internal-flash format. It is not supported by
+`as11_flash.py`.
 
 ## Error codes
 
