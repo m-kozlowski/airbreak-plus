@@ -2103,20 +2103,27 @@ def _add_apply_args(p: argparse.ArgumentParser) -> None:
                          f"{int(LONG_RPC_TIMEOUT)})"))
 
 
-def _add_device_args(p: argparse.ArgumentParser) -> None:
+def _add_debug_arg(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--debug", action="store_true", default=argparse.SUPPRESS,
+                   help="verbose transport-level packet logging")
+
+
+def _add_device_args(p: argparse.ArgumentParser, *, show_help: bool = True) -> None:
     """Device-selection args, matching as11_config.py conventions."""
     suppr = argparse.SUPPRESS
+    _add_debug_arg(p)
     g = p.add_argument_group("device selection")
     g.add_argument("-d", "--device", default=suppr,
-                   help="device spec: ble:<mac|alias>, can:<port>, "
-                        "tcp:<host>[:<port>]")
+                   help=("device spec: ble:<mac|alias>, can:<port>, "
+                         "tcp:<host>[:<port>]") if show_help else suppr)
     g.add_argument("--addr", default=suppr,
-                   help="BLE target (compat for -d ble:<x>; env: AS11_ADDR)")
+                   help=("BLE target (compat for -d ble:<x>; env: AS11_ADDR)"
+                         if show_help else suppr))
     g.add_argument("-p", "--port", default=suppr,
-                   help="CAN target (compat for -d can:<x>; "
-                        "env: AS11_CAN_PORT)")
+                   help=("CAN target (compat for -d can:<x>; "
+                         "env: AS11_CAN_PORT)" if show_help else suppr))
     if _can_transport is not None:
-        _can_transport.add_args(p)
+        _can_transport.add_args(p, show_help=show_help)
     if _aircannect_transport is not None:
         _aircannect_transport.add_args(p)
 
@@ -2178,21 +2185,18 @@ def main(argv=None) -> int:
                         format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
     ap = argparse.ArgumentParser(
-        prog="as11_flash",
-        description="AirSense 11 flash / OTA tool (BLE + CAN).",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=__doc__)
-    ap.add_argument("--debug", action="store_true",
-                    help="verbose transport-level packet logging")
+        description="Air11 firmware upgrade and service tool.")
     _add_device_args(ap)
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     # targets
     p_t = sub.add_parser("targets", help="list block targets")
+    _add_debug_arg(p_t)
     p_t.set_defaults(func=cmd_targets)
 
     # build
     p_b = sub.add_parser("build", help="build an .abc container locally")
+    _add_debug_arg(p_b)
     _add_input_args(p_b)
     _add_build_args(p_b)
     p_b.add_argument("-o", "--output", required=True,
@@ -2203,6 +2207,7 @@ def main(argv=None) -> int:
 
     # info
     p_i = sub.add_parser("info", help="inspect an .abc container")
+    _add_debug_arg(p_i)
     p_i.add_argument("file", help=".abc file to inspect")
     p_i.set_defaults(func=cmd_info)
 
@@ -2210,7 +2215,7 @@ def main(argv=None) -> int:
     p_u = sub.add_parser("upload",
                          help="push a pre-built .abc; CheckUpgradeFile only "
                               "unless --apply / --apply-plain is given")
-    _add_device_args(p_u)
+    _add_device_args(p_u, show_help=False)
     p_u.add_argument("file", help=".abc file to upload")
     p_u.add_argument("--fix-crc", action="store_true",
                      help="recompute and patch CRC16-CCITT HW-region footers "
@@ -2223,7 +2228,7 @@ def main(argv=None) -> int:
     # apply only
     p_a = sub.add_parser("apply",
                          help="apply a previously uploaded and verified .abc")
-    _add_device_args(p_a)
+    _add_device_args(p_a, show_help=False)
     _add_input_args(p_a)
     _add_build_args(p_a, block_required=False)
     p_a.add_argument("--abc-file", metavar="ABC",
@@ -2238,7 +2243,7 @@ def main(argv=None) -> int:
                          help="build .abc from firmware and upload in one step; "
                               "applies by default (BLE authenticated, "
                               "CAN plain) unless --verify-only is given")
-    _add_device_args(p_f)
+    _add_device_args(p_f, show_help=False)
     _add_input_args(p_f)
     _add_build_args(p_f, block_required=False)
     p_f.add_argument("--save-abc", metavar="PATH",
@@ -2250,18 +2255,18 @@ def main(argv=None) -> int:
     p_s = sub.add_parser(
         "service", help="communicate with the bootloader service"
     )
-    _add_device_args(p_s)
+    _add_device_args(p_s, show_help=False)
     _add_service_link_args(p_s, defaults=True)
     service_sub = p_s.add_subparsers(dest="service_cmd", required=True)
 
     p_s_info = service_sub.add_parser("info", help="query service identity")
-    _add_device_args(p_s_info)
+    _add_device_args(p_s_info, show_help=False)
     _add_service_link_args(p_s_info, defaults=False)
 
     p_s_enter = service_sub.add_parser(
         "enter", help="enter service mode during a reset"
     )
-    _add_device_args(p_s_enter)
+    _add_device_args(p_s_enter, show_help=False)
     _add_service_link_args(
         p_s_enter, defaults=False,
         timeout_help="CAN entry window (default: 30)",
@@ -2269,7 +2274,7 @@ def main(argv=None) -> int:
     p_s_enter.set_defaults(timeout=30.0)
 
     p_s_reset = service_sub.add_parser("reset", help="leave service mode and reset")
-    _add_device_args(p_s_reset)
+    _add_device_args(p_s_reset, show_help=False)
     _add_service_link_args(p_s_reset, defaults=False)
 
     for command, selection_help in (
@@ -2279,7 +2284,7 @@ def main(argv=None) -> int:
         p_s_read = service_sub.add_parser(
             command, help="read storage to a raw file"
         )
-        _add_device_args(p_s_read)
+        _add_device_args(p_s_read, show_help=False)
         _add_service_link_args(p_s_read, defaults=False)
         p_s_read.add_argument("file", help="output file")
         p_s_read.add_argument(
@@ -2294,7 +2299,7 @@ def main(argv=None) -> int:
         p_s_write = service_sub.add_parser(
             command, help="write storage from a raw file"
         )
-        _add_device_args(p_s_write)
+        _add_device_args(p_s_write, show_help=False)
         _add_service_link_args(p_s_write, defaults=False)
         p_s_write.add_argument("file", help="input file")
         p_s_write.add_argument(
@@ -2304,6 +2309,8 @@ def main(argv=None) -> int:
     p_s.set_defaults(func=cmd_service)
 
     args = ap.parse_args(argv)
+    if getattr(args, "debug", False):
+        logging.getLogger().setLevel(logging.DEBUG)
 
     # shared arg validation
     if getattr(args, "block_delay", 0.0) < 0:
@@ -2330,6 +2337,9 @@ if __name__ == "__main__":
         sys.exit(1)
     except TransportError as e:
         print(f"\ntransport error: {e}", file=sys.stderr)
+        sys.exit(1)
+    except OSError as e:
+        print(f"\nerror: {e}", file=sys.stderr)
         sys.exit(1)
     except RuntimeError as e:
         if str(e).startswith("RPC error "):

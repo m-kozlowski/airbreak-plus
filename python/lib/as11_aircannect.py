@@ -45,7 +45,7 @@ class _AirCannectConfig:
     debug: bool = False
 
 
-def parse_target(target: str, *, default_port: int = DEFAULT_PORT) -> tuple[str, int]:
+def parse_target(target: str) -> tuple[str, int]:
     """Parse ``host``, ``host:port`` or ``[ipv6]:port`` into (host, port)."""
     s = target.strip()
     if not s:
@@ -64,7 +64,7 @@ def parse_target(target: str, *, default_port: int = DEFAULT_PORT) -> tuple[str,
                 raise SystemExit(
                     f"aircannect: bad port in {target!r}: {exc}") from exc
         elif not rest:
-            port = default_port
+            port = DEFAULT_PORT
         else:
             raise SystemExit(
                 f"aircannect: unexpected text after IPv6 bracket in {target!r}")
@@ -79,7 +79,7 @@ def parse_target(target: str, *, default_port: int = DEFAULT_PORT) -> tuple[str,
                 f"aircannect: bad port in {target!r}: {exc}") from exc
         return host, port
     if ":" not in s:
-        return s, default_port
+        return s, DEFAULT_PORT
     raise SystemExit(
         f"aircannect: ambiguous target {target!r}; wrap IPv6 in [brackets]")
 
@@ -109,9 +109,7 @@ class AirCannectTransport:
     @classmethod
     def from_args(cls, target: str, args: argparse.Namespace
                   ) -> "AirCannectTransport":
-        host, port = parse_target(target,
-                                  default_port=getattr(args, "aircannect_port",
-                                                       DEFAULT_PORT))
+        host, port = parse_target(target)
         return cls(
             host=host,
             port=port,
@@ -399,12 +397,8 @@ class AirCannectServiceTransport(AirCannectTransport):
             ) from exc
 
 
-def add_args(p: argparse.ArgumentParser) -> None:
-    suppr = argparse.SUPPRESS
-    g = p.add_argument_group("AirCANnect bridge (ignored unless -d tcp:...)")
-    g.add_argument("--aircannect-port", type=int, default=suppr,
-                   help=f"TCP port if -d tcp:<host> omits the port "
-                        f"(default {DEFAULT_PORT})")
+def add_args(_p: argparse.ArgumentParser) -> None:
+    pass
 
 
 __all__ = [

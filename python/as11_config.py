@@ -25,8 +25,10 @@ import json
 import logging
 import math
 import os
+import shlex
 import sys
 import time
+from contextlib import nullcontext
 from pathlib import Path
 
 
@@ -52,13 +54,13 @@ except ModuleNotFoundError as exc:  # pragma: no cover
 
 from as11_rpc import (  # noqa: E402
     Transport, TransportError, FramingError,
-    TYPE_COERCE, parse_set_items, load_json_blob,
+    load_json_blob,
     set_params_from_args,
     host_datetime_iso, parse_flex_datetime, format_datetime_iso,
 )
 from as11_rpc_vars import (  # noqa: E402
     VAR_GROUPS, expand_groups, resolve_group,
-    SPOOL_GROUPS, SPOOL_TYPES, SPOOL_FORMATS, SPOOL_REGISTRY,
+    SPOOL_GROUPS, SPOOL_FORMATS, SPOOL_REGISTRY,
     VAR_NAMES, VAR_SUBTREES, STREAM_EDF_ALIASES, STREAM_EDF_SAMPLE_MS,
     STREAM_GROUPS, EVENT_FAMILIES,
     REGISTRIES,
@@ -66,15 +68,11 @@ from as11_rpc_vars import (  # noqa: E402
 )
 from as11_spool import (  # noqa: E402
     SPOOL_FRAGMENT_SIZE, SPOOL_FRAGMENT_SIZE_LIMIT,
-    SpoolError, spool_one_round,
-    proto_pretty, summary_pretty,
-    print_spool_legend, print_spool_summary,
+    SPOOL_OUTPUT_FORMATS, SPOOL_OUTPUT_DEFAULT,
+    SpoolError, SpoolDecodeError, spool_one_round,
+    decode_spool, render_spool,
     spool_payload_first_field, detect_spool_type,
     SELECTOR_BY_SPOOL,
-    setting_profiles_pretty, configuration_profiles_pretty,
-    metric_spool_pretty, periodic_compressed_pretty,
-    soundcheck_vector_pretty, diagnostic_blob_pretty, audio_spool_pretty,
-    rc03_spool_pretty, therapy_one_minute_pretty, event_spool_pretty,
 )
 
 
@@ -106,10 +104,31 @@ def positive_float_arg(value: str) -> float:
     return parsed
 
 
-SESSION_COMMANDS = (
-    "get", "set", "gettime", "settime", "rpc",
-    "known", "quit", "exit", "q", "help",
-)
+def spool_datetime_arg(value: str) -> str:
+    try:
+        return format_datetime_iso(parse_flex_datetime(value))
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
+def _normalize_cli_args(argv: list[str] | None) -> list[str]:
+    args = list(sys.argv[1:] if argv is None else argv)
+    index = 0
+    while index + 1 < len(args):
+        value = args[index + 1]
+        relative = (
+            len(value) >= 3
+            and value[0] in "+-"
+            and value[-1] in "smhd"
+            and value[1:-1].isdigit()
+        )
+        if args[index] == "--from-dt" and relative:
+            args[index:index + 2] = [f"--from-dt={value}"]
+        index += 1
+    return args
+
+
+SESSION_META_COMMANDS = ("quit", "exit", "q", "help")
 
 
 def session_history_path() -> Path:
@@ -122,8 +141,8 @@ def session_history_path() -> Path:
     return Path.home() / ".as11_config_history"
 
 
-def setup_session_readline() -> None:
-    """Enable persistent history and tab completion for the interactive REPL."""
+def setup_session_readline(command_names: tuple[str, ...]) -> None:
+    """Enable persistent history and tab completion for an interactive session."""
     if not sys.stdin.isatty():
         return
     try:
@@ -160,8 +179,9 @@ def setup_session_readline() -> None:
             elif isinstance(item, (tuple, list)) and item and isinstance(item[0], str):
                 yield item[0]
 
+    session_commands = command_names + SESSION_META_COMMANDS
     completion_words = sorted(
-        set(SESSION_COMMANDS)
+        set(session_commands)
         | set(completion_names(REGISTRIES))
         | set(completion_names(VAR_NAMES))
         | set(completion_names(VAR_SUBTREES))
@@ -172,7 +192,7 @@ def setup_session_readline() -> None:
         begidx = readline.get_begidx()
         stripped = line.lstrip()
         if begidx == len(line) - len(stripped):
-            matches = [word + " " for word in SESSION_COMMANDS
+            matches = [word + " " for word in session_commands
                        if word.startswith(text)]
         else:
             matches = [word for word in completion_words
@@ -290,7 +310,10 @@ def build_transport(args: argparse.Namespace) -> Transport:
     )
 
 
-def connect_transport(args: argparse.Namespace) -> Transport:
+def connect_transport(args: argparse.Namespace):
+    borrowed = getattr(args, "_borrowed_transport", None)
+    if borrowed is not None:
+        return nullcontext(borrowed)
     t = build_transport(args)
     t.connect()
     return t
@@ -385,30 +408,23 @@ def cmd_settime(args: argparse.Namespace) -> int:
 
 
 def cmd_session(args: argparse.Namespace) -> int:
-    """Interactive REPL. Keeps the transport open across commands."""
-    with connect_transport(args) as t:
-        first_call = [True]
-        setup_session_readline()
+    """Interactive CLI using one persistent transport where possible."""
+    session_parser = build_parser()
+    command_names: tuple[str, ...] = ()
+    for action in session_parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            command_names = tuple(action.choices)
+            break
+    setup_session_readline(command_names)
 
-        def do_rpc(method, params):
-            if first_call[0]:
-                first_call[0] = False
-                return call_rpc(t, args, method, params)
-            return t.rpc(method, params, timeout=args.timeout)
-
-        def print_session_help() -> None:
-            print(f"AS11 session on {t.name}. Commands:")
-            print("  get NAME [NAME...]              -> Get RPC")
-            print("  set NAME VALUE [--type T] ...   -> Set RPC")
-            print("  gettime                         -> GetDateTime")
-            print("  settime [ISO]                   -> SetDateTime")
-            print("  rpc METHOD [JSON_PARAMS]        -> arbitrary RPC")
-            print("  known [REGISTRY] [PATTERN]      -> list known names")
-            print("  help                            -> show this help")
-            print("  quit / exit                     -> leave")
-
+    t = build_transport(args)
+    t.connect()
+    try:
         if sys.stdin.isatty():
-            print_session_help()
+            print(f"AS11 session on {t.name}.")
+            print("Enter any as11_config command; use `help [COMMAND]` for help.")
+            print("Use `quit` or `exit` to leave.")
+
         while True:
             if sys.stdin.isatty():
                 try:
@@ -420,102 +436,69 @@ def cmd_session(args: argparse.Namespace) -> int:
                 line = sys.stdin.readline()
                 if not line:
                     break
+
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
-            if line.lower() in {"quit", "exit", "q"}:
-                break
             try:
-                verb, _, rest = line.partition(" ")
-                verb = verb.lower()
-                if verb == "help":
-                    print_session_help()
+                tokens = shlex.split(line)
+            except ValueError as exc:
+                eprint(f"parse error: {exc}")
+                continue
+            if not tokens:
+                continue
+
+            verb = tokens[0].lower()
+            if verb in {"quit", "exit", "q"}:
+                break
+            if verb == "help":
+                if len(tokens) == 1:
+                    session_parser.print_help()
                     continue
-                elif verb == "get":
-                    names = rest.split()
-                    if not names:
-                        eprint("get: at least one variable name required")
-                        continue
-                    resp = do_rpc("Get", names)
-                elif verb == "set":
-                    toks = rest.split()
-                    if not toks:
-                        eprint("set: NAME VALUE [--type T] ... or --json '{...}'")
-                        continue
-                    if toks[0] == "--json":
-                        if len(toks) < 2:
-                            eprint("set --json: missing JSON")
-                            continue
-                        raw = rest.partition("--json")[2].strip()
-                        params = load_json_blob(raw, what="set --json")
-                        if not isinstance(params, dict):
-                            eprint("set --json: must be a JSON object")
-                            continue
-                    else:
-                        pairs = parse_set_items(toks)
-                        params = {}
-                        aborted = False
-                        for name, value, typ in pairs:
-                            try:
-                                params[name] = TYPE_COERCE[typ](value)
-                            except (ValueError, KeyError) as exc:
-                                eprint(f"{name}: cannot coerce "
-                                       f"{value!r} as {typ} ({exc})")
-                                aborted = True
-                                break
-                        if aborted:
-                            continue
-                    resp = do_rpc("Set", params)
-                elif verb == "gettime":
-                    resp = do_rpc("GetDateTime", None)
-                elif verb == "settime":
-                    spec = rest.strip()
-                    if spec:
-                        try:
-                            stamp = format_datetime_iso(parse_flex_datetime(spec))
-                        except ValueError as exc:
-                            eprint(f"settime: {exc}")
-                            continue
-                    else:
-                        stamp = host_datetime_iso()
-                    resp = do_rpc("SetDateTime", {"dateTime": stamp})
-                elif verb == "rpc":
-                    method, _, params_str = rest.partition(" ")
-                    if not method:
-                        eprint("rpc: method required")
-                        continue
-                    if params_str.strip():
-                        params = load_json_blob(
-                            params_str.strip(), what="rpc params"
-                        )
-                    else:
-                        params = None
-                    resp = do_rpc(method, params)
-                elif verb == "known":
-                    toks = rest.split()
-                    if len(toks) > 2:
-                        eprint("known: [REGISTRY] [PATTERN]")
-                        continue
-                    action = toks[0] if toks else None
-                    if action and action not in REGISTRIES:
-                        known = ", ".join(REGISTRIES)
-                        eprint(f"known: unknown registry {action!r}; known: {known}")
-                        continue
-                    cmd_known(argparse.Namespace(
-                        known_action=action,
-                        pattern=toks[1] if len(toks) > 1 else None,
-                    ))
-                    continue
-                else:
-                    eprint(f"unknown command: {verb}")
-                    continue
-                print_response(resp)
+                tokens = tokens[1:] + ["--help"]
+
+            try:
+                command_args = session_parser.parse_args(
+                    _normalize_cli_args(tokens)
+                )
+                if command_args.command == "session":
+                    raise SystemExit("session: a session cannot be nested")
+
+                explicit_device = any(
+                    hasattr(command_args, name)
+                    for name in ("device", "addr", "port")
+                )
+                merged = vars(args).copy()
+                merged.update(vars(command_args))
+                command_args = argparse.Namespace(**merged)
+                _apply_common_defaults(command_args)
+
+                # SubscribeEvent has no unsubscribe operation. Preserve the
+                # normal CLI behavior by running it on an owned connection,
+                # then restore the session connection when it ends.
+                reconnect = (
+                    command_args.command == "subscribe" and not explicit_device
+                )
+                if reconnect:
+                    t.close()
+                elif not explicit_device:
+                    command_args._borrowed_transport = t
+
+                try:
+                    command_args.func(command_args)
+                finally:
+                    if reconnect:
+                        t = build_transport(args)
+                        t.connect()
             except TimeoutError as exc:
                 eprint(f"timeout: {exc}")
             except SystemExit as exc:
-                eprint(str(exc))
+                if isinstance(exc.code, str):
+                    eprint(exc.code)
             except Exception as exc:
                 eprint(f"error: {exc}")
+    finally:
+        t.close()
     return 0
 
 
@@ -676,96 +659,22 @@ def spool_address_for(spool_type: str, from_dt: str) -> dict:
     return {spool_type: {"fromDateTime": from_dt}}
 
 
-_GATE_TRUTHY = {"yes", "on", "true", "enabled", "1"}
-
-
-def _is_gate_open(value) -> bool:
-    """Classify a gate-var Get response as open (truthy) or closed."""
-    if value is None:
-        return False
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return value != 0
-    return str(value).strip().lower() in _GATE_TRUTHY
-
-
-def _wire_match_cell(name: str, data: bytes) -> str:
-    """Compare observed top-level protobuf field against the registry."""
-    expected = SPOOL_REGISTRY.get(name, {}).get("wire_field")
-    observed = spool_payload_first_field(data)
-    if observed is None:
-        return ""
-    if expected is None:
-        return f"f{observed}"
-    if observed == expected:
-        return f"ok f{observed}"
-    return f"MISMATCH expected f{expected} got f{observed}"
-
-
-def decode_spool_payload(spool_type: str, data: bytes, *,
-                         samples: bool = False, details: bool = False,
-                         raw_proto: bool = False,
-                         app_version: str | None = None) -> None:
-    """Pretty-print a spool payload using the type-specific decoder."""
-    if not samples and not raw_proto:
-        print_spool_legend(spool_type)
-    event_table = False
-    if raw_proto:
-        proto_pretty(data)
-    elif rc03_spool_pretty(spool_type, data, samples=samples):
-        pass
-    elif setting_profiles_pretty(spool_type, data, details=details):
-        pass
-    elif configuration_profiles_pretty(spool_type, data, details=details):
-        pass
-    elif therapy_one_minute_pretty(spool_type, data,
-                                   samples=samples, details=details):
-        pass
-    elif periodic_compressed_pretty(spool_type, data,
-                                    samples=samples, details=details):
-        pass
-    elif metric_spool_pretty(spool_type, data, details=details):
-        pass
-    elif soundcheck_vector_pretty(spool_type, data,
-                                  samples=samples, details=details):
-        pass
-    elif diagnostic_blob_pretty(spool_type, data, details=details):
-        pass
-    elif audio_spool_pretty(spool_type, data, details=details):
-        pass
-    elif spool_type == "Summary":
-        summary_pretty(data, details=details)
-    elif event_spool_pretty(
-            spool_type, data, app_version=app_version, details=details):
-        event_table = True
-    else:
-        proto_pretty(data)
-    if not samples and not event_table:
-        print_spool_summary(spool_type, data)
-
-
-def cmd_decode(args: argparse.Namespace) -> int:
-    """Offline: decode a previously captured spool payload from a file.
-
-    Without `--type`, the spool type is inferred from the outer
-    protobuf field number using SPOOL_REGISTRY. When the wire field is
-    shared by multiple event spools, their event codes select the best
-    matching firmware map; other candidates are reported on stderr.
-    """
+def _decode_spool_file(path: str, spool_type: str | None,
+                       output_format: str | None,
+                       app_version: str | None) -> int:
     try:
-        with open(args.file, "rb") as f:
+        with open(path, "rb") as f:
             data = f.read()
     except OSError as exc:
-        raise SystemExit(f"decode: cannot read {args.file}: {exc}")
-    spool_type = args.type
+        raise SystemExit(f"spool: cannot read {path}: {exc}")
+    if spool_type is not None and spool_type not in SPOOL_REGISTRY:
+        raise SystemExit(f"spool: unknown spool type {spool_type!r}")
     if not data:
         if spool_type is None:
-            raise SystemExit(f"decode: {args.file} is empty")
-        decode_spool_payload(
-            spool_type, data,
-            samples=args.samples, details=args.details,
-            raw_proto=args.raw_proto, app_version=args.app_version,
+            raise SystemExit(f"spool: {path} is empty")
+        render_spool(
+            decode_spool(spool_type, data, app_version=app_version),
+            output_format or SPOOL_OUTPUT_DEFAULT,
         )
         return 0
 
@@ -775,96 +684,19 @@ def cmd_decode(args: argparse.Namespace) -> int:
             field = spool_payload_first_field(data)
             field_str = f"f{field}" if field is not None else "no protobuf field"
             raise SystemExit(
-                f"decode: could not autodetect spool type ({field_str}); "
-                f"pass --type"
+                f"spool: could not autodetect spool type ({field_str}); "
+                f"pass the type before --input"
             )
         spool_type = best
         if len(candidates) > 1:
             alternatives = [item for item in candidates if item != spool_type]
             eprint(f"# autodetected: {spool_type} "
                    f"(field shared with {', '.join(alternatives)})")
-        else:
-            eprint(f"# autodetected: {spool_type}")
-    elif spool_type not in SPOOL_REGISTRY:
-        eprint(f"# warning: {spool_type!r} is not in SPOOL_REGISTRY; "
-               f"decoding with generic protobuf")
 
-    decode_spool_payload(
-        spool_type, data,
-        samples=args.samples, details=args.details,
-        raw_proto=args.raw_proto, app_version=args.app_version,
+    render_spool(
+        decode_spool(spool_type, data, app_version=app_version),
+        output_format or SPOOL_OUTPUT_DEFAULT,
     )
-    return 0
-
-
-def cmd_spool_probe(args: argparse.Namespace) -> int:
-    """Inventory the spools that currently have data.
-
-    For each known (or single requested) spool type, do one StartSpool +
-    PullSpoolFragments round. Pre-checks `gate_var` from SPOOL_REGISTRY
-    and skips closed gates without round-tripping. Verifies the
-    observed outer protobuf field against `SPOOL_REGISTRY[name].wire_field`.
-    """
-    names = ([args.spool_type] if getattr(args, "spool_type", None)
-             else SPOOL_TYPES)
-    from_dt = args.from_dt or "2000-01-01T00:00:00.000Z"
-    only = getattr(args, "only", "all")
-    gate_cache: dict[str, bool] = {}
-    rows: list[tuple[str, str, str, str, str, str]] = []
-
-    with connect_transport(args) as t:
-        for name in names:
-            info = SPOOL_REGISTRY.get(name, {})
-            gate = info.get("gate_var")
-            status, n_bytes, n_frags, next_from, note = "", "0", "0", "", ""
-
-            if gate is not None:
-                if gate not in gate_cache:
-                    try:
-                        resp = t.rpc("Get", [gate], timeout=args.timeout)
-                        gate_value = resp.get("result", {}).get(gate)
-                        gate_cache[gate] = _is_gate_open(gate_value)
-                    except Exception as exc:
-                        gate_cache[gate] = False
-                        eprint(f"# warning: Get {gate} failed: {exc}")
-                if not gate_cache[gate]:
-                    rows.append((name, "GATED", "-", "-", "",
-                                 f"gate {gate}=Off"))
-                    continue
-
-            try:
-                data, status, nxt, n_frags_int = spool_one_round(
-                    t, spool_address_for(name, from_dt), args.max_size,
-                    fragment_timeout=args.fragment_timeout,
-                    fragment_max=args.fragment_max,
-                    verbose=False,
-                )
-            except SpoolError as exc:
-                code = f"code {exc.code}" if exc.code is not None else "no code"
-                rows.append((name, "ERROR", "0", "0", "",
-                             f"{code}: {exc.message}"))
-                continue
-            except Exception as exc:
-                rows.append((name, "ERROR", "0", "0", "", str(exc)))
-                continue
-
-            n_bytes = str(len(data))
-            n_frags = str(n_frags_int)
-            if (status == "SPOOL_COMPLETE_MORE_DATA_PENDING"
-                    and isinstance(nxt, dict)):
-                next_from = nxt.get(name, {}).get("fromDateTime", "")
-            note = _wire_match_cell(name, data)
-            rows.append((name, status, n_bytes, n_frags, next_from, note))
-
-    print("spool_type\tstatus\tbytes\tfrags\tnext_from\twire_match")
-    for row in rows:
-        if only == "populated":
-            try:
-                if int(row[2]) <= 0:
-                    continue
-            except ValueError:
-                continue
-        print("\t".join(row))
     return 0
 
 
@@ -957,22 +789,28 @@ def cmd_subscribe(args: argparse.Namespace) -> int:
 
 
 def cmd_spool(args: argparse.Namespace) -> int:
-    """Download spool data from the device.
+    """Download spool data or decode a captured payload.
 
     Calls StartSpool -> PullSpoolFragments, optionally iterating rounds
     to follow `SPOOL_COMPLETE_MORE_DATA_PENDING` continuation tokens.
-    Writes raw binary to --output (if given) and/or a decoded or
-    base64-envelope to stdout.
+    Writes raw binary to --output (if given) and emits decoded data or a
+    Base64 envelope to stdout.
     """
     if getattr(args, "list_types", False):
         print_spool_types()
         return 0
-    if getattr(args, "probe", False):
-        return cmd_spool_probe(args)
+    if args.input:
+        if args.no_decode:
+            raise SystemExit("spool: --no-decode cannot be used with --input")
+        return _decode_spool_file(
+            args.input, args.spool_type, args.format, args.app_version
+        )
     if not getattr(args, "spool_type", None):
         raise SystemExit(
-            "spool: spool_type required (or use --list-types/--probe)"
+            "spool: spool_type required (or use --input/--list-types)"
         )
+    if args.no_decode and args.format is not None:
+        raise SystemExit("spool: --format cannot be used with --no-decode")
     spool_type = args.spool_type
     from_dt = args.from_dt or "2000-01-01T00:00:00.000Z"
     spool_address = spool_address_for(spool_type, from_dt)
@@ -983,9 +821,10 @@ def cmd_spool(args: argparse.Namespace) -> int:
     final_status = ""
     last_next = None
     app_version = args.app_version
+    transfer_verbose = args.verbose or args.debug
 
     with connect_transport(args) as t:
-        if (args.decode and spool_type in SELECTOR_BY_SPOOL
+        if (not args.no_decode and spool_type in SELECTOR_BY_SPOOL
                 and app_version is None):
             try:
                 version_resp = call_rpc(
@@ -1004,12 +843,13 @@ def cmd_spool(args: argparse.Namespace) -> int:
                        f"comparing all bundled diagnostic manifests: {exc}")
         while True:
             round_num += 1
-            if round_num > 1:
+            if round_num > 1 and transfer_verbose:
                 eprint(f"--- round {round_num} (continuing from nextSpoolAddress) ---")
             data, status, nxt, n_frags = spool_one_round(
                 t, spool_address, args.max_size,
                 fragment_timeout=args.fragment_timeout,
                 fragment_max=args.fragment_max,
+                verbose=transfer_verbose,
             )
             all_data.extend(data)
             total_fragments += n_frags
@@ -1019,7 +859,7 @@ def cmd_spool(args: argparse.Namespace) -> int:
                 break
             if status != "SPOOL_COMPLETE_MORE_DATA_PENDING" or not nxt:
                 break
-            if round_num >= args.max_rounds:
+            if args.max_rounds is not None and round_num >= args.max_rounds:
                 eprint(f"  stopping: hit --max-rounds {args.max_rounds}")
                 break
             spool_address = nxt
@@ -1035,11 +875,10 @@ def cmd_spool(args: argparse.Namespace) -> int:
         if last_next and final_status == "SPOOL_COMPLETE_MORE_DATA_PENDING":
             eprint(f"  nextSpoolAddress: {json.dumps(last_next)}")
 
-    if args.decode:
-        decode_spool_payload(
-            spool_type, data,
-            samples=args.samples, details=args.details,
-            raw_proto=args.raw_proto, app_version=app_version,
+    if not args.no_decode:
+        render_spool(
+            decode_spool(spool_type, data, app_version=app_version),
+            args.format or SPOOL_OUTPUT_DEFAULT,
         )
         if last_next and final_status == "SPOOL_COMPLETE_MORE_DATA_PENDING":
             eprint(f"\n# status={final_status}")
@@ -1200,8 +1039,7 @@ def cmd_devices(args: argparse.Namespace) -> int:
         return 0
 
     if action == "pair":
-        addr = resolve_addr(getattr(args, "addr", None)
-                           or resolve_device_spec(args).removeprefix("ble:"))
+        addr = resolve_addr(args.target)
         async def _pair():
             conn = As11Connection(debug=args.debug)
             try:
@@ -1287,28 +1125,42 @@ def cmd_devices(args: argparse.Namespace) -> int:
 
 
 
-def build_common_parser() -> argparse.ArgumentParser:
+def add_logging_args(p: argparse.ArgumentParser) -> None:
+    suppr = argparse.SUPPRESS
+    p.add_argument("--debug", action="store_true", default=suppr,
+                   help="verbose packet logging")
+    p.add_argument("-v", "--verbose", action="store_true", default=suppr,
+                   help="info-level logging")
+
+
+def build_logging_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(add_help=False)
+    add_logging_args(parser)
+    return parser
+
+
+def build_common_parser(*, show_transport_help: bool) -> argparse.ArgumentParser:
     SUPPR = argparse.SUPPRESS
     common = argparse.ArgumentParser(add_help=False)
     g = common.add_argument_group("device selection")
     g.add_argument(
         "-d", "--device", default=SUPPR,
-        help="device spec: ble:<mac|alias>, can:<port>, tcp:<host:port>"
+        help=("device spec: ble:<mac|alias>, can:<port>, tcp:<host:port>"
+              if show_transport_help else SUPPR)
     )
     g.add_argument(
         "--addr", default=SUPPR,
-        help="BLE MAC/UUID/alias (shortcut for -d ble:<addr>; env: AS11_ADDR)"
+        help=("BLE MAC/UUID/alias (shortcut for -d ble:<addr>; "
+              "env: AS11_ADDR)" if show_transport_help else SUPPR)
     )
     g.add_argument(
         "-p", "--port", default=SUPPR,
-        help="CAN target (shortcut for -d can:<target>; env: AS11_CAN_PORT)"
+        help=("CAN target (shortcut for -d can:<target>; env: AS11_CAN_PORT)"
+              if show_transport_help else SUPPR)
     )
-    common.add_argument("--debug", action="store_true", default=SUPPR,
-                        help="verbose packet logging")
-    common.add_argument("-v", "--verbose", action="store_true", default=SUPPR,
-                        help="info-level logging")
+    add_logging_args(common)
     if _can_transport is not None:
-        _can_transport.add_args(common)
+        _can_transport.add_args(common, show_help=show_transport_help)
     if _aircannect_transport is not None:
         _aircannect_transport.add_args(common)
     return common
@@ -1332,18 +1184,20 @@ def add_rpc_args(p: argparse.ArgumentParser) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    common = build_common_parser()
+    common = build_common_parser(show_transport_help=True)
+    command_common = build_common_parser(show_transport_help=False)
+    logging_common = build_logging_parser()
     raw_fmt = argparse.RawDescriptionHelpFormatter
 
     p = argparse.ArgumentParser(
-        description="AS11 unified config CLI (BLE / CAN).",
+        description="Air11 configuration, RPC, and data access tool.",
         parents=[common],
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     sub = p.add_subparsers(dest="command", required=True)
 
     g = sub.add_parser(
-        "get", parents=[common],
+        "get", parents=[command_common],
         help="read one or more config variables (Get RPC)",
         epilog="examples:\n"
                "  get SerialNumber\n"
@@ -1363,7 +1217,7 @@ def build_parser() -> argparse.ArgumentParser:
     g.set_defaults(func=cmd_get)
 
     r = sub.add_parser(
-        "rpc", parents=[common],
+        "rpc", parents=[command_common],
         help="call an arbitrary JSON-RPC method",
         epilog="examples:\n"
                "  rpc --method GetVersion\n"
@@ -1380,7 +1234,7 @@ def build_parser() -> argparse.ArgumentParser:
     r.set_defaults(func=cmd_rpc)
 
     st = sub.add_parser(
-        "set", parents=[common],
+        "set", parents=[command_common],
         help="write one or more settings (Set RPC)",
         epilog="values default to string unless --type follows the pair.\n"
                "types: str (default), int, float, bool, json.\n\n"
@@ -1401,14 +1255,14 @@ def build_parser() -> argparse.ArgumentParser:
     st.set_defaults(func=cmd_set)
 
     gt = sub.add_parser(
-        "gettime", parents=[common],
+        "gettime", parents=[command_common],
         help="GetDateTime",
     )
     add_rpc_args(gt)
     gt.set_defaults(func=cmd_gettime)
 
     dt = sub.add_parser(
-        "settime", parents=[common],
+        "settime", parents=[command_common],
         help="SetDateTime (default: host UTC now)",
         epilog="TIME (optional) accepts:\n"
                "  (empty) / now                  host UTC now\n"
@@ -1433,13 +1287,13 @@ def build_parser() -> argparse.ArgumentParser:
                     help="print the payload without transmitting")
     dt.set_defaults(func=cmd_settime)
 
-    s = sub.add_parser("session", parents=[common],
+    s = sub.add_parser("session", parents=[command_common],
                        help="interactive REPL, keeps the transport open")
     add_rpc_args(s)
     s.set_defaults(func=cmd_session)
 
     stream = sub.add_parser(
-        "stream", parents=[common],
+        "stream", parents=[command_common],
         help="start real-time data stream (NDJSON to stdout)",
         epilog="examples:\n"
                "  stream\n"
@@ -1467,7 +1321,7 @@ def build_parser() -> argparse.ArgumentParser:
     stream.set_defaults(func=cmd_stream)
 
     sub_p = sub.add_parser(
-        "subscribe", parents=[common],
+        "subscribe", parents=[command_common],
         help="subscribe to events or DataItem changes (NDJSON to stdout)",
     )
     add_rpc_args(sub_p)
@@ -1481,33 +1335,32 @@ def build_parser() -> argparse.ArgumentParser:
     sub_p.set_defaults(func=cmd_subscribe)
 
     sp = sub.add_parser(
-        "spool", parents=[common],
-        help="download spool data from the device",
+        "spool", parents=[command_common],
+        help="download or decode spool data",
         epilog="examples:\n"
                "  spool Summary\n"
-               "  spool TherapyEvents-RespiratoryEvents --decode\n"
-               "  spool Summary --from-dt 2026-01-01T00:00:00.000Z "
+               "  spool TherapyEvents-RespiratoryEvents\n"
+               "  spool Summary --from-dt 2026-08-01 "
                "-o /tmp/summary.bin\n"
+               "  spool --input /tmp/summary.bin\n"
+               "  spool Summary --input /tmp/summary.bin\n"
                "  spool --list-types",
         formatter_class=raw_fmt,
     )
     add_rpc_args(sp)
     sp.add_argument("spool_type", nargs="?",
-                    help="spool type (see --list-types)")
+                    help="spool type; optional with --input (see --list-types)")
     sp.add_argument("--list-types", action="store_true",
                     help="print known spool types and exit")
-    sp.add_argument("--probe", action="store_true",
-                    help="probe one spool type, or all known types if omitted; "
-                         "prints status without dumping payload")
-    sp.add_argument("--only", choices=("all", "populated"), default="all",
-                    help="probe filter: 'populated' shows only rows with "
-                         "bytes > 0; default 'all'")
-    sp.add_argument("--from-dt", default=None,
-                    help="from datetime (ISO 8601); default 2000-01-01")
+    sp.add_argument(
+        "--from-dt", type=spool_datetime_arg, default=None,
+        help="earliest record time; accepts ISO 8601, a local date such as "
+             "2026-08-01, or a relative value such as -7d; default: all",
+    )
     sp.add_argument("--max-size", type=spool_size_arg, default=4096,
                     help="maxSpoolSize per round")
-    sp.add_argument("--max-rounds", type=positive_int_arg, default=100,
-                    help="cap on continuation rounds")
+    sp.add_argument("--max-rounds", type=positive_int_arg, default=None,
+                    help="optional cap on continuation rounds; default: unlimited")
     sp.add_argument("--no-follow", action="store_true",
                     help="stop after first round; do not follow continuations")
     sp.add_argument("--fragment-timeout", type=positive_float_arg,
@@ -1517,49 +1370,25 @@ def build_parser() -> argparse.ArgumentParser:
                     default=SPOOL_FRAGMENT_SIZE,
                     help="maxFragmentSize passed to PullSpoolFragments "
                          f"(firmware caps it at {SPOOL_FRAGMENT_SIZE_LIMIT})")
-    sp.add_argument("--decode", action="store_true",
-                    help="decode protobuf payload to stdout")
-    sp.add_argument("--raw-proto", action="store_true",
-                    help="with --decode, force generic protobuf dump")
-    sp.add_argument("--details", action="store_true",
-                    help="with --decode, print detailed Summary fields")
-    sp.add_argument("--samples", action="store_true",
-                    help="with --decode, print decoded sample rows as CSV")
+    sp.add_argument("--no-decode", action="store_true",
+                    help="return the raw payload as a Base64 JSON envelope")
+    sp.add_argument("--format", choices=SPOOL_OUTPUT_FORMATS, default=None,
+                    help="decoded output format; default: "
+                         f"{SPOOL_OUTPUT_DEFAULT}")
     sp.add_argument("--app-version", default=None,
-                    help="APPX version for diagnostic error decoding; "
-                         "queried from the device when omitted")
-    sp.add_argument("-o", "--output", default=None,
-                    help="write raw binary to this file")
+                    help="APPX version for diagnostic error decoding; queried "
+                         "for live downloads when omitted")
+    spool_file = sp.add_mutually_exclusive_group()
+    spool_file.add_argument(
+        "-i", "--input", default=None,
+        help="decode a captured spool payload without contacting a device",
+    )
+    spool_file.add_argument("-o", "--output", default=None,
+                            help="write downloaded raw payload to this file")
     sp.set_defaults(func=cmd_spool)
 
-    dec = sub.add_parser(
-        "decode",
-        help="decode a captured spool payload offline (no device needed)",
-        epilog="examples:\n"
-               "  decode summary.bin                    # autodetect type\n"
-               "  decode --type Summary summary.bin     # force a type\n"
-               "  decode --raw-proto unknown.bin        # generic protobuf dump\n"
-               "  decode --samples respflow.bin         # RC03 samples as CSV\n"
-               "  decode --details summary.bin          # full Summary fields",
-        formatter_class=raw_fmt,
-    )
-    dec.add_argument("file",
-                     help="path to a previously captured spool payload")
-    dec.add_argument("--type", default=None,
-                     help="spool type (overrides autodetect)")
-    dec.add_argument("--raw-proto", action="store_true",
-                     help="force generic protobuf dump")
-    dec.add_argument("--details", action="store_true",
-                     help="print detailed Summary fields")
-    dec.add_argument("--samples", action="store_true",
-                     help="print decoded sample rows as CSV")
-    dec.add_argument("--app-version", default=None,
-                     help="APPX version or ApplicationIdentifier for "
-                          "diagnostic error decoding")
-    dec.set_defaults(func=cmd_decode)
-
     kn = sub.add_parser(
-        "known",
+        "known", parents=[logging_common],
         help="show known var/stream/event/spool names (offline, no device)",
         epilog="examples:\n"
                "  known                      list registries\n"
@@ -1588,7 +1417,7 @@ def build_parser() -> argparse.ArgumentParser:
     kn.set_defaults(func=cmd_known)
 
     dev = sub.add_parser(
-        "devices", parents=[common],
+        "devices", parents=[logging_common],
         help="BLE device management (scan/pair/list/alias/unalias)",
     )
     dev_sub = dev.add_subparsers(dest="devices_action")
@@ -1599,6 +1428,7 @@ def build_parser() -> argparse.ArgumentParser:
     dev_sub.add_parser("list", help="list paired devices (default)")
 
     dev_pair = dev_sub.add_parser("pair", help="pair with a BLE device")
+    dev_pair.add_argument("target", help="BLE MAC/UUID/alias")
     dev_pair.add_argument("--passkey", default=None,
                           help="4-digit passkey shown on the device screen "
                                "(prompted if omitted)")
@@ -1643,7 +1473,7 @@ def _configure_logging(args: argparse.Namespace) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    args = build_parser().parse_args(_normalize_cli_args(argv))
     _apply_common_defaults(args)
     _configure_logging(args)
     return args.func(args)
@@ -1673,6 +1503,9 @@ if __name__ == "__main__":
         raise
     except SpoolError as exc:
         print(f"\nspool error: {exc.message}", file=sys.stderr)
+        raise SystemExit(1)
+    except SpoolDecodeError as exc:
+        print(f"\nspool decode error: {exc}", file=sys.stderr)
         raise SystemExit(1)
     except Exception as exc:
         log.exception("fatal: %s", exc)

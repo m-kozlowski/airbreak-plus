@@ -691,10 +691,6 @@ def add_port_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--timeout", type=float, default=0.05, help="serial read timeout in seconds")
     parser.add_argument("--open-delay", type=float, default=0.05, help="delay after opening serial port")
     parser.add_argument("--no-reset-buffers", action="store_true", help="do not clear serial buffers after opening")
-    parser.add_argument("--dtr", dest="dtr", action="store_true", default=None, help="force DTR on after opening port")
-    parser.add_argument("--no-dtr", dest="dtr", action="store_false", help="force DTR off after opening port")
-    parser.add_argument("--rts", dest="rts", action="store_true", default=None, help="force RTS on after opening port")
-    parser.add_argument("--no-rts", dest="rts", action="store_false", help="force RTS off after opening port")
 
 
 def add_can_config_args(parser: argparse.ArgumentParser, *, scan: bool = False) -> None:

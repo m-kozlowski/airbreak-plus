@@ -7,7 +7,6 @@ import argparse
 import os
 import re
 from importlib import import_module
-from as11_can_common import DEFAULT_RPC_RX_ID, DEFAULT_RPC_TX_ID, parse_int
 
 
 CAN_TRANSPORTS = {
@@ -21,29 +20,13 @@ CAN_FLAVOUR_ALIASES = {
 }
 
 
-def add_args(p: argparse.ArgumentParser) -> None:
+def add_args(p: argparse.ArgumentParser, *, show_help: bool = True) -> None:
     suppr = argparse.SUPPRESS
     g = p.add_argument_group("CAN adapter (ignored unless -d can:...)")
     g.add_argument("--can-flavour", default=suppr,
                    choices=tuple(CAN_TRANSPORTS),
-                   help="CAN adapter protocol. By default this is inferred from can:<target>")
-    g.add_argument("--serial-baud", type=int, default=suppr,
-                   help="serial adapter baud / line coding (backend default if omitted)")
-    g.add_argument("--bitrate", type=parse_int, default=suppr,
-                   help="CAN bitrate (default: 1000000)")
-    g.add_argument("--mode", choices=("normal", "silent"), default=suppr,
-                   help="adapter CAN mode (default: normal)")
-    g.add_argument("--no-reset-buffers", action="store_true", default=suppr)
-    g.add_argument("--dtr", dest="dtr", action="store_true", default=suppr)
-    g.add_argument("--no-dtr", dest="dtr", action="store_false")
-    g.add_argument("--rts", dest="rts", action="store_true", default=suppr)
-    g.add_argument("--no-rts", dest="rts", action="store_false")
-    g.add_argument("--tx-id", type=parse_int, default=suppr,
-                   help=f"CAN host->device ID (default 0x{DEFAULT_RPC_TX_ID:03X})")
-    g.add_argument("--rx-id", type=parse_int, default=suppr,
-                   help=f"CAN device->host ID (default 0x{DEFAULT_RPC_RX_ID:03X})")
-    g.add_argument("--frame-interval", type=float, default=suppr,
-                   help="delay between outgoing CAN frames in a datagram (default: 0)")
+                   help=("CAN adapter protocol. By default this is inferred "
+                         "from can:<target>") if show_help else suppr)
 
 
 def split_flavour_target(target: str) -> tuple[str | None, str]:

@@ -1,6 +1,6 @@
 # as11_config
 
-BLE / CAN configuration and data access tool for AirSense 11 / AirCurve 11 series.
+Configuration, RPC, and data access tool for Air11 devices.
 
 Read and write settings, call JSON-RPC methods, stream live data, subscribe to events, download spool data, and manage BLE [pairing aliases](#devices).
 
@@ -66,11 +66,18 @@ as11_config.py -d ble:as11 settime +1h --dry-run
 
 ### session
 
-Open an interactive REPL and keep the transport open across commands.
+Open an interactive CLI and keep the transport open across commands. Interactive
+commands use the same syntax and options as normal `as11_config.py` commands;
+use `help [COMMAND]` to show their standard help. A nested `session` command is
+not accepted.
 
 ```
 as11_config.py -d ble:as11 session
 ```
+
+`SubscribeEvent` subscriptions end with their RPC connection. After an
+interactive `subscribe` command finishes, the session reconnects before showing
+the next prompt.
 
 ### stream / subscribe
 
@@ -108,21 +115,19 @@ not exceed `sampleIntervalMs * 5`.
 
 ### spool
 
-Download spool data, optionally decode it on the host.
+Download and decode spool data.
 
 ```
 as11_config.py -d ble:as11 spool Summary
-as11_config.py -d ble:as11 spool TherapyEvents-RespiratoryEvents --decode
-as11_config.py -d ble:as11 spool SettingProfilesCollection --decode
-as11_config.py -d ble:as11 spool ConfigurationProfilesCollection --decode
-as11_config.py -d ble:as11 spool RespiratoryFlow6p25Hz --decode --samples
-as11_config.py -d ble:as11 spool TherapyOneMinutePeriodic --decode --samples
-as11_config.py -d ble:as11 spool DiagnosticTenMinutePeriodic --decode --samples
-as11_config.py -d ble:as11 spool MachineMetrics --decode
-as11_config.py -d ble:as11 spool SoundcheckVector --decode
-as11_config.py -d ble:as11 spool Summary --from-dt 2026-01-01T00:00:00.000Z -o summary.bin
+as11_config.py -d ble:as11 spool TherapyEvents-RespiratoryEvents --format table
+as11_config.py -d ble:as11 spool RespiratoryFlow6p25Hz --format csv
+as11_config.py -d ble:as11 spool Summary --format summary
+as11_config.py -d ble:as11 spool Summary --from-dt 2026-08-01
+as11_config.py -d ble:as11 spool Summary --from-dt=-7d -o summary.bin
+as11_config.py -d ble:as11 spool Summary --no-decode
+as11_config.py spool --input summary.bin
+as11_config.py spool Summary --input summary.bin
 as11_config.py -d ble:as11 spool --list-types
-as11_config.py -d ble:as11 spool --probe --from-dt 2026-04-29T00:00:00.000Z
 ```
 
 Spool types, payload families, and inner record shapes are listed in
@@ -134,99 +139,86 @@ The tool builds the `spoolAddress` as:
 { "<spool type>": { "fromDateTime": "<ISO timestamp>" } }
 ```
 
-`--probe` runs one non-following spool round per selected type and prints a
-compact status table. Use `--only populated` to hide empty rows. Spools with
-a `gate_var` (currently only `RecordedSound`) are pre-checked and reported as
-`GATED` without a round-trip when the gate is closed.
-
 The confirmed spool-address selector is `fromDateTime`. The returned
 `nextSpoolAddress` uses the same shape and is followed automatically unless
 `--no-follow` is passed.
 
+`--from-dt` accepts a full ISO 8601 timestamp, a local date such as
+`2026-08-01`, Unix epoch seconds, or a relative value such as `-7d`, `-12h`,
+or `-30m`. Without the option, the tool requests all available records.
+
 Each round validates the fragment sequence and the terminal SHA-256 before
 accepting its payload. `--max-size` controls the unencoded payload ceiling per
 round. `--fragment-max` defaults to `3000`; the device clamps larger requests
-to `3576` bytes.
+to `3576` bytes. Use `-v` to show transfer rounds, fragments, and hash checks.
 
-For archived signal spools such as `RespiratoryFlow6p25Hz`, `--decode`
-prints record metadata and decoded RC03 ranges. Add `--samples` to print the
-decoded samples as CSV with `record,index,time_ms,value_raw,value` columns.
+Spool payloads are decoded by default. `--format` selects the presentation:
 
-For `SettingProfilesCollection`, `--decode` prints historical active-profile,
+| Format | Output |
+|--------|--------|
+| `table` | Terminal-oriented record, event, metric, and sample tables; the default. |
+| `json` | Complete decoded model. |
+| `csv` | Complete model flattened to `path,value` rows. |
+| `summary` | Compact record, event-count, or sample-range summary. |
+
+The complete model includes all decoded samples, raw values, units, timing,
+compression metadata, and unrecognized protobuf fields. `--no-decode` instead
+returns a JSON envelope containing the payload as Base64 and the transfer
+metadata. The `-o` option writes the raw payload to a file; combined with
+`--no-decode`, it suppresses payload output on stdout.
+
+Use `-i/--input` to decode a previously captured raw payload without contacting
+a device. The spool type is detected from the payload when omitted. Supply it
+as the positional argument when the outer protobuf field is ambiguous.
+
+Archived signal spools such as `RespiratoryFlow6p25Hz` include complete RC03
+record metadata and both raw and scaled sample arrays.
+
+`SettingProfilesCollection` contains historical active-profile,
 therapy-profile, feature-profile, and alarm-profile snapshots. Pressures and
-time values are scaled into human units. Enum-like settings remain `Raw`
-values.
+time values include their scaled values and units; enum-like settings retain
+their raw values.
 
-For `ConfigurationProfilesCollection`, `--decode` prints the configuration
+`ConfigurationProfilesCollection` contains the configuration
 attributes and `DataDeliveryControlV2` spool on/off mask.
 
-For `TherapyOneMinutePeriodic`, `--decode` prints record ranges for the
-one-minute therapy measurements. Add `--samples` to print dashboard-friendly
-CSV rows with pressure, leak, ventilation, respiratory rate, I:E ratio, and
-oximetry columns when oximetry is present.
+`TherapyOneMinutePeriodic` contains one-minute pressure, leak, ventilation,
+respiratory-rate, I:E-ratio, and oximetry series when oximetry is present.
 
-For metric snapshots (`MachineMetrics`, `MemoryMetrics`,
-`CellularDataUsage`), `--decode` prints named current snapshot fields where
-known. `MemoryMetrics` reports write, erase, and FTL generation counters for
-the `SETTINGS`, `DATALOG`, and `UPGRADE` volumes in external NOR flash.
+Metric snapshots (`MachineMetrics`, `MemoryMetrics`, `CellularDataUsage`)
+contain named current snapshot fields where known. `MemoryMetrics` reports
+write, erase, and FTL generation counters for the `SETTINGS`, `DATALOG`, and
+`UPGRADE` volumes in external NOR flash.
 
-For `DiagnosticTenMinutePeriodic`, `--decode` prints ten-minute cellular
-diagnostic signal ranges. Add `--samples` to print CSV samples for signal
-strength and signal-quality streams.
+`DiagnosticTenMinutePeriodic` contains ten-minute cellular signal-strength and
+signal-quality series.
 
-For `atmosphericPressure10min`, `--decode` prints ten-minute atmospheric
-pressure ranges. Add `--samples` for CSV output. The archive scale is decoded;
-the physical unit is not identified.
+For `atmosphericPressure10min`, the archive scale is decoded; the physical unit
+is not identified.
 
-For `SoundcheckVector`, `--decode` prints soundcheck vector bins and peak
-pairs. Add `--samples` for CSV rows.
+`SoundcheckVector` contains soundcheck vector bins and peak pairs.
 
-`AcousticSignatureV2` and `RecordedSound` use conservative byte/blob
-decoders because populated samples have not yet been verified. `RecordedSound`
-is gated by `SoundDownloadAllowed`.
+`AcousticSignatureV2` and `RecordedSound` retain their blob data as Base64.
+`RecordedSound` is gated by `SoundDownloadAllowed`.
 
-For event spools, `--decode` prints a TSV table with event type, start/end
-timestamps, duration, and any extra fields. Event type names are shown only
-where the mapping is known; otherwise the numeric type is left as-is.
+Event records include the numeric type, known event name, start/end timestamps,
+duration, and all extra fields.
 
 Diagnostic exception spools use APPX-specific error manifests. Live `spool`
 decoding reads `ApplicationIdentifier` automatically. For an offline capture,
 pass `--app-version`, or omit it to compare all bundled firmware maps:
 
 ```
-as11_config.py decode --type DiagnosticExceptionEvents-AppErrors \
-    --app-version 8.4.0 app-errors.bin
+as11_config.py spool DiagnosticExceptionEvents-AppErrors --input app-errors.bin \
+    --app-version 8.4.0
 ```
 
-The output retains the numeric code and lists every matching direct producer
-and mapped backend status. Codes with more than one candidate are marked
-`[ambiguous]`. Add `--details` to include producer call-site addresses.
+The output retains the numeric code and lists every matching direct producer,
+producer call site, and mapped backend status. Codes with more than one
+candidate are marked `[ambiguous]`.
 
-For `Summary`, `--decode` prints a compact record header plus scalar and
-percentile metric lines. The compact header includes the period range,
-`duration_min`, timezone offset, session count, and session entries when
-present. Each entry contains its start timestamp and duration in minutes. Add
-`--details` to print the field-by-field wire view with decoded percentile
-annotations.
-
-Use `--decode --raw-proto` to bypass the spool-specific pretty-printers and
-inspect the generic protobuf wire structure.
-
-### decode
-
-Decode a previously captured spool payload offline, without contacting the
-device. Pass `--type` when the payload type is known.
-
-```
-as11_config.py decode summary.bin
-as11_config.py decode --type Summary summary.bin
-as11_config.py decode --details summary.bin
-as11_config.py decode --type SettingProfilesCollection settings.bin
-as11_config.py decode --samples respflow.bin
-as11_config.py decode --type TherapyOneMinutePeriodic --samples therapy-1min.bin
-as11_config.py decode --type DiagnosticTenMinutePeriodic --samples diag10.bin
-as11_config.py decode --raw-proto unknown.bin
-```
+`Summary` records contain the period range, duration, timezone offset, session
+entries, scalar values, and percentile metrics.
 
 ### known
 
@@ -263,7 +255,7 @@ storage for paired devices.
 
 ```
 as11_config.py devices scan
-as11_config.py -d ble:AA:BB:CC:DD:EE:FF devices pair
+as11_config.py devices pair AA:BB:CC:DD:EE:FF
 as11_config.py devices alias AA:BB:CC:DD:EE:FF bedroom
 as11_config.py devices ota-key bedroom --key HEXSTR
 as11_config.py devices ota-key bedroom --key-file ota-key.hex

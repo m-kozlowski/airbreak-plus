@@ -1,11 +1,10 @@
 # as11_flash
 
-BLE / CAN firmware flash tool for AirSense 11 / AirCurve 11 series.
+Firmware upgrade and bootloader service tool for Air11 devices.
 
 Push a raw firmware image to the device, target a specific flash block,
 optionally apply the upgrade. Builds the `.abc` OTA container internally and
-sends it over the same RPC path the device's own updater uses. Supports both
-BLE and CAN transports.
+sends it over the same RPC path the device's own updater uses.
 
 ## Contents
 

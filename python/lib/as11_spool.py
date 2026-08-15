@@ -8,26 +8,30 @@ from __future__ import annotations
 import base64
 import binascii
 from collections import Counter
+import csv
 import hashlib
+import json
 import sys
+import textwrap
 from typing import Iterator
 
 from as11_rpc_vars import EVENT_FAMILIES, SPOOL_REGISTRY
 
 try:
     from as11_diagnostic_errors import (
-        SELECTOR_BY_SPOOL, normalize_app_version, summarize_diagnostic_code,
+        SELECTOR_BY_SPOOL, summarize_diagnostic_code,
     )
 except ModuleNotFoundError as exc:
     if exc.name != "as11_diagnostic_errors":
         raise
     SELECTOR_BY_SPOOL = {}
-    normalize_app_version = None
     summarize_diagnostic_code = None
 
 
 SPOOL_FRAGMENT_SIZE = 3000
 SPOOL_FRAGMENT_SIZE_LIMIT = 3576
+SPOOL_OUTPUT_FORMATS = ("json", "csv", "table", "summary")
+SPOOL_OUTPUT_DEFAULT = "table"
 
 
 class SpoolError(Exception):
@@ -44,6 +48,10 @@ class SpoolError(Exception):
         self.response = response
         self.message = message
         self.code = code
+
+
+class SpoolDecodeError(ValueError):
+    """A spool payload could not be decoded completely."""
 
 
 # Single-round spool cycle. Transport-agnostic.
@@ -246,67 +254,6 @@ def proto_decode(data: bytes) -> list[tuple[int, int, object]]:
         else:
             raise ValueError(f"unsupported wire type {wire} at offset {i}")
     return out
-
-
-def proto_pretty(data: bytes, indent: int = 0, out=None) -> None:
-    """Pretty-print protobuf blob with nested-message heuristic."""
-    from datetime import datetime, timezone
-    if out is None:
-        out = sys.stdout
-    pad = "  " * indent
-    for field, wire, value in proto_decode(data):
-        if wire == 2:
-            try:
-                sub = proto_decode(value)
-                if sub and all(0 < f < 2**29 for f, _, _ in sub):
-                    print(f"{pad}{field} (msg, {len(value)}B):", file=out)
-                    proto_pretty(value, indent + 1, out)
-                    continue
-            except (ValueError, IndexError):
-                pass
-            if value and all(32 <= b < 127 for b in value):
-                print(f"{pad}{field} (str): {value.decode()!r}", file=out)
-            else:
-                h = value.hex()
-                if len(h) > 80:
-                    h = h[:80] + "..."
-                print(f"{pad}{field} (bytes {len(value)}B): {h}", file=out)
-        elif wire == 0:
-            note = ""
-            if 10**12 < value < 2 * 10**12:
-                try:
-                    note = f" [~{datetime.fromtimestamp(value / 1000, timezone.utc).isoformat()}]"
-                except (OverflowError, OSError):
-                    pass
-            elif 10**9 < value < 2 * 10**9:
-                try:
-                    note = f" [~{datetime.fromtimestamp(value, timezone.utc).isoformat()}]"
-                except (OverflowError, OSError):
-                    pass
-            print(f"{pad}{field} (varint): {value}{note}", file=out)
-        else:
-            print(f"{pad}{field} ({_PROTO_WIRE.get(wire, wire)}): {value}", file=out)
-
-
-def spool_payload_shape(data: bytes) -> str:
-    """Compact protobuf field summary for probe output."""
-    if not data:
-        return "empty"
-    try:
-        fields = proto_decode(data)
-    except (ValueError, IndexError) as exc:
-        return f"non-protobuf: {exc}"
-    counts = Counter((field, wire) for field, wire, _value in fields)
-    parts = []
-    for (field, wire), count in sorted(counts.items())[:8]:
-        name = _PROTO_WIRE.get(wire, str(wire))
-        parts.append(f"f{field}/{name}x{count}")
-    if len(counts) > 8:
-        parts.append("...")
-    if b"RC03" in data:
-        parts.append("RC03")
-    return ", ".join(parts)
-
 
 
 def _event_code_map(selector: str, codes: tuple[int, ...],
@@ -976,105 +923,6 @@ def _therapy_1minute_records(data: bytes) -> list[bytes]:
     return [data]
 
 
-def _fmt_number(value) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, float):
-        return f"{value:.8g}"
-    return str(value)
-
-
-def _fmt_duration_ms(value: int) -> str:
-    if value % 1000 == 0:
-        return f"{value // 1000}s"
-    return f"{value}ms"
-
-
-def _format_profile_value(value: int, kind: str) -> str:
-    if kind == "pressure":
-        return f"{value / 100.0:.8g} cmH2O"
-    if kind == "seconds":
-        return f"{value / 1000.0:.8g} s"
-    if kind == "centiseconds":
-        return f"{value / 100.0:.8g} s"
-    if kind == "milliseconds":
-        return f"{value} ms"
-    if kind == "minutes_scaled":
-        return f"{value / 100.0:.8g} min"
-    if kind == "celsius":
-        return f"{value / 100.0:.8g} C"
-    if kind == "centimeters":
-        return f"{value} cm"
-    if kind == "bpm_scaled":
-        return f"{value / 100.0:.8g} bpm"
-    if kind == "l_min_scaled":
-        return f"{value / 100.0:.8g} L/min"
-    return str(value)
-
-
-def _format_metric_value(value: int, kind: str) -> str:
-    if kind == "timestamp":
-        return _fmt_utc_ms(value)
-    if kind == "duration_ms":
-        return _fmt_duration_ms(value)
-    if kind == "bytes":
-        return f"{value} B"
-    return str(value)
-
-
-def _decode_varint_message(data: bytes) -> dict[int, list[int]]:
-    out: dict[int, list[int]] = {}
-    for field, wire, value in proto_decode(data):
-        if wire == 0:
-            out.setdefault(field, []).append(value)
-    return out
-
-
-def _format_named_message(data: bytes,
-                          defs: tuple[tuple[int, str, str], ...],
-                          *, details: bool = False) -> str:
-    values = _decode_varint_message(data)
-    parts = []
-    used = set()
-    for field, name, kind in defs:
-        if field not in values:
-            continue
-        used.add(field)
-        if len(values[field]) == 1:
-            value = _format_profile_value(values[field][0], kind)
-        else:
-            value = "[" + ",".join(
-                _format_profile_value(item, kind) for item in values[field]
-            ) + "]"
-        parts.append(f"{name}={value}")
-    if details:
-        for field in sorted(set(values) - used):
-            raw = ",".join(str(item) for item in values[field])
-            parts.append(f"f{field}={raw}")
-    return " ".join(parts)
-
-
-def _profile_attr(data: bytes) -> tuple[int | None, str, int | None, list[str]]:
-    applied_ms = None
-    source = ""
-    transaction = None
-    extras = []
-    for field, wire, value in proto_decode(data):
-        if field == 1 and wire == 0:
-            applied_ms = value
-        elif field in (2, 3) and wire == 2:
-            if value:
-                try:
-                    source = value.decode("utf-8")
-                except UnicodeDecodeError:
-                    source = value.hex()
-        elif field in (3, 4) and wire == 0:
-            transaction = value
-        else:
-            extras.append(f"f{field}/{_PROTO_WIRE.get(wire, wire)}")
-    return applied_ms, source, transaction, extras
-
-
 def _setting_profile_records(data: bytes) -> list[bytes]:
     top = proto_decode(data)
     if top and all(field == 3 and wire == 2 for field, wire, _value in top):
@@ -1109,431 +957,6 @@ def _delivery_status(value: int) -> str:
     if value == 2:
         return "On"
     return str(value)
-
-
-def _print_active_profiles(data: bytes, out, *, details: bool) -> None:
-    therapy_profile = None
-    feature_profiles = []
-    extras = []
-    for field, wire, value in proto_decode(data):
-        if field == 1 and wire == 0:
-            therapy_profile = value
-        elif field == 2 and wire == 0:
-            feature_profiles.append(value)
-        else:
-            extras.append(
-                f"f{field}/{_PROTO_WIRE.get(wire, wire)}="
-                f"{_format_wire_value(wire, value)}"
-            )
-    if therapy_profile is None:
-        therapy_text = "n/a"
-    else:
-        name = ACTIVE_THERAPY_PROFILE_NAMES.get(
-            therapy_profile, f"id{therapy_profile}"
-        )
-        therapy_text = f"{name}({therapy_profile})"
-    names = [ACTIVE_FEATURE_PROFILE_NAMES.get(item, f"id{item}")
-             for item in feature_profiles]
-    print(f"  ActiveProfiles: therapy={therapy_text} "
-          f"features={','.join(names)}", file=out)
-    if details and extras:
-        print(f"    extras={','.join(extras)}", file=out)
-
-
-def _print_therapy_profiles(data: bytes, out, *, details: bool) -> None:
-    print("  TherapyProfiles:", file=out)
-    for field, wire, value in proto_decode(data):
-        if wire != 2:
-            if details:
-                print(f"    f{field}/{_PROTO_WIRE.get(wire, wire)}", file=out)
-            continue
-        name, defs = THERAPY_PROFILE_FIELDS.get(
-            field, (f"TherapyProfile{field}", ())
-        )
-        body = _format_named_message(value, defs, details=details or not defs)
-        print(f"    {name}: {body}", file=out)
-
-
-def _print_reminders(data: bytes, out, *, details: bool) -> None:
-    for field, wire, value in proto_decode(data):
-        name = REMINDER_FIELDS.get(field, f"Reminder{field}")
-        if wire != 2:
-            if details:
-                print(f"      {name}: f{field}/{_PROTO_WIRE.get(wire, wire)}",
-                      file=out)
-            continue
-        values = _decode_varint_message(value)
-        parts = []
-        if 1 in values:
-            parts.append(f"EnableRaw={values[1][0]}")
-        if 2 in values:
-            parts.append(f"StartDateTime={_fmt_utc_ms(values[2][0])}")
-        if 3 in values:
-            parts.append(f"PeriodRaw={values[3][0]}")
-        if details:
-            for extra in sorted(set(values) - {1, 2, 3}):
-                raw = ",".join(str(v) for v in values[extra])
-                parts.append(f"f{extra}={raw}")
-        print(f"      {name}: {' '.join(parts)}", file=out)
-
-
-def _print_feature_profiles(data: bytes, out, *, details: bool) -> None:
-    print("  FeatureProfiles:", file=out)
-    for field, wire, value in proto_decode(data):
-        if field == 14 and wire == 2:
-            print("    ReminderFeature:", file=out)
-            _print_reminders(value, out, details=details)
-            continue
-        if wire != 2:
-            if details:
-                print(f"    f{field}/{_PROTO_WIRE.get(wire, wire)}", file=out)
-            continue
-        name, defs = FEATURE_PROFILE_FIELDS.get(
-            field, (f"FeatureProfile{field}", ())
-        )
-        body = _format_named_message(value, defs, details=details or not defs)
-        print(f"    {name}: {body}", file=out)
-
-
-def _print_alarm_profiles(data: bytes, out, *, details: bool) -> None:
-    print("  AlarmProfiles:", file=out)
-    for field, wire, value in proto_decode(data):
-        if wire != 2:
-            if details:
-                print(f"    f{field}/{_PROTO_WIRE.get(wire, wire)}", file=out)
-            continue
-        name, defs = ALARM_PROFILE_FIELDS.get(
-            field, (f"AlarmProfile{field}", ())
-        )
-        body = _format_named_message(value, defs, details=details or not defs)
-        print(f"    {name}: {body}", file=out)
-
-
-def setting_profiles_pretty(spool_type: str, data: bytes, out=None,
-                            *, details: bool = False) -> bool:
-    """Print SettingProfilesCollection records."""
-    if out is None:
-        out = sys.stdout
-    if spool_type != "SettingProfilesCollection":
-        return False
-    try:
-        records = _setting_profile_records(data)
-    except (ValueError, IndexError) as exc:
-        print(f"# cannot decode SettingProfilesCollection protobuf: {exc}",
-              file=out)
-        return True
-
-    print("# SettingProfilesCollection spool", file=out)
-    for record_index, record in enumerate(records):
-        try:
-            fields = proto_decode(record)
-        except (ValueError, IndexError) as exc:
-            print(f"record {record_index}: invalid protobuf: {exc}", file=out)
-            continue
-        print(f"record {record_index}:", file=out)
-        for field, wire, value in fields:
-            if field == 1 and wire == 2:
-                applied, source, transaction, extras = _profile_attr(value)
-                source_part = f" source={source!r}" if source else ""
-                tx_part = (f" transaction={transaction}"
-                           if transaction is not None else "")
-                print(f"  Attributes: AppliedDateTime={_fmt_utc_ms(applied)}"
-                      f"{source_part}{tx_part}", file=out)
-                if details and extras:
-                    print(f"    extras={','.join(extras)}", file=out)
-            elif field == 2 and wire == 2:
-                _print_active_profiles(value, out, details=details)
-            elif field == 3 and wire == 2:
-                _print_therapy_profiles(value, out, details=details)
-            elif field == 4 and wire == 2:
-                _print_feature_profiles(value, out, details=details)
-            elif field == 5 and wire == 2:
-                _print_alarm_profiles(value, out, details=details)
-            elif details:
-                print(f"  f{field}/{_PROTO_WIRE.get(wire, wire)}", file=out)
-    return True
-
-
-def _print_data_delivery_control(data: bytes, out, *, details: bool) -> None:
-    values = _decode_varint_message(data)
-    parts = []
-    for field in sorted(values):
-        name = DATA_DELIVERY_FIELDS.get(field, f"id{field}")
-        if len(values[field]) == 1:
-            parts.append(f"{name}={_delivery_status(values[field][0])}")
-        else:
-            raw = ",".join(_delivery_status(item) for item in values[field])
-            parts.append(f"{name}=[{raw}]")
-    line = "    "
-    for item in parts:
-        if len(line) + len(item) > 100:
-            print(line.rstrip(), file=out)
-            line = "    "
-        line += item + "  "
-    if line.strip():
-        print(line.rstrip(), file=out)
-    if details:
-        missing = sorted(set(DATA_DELIVERY_FIELDS) - set(values))
-        if missing:
-            names = ",".join(DATA_DELIVERY_FIELDS[item] for item in missing)
-            print(f"    absent={names}", file=out)
-
-
-def configuration_profiles_pretty(spool_type: str, data: bytes, out=None,
-                                  *, details: bool = False) -> bool:
-    """Print ConfigurationProfilesCollection records."""
-    if out is None:
-        out = sys.stdout
-    if spool_type != "ConfigurationProfilesCollection":
-        return False
-    try:
-        records = _config_profile_records(data)
-    except (ValueError, IndexError) as exc:
-        print(f"# cannot decode ConfigurationProfilesCollection protobuf: {exc}",
-              file=out)
-        return True
-
-    print("# ConfigurationProfilesCollection spool", file=out)
-    for record_index, record in enumerate(records):
-        try:
-            fields = proto_decode(record)
-        except (ValueError, IndexError) as exc:
-            print(f"record {record_index}: invalid protobuf: {exc}", file=out)
-            continue
-        print(f"record {record_index}:", file=out)
-        for field, wire, value in fields:
-            if field == 1 and wire == 2:
-                applied, source, transaction, extras = _profile_attr(value)
-                source_part = f" source={source!r}" if source else ""
-                tx_part = (f" transaction={transaction}"
-                           if transaction is not None else "")
-                print(f"  Attributes: AppliedDateTime={_fmt_utc_ms(applied)}"
-                      f"{source_part}{tx_part}", file=out)
-                if details and extras:
-                    print(f"    extras={','.join(extras)}", file=out)
-            elif field == 2 and wire == 2:
-                print("  DataDeliveryControlV2:", file=out)
-                _print_data_delivery_control(value, out, details=details)
-            elif details:
-                print(f"  f{field}/{_PROTO_WIRE.get(wire, wire)}", file=out)
-    return True
-
-
-def _format_attr_message(data: bytes) -> str:
-    fields = []
-    for field, wire, value in proto_decode(data):
-        if field == 1 and wire == 0:
-            fields.append(f"ReportDateTime={_fmt_utc_ms(value)}")
-        elif wire == 0:
-            fields.append(f"f{field}={value}")
-        elif wire == 2:
-            fields.append(f"f{field}=bytes:{len(value)}")
-        else:
-            fields.append(f"f{field}/{_PROTO_WIRE.get(wire, wire)}={value}")
-    return " ".join(fields)
-
-
-def _metric_record_pretty(spool_type: str, record: bytes, out,
-                          *, details: bool) -> None:
-    spec = METRIC_SPOOL_DEFS[spool_type]
-    field_defs = spec["fields"]
-    for field, wire, value in proto_decode(record):
-        label, kind = field_defs.get(field, (f"f{field}", "raw"))
-        if kind == "attributes" and wire == 2:
-            print(f"  {label}: {_format_attr_message(value)}", file=out)
-        elif wire == 0:
-            print(f"  {label}: {_format_metric_value(value, kind)}", file=out)
-        elif details and wire == 2:
-            print(f"  {label}: bytes={len(value)}", file=out)
-        elif details:
-            print(f"  {label}: {_PROTO_WIRE.get(wire, wire)}={value}",
-                  file=out)
-
-
-def _memory_metrics_pretty(record: bytes, out, *, details: bool) -> None:
-    for field, wire, value in proto_decode(record):
-        if field == 1 and wire == 2:
-            print(f"  Attributes: {_format_attr_message(value)}", file=out)
-            continue
-        if field == 2 and wire == 2:
-            values = _decode_varint_message(value)
-            set_id = values.get(1, [None])[0]
-            metric_set = MEMORY_METRIC_SETS.get(set_id)
-            parts = [f"set={set_id}"]
-            used = {1}
-            if metric_set is not None:
-                volume, source_fields = metric_set
-                parts.append(f"volume={volume}")
-                for subfield, (source_tag, name) in enumerate(
-                        source_fields, start=2):
-                    if subfield not in values:
-                        continue
-                    used.add(subfield)
-                    raw = ",".join(str(item) for item in values[subfield])
-                    parts.append(f"{name}={raw}({source_tag})")
-            if details or metric_set is None:
-                for subfield in sorted(set(values) - used):
-                    raw = ",".join(str(item) for item in values[subfield])
-                    parts.append(f"f{subfield}={raw}")
-            print("  MemoryMetric: " + " ".join(parts), file=out)
-            continue
-        if details:
-            print(f"  f{field}/{_PROTO_WIRE.get(wire, wire)}", file=out)
-
-
-def metric_spool_pretty(spool_type: str, data: bytes, out=None,
-                        *, details: bool = False) -> bool:
-    """Print metric snapshot spools."""
-    if out is None:
-        out = sys.stdout
-    if spool_type not in METRIC_SPOOL_TYPES:
-        return False
-    if not data:
-        print(f"# {spool_type} spool is empty", file=out)
-        return True
-
-    if spool_type == "MemoryMetrics":
-        expected_field = 16
-    else:
-        expected_field = METRIC_SPOOL_DEFS.get(spool_type, {}).get("wire_field")
-    try:
-        records = _wrapped_records(data, expected_field)
-    except (ValueError, IndexError) as exc:
-        print(f"# cannot decode {spool_type} protobuf: {exc}", file=out)
-        return True
-
-    print(f"# {spool_type} metric spool", file=out)
-    for record_index, record in enumerate(records):
-        print(f"record {record_index}:", file=out)
-        if spool_type == "MemoryMetrics":
-            _memory_metrics_pretty(record, out, details=details)
-        elif spool_type in METRIC_SPOOL_DEFS:
-            _metric_record_pretty(spool_type, record, out, details=details)
-        else:
-            proto_pretty(record, indent=1, out=out)
-    return True
-
-
-def therapy_one_minute_pretty(spool_type: str, data: bytes, out=None,
-                              *, samples: bool = False,
-                              details: bool = False) -> bool:
-    """Print TherapyOneMinutePeriodic records as ranges or CSV samples."""
-    if out is None:
-        out = sys.stdout
-    if spool_type != "TherapyOneMinutePeriodic":
-        return False
-
-    try:
-        records = _therapy_1minute_records(data)
-    except (ValueError, IndexError) as exc:
-        print(f"# cannot decode TherapyOneMinutePeriodic protobuf: {exc}",
-              file=out)
-        return True
-
-    columns = [
-        THERAPY_1MINUTE_FIELDS[field]["column"]
-        for field in sorted(THERAPY_1MINUTE_FIELDS)
-    ]
-    if samples:
-        raw_columns = []
-        if details:
-            raw_columns = [
-                "raw_" + THERAPY_1MINUTE_FIELDS[field]["column"]
-                for field in sorted(THERAPY_1MINUTE_FIELDS)
-            ]
-        print(",".join(
-            ["record", "index", "time_ms", "time_utc"] + columns + raw_columns
-        ), file=out)
-    else:
-        print("# TherapyOneMinutePeriodic spool", file=out)
-        print("# field 3 sample blocks are headerless int16 delta2/Rice series",
-              file=out)
-
-    for record_index, record in enumerate(records):
-        try:
-            fields = proto_decode(record)
-        except (ValueError, IndexError) as exc:
-            print(f"record {record_index}: invalid protobuf: {exc}", file=out)
-            continue
-
-        interval_token = None
-        signals = {}
-        extras = []
-        for field, wire, value in fields:
-            if field == 15 and wire == 0:
-                interval_token = value
-            elif field in THERAPY_1MINUTE_FIELDS and wire == 2:
-                try:
-                    signals[field] = _therapy_1minute_signal(value, field)
-                except (ValueError, IndexError) as exc:
-                    extras.append((field, f"decode_error={exc}"))
-            else:
-                extras.append((field, _PROTO_WIRE.get(wire, wire)))
-
-        interval_ms = _therapy_1minute_interval_ms(interval_token)
-        starts = [
-            sig["start_ms"] for sig in signals.values()
-            if sig["start_ms"] is not None
-        ]
-        start_ms = min(starts) if starts else None
-        sample_count = max((len(sig["values"]) for sig in signals.values()),
-                           default=0)
-
-        if samples:
-            for sample_index in range(sample_count):
-                ts = ""
-                ts_utc = ""
-                if start_ms is not None:
-                    ts = str(start_ms + sample_index * interval_ms)
-                    ts_utc = _fmt_utc_ms(int(ts))
-                values = []
-                raw_values = []
-                for field in sorted(THERAPY_1MINUTE_FIELDS):
-                    sig = signals.get(field)
-                    if sig is None or sample_index >= len(sig["values"]):
-                        values.append("")
-                        raw_values.append("")
-                    else:
-                        values.append(_fmt_number(sig["values"][sample_index]))
-                        raw_values.append(str(sig["raw"][sample_index]))
-                row = [str(record_index), str(sample_index), ts, ts_utc] + values
-                if details:
-                    row += raw_values
-                print(",".join(row), file=out)
-            continue
-
-        signal_names = ",".join(
-            THERAPY_1MINUTE_FIELDS[field]["name"]
-            for field in sorted(signals)
-        )
-        print(f"record {record_index}: start={start_ms} "
-              f"[{_fmt_utc_ms(start_ms) if start_ms is not None else ''}] "
-              f"interval_ms={interval_ms} samples={sample_count} "
-              f"signals={signal_names}", file=out)
-        for field in sorted(signals):
-            sig = signals[field]
-            spec = sig["spec"]
-            raw = sig["raw"]
-            values = sig["values"]
-            if not raw:
-                print(f"  {spec['name']}: samples=0", file=out)
-                continue
-            detail = ""
-            if details:
-                detail = (f" status={sig['status']} "
-                          f"blob_bytes={len(sig['blob'])}")
-            print(
-                f"  {spec['name']}: samples={len(values)} unit={spec['unit']} "
-                f"raw_min={min(raw)} raw_max={max(raw)} "
-                f"value_min={min(values):.8g} value_max={max(values):.8g}"
-                f"{detail}",
-                file=out,
-            )
-        if extras:
-            print("  extras=" + ",".join(f"f{field}:{note}"
-                                         for field, note in extras),
-                  file=out)
-    return True
 
 
 def _periodic_compressed_interval_ms(token: int | None) -> int:
@@ -1614,153 +1037,6 @@ def _atmospheric_pressure_record(data: bytes) -> dict:
     }
 
 
-def _atmospheric_pressure_pretty(data: bytes, out, *, samples: bool,
-                                 details: bool) -> None:
-    records = _wrapped_records(data, 27)
-    if samples:
-        print("record,signal,index,time_ms,time_utc,value_raw,value", file=out)
-    else:
-        print("# atmosphericPressure10min compressed periodic spool", file=out)
-
-    for record_index, record in enumerate(records):
-        try:
-            decoded = _atmospheric_pressure_record(record)
-        except (ValueError, IndexError) as exc:
-            if not samples:
-                print(f"record {record_index}: invalid protobuf: {exc}",
-                      file=out)
-            continue
-
-        if samples:
-            for sample_index, (raw, value) in enumerate(
-                    zip(decoded["raw"], decoded["values"])):
-                timestamp = ""
-                timestamp_text = ""
-                if decoded["start_ms"] is not None:
-                    timestamp = str(
-                        decoded["start_ms"]
-                        + sample_index * decoded["interval_ms"]
-                    )
-                    timestamp_text = _fmt_utc_ms(int(timestamp))
-                print(f"{record_index},AtmosphericPressure,{sample_index},"
-                      f"{timestamp},{timestamp_text},{raw},"
-                      f"{_fmt_number(value)}", file=out)
-            continue
-
-        start = decoded["start_ms"]
-        start_text = _fmt_utc_ms(start) if start is not None else "n/a"
-        raw = decoded["raw"]
-        values = decoded["values"]
-        print(f"record {record_index}: marker={decoded['marker']} "
-              f"start={start_text} interval_ms={decoded['interval_ms']} "
-              f"samples={len(values)}", file=out)
-        if raw:
-            print(f"  AtmosphericPressure: raw_min={min(raw)} "
-                  f"raw_max={max(raw)} "
-                  f"value_min={_fmt_number(min(values))} "
-                  f"value_max={_fmt_number(max(values))}", file=out)
-            print(f"    first_values={_rc03_preview(values[:8])}", file=out)
-            print(f"    last_values={_rc03_preview(values[-8:])}", file=out)
-        if details and decoded["extras"]:
-            print(f"  extras={decoded['extras']}", file=out)
-
-
-def periodic_compressed_pretty(spool_type: str, data: bytes, out=None,
-                               *, samples: bool = False,
-                               details: bool = False) -> bool:
-    """Print DiagnosticTenMinutePeriodic/related compressed series."""
-    if out is None:
-        out = sys.stdout
-    if spool_type not in PERIODIC_COMPRESSED_SPOOL_TYPES:
-        return False
-    if not data:
-        print(f"# {spool_type} spool is empty", file=out)
-        return True
-    if spool_type == "atmosphericPressure10min":
-        try:
-            _atmospheric_pressure_pretty(
-                data, out, samples=samples, details=details
-            )
-        except (ValueError, IndexError) as exc:
-            print(f"# cannot decode {spool_type} protobuf: {exc}", file=out)
-        return True
-
-    expected = SPOOL_REGISTRY.get(spool_type, {}).get("wire_field")
-    try:
-        records = _wrapped_records(data, expected)
-    except (ValueError, IndexError) as exc:
-        print(f"# cannot decode {spool_type} protobuf: {exc}", file=out)
-        return True
-
-    if samples:
-        print("record,signal,index,time_ms,time_utc,value_raw,value", file=out)
-    else:
-        print(f"# {spool_type} compressed periodic spool", file=out)
-        print("# field 1 = origin/kind, signal fields carry interval, "
-              "start timestamp, and a headerless int16 delta2/Rice block",
-              file=out)
-
-    for record_index, record in enumerate(records):
-        try:
-            fields = proto_decode(record)
-        except (ValueError, IndexError) as exc:
-            if not samples:
-                print(f"record {record_index}: invalid protobuf: {exc}",
-                      file=out)
-            continue
-        origin = None
-        signals = []
-        extras = []
-        for field, wire, value in fields:
-            if field == 1 and wire == 0:
-                origin = value
-            elif wire == 2:
-                try:
-                    signals.append(_periodic_compressed_signal(field, value))
-                except (ValueError, IndexError) as exc:
-                    extras.append(f"f{field}:decode_error={exc}")
-            else:
-                extras.append(f"f{field}/{_PROTO_WIRE.get(wire, wire)}")
-
-        if samples:
-            for sig in signals:
-                name = sig["spec"]["name"]
-                for sample_index, (raw, physical) in enumerate(
-                        zip(sig["raw"], sig["values"])):
-                    ts = ""
-                    ts_utc = ""
-                    if sig["start_ms"] is not None:
-                        ts = str(sig["start_ms"]
-                                 + sample_index * sig["interval_ms"])
-                        ts_utc = _fmt_utc_ms(int(ts))
-                    print(f"{record_index},{name},{sample_index},{ts},"
-                          f"{ts_utc},{raw},{_fmt_number(physical)}",
-                          file=out)
-            continue
-
-        print(f"record {record_index}: origin={origin} "
-              f"signals={len(signals)}", file=out)
-        for sig in signals:
-            values = sig["values"]
-            raw = sig["raw"]
-            name = sig["spec"]["name"]
-            start = sig["start_ms"]
-            start_text = _fmt_utc_ms(start) if start is not None else "n/a"
-            print(f"  {name}: start={start_text} "
-                  f"interval_ms={sig['interval_ms']} samples={len(values)} "
-                  f"raw_min={min(raw)} raw_max={max(raw)} "
-                  f"value_min={_fmt_number(min(values))} "
-                  f"value_max={_fmt_number(max(values))}",
-                  file=out)
-            print(f"    first_values={_rc03_preview(values[:8])}", file=out)
-            print(f"    last_values={_rc03_preview(values[-8:])}", file=out)
-            if details and sig["extras"]:
-                print(f"    extras={sig['extras']}", file=out)
-        if details and extras:
-            print(f"  extras={extras}", file=out)
-    return True
-
-
 def _fmt_utc_ms(value: int) -> str:
     from datetime import datetime, timezone
     try:
@@ -1834,10 +1110,6 @@ def _rc03_scale(params: list[int]) -> float:
     return 2.0 * (10.0 ** params[1])
 
 
-def _rc03_preview(values: list[float]) -> str:
-    return "[" + ", ".join(f"{value:.8g}" for value in values) + "]"
-
-
 def rc03_decode_block(block: bytes, sample_count: int) -> dict:
     rc03 = _rc03_parse(block)
     params = rc03["params"]
@@ -1873,240 +1145,6 @@ def rc03_decode_block(block: bytes, sample_count: int) -> dict:
         "values": values,
         "physical": [v * scale for v in values],
     }
-
-
-def rc03_spool_pretty(spool_type: str, data: bytes, out=None,
-                      *, samples: bool = False) -> bool:
-    """Print archived RC03 signal records. Returns True when handled."""
-    if out is None:
-        out = sys.stdout
-    expected_field = RC03_SPOOL_FIELDS.get(spool_type)
-    if expected_field is None:
-        return False
-
-    try:
-        records = proto_decode(data)
-    except (ValueError, IndexError) as exc:
-        print(f"# cannot decode outer protobuf: {exc}", file=out)
-        return True
-
-    print("# archived signal spool", file=out)
-    print("# field 4 is an RC03 compressed sample block", file=out)
-    if samples:
-        print("record,index,time_ms,value_raw,value", file=out)
-    for idx, (field, wire, value) in enumerate(records):
-        if field != expected_field or wire != 2:
-            print(f"record {idx}: unexpected f{field}/{_PROTO_WIRE.get(wire, wire)}",
-                  file=out)
-            continue
-        outer = proto_decode(value)
-        record_kind = None
-        payload = None
-        for sf, sw, sv in outer:
-            if sf == 1 and sw == 0:
-                record_kind = sv
-            elif sf == 2 and sw == 2:
-                payload = sv
-        if payload is None:
-            print(f"record {idx}: missing payload", file=out)
-            continue
-        fields = {}
-        block = None
-        for sf, sw, sv in proto_decode(payload):
-            if sw == 0:
-                fields[sf] = sv
-            elif sf == 4 and sw == 2:
-                block = sv
-        interval = fields.get(1)
-        start = fields.get(2)
-        end = fields.get(3)
-        count = "n/a"
-        if interval and start is not None and end is not None and end >= start:
-            count = (end - start) // interval + 1
-        if block is None:
-            if not samples:
-                print(f"record {idx}: missing RC03 block", file=out)
-            continue
-        try:
-            decoded = rc03_decode_block(block, int(count))
-        except ValueError as exc:
-            if not samples:
-                print(f"record {idx}: {exc}", file=out)
-            continue
-        if samples:
-            for sample_index, (raw, physical) in enumerate(
-                    zip(decoded["values"], decoded["physical"])):
-                ts = (start + sample_index * interval
-                      if start is not None and interval else "")
-                print(f"{idx},{sample_index},{ts},{raw},{physical:.8g}",
-                      file=out)
-            continue
-        body = decoded["body"]
-        compressed = max(0, len(body) - 2 * len(decoded["seed"]))
-        physical = decoded["physical"]
-        print(f"record {idx}: kind={record_kind} interval_ms={interval} "
-              f"samples={count}", file=out)
-        if start is not None and end is not None:
-            print(f"  start={start} [{_fmt_utc_ms(start)}]", file=out)
-            print(f"  end={end} [{_fmt_utc_ms(end)}]", file=out)
-        print(f"  rc03_header={decoded['header'].hex()} "
-              f"params={decoded['params']} raw_params={decoded['raw_params'].hex()} "
-              f"rice_m={decoded['m']} scale={decoded['scale']:.8g}",
-              file=out)
-        print(f"  raw_seed={decoded['seed']} body_bytes={len(body)} "
-              f"compressed_tail_bytes={compressed}", file=out)
-        print(f"  raw_min={min(decoded['values'])} raw_max={max(decoded['values'])} "
-              f"value_min={min(physical):.8g} value_max={max(physical):.8g}",
-              file=out)
-        print(f"  first_values={_rc03_preview(physical[:8])}", file=out)
-        print(f"  last_values={_rc03_preview(physical[-8:])}", file=out)
-    return True
-
-
-def _hex_preview(data: bytes, limit: int = 64) -> str:
-    out = data[:limit].hex()
-    if len(data) > limit:
-        out += "..."
-    return out
-
-
-def soundcheck_vector_pretty(spool_type: str, data: bytes, out=None,
-                             *, samples: bool = False,
-                             details: bool = False) -> bool:
-    """Print SoundcheckVector records."""
-    if out is None:
-        out = sys.stdout
-    if spool_type != "SoundcheckVector":
-        return False
-    if not data:
-        print("# SoundcheckVector spool is empty", file=out)
-        return True
-
-    try:
-        records = _wrapped_records(data, 15)
-    except (ValueError, IndexError) as exc:
-        print(f"# cannot decode SoundcheckVector protobuf: {exc}", file=out)
-        return True
-
-    if samples:
-        print("record,kind,index,value_a,value_b", file=out)
-    else:
-        print("# SoundcheckVector spool", file=out)
-        print("# field 3 values are the vector bins; field 4 contains "
-              "repeated peak pairs", file=out)
-
-    for record_index, record in enumerate(records):
-        try:
-            fields = proto_decode(record)
-        except (ValueError, IndexError) as exc:
-            if not samples:
-                print(f"record {record_index}: invalid protobuf: {exc}",
-                      file=out)
-            continue
-        report_ms = None
-        sample_rate = None
-        vector = []
-        peaks = []
-        extras = []
-        for field, wire, value in fields:
-            if field == 1 and wire == 0:
-                report_ms = value
-            elif field == 2 and wire == 0:
-                sample_rate = value
-            elif field == 3 and wire == 0:
-                vector.append(value)
-            elif field == 4 and wire == 2:
-                try:
-                    for pf, pw, pv in proto_decode(value):
-                        if pf == 1 and pw == 2:
-                            pair = _decode_varint_message(pv)
-                            peaks.append((
-                                pair.get(1, [None])[0],
-                                pair.get(2, [None])[0],
-                            ))
-                        else:
-                            extras.append(f"peak_f{pf}/{_PROTO_WIRE.get(pw, pw)}")
-                except (ValueError, IndexError) as exc:
-                    extras.append(f"peaks_decode_error={exc}")
-            else:
-                extras.append(f"f{field}/{_PROTO_WIRE.get(wire, wire)}")
-
-        if samples:
-            for idx, value in enumerate(vector):
-                print(f"{record_index},vector,{idx},{value},", file=out)
-            for idx, (a, b) in enumerate(peaks):
-                print(f"{record_index},peak,{idx},{a},{b}", file=out)
-            continue
-
-        print(f"record {record_index}: report={_fmt_utc_ms(report_ms)} "
-              f"sample_rate_hz={sample_rate} vector_bins={len(vector)} "
-              f"peaks={len(peaks)}", file=out)
-        print(f"  vector={_rc03_preview(vector)}", file=out)
-        if peaks:
-            peak_text = ", ".join(f"({a},{b})" for a, b in peaks)
-            print(f"  peaks={peak_text}", file=out)
-        if details and extras:
-            print(f"  extras={extras}", file=out)
-    return True
-
-
-def diagnostic_blob_pretty(spool_type: str, data: bytes, out=None,
-                           *, details: bool = False) -> bool:
-    """Print AcousticSignatureV2 records without interpreting blob contents."""
-    if out is None:
-        out = sys.stdout
-    if spool_type != "AcousticSignatureV2":
-        return False
-    print("# AcousticSignatureV2 diagnostic blob spool", file=out)
-    if not data:
-        print("empty", file=out)
-        return True
-    try:
-        records = _wrapped_records(data, 11)
-    except (ValueError, IndexError):
-        print(f"bytes={len(data)} hex={_hex_preview(data)}", file=out)
-        return True
-    for index, record in enumerate(records):
-        print(f"record {index}: bytes={len(record)} "
-              f"hex={_hex_preview(record)}", file=out)
-        try:
-            fields = proto_decode(record)
-        except (ValueError, IndexError):
-            continue
-        if details:
-            proto_pretty(record, indent=1, out=out)
-            continue
-        parts = []
-        for field, wire, value in fields:
-            if wire == 2:
-                parts.append(f"f{field}=bytes:{len(value)}")
-            else:
-                parts.append(f"f{field}/{_PROTO_WIRE.get(wire, wire)}")
-        if parts:
-            print("  fields=" + " ".join(parts), file=out)
-    return True
-
-
-def audio_spool_pretty(spool_type: str, data: bytes, out=None,
-                       *, details: bool = False) -> bool:
-    """Print RecordedSound metadata without assuming a container format."""
-    if out is None:
-        out = sys.stdout
-    if spool_type != "RecordedSound":
-        return False
-    print("# RecordedSound audio spool", file=out)
-    if not data:
-        print("empty", file=out)
-        return True
-    print(f"bytes={len(data)} hex={_hex_preview(data)}", file=out)
-    if data.startswith(b"RIFF") and len(data) >= 44:
-        print("container=RIFF/WAVE", file=out)
-    elif details:
-        try:
-            proto_pretty(data, indent=1, out=out)
-        except (ValueError, IndexError):
-            pass
-    return True
 
 
 _SUMMARY_FIELDS = {
@@ -2219,264 +1257,31 @@ _SUMMARY_METRIC_SCALES = {
 }
 
 
-def _summary_record_pretty(data: bytes, out) -> None:
-    for field, wire, value in proto_decode(data):
-        label = _SUMMARY_FIELDS.get(field, f"field_{field}")
-        if wire == 2:
-            try:
-                subs = proto_decode(value)
-            except (ValueError, IndexError):
-                subs = None
-            if subs:
-                print(f"{label} (msg, {len(value)}B):", file=out)
-                submap = _SUMMARY_SUBFIELDS.get(field, {})
-                for sf, sw, sv in subs:
-                    if sf in submap:
-                        pct = submap[sf]
-                        scale, unit = _SUMMARY_METRIC_SCALES[field]
-                        decoded = _fmt_number(sv * scale)
-                        tail = f"  # p{pct}, value={decoded} {unit}"
-                    else:
-                        tail = ""
-                    print(f"  sub_f{sf} ({_PROTO_WIRE.get(sw, sw)}): {sv}{tail}",
-                          file=out)
-            else:
-                h = value.hex()
-                if len(h) > 80:
-                    h = h[:80] + "..."
-                print(f"{label} (bytes {len(value)}B): {h}", file=out)
-        elif wire == 0:
-            print(f"{label} (varint): {value}", file=out)
-        elif wire == 1:
-            print(f"{label} (u64): {value}", file=out)
-        elif wire == 5:
-            print(f"{label} (u32): {value}", file=out)
-        else:
-            print(f"{label} ({_PROTO_WIRE.get(wire, wire)}): {value}", file=out)
-
-
 def _summary_metric_name(label: str) -> str:
     return label.split(" (", 1)[0]
 
 
-def _summary_session_entries(data: bytes) -> list[tuple[int | None, int | None]]:
+def _decode_summary_session_entries(data: bytes) -> dict:
     entries = []
-    try:
-        wrappers = proto_decode(data)
-    except (ValueError, IndexError):
-        return entries
+    unknown = []
+    wrappers = proto_decode(data)
     for field, wire, value in wrappers:
         if field != 1 or wire != 2:
+            unknown.append(_decoded_wire_field(field, wire, value))
             continue
-        ts = None
-        duration_min = None
-        try:
-            fields = proto_decode(value)
-        except (ValueError, IndexError):
-            continue
+        entry = {"unknownFields": []}
+        fields = proto_decode(value)
         for sf, sw, sv in fields:
             if sf == 1 and sw == 0:
-                ts = sv
+                entry.update(_timestamp_fields("startTime", int(sv)))
             elif sf == 2 and sw == 0:
-                duration_min = sv
-        entries.append((ts, duration_min))
-    return entries
-
-
-def _summary_session_duration(duration_min: int | None) -> str:
-    if duration_min is None:
-        return "n/a"
-    return str(duration_min)
-
-
-def _summary_record_stats(data: bytes) -> dict:
-    stats = {
-        "scalars": [],
-        "metrics": [],
-        "session_entries": [],
-    }
-    for field, wire, value in proto_decode(data):
-        label = _SUMMARY_FIELDS.get(field, f"field_{field}")
-        if field == 6 and wire == 2:
-            stats["session_entries"] = _summary_session_entries(value)
-            continue
-        if wire == 2:
-            submap = _SUMMARY_SUBFIELDS.get(field)
-            if submap:
-                cols = {}
-                extras = []
-                try:
-                    subs = proto_decode(value)
-                except (ValueError, IndexError):
-                    subs = []
-                for sf, sw, sv in subs:
-                    if sw == 0 and sf in submap:
-                        pct = submap[sf]
-                        scale, _unit = _SUMMARY_METRIC_SCALES[field]
-                        cols[pct] = sv * scale
-                    else:
-                        extras.append(f"f{sf}/{_PROTO_WIRE.get(sw, sw)}")
-                unit = _SUMMARY_METRIC_SCALES[field][1]
-                stats["metrics"].append(
-                    (_summary_metric_name(label), unit, cols, extras)
+                entry["durationMin"] = int(sv)
+            else:
+                entry["unknownFields"].append(
+                    _decoded_wire_field(sf, sw, sv)
                 )
-            else:
-                stats["scalars"].append((_summary_metric_name(label),
-                                         f"{len(value)}B"))
-            continue
-        if wire == 0:
-            scale = _SUMMARY_SCALAR_SCALES.get(field)
-            if scale is not None:
-                stats["scalars"].append((_summary_metric_name(label),
-                                         value * scale, value))
-            else:
-                stats["scalars"].append((_summary_metric_name(label), value))
-        elif wire == 1:
-            stats["scalars"].append((_summary_metric_name(label), value))
-        elif wire == 5:
-            stats["scalars"].append((_summary_metric_name(label), value))
-        else:
-            stats["scalars"].append((_summary_metric_name(label),
-                                     f"{_PROTO_WIRE.get(wire, wire)}:{value}"))
-    return stats
-
-
-def _summary_scalar(stats: dict, name: str):
-    for item in stats["scalars"]:
-        key, value = item[0], item[1]
-        if key == name:
-            return value
-    return None
-
-
-def _summary_record_compact(index: int, data: bytes, out) -> None:
-    stats = _summary_record_stats(data)
-    start = _summary_scalar(stats, "PeriodStart")
-    end = _summary_scalar(stats, "PeriodEnd")
-    tz_offset = _summary_scalar(stats, "TimeZoneOffsetMin")
-    duration = _summary_scalar(stats, "DurationMin")
-    session_count = _summary_scalar(stats, "SessionCount")
-    if session_count is None:
-        session_count = len(stats["session_entries"])
-    record_ts = _summary_scalar(stats, "RecordTimestamp")
-    smd_smt_ts = _summary_scalar(stats, "SmdSmtTimestamp")
-    print(f"Summary record {index} ({len(data)}B):", file=out)
-    if isinstance(start, int) and isinstance(end, int):
-        print(f"  range: {_fmt_utc_ms(start)} -> {_fmt_utc_ms(end)}", file=out)
-    bits = []
-    if duration is not None:
-        bits.append(f"duration_min={duration}")
-    bits.append(f"sessions={session_count}")
-    if tz_offset is not None:
-        bits.append(f"tz_offset_min={tz_offset}")
-    if isinstance(record_ts, int):
-        bits.append(f"record_ts={_fmt_utc_ms(record_ts)}")
-    if isinstance(smd_smt_ts, int):
-        bits.append(f"smd_smt_ts={_fmt_utc_ms(smd_smt_ts)}")
-    print("  " + " ".join(bits), file=out)
-
-    if stats["session_entries"]:
-        print("  session_entries:", file=out)
-        for ts, duration_min in stats["session_entries"]:
-            when = _fmt_utc_ms(ts) if isinstance(ts, int) else "n/a"
-            print(f"    {when}  duration_min={_summary_session_duration(duration_min)}",
-                  file=out)
-
-    skip_scalars = {
-        "f1_init_marker", "PeriodStart", "PeriodEnd",
-        "TimeZoneOffsetMin", "DurationMin", "SessionCount",
-        "RecordTimestamp", "SmdSmtTimestamp",
-    }
-    scalars = [item for item in stats["scalars"]
-               if item[0] not in skip_scalars]
-    if scalars:
-        print("  scalars:", file=out)
-        line = "    "
-        for scalar in scalars:
-            name, value = scalar[0], scalar[1]
-            if len(scalar) > 2:
-                item = f"{name}={value:g} (raw={scalar[2]})"
-            else:
-                item = f"{name}={value}"
-            if len(line) + len(item) + 2 > 96:
-                print(line.rstrip(), file=out)
-                line = "    "
-            line += item + "  "
-        if line.strip():
-            print(line.rstrip(), file=out)
-
-    if stats["metrics"]:
-        print("  metrics:", file=out)
-        for name, unit, cols, extras in stats["metrics"]:
-            parts = [f"p{pct}={_fmt_number(cols[pct])}"
-                     for pct in (5, 50, 70, 95, 100)
-                     if pct in cols]
-            if extras:
-                parts.append("extra=" + ",".join(extras))
-            print(f"    {name} ({unit}): " + " ".join(parts), file=out)
-
-
-def summary_pretty(data: bytes, out=None, *, details: bool = False) -> None:
-    """Pretty-print the Summary protobuf using firmware-verified field names."""
-    if out is None:
-        out = sys.stdout
-
-    try:
-        top = proto_decode(data)
-    except (ValueError, IndexError):
-        return
-
-    # Summary spool payloads are usually repeated field-2 wrapper records.
-    if top and all(field == 2 and wire == 2 for field, wire, _value in top):
-        for idx, (_field, _wire, value) in enumerate(top, 1):
-            if details:
-                print(f"Summary record {idx} ({len(value)}B):", file=out)
-                _summary_record_pretty(value, out)
-            else:
-                _summary_record_compact(idx, value, out)
-        return
-
-    while (len(top) == 1 and top[0][1] == 2
-           and isinstance(top[0][2], (bytes, bytearray))):
-        data = top[0][2]
-        try:
-            top = proto_decode(data)
-        except (ValueError, IndexError):
-            return
-    if details:
-        _summary_record_pretty(data, out)
-    else:
-        _summary_record_compact(1, data, out)
-
-
-def print_spool_legend(spool_type: str) -> None:
-    legend = SPOOL_LEGENDS.get(spool_type)
-    if not legend:
-        return
-    record_kind = legend.get("record_kind", "event")
-    if record_kind == "gui":
-        print("# GUI record layout: field 1 = kind, field 2 = timestamp_ms, "
-              "field 3 = value")
-        return
-    if record_kind == "diagnostic_error":
-        print("# diagnostic record layout: field 1 = firmware error code, "
-              "field 2 = start_ms, field 3 = end_ms, "
-              "field 4 = duration_ms")
-        return
-    if record_kind == "survey":
-        print("# SurveyEvents records are preserved as protobuf fields; "
-              "their payload semantics are not yet named")
-        return
-    et = legend.get("event_types")
-    if et:
-        print("# event record layout: field 1 = type, field 2 = start_ms, "
-              "field 3 = end_ms, field 4 = duration_ms")
-        if legend.get("string_field") is not None:
-            print("# string event payload: field %d = text "
-                  "(from firmware 8.6.0)" % legend["string_field"])
-        if len(et) <= 12:
-            parts = ", ".join(f"{k}={v}" for k, v in sorted(et.items()))
-            print(f"# event types: {parts}")
+        entries.append(entry)
+    return {"entries": entries, "unknownFields": unknown}
 
 
 def spool_walk_events(data: bytes, depth: int = 0) -> Iterator[bytes]:
@@ -2494,20 +1299,29 @@ def spool_walk_events(data: bytes, depth: int = 0) -> Iterator[bytes]:
             yield from spool_walk_events(value, depth + 1)
 
 
-def _walk_records(data: bytes, decoder, depth: int = 0) -> Iterator[dict]:
-    """Yield nested length-delimited records accepted by `decoder`."""
-    try:
-        fields = proto_decode(data)
-    except (ValueError, IndexError):
-        return
-    for _field, wire, value in fields:
+def _decode_records_strict(data: bytes, decoder, depth: int = 0) -> list[dict]:
+    record = decoder(data)
+    if record is not None:
+        return [record]
+    records = []
+    for field, wire, value in proto_decode(data):
         if wire != 2:
-            continue
-        record = decoder(value)
-        if record is not None:
-            yield record
+            raise SpoolDecodeError(
+                f"unexpected envelope field f{field}/"
+                f"{_PROTO_WIRE.get(wire, wire)}"
+            )
+        nested = decoder(bytes(value))
+        if nested is not None:
+            records.append(nested)
         elif depth < 2:
-            yield from _walk_records(value, decoder, depth + 1)
+            records.extend(_decode_records_strict(
+                bytes(value), decoder, depth + 1
+            ))
+        else:
+            raise SpoolDecodeError(
+                f"unrecognized record at envelope field f{field}"
+            )
+    return records
 
 
 def _event_record(data: bytes) -> dict | None:
@@ -2561,185 +1375,6 @@ def _event_name(spool_type: str, event_type: int) -> str:
     return legend.get("event_types", {}).get(event_type, "")
 
 
-def _event_extra(spool_type: str, event_type: int, field: int,
-                 wire: int, value: object) -> str:
-    legend = SPOOL_LEGENDS.get(spool_type, {})
-    if (spool_type == "CellularActivityEvents" and event_type == 95
-            and field == 14 and wire == 0):
-        packed = int(value)
-        error_id = (packed >> 12) & 0xFFF
-        detail_id = packed & 0xFFF
-        error_name = legend.get("log_error_ids", {}).get(error_id)
-        error = f"{error_id}({error_name})" if error_name else str(error_id)
-        return f"error_id={error},detail_id={detail_id}"
-
-    if wire == 2 and field == legend.get("string_field"):
-        name = "text"
-    else:
-        name = legend.get("extra_fields", {}).get((event_type, field))
-    if name is None:
-        name = f"f{field}/{_PROTO_WIRE.get(wire, wire)}"
-    if wire == 0:
-        enum_name = legend.get("extra_enums", {}).get(
-            (event_type, field), {}
-        ).get(value)
-        if enum_name:
-            value = f"{value}({enum_name})"
-    elif wire == 2:
-        raw = bytes(value)
-        value = repr(raw.decode("ascii")) if (
-            raw and all(32 <= byte < 127 for byte in raw)
-        ) else "0x" + raw.hex()
-    return f"{name}={value}"
-
-
-def _format_wire_value(wire: int, value: object) -> str:
-    if wire == 2:
-        raw = bytes(value)
-        if raw and all(32 <= byte < 127 for byte in raw):
-            return repr(raw.decode("ascii"))
-        return "0x" + raw.hex()
-    return str(value)
-
-
-def _gui_event_spool_pretty(spool_type: str, data: bytes, out) -> bool:
-    records = list(_walk_records(data, _gui_event_record))
-    if not records:
-        return False
-
-    print("# GUI event spool", file=out)
-    print("idx\tkind\tname\ttimestamp_ms\ttimestamp_utc\tvalue\textras",
-          file=out)
-    for idx, record in enumerate(records):
-        event_type = int(record["type"])
-        timestamp = int(record["timestamp"])
-        value = _format_wire_value(record["value_wire"], record["value"])
-        extras = ",".join(
-            _event_extra(spool_type, event_type, field, wire, extra)
-            for field, wire, extra in record["extras"]
-        )
-        name = _event_name(spool_type, event_type) or "unknown"
-        print(f"{idx}\t{event_type}\t{name}\t{timestamp}\t"
-              f"{_fmt_utc_ms(timestamp)}\t{value}\t{extras}", file=out)
-
-    counts = Counter(int(record["type"]) for record in records)
-    print("", file=out)
-    print(f"# summary: {len(records)} GUI events", file=out)
-    for event_type in sorted(counts):
-        name = _event_name(spool_type, event_type) or "unknown"
-        print(f"#   {event_type} {name:24s} {counts[event_type]:6d}",
-              file=out)
-    return True
-
-
-def event_spool_pretty(spool_type: str, data: bytes, out=None, *,
-                       app_version: str | None = None,
-                       details: bool = False) -> bool:
-    """Print an AS11 event spool according to its firmware wire schema."""
-    if out is None:
-        out = sys.stdout
-    if spool_type not in EVENT_SPOOL_TYPES:
-        return False
-    legend = SPOOL_LEGENDS.get(spool_type, {})
-    record_kind = legend.get("record_kind", "event")
-    if record_kind == "gui":
-        return _gui_event_spool_pretty(spool_type, data, out)
-    if record_kind == "survey":
-        return False
-
-    records = []
-    for ev in spool_walk_events(data):
-        record = _event_record(ev)
-        if record is not None:
-            records.append(record)
-    if not records:
-        return False
-
-    diagnostic = record_kind == "diagnostic_error"
-    print("# diagnostic error spool" if diagnostic else "# event spool",
-          file=out)
-    if diagnostic:
-        print("idx\tcode\tcode_hex\tstart_ms\tstart_utc\tend_ms\tend_utc\t"
-              "duration_ms\textras", file=out)
-    else:
-        print("idx\ttype\tname\tstart_ms\tstart_utc\tend_ms\tend_utc\t"
-              "duration_ms\textras", file=out)
-    interpretations = {}
-    for idx, record in enumerate(records):
-        event_type = int(record["type"])
-        start = int(record["start"])
-        end = int(record["end"])
-        duration = record["duration"]
-        if duration is None:
-            duration = end - start
-        extras = ",".join(
-            _event_extra(spool_type, event_type, field, wire, value)
-            for field, wire, value in record["extras"]
-        )
-        if diagnostic:
-            if (summarize_diagnostic_code is not None
-                    and event_type not in interpretations):
-                interpretations[event_type] = summarize_diagnostic_code(
-                    spool_type, event_type, app_version, details=details
-                )
-            print(f"{idx}\t{event_type}\t0x{event_type:04X}\t"
-                  f"{start}\t{_fmt_utc_ms(start)}\t"
-                  f"{end}\t{_fmt_utc_ms(end)}\t{duration}\t{extras}",
-                  file=out)
-        else:
-            name = _event_name(spool_type, event_type) or "unknown"
-            print(f"{idx}\t{event_type}\t{name}\t"
-                  f"{start}\t{_fmt_utc_ms(start)}\t"
-                  f"{end}\t{_fmt_utc_ms(end)}\t{duration}\t{extras}",
-                  file=out)
-
-    counts = Counter(int(record["type"]) for record in records)
-    print("", file=out)
-    if diagnostic and normalize_app_version is not None:
-        version = normalize_app_version(app_version)
-        scope = version or "all bundled APPX manifests"
-        print(f"# code interpretations ({scope}):", file=out)
-        for event_type in sorted(interpretations):
-            print(f"#   {event_type:5d} 0x{event_type:04X}  "
-                  f"{interpretations[event_type]}", file=out)
-        print("", file=out)
-    noun = "error records" if diagnostic else "events"
-    print(f"# summary: {len(records)} {noun}", file=out)
-    for event_type in sorted(counts):
-        name = _event_name(spool_type, event_type)
-        label = f"code={event_type}" if diagnostic else f"{event_type}"
-        if name:
-            label += f" {name}"
-        print(f"#   {label:28s} {counts[event_type]:6d}", file=out)
-    return True
-
-
-def print_spool_summary(spool_type: str, data: bytes) -> None:
-    legend = SPOOL_LEGENDS.get(spool_type)
-    if not legend:
-        return
-    et = legend.get("event_types")
-    if not et:
-        return
-    from collections import Counter
-    counts = Counter()
-    total = 0
-    for ev in spool_walk_events(data):
-        total += 1
-        try:
-            for field, wire, value in proto_decode(ev):
-                if field == 1 and wire == 0:
-                    counts[value] += 1
-                    break
-        except (ValueError, IndexError):
-            pass
-    if total:
-        print()
-        print(f"# summary: {total} events")
-        for k in sorted(counts):
-            print(f"#   {et.get(k, f'type={k}'):20s} {counts[k]:6d}")
-
-
 def spool_payload_first_field(data: bytes) -> int | None:
     """Return the field number of the outer protobuf record, or None."""
     if not data:
@@ -2789,18 +1424,1292 @@ def detect_spool_type(data: bytes) -> tuple[str | None, list[str]]:
     return candidates[0], candidates
 
 
+def _decoded_wire_value(wire: int, value: object) -> object:
+    if wire == 2:
+        raw = bytes(value)
+        return {
+            "length": len(raw),
+            "base64": base64.b64encode(raw).decode("ascii"),
+        }
+    return value
+
+
+def _decoded_wire_field(field: int, wire: int, value: object) -> dict:
+    return {
+        "field": field,
+        "wireType": _PROTO_WIRE.get(wire, str(wire)),
+        "value": _decoded_wire_value(wire, value),
+    }
+
+
+def _decoded_wire_fields(fields) -> list[dict]:
+    return [_decoded_wire_field(field, wire, value)
+            for field, wire, value in fields]
+
+
+def _timestamp_fields(prefix: str, value: int | None) -> dict:
+    if value is None:
+        return {}
+    return {prefix + "Ms": value, prefix: _fmt_utc_ms(value)}
+
+
+_PROFILE_VALUE_KINDS = {
+    "pressure": (0.01, "cmH2O"),
+    "seconds": (0.001, "s"),
+    "centiseconds": (0.01, "s"),
+    "milliseconds": (1.0, "ms"),
+    "minutes_scaled": (0.01, "min"),
+    "celsius": (0.01, "C"),
+    "centimeters": (1.0, "cm"),
+    "bpm_scaled": (0.01, "bpm"),
+    "l_min_scaled": (0.01, "L/min"),
+}
+
+
+def _decoded_profile_value(raw: int, kind: str) -> dict:
+    out = {"raw": raw}
+    scale_unit = _PROFILE_VALUE_KINDS.get(kind)
+    if scale_unit is not None:
+        scale, unit = scale_unit
+        out.update(value=raw * scale, unit=unit)
+    return out
+
+
+def _store_decoded_value(values: dict, name: str, value: object) -> None:
+    previous = values.get(name)
+    if previous is None:
+        values[name] = value
+    elif isinstance(previous, list):
+        previous.append(value)
+    else:
+        values[name] = [previous, value]
+
+
+def _decode_named_profile_message(
+        data: bytes, definitions: tuple[tuple[int, str, str], ...]) -> dict:
+    by_field = {field: (name, kind) for field, name, kind in definitions}
+    values = {}
+    unknown = []
+    for field, wire, value in proto_decode(data):
+        definition = by_field.get(field)
+        if definition is None or wire != 0:
+            unknown.append(_decoded_wire_field(field, wire, value))
+            continue
+        name, kind = definition
+        _store_decoded_value(values, name,
+                             _decoded_profile_value(int(value), kind))
+    return {"values": values, "unknownFields": unknown}
+
+
+def _decode_profile_attributes(data: bytes) -> dict:
+    out = {"unknownFields": []}
+    for field, wire, value in proto_decode(data):
+        if field == 1 and wire == 0:
+            out.update(_timestamp_fields("appliedDateTime", int(value)))
+        elif field in (2, 3) and wire == 2:
+            raw = bytes(value)
+            try:
+                out["source"] = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                out["sourceBase64"] = base64.b64encode(raw).decode("ascii")
+        elif field in (3, 4) and wire == 0:
+            out["transaction"] = int(value)
+        else:
+            out["unknownFields"].append(
+                _decoded_wire_field(field, wire, value)
+            )
+    return out
+
+
+def _decode_active_profiles(data: bytes) -> dict:
+    out = {"featureProfiles": [], "unknownFields": []}
+    for field, wire, value in proto_decode(data):
+        if field == 1 and wire == 0:
+            raw = int(value)
+            out["therapyProfile"] = {
+                "raw": raw,
+                "name": ACTIVE_THERAPY_PROFILE_NAMES.get(raw),
+            }
+        elif field == 2 and wire == 0:
+            raw = int(value)
+            out["featureProfiles"].append({
+                "raw": raw,
+                "name": ACTIVE_FEATURE_PROFILE_NAMES.get(raw),
+            })
+        else:
+            out["unknownFields"].append(
+                _decoded_wire_field(field, wire, value)
+            )
+    return out
+
+
+def _decode_profile_group(data: bytes, definitions: dict[int, tuple]) -> dict:
+    profiles = []
+    unknown = []
+    for field, wire, value in proto_decode(data):
+        if wire != 2:
+            unknown.append(_decoded_wire_field(field, wire, value))
+            continue
+        name, field_defs = definitions.get(
+            field, (f"Profile{field}", ())
+        )
+        profile = {
+            "field": field,
+            "name": name,
+            **_decode_named_profile_message(bytes(value), field_defs),
+        }
+        profiles.append(profile)
+    return {"profiles": profiles, "unknownFields": unknown}
+
+
+def _decode_reminders(data: bytes) -> dict:
+    reminders = []
+    unknown = []
+    definitions = (
+        (1, "EnableRaw", "raw"),
+        (2, "StartDateTimeMs", "raw"),
+        (3, "PeriodRaw", "raw"),
+    )
+    for field, wire, value in proto_decode(data):
+        if wire != 2:
+            unknown.append(_decoded_wire_field(field, wire, value))
+            continue
+        decoded = _decode_named_profile_message(bytes(value), definitions)
+        start = decoded["values"].get("StartDateTimeMs")
+        if isinstance(start, dict):
+            start["value"] = _fmt_utc_ms(start["raw"])
+        reminders.append({
+            "field": field,
+            "name": REMINDER_FIELDS.get(field, f"Reminder{field}"),
+            **decoded,
+        })
+    return {"reminders": reminders, "unknownFields": unknown}
+
+
+def _decode_feature_profiles(data: bytes) -> dict:
+    profiles = []
+    unknown = []
+    for field, wire, value in proto_decode(data):
+        if wire != 2:
+            unknown.append(_decoded_wire_field(field, wire, value))
+            continue
+        if field == 14:
+            profiles.append({
+                "field": field,
+                "name": "ReminderFeature",
+                **_decode_reminders(bytes(value)),
+            })
+            continue
+        name, field_defs = FEATURE_PROFILE_FIELDS.get(
+            field, (f"FeatureProfile{field}", ())
+        )
+        profiles.append({
+            "field": field,
+            "name": name,
+            **_decode_named_profile_message(bytes(value), field_defs),
+        })
+    return {"profiles": profiles, "unknownFields": unknown}
+
+
+def _decode_setting_profiles(data: bytes) -> list[dict]:
+    records = []
+    for index, payload in enumerate(_setting_profile_records(data)):
+        record = {"record": index, "unknownFields": []}
+        for field, wire, value in proto_decode(payload):
+            if field == 1 and wire == 2:
+                record["attributes"] = _decode_profile_attributes(bytes(value))
+            elif field == 2 and wire == 2:
+                record["activeProfiles"] = _decode_active_profiles(bytes(value))
+            elif field == 3 and wire == 2:
+                record["therapyProfiles"] = _decode_profile_group(
+                    bytes(value), THERAPY_PROFILE_FIELDS
+                )
+            elif field == 4 and wire == 2:
+                record["featureProfiles"] = _decode_feature_profiles(
+                    bytes(value)
+                )
+            elif field == 5 and wire == 2:
+                record["alarmProfiles"] = _decode_profile_group(
+                    bytes(value), ALARM_PROFILE_FIELDS
+                )
+            else:
+                record["unknownFields"].append(
+                    _decoded_wire_field(field, wire, value)
+                )
+        records.append(record)
+    return records
+
+
+def _decode_delivery_control(data: bytes) -> dict:
+    values = []
+    unknown = []
+    for field, wire, value in proto_decode(data):
+        if wire != 0:
+            unknown.append(_decoded_wire_field(field, wire, value))
+            continue
+        raw = int(value)
+        values.append({
+            "field": field,
+            "name": DATA_DELIVERY_FIELDS.get(field),
+            "raw": raw,
+            "value": _delivery_status(raw),
+        })
+    return {"values": values, "unknownFields": unknown}
+
+
+def _decode_configuration_profiles(data: bytes) -> list[dict]:
+    records = []
+    for index, payload in enumerate(_config_profile_records(data)):
+        record = {"record": index, "unknownFields": []}
+        for field, wire, value in proto_decode(payload):
+            if field == 1 and wire == 2:
+                record["attributes"] = _decode_profile_attributes(bytes(value))
+            elif field == 2 and wire == 2:
+                record["dataDeliveryControlV2"] = _decode_delivery_control(
+                    bytes(value)
+                )
+            else:
+                record["unknownFields"].append(
+                    _decoded_wire_field(field, wire, value)
+                )
+        records.append(record)
+    return records
+
+
+def _decode_metric_attributes(data: bytes) -> dict:
+    out = {"unknownFields": []}
+    for field, wire, value in proto_decode(data):
+        if field == 1 and wire == 0:
+            out.update(_timestamp_fields("reportDateTime", int(value)))
+        else:
+            out["unknownFields"].append(
+                _decoded_wire_field(field, wire, value)
+            )
+    return out
+
+
+def _decoded_metric_value(raw: int, kind: str) -> dict:
+    if kind == "timestamp":
+        return {"raw": raw, "value": _fmt_utc_ms(raw)}
+    if kind == "duration_ms":
+        return {"raw": raw, "value": raw, "unit": "ms"}
+    if kind == "bytes":
+        return {"raw": raw, "value": raw, "unit": "bytes"}
+    return {"raw": raw}
+
+
+def _decode_memory_metric_record(data: bytes) -> dict:
+    record = {"metrics": [], "unknownFields": []}
+    for field, wire, value in proto_decode(data):
+        if field == 1 and wire == 2:
+            record["attributes"] = _decode_metric_attributes(bytes(value))
+            continue
+        if field == 2 and wire == 2:
+            fields = proto_decode(bytes(value))
+            set_values = [int(sv) for sf, sw, sv in fields
+                          if sf == 1 and sw == 0]
+            set_id = set_values[0] if set_values else None
+            metric_set = MEMORY_METRIC_SETS.get(set_id)
+            metric = {
+                "set": (set_values[0] if len(set_values) == 1
+                        else set_values or None),
+                "volume": metric_set[0] if metric_set else None,
+                "values": {},
+                "unknownFields": [],
+            }
+            definitions = {
+                subfield: (source_tag, name)
+                for subfield, (source_tag, name) in enumerate(
+                    metric_set[1], start=2
+                )
+            } if metric_set is not None else {}
+            for subfield, subwire, subvalue in fields:
+                if subfield == 1 and subwire == 0:
+                    continue
+                definition = definitions.get(subfield)
+                if definition is None or subwire != 0:
+                    metric["unknownFields"].append(
+                        _decoded_wire_field(subfield, subwire, subvalue)
+                    )
+                    continue
+                source_tag, name = definition
+                decoded_value = {
+                    "sourceTag": source_tag,
+                    "raw": int(subvalue),
+                }
+                _store_decoded_value(metric["values"], name, decoded_value)
+            record["metrics"].append(metric)
+            continue
+        record["unknownFields"].append(
+            _decoded_wire_field(field, wire, value)
+        )
+    return record
+
+
+def _decode_metric_spool(spool_type: str, data: bytes) -> list[dict]:
+    expected = (16 if spool_type == "MemoryMetrics"
+                else METRIC_SPOOL_DEFS[spool_type]["wire_field"])
+    records = []
+    for index, payload in enumerate(_wrapped_records(data, expected)):
+        if spool_type == "MemoryMetrics":
+            record = _decode_memory_metric_record(payload)
+            record["record"] = index
+            records.append(record)
+            continue
+        definitions = METRIC_SPOOL_DEFS[spool_type]["fields"]
+        record = {"record": index, "values": {}, "unknownFields": []}
+        for field, wire, value in proto_decode(payload):
+            definition = definitions.get(field)
+            if definition is None:
+                record["unknownFields"].append(
+                    _decoded_wire_field(field, wire, value)
+                )
+                continue
+            name, kind = definition
+            if kind == "attributes" and wire == 2:
+                record["attributes"] = _decode_metric_attributes(bytes(value))
+            elif wire == 0:
+                _store_decoded_value(
+                    record["values"], name,
+                    _decoded_metric_value(int(value), kind)
+                )
+            else:
+                record["unknownFields"].append(
+                    _decoded_wire_field(field, wire, value)
+                )
+        records.append(record)
+    return records
+
+
+def _decoded_signal(signal: dict, *, interval_ms: int | None = None) -> dict:
+    spec = signal["spec"]
+    out = {
+        "field": signal["field"],
+        "name": spec["name"],
+        "column": spec["column"],
+        "unit": spec.get("unit"),
+        "scale": float(spec["scale"]),
+        "sampleCount": len(signal["values"]),
+        "rawValues": signal["raw"],
+        "values": signal["values"],
+        "compressedBytes": len(signal["blob"]),
+        "unknownFields": _decoded_wire_fields(signal["extras"]),
+    }
+    if "status" in signal:
+        out["status"] = signal["status"]
+    out.update(_timestamp_fields("startTime", signal.get("start_ms")))
+    actual_interval = (interval_ms if interval_ms is not None
+                       else signal.get("interval_ms"))
+    if actual_interval is not None:
+        out["intervalMs"] = actual_interval
+    return out
+
+
+def _decode_therapy_one_minute(data: bytes) -> list[dict]:
+    records = []
+    for index, payload in enumerate(_therapy_1minute_records(data)):
+        interval_token = None
+        signals = []
+        unknown = []
+        for field, wire, value in proto_decode(payload):
+            if field == 15 and wire == 0:
+                interval_token = int(value)
+            elif field in THERAPY_1MINUTE_FIELDS and wire == 2:
+                try:
+                    signals.append(_therapy_1minute_signal(bytes(value), field))
+                except (ValueError, IndexError) as exc:
+                    raise SpoolDecodeError(
+                        f"TherapyOneMinutePeriodic record {index} field "
+                        f"{field}: {exc}"
+                    ) from exc
+            else:
+                unknown.append(_decoded_wire_field(field, wire, value))
+        interval_ms = _therapy_1minute_interval_ms(interval_token)
+        records.append({
+            "record": index,
+            "intervalToken": interval_token,
+            "intervalMs": interval_ms,
+            "signals": [_decoded_signal(signal, interval_ms=interval_ms)
+                        for signal in signals],
+            "unknownFields": unknown,
+        })
+    return records
+
+
+def _decode_periodic_compressed(spool_type: str, data: bytes) -> list[dict]:
+    expected = SPOOL_REGISTRY[spool_type]["wire_field"]
+    records = []
+    for index, payload in enumerate(_wrapped_records(data, expected)):
+        if spool_type == "atmosphericPressure10min":
+            try:
+                decoded = _atmospheric_pressure_record(payload)
+            except (ValueError, IndexError) as exc:
+                raise SpoolDecodeError(
+                    f"{spool_type} record {index}: {exc}"
+                ) from exc
+            signal = {
+                "field": 4,
+                "spec": ATMOSPHERIC_PRESSURE_FIELD,
+                "interval_ms": decoded["interval_ms"],
+                "start_ms": decoded["start_ms"],
+                "blob": decoded["blob"],
+                "raw": decoded["raw"],
+                "values": decoded["values"],
+                "extras": (),
+            }
+            records.append({
+                "record": index,
+                "marker": decoded["marker"],
+                "signals": [_decoded_signal(signal)],
+                "unknownFields": _decoded_wire_fields(decoded["extras"]),
+            })
+            continue
+
+        origin = None
+        signals = []
+        unknown = []
+        for field, wire, value in proto_decode(payload):
+            if field == 1 and wire == 0:
+                origin = int(value)
+            elif wire == 2:
+                try:
+                    signals.append(_periodic_compressed_signal(
+                        field, bytes(value)
+                    ))
+                except (ValueError, IndexError) as exc:
+                    raise SpoolDecodeError(
+                        f"{spool_type} record {index} field {field}: {exc}"
+                    ) from exc
+            else:
+                unknown.append(_decoded_wire_field(field, wire, value))
+        records.append({
+            "record": index,
+            "origin": origin,
+            "signals": [_decoded_signal(signal) for signal in signals],
+            "unknownFields": unknown,
+        })
+    return records
+
+
+def _decode_rc03_spool(spool_type: str, data: bytes) -> list[dict]:
+    expected_field = RC03_SPOOL_FIELDS[spool_type]
+    records = []
+    for index, (field, wire, value) in enumerate(proto_decode(data)):
+        if field != expected_field or wire != 2:
+            raise SpoolDecodeError(
+                f"{spool_type} record {index}: expected "
+                f"f{expected_field}/bytes, got "
+                f"f{field}/{_PROTO_WIRE.get(wire, wire)}"
+            )
+        record_kind = None
+        payload = None
+        outer_unknown = []
+        for subfield, subwire, subvalue in proto_decode(bytes(value)):
+            if subfield == 1 and subwire == 0:
+                record_kind = int(subvalue)
+            elif subfield == 2 and subwire == 2:
+                payload = bytes(subvalue)
+            else:
+                outer_unknown.append(
+                    _decoded_wire_field(subfield, subwire, subvalue)
+                )
+        if payload is None:
+            raise SpoolDecodeError(f"{spool_type} record {index}: missing payload")
+
+        interval = None
+        start = None
+        end = None
+        block = None
+        payload_unknown = []
+        for subfield, subwire, subvalue in proto_decode(payload):
+            if subfield == 1 and subwire == 0:
+                interval = int(subvalue)
+            elif subfield == 2 and subwire == 0:
+                start = int(subvalue)
+            elif subfield == 3 and subwire == 0:
+                end = int(subvalue)
+            elif subfield == 4 and subwire == 2:
+                block = bytes(subvalue)
+            else:
+                payload_unknown.append(
+                    _decoded_wire_field(subfield, subwire, subvalue)
+                )
+        if interval is None or interval <= 0 or start is None or end is None:
+            raise SpoolDecodeError(
+                f"{spool_type} record {index}: incomplete sample timing"
+            )
+        if end < start:
+            raise SpoolDecodeError(
+                f"{spool_type} record {index}: end precedes start"
+            )
+        if block is None:
+            raise SpoolDecodeError(
+                f"{spool_type} record {index}: missing RC03 block"
+            )
+        sample_count = (end - start) // interval + 1
+        try:
+            decoded = rc03_decode_block(block, sample_count)
+        except ValueError as exc:
+            raise SpoolDecodeError(
+                f"{spool_type} record {index}: {exc}"
+            ) from exc
+        record = {
+            "record": index,
+            "recordKind": record_kind,
+            "intervalMs": interval,
+            "sampleCount": sample_count,
+            "scale": decoded["scale"],
+            "rawValues": decoded["values"],
+            "values": decoded["physical"],
+            "compression": {
+                "format": "RC03",
+                "headerHex": decoded["header"].hex(),
+                "headerLength": decoded["header_len"],
+                "parameters": decoded["params"],
+                "rawParametersHex": decoded["raw_params"].hex(),
+                "riceM": decoded["m"],
+                "seed": decoded["seed"],
+                "bodyBytes": len(decoded["body"]),
+            },
+            "unknownFields": outer_unknown + payload_unknown,
+        }
+        record.update(_timestamp_fields("startTime", start))
+        record.update(_timestamp_fields("endTime", end))
+        records.append(record)
+    return records
+
+
+def _decode_soundcheck_vector(data: bytes) -> list[dict]:
+    records = []
+    for index, payload in enumerate(_wrapped_records(data, 15)):
+        report_ms = None
+        sample_rate = None
+        vector = []
+        peaks = []
+        unknown = []
+        for field, wire, value in proto_decode(payload):
+            if field == 1 and wire == 0:
+                report_ms = int(value)
+            elif field == 2 and wire == 0:
+                sample_rate = int(value)
+            elif field == 3 and wire == 0:
+                vector.append(int(value))
+            elif field == 4 and wire == 2:
+                for peak_field, peak_wire, peak_value in proto_decode(
+                        bytes(value)):
+                    if peak_field != 1 or peak_wire != 2:
+                        unknown.append(_decoded_wire_field(
+                            peak_field, peak_wire, peak_value
+                        ))
+                        continue
+                    pair = {"unknownFields": []}
+                    for pair_field, pair_wire, pair_value in proto_decode(
+                            bytes(peak_value)):
+                        if pair_field == 1 and pair_wire == 0:
+                            _store_decoded_value(
+                                pair, "a", int(pair_value)
+                            )
+                        elif pair_field == 2 and pair_wire == 0:
+                            _store_decoded_value(
+                                pair, "b", int(pair_value)
+                            )
+                        else:
+                            pair["unknownFields"].append(
+                                _decoded_wire_field(
+                                    pair_field, pair_wire, pair_value
+                                )
+                            )
+                    peaks.append(pair)
+            else:
+                unknown.append(_decoded_wire_field(field, wire, value))
+        record = {
+            "record": index,
+            "sampleRateHz": sample_rate,
+            "vector": vector,
+            "peaks": peaks,
+            "unknownFields": unknown,
+        }
+        record.update(_timestamp_fields("reportTime", report_ms))
+        records.append(record)
+    return records
+
+
+_SUMMARY_TIMESTAMP_FIELDS = {2, 3, 40, 43}
+
+
+def _summary_record_payloads(data: bytes) -> list[bytes]:
+    fields = proto_decode(data)
+    if fields and all(field == 2 and wire == 2
+                      for field, wire, _value in fields):
+        return [bytes(value) for _field, _wire, value in fields]
+    while (len(fields) == 1 and fields[0][1] == 2
+           and isinstance(fields[0][2], (bytes, bytearray))):
+        data = bytes(fields[0][2])
+        fields = proto_decode(data)
+    return [data]
+
+
+def _decode_summary_metric(field: int, data: bytes) -> dict:
+    scale, unit = _SUMMARY_METRIC_SCALES[field]
+    subfields = _SUMMARY_SUBFIELDS[field]
+    percentiles = {}
+    unknown = []
+    for subfield, wire, value in proto_decode(data):
+        percentile = subfields.get(subfield)
+        if percentile is None or wire != 0:
+            unknown.append(_decoded_wire_field(subfield, wire, value))
+            continue
+        raw = int(value)
+        percentiles[str(percentile)] = {
+            "raw": raw,
+            "value": raw * scale,
+        }
+    return {
+        "unit": unit,
+        "percentiles": percentiles,
+        "unknownFields": unknown,
+    }
+
+
+def _decode_summary_records(data: bytes) -> list[dict]:
+    records = []
+    for index, payload in enumerate(_summary_record_payloads(data)):
+        record = {
+            "record": index,
+            "byteLength": len(payload),
+            "values": {},
+            "metrics": {},
+            "unknownFields": [],
+        }
+        for field, wire, value in proto_decode(payload):
+            name = _summary_metric_name(
+                _SUMMARY_FIELDS.get(field, f"field_{field}")
+            )
+            if field == 6 and wire == 2:
+                decoded_entries = _decode_summary_session_entries(bytes(value))
+                record["sessionDurationEntries"] = decoded_entries["entries"]
+                if decoded_entries["unknownFields"]:
+                    record["sessionDurationUnknownFields"] = (
+                        decoded_entries["unknownFields"]
+                    )
+                continue
+            if field in _SUMMARY_SUBFIELDS and wire == 2:
+                record["metrics"][name] = _decode_summary_metric(
+                    field, bytes(value)
+                )
+                continue
+            if wire == 0:
+                raw = int(value)
+                decoded = {"raw": raw}
+                scale = _SUMMARY_SCALAR_SCALES.get(field)
+                if scale is not None:
+                    decoded["value"] = raw * scale
+                if field in _SUMMARY_TIMESTAMP_FIELDS:
+                    decoded["value"] = _fmt_utc_ms(raw)
+                _store_decoded_value(record["values"], name, decoded)
+                continue
+            if wire in (1, 5):
+                _store_decoded_value(
+                    record["values"], name, {"raw": int(value)}
+                )
+                continue
+            record["unknownFields"].append(
+                _decoded_wire_field(field, wire, value)
+            )
+        records.append(record)
+    return records
+
+
+def _decode_event_extra(spool_type: str, event_type: int, field: int,
+                        wire: int, value: object) -> dict:
+    legend = SPOOL_LEGENDS.get(spool_type, {})
+    if wire == 2 and field == legend.get("string_field"):
+        name = "text"
+    else:
+        name = legend.get("extra_fields", {}).get((event_type, field))
+    out = {
+        "field": field,
+        "wireType": _PROTO_WIRE.get(wire, str(wire)),
+        "name": name,
+        "raw": _decoded_wire_value(wire, value),
+    }
+    if (spool_type == "CellularActivityEvents" and event_type == 95
+            and field == 14 and wire == 0):
+        packed = int(value)
+        error_id = (packed >> 12) & 0xFFF
+        out["value"] = {
+            "errorId": error_id,
+            "errorName": legend.get("log_error_ids", {}).get(error_id),
+            "detailId": packed & 0xFFF,
+        }
+    elif wire == 0:
+        enum_name = legend.get("extra_enums", {}).get(
+            (event_type, field), {}
+        ).get(value)
+        if enum_name is not None:
+            out["value"] = enum_name
+    elif wire == 2:
+        raw = bytes(value)
+        if raw and all(32 <= byte < 127 for byte in raw):
+            out["value"] = raw.decode("ascii")
+    return out
+
+
+def _decode_gui_events(spool_type: str, data: bytes) -> list[dict]:
+    records = []
+    sources = _decode_records_strict(data, _gui_event_record)
+    for index, source in enumerate(sources):
+        event_type = int(source["type"])
+        timestamp = int(source["timestamp"])
+        record = {
+            "record": index,
+            "type": event_type,
+            "name": _event_name(spool_type, event_type) or None,
+            "value": _decoded_wire_value(
+                source["value_wire"], source["value"]
+            ),
+            "valueWireType": _PROTO_WIRE.get(
+                source["value_wire"], str(source["value_wire"])
+            ),
+            "extraFields": [
+                _decode_event_extra(spool_type, event_type, *extra)
+                for extra in source["extras"]
+            ],
+        }
+        record.update(_timestamp_fields("timestamp", timestamp))
+        records.append(record)
+    return records
+
+
+def _decode_survey_events(data: bytes) -> list[dict]:
+    records = []
+    for index, payload in enumerate(_wrapped_records(data, 14)):
+        records.append({
+            "record": index,
+            "fields": _decoded_wire_fields(proto_decode(payload)),
+        })
+    return records
+
+
+def _decode_events(spool_type: str, data: bytes,
+                   app_version: str | None) -> list[dict]:
+    record_kind = SPOOL_LEGENDS.get(spool_type, {}).get(
+        "record_kind", "event"
+    )
+    if record_kind == "gui":
+        return _decode_gui_events(spool_type, data)
+    if record_kind == "survey":
+        return _decode_survey_events(data)
+
+    diagnostic = record_kind == "diagnostic_error"
+    records = []
+    decoded_records = _decode_records_strict(data, _event_record)
+    for index, event in enumerate(decoded_records):
+        event_type = int(event["type"])
+        start = int(event["start"])
+        end = int(event["end"])
+        duration = event["duration"]
+        if duration is None:
+            duration = end - start
+        record = {
+            "record": index,
+            "type": event_type,
+            "name": _event_name(spool_type, event_type) or None,
+            "durationMs": int(duration),
+            "extraFields": [
+                _decode_event_extra(spool_type, event_type, *extra)
+                for extra in event["extras"]
+            ],
+        }
+        record.update(_timestamp_fields("startTime", start))
+        record.update(_timestamp_fields("endTime", end))
+        if diagnostic and summarize_diagnostic_code is not None:
+            record["interpretation"] = summarize_diagnostic_code(
+                spool_type, event_type, app_version, details=True
+            )
+        records.append(record)
+    return records
+
+
+def _decode_diagnostic_blob(data: bytes) -> list[dict]:
+    records = []
+    for index, payload in enumerate(_wrapped_records(data, 11)):
+        record = {
+            "record": index,
+            "byteLength": len(payload),
+            "dataBase64": base64.b64encode(payload).decode("ascii"),
+        }
+        try:
+            record["fields"] = _decoded_wire_fields(proto_decode(payload))
+        except (ValueError, IndexError):
+            pass
+        records.append(record)
+    return records
+
+
+def _decode_audio(data: bytes) -> list[dict]:
+    container = "RIFF/WAVE" if data.startswith(b"RIFF") else None
+    return [{
+        "record": 0,
+        "container": container,
+        "byteLength": len(data),
+        "dataBase64": base64.b64encode(data).decode("ascii"),
+    }] if data else []
+
+
+def decode_spool(spool_type: str, data: bytes, *,
+                 app_version: str | None = None) -> dict:
+    """Decode a complete spool payload into a JSON-serializable model."""
+    info = SPOOL_REGISTRY.get(spool_type)
+    if info is None:
+        raise SpoolDecodeError(f"unknown spool type: {spool_type}")
+    family = info["family"]
+    if not data:
+        return {"spoolType": spool_type, "family": family, "records": []}
+    try:
+        if family == "summary":
+            records = _decode_summary_records(data)
+        elif family == "profile":
+            records = _decode_setting_profiles(data)
+        elif family == "config":
+            records = _decode_configuration_profiles(data)
+        elif family == "event":
+            records = _decode_events(spool_type, data, app_version)
+        elif family == "periodic":
+            records = _decode_therapy_one_minute(data)
+        elif family == "periodic_compressed":
+            records = _decode_periodic_compressed(spool_type, data)
+        elif family == "metric":
+            records = _decode_metric_spool(spool_type, data)
+        elif family == "rc03":
+            records = _decode_rc03_spool(spool_type, data)
+        elif family == "diag_vector":
+            records = _decode_soundcheck_vector(data)
+        elif family == "diag_blob":
+            records = _decode_diagnostic_blob(data)
+        elif family == "audio":
+            records = _decode_audio(data)
+        else:
+            raise SpoolDecodeError(
+                f"{spool_type}: unsupported spool family {family!r}"
+            )
+    except SpoolDecodeError:
+        raise
+    except (ValueError, IndexError) as exc:
+        raise SpoolDecodeError(f"{spool_type}: {exc}") from exc
+    return {
+        "spoolType": spool_type,
+        "family": family,
+        "records": records,
+    }
+
+
+def _flatten_decoded(value: object, path: str = ""):
+    if isinstance(value, dict):
+        if not value:
+            yield path, {}
+            return
+        for key, child in value.items():
+            child_path = f"{path}.{key}" if path else str(key)
+            yield from _flatten_decoded(child, child_path)
+        return
+    if isinstance(value, list):
+        if not value:
+            yield path, []
+            return
+        for index, child in enumerate(value):
+            yield from _flatten_decoded(child, f"{path}[{index}]")
+        return
+    yield path, value
+
+
+def _render_decoded_csv(decoded: dict, out) -> None:
+    writer = csv.writer(out, lineterminator="\n")
+    writer.writerow(("path", "value"))
+    for path, value in _flatten_decoded(decoded):
+        writer.writerow((path, json.dumps(value, ensure_ascii=True)))
+
+
+def _table_cell(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    if isinstance(value, float):
+        return f"{value:.10g}"
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=True, separators=(",", ":"))
+
+
+def _table_time(value: object) -> str:
+    text = _table_cell(value)
+    if text.endswith("+00:00"):
+        text = text[:-6] + "Z"
+    if text.endswith("Z") and "." in text:
+        text = text[:-1].rstrip("0").rstrip(".") + "Z"
+    return text.replace("T", " ")
+
+
+def _write_table(headers, rows, out, *, indent: str = "") -> None:
+    rendered = [[_table_cell(cell) for cell in row] for row in rows]
+    if not rendered:
+        return
+    widths = []
+    for index, header in enumerate(headers):
+        widest = max([len(str(header))] + [len(row[index]) for row in rendered])
+        widths.append(min(widest, 40))
+
+    def wrapped_row(row):
+        columns = [textwrap.wrap(cell, width=max(width, 1),
+                                 break_long_words=True,
+                                 break_on_hyphens=False) or [""]
+                   for cell, width in zip(row, widths)]
+        for line in range(max(len(column) for column in columns)):
+            yield [column[line] if line < len(column) else ""
+                   for column in columns]
+
+    header_row = [str(header) for header in headers]
+    print(indent + "  ".join(
+        cell.ljust(width) for cell, width in zip(header_row, widths)
+    ).rstrip(), file=out)
+    print(indent + "  ".join("-" * width for width in widths).rstrip(),
+          file=out)
+    for row in rendered:
+        for line in wrapped_row(row):
+            print(indent + "  ".join(
+                cell.ljust(width) for cell, width in zip(line, widths)
+            ).rstrip(), file=out)
+
+
+def _decoded_value_cell(value: object) -> str:
+    if not isinstance(value, dict):
+        return _table_cell(value)
+    if "value" in value or "raw" in value:
+        display = value.get("value", value.get("name", value.get("raw")))
+        if isinstance(display, str) and "T" in display:
+            display = _table_time(display)
+        text = _table_cell(display)
+        if value.get("unit"):
+            text += f" {value['unit']}"
+        raw = value.get("raw")
+        if raw is not None and display != raw:
+            text += f" (raw {raw})"
+        return text
+    return _table_cell(value)
+
+
+def _decoded_value_parts(value: object) -> tuple[object, str, object]:
+    if not isinstance(value, dict):
+        return value, "", ""
+    display = value.get("value", value.get("name", value.get("raw", "")))
+    if isinstance(display, str) and "T" in display:
+        display = _table_time(display)
+    raw = value.get("raw", "")
+    return display, value.get("unit", ""), "" if display == raw else raw
+
+
+def _is_table_scalar(value: object) -> bool:
+    if not isinstance(value, (dict, list)):
+        return True
+    return (isinstance(value, dict)
+            and ("value" in value or "raw" in value)
+            and not any(isinstance(item, (dict, list))
+                        for item in value.values()))
+
+
+def _render_table_tree(title: str, value: object, out,
+                       *, indent: str = "") -> None:
+    if value in (None, [], {}):
+        return
+    print(f"{indent}{title}:", file=out)
+    child_indent = indent + "  "
+    if isinstance(value, dict):
+        scalar_rows = [(key, _decoded_value_cell(item))
+                       for key, item in value.items()
+                       if _is_table_scalar(item)]
+        _write_table(("Field", "Value"), scalar_rows, out,
+                     indent=child_indent)
+        for key, item in value.items():
+            if not _is_table_scalar(item):
+                _render_table_tree(str(key), item, out, indent=child_indent)
+        return
+    if isinstance(value, list):
+        if all(_is_table_scalar(item) for item in value):
+            _write_table(("#", "Value"),
+                         ((index, _decoded_value_cell(item))
+                          for index, item in enumerate(value)),
+                         out, indent=child_indent)
+        else:
+            for index, item in enumerate(value):
+                label = (item.get("name") if isinstance(item, dict)
+                         else None) or str(index)
+                _render_table_tree(str(label), item, out,
+                                   indent=child_indent)
+        return
+    print(child_indent + _table_cell(value), file=out)
+
+
+def _render_event_table(decoded: dict, out) -> None:
+    records = decoded["records"]
+    _write_table(
+        ("#", "Event", "Type", "Start", "End", "Duration"),
+        ((record.get("record"), record.get("name") or "unknown",
+          record.get("type"), _table_time(record.get("startTime")),
+          _table_time(record.get("endTime")), record.get("durationMs"))
+         for record in records),
+        out,
+    )
+    for record in records:
+        details = {
+            key: record[key]
+            for key in ("extraFields", "interpretation", "unknownFields")
+            if record.get(key)
+        }
+        if details:
+            _render_table_tree(f"Event {record.get('record')} details",
+                               details, out)
+
+
+def _render_summary_table(decoded: dict, out) -> None:
+    records = decoded["records"]
+    _write_table(
+        ("#", "Period start", "Period end", "Minutes", "TZ", "Sessions"),
+        ((record.get("record"),
+          _table_time(_decoded_known_value(record, "PeriodStart")),
+          _table_time(_decoded_known_value(record, "PeriodEnd")),
+          _decoded_known_value(record, "DurationMin"),
+          _decoded_known_value(record, "TimeZoneOffsetMin"),
+          (_decoded_known_value(record, "SessionCount")
+           if _decoded_known_value(record, "SessionCount") is not None
+           else len(record.get("sessionDurationEntries", []))))
+         for record in records),
+        out,
+    )
+    for record in records:
+        number = record.get("record")
+        sessions = record.get("sessionDurationEntries", [])
+        if sessions:
+            print(f"\nRecord {number} sessions:", file=out)
+            _write_table(
+                ("#", "Start", "Minutes"),
+                ((index, _table_time(session.get("startTime")),
+                  session.get("durationMin"))
+                 for index, session in enumerate(sessions)),
+                out, indent="  ",
+            )
+
+        values = record.get("values", {})
+        if values:
+            print(f"\nRecord {number} values:", file=out)
+            _write_table(
+                ("Name", "Value", "Unit", "Raw"),
+                ((name, *_decoded_value_parts(value))
+                 for name, value in values.items()),
+                out, indent="  ",
+            )
+
+        metrics = record.get("metrics", {})
+        if metrics:
+            percentile_names = ("5", "50", "70", "95", "100")
+            print(f"\nRecord {number} metrics:", file=out)
+            _write_table(
+                ("Metric", "Unit", "p5", "p50", "p70", "p95", "p100"),
+                ((name, metric.get("unit", ""),
+                  *(_decoded_value_parts(
+                      metric.get("percentiles", {}).get(percentile, {})
+                    )[0] for percentile in percentile_names))
+                 for name, metric in metrics.items()),
+                out, indent="  ",
+            )
+
+        details = {
+            key: record[key]
+            for key in ("sessionDurationUnknownFields", "unknownFields")
+            if record.get(key)
+        }
+        if details:
+            _render_table_tree(f"Record {number} additional fields",
+                               details, out)
+
+
+def _sample_rows(sample: dict):
+    raw_values = sample.get("rawValues", [])
+    values = sample.get("values", [])
+    count = max(len(raw_values), len(values))
+    start = sample.get("startTimeMs")
+    interval = sample.get("intervalMs")
+    for index in range(count):
+        timestamp = ""
+        if start is not None and interval is not None:
+            timestamp = _table_time(_fmt_utc_ms(start + index * interval))
+        yield (
+            index,
+            timestamp,
+            raw_values[index] if index < len(raw_values) else "",
+            values[index] if index < len(values) else "",
+        )
+
+
+def _render_signal_table(decoded: dict, out) -> None:
+    samples = []
+    metadata = []
+    for record in decoded["records"]:
+        signals = record.get("signals")
+        if signals is None and "values" in record:
+            signals = [record]
+        for signal_index, signal in enumerate(signals or []):
+            name = signal.get("name") or decoded["spoolType"]
+            metadata.append((
+                record.get("record"), name,
+                _table_time(signal.get("startTime")),
+                _table_time(signal.get("endTime")),
+                signal.get("intervalMs", record.get("intervalMs")),
+                signal.get("sampleCount", len(signal.get("values", []))),
+                min(signal["values"]) if signal.get("values") else "",
+                max(signal["values"]) if signal.get("values") else "",
+                signal.get("unit", ""),
+            ))
+            samples.append((record, signal_index, name, signal))
+    _write_table(
+        ("Record", "Signal", "Start", "End", "Interval", "Samples",
+         "Min", "Max", "Unit"),
+        metadata, out,
+    )
+    for record, signal_index, name, signal in samples:
+        print(f"\nRecord {record.get('record')} {name} samples:", file=out)
+        _write_table(("#", "Time", "Raw", "Value"),
+                     _sample_rows(signal), out, indent="  ")
+
+        details = {
+            key: value for key, value in signal.items()
+            if key not in {
+                "name", "startTime", "startTimeMs", "endTime", "endTimeMs",
+                "intervalMs", "sampleCount", "rawValues", "values", "unit",
+            } and value not in (None, [], {})
+        }
+        if details:
+            _render_table_tree("Details", details, out, indent="  ")
+
+    for record in decoded["records"]:
+        if "signals" not in record:
+            continue
+        details = {
+            key: value for key, value in record.items()
+            if key not in {"record", "signals"} and value not in (None, [], {})
+        }
+        if details:
+            _render_table_tree(
+                f"Record {record.get('record')} metadata", details, out
+            )
+
+
+def _render_decoded_table(decoded: dict, out) -> None:
+    print(f"{decoded['spoolType']} ({decoded['family']}), "
+          f"{len(decoded['records'])} record(s)", file=out)
+    if not decoded["records"]:
+        return
+    print(file=out)
+    family = decoded["family"]
+    if family == "event":
+        _render_event_table(decoded, out)
+    elif family == "summary":
+        _render_summary_table(decoded, out)
+    elif family in {"periodic", "periodic_compressed", "rc03"}:
+        _render_signal_table(decoded, out)
+    else:
+        _render_table_tree("Records", decoded["records"], out)
+
+
+def _decoded_known_value(record: dict, name: str):
+    value = record.get("values", {}).get(name)
+    if isinstance(value, dict):
+        return value.get("value", value.get("raw"))
+    return value
+
+
+def _render_decoded_summary(decoded: dict, out) -> None:
+    spool_type = decoded["spoolType"]
+    family = decoded["family"]
+    records = decoded["records"]
+    print(f"{spool_type}: family={family} records={len(records)}", file=out)
+
+    if family == "event":
+        counts = Counter((record.get("name") or f"type={record.get('type')}")
+                         for record in records)
+        for name, count in sorted(counts.items()):
+            print(f"  {name}: {count}", file=out)
+        return
+
+    if family == "summary":
+        for record in records:
+            start = _decoded_known_value(record, "PeriodStart")
+            end = _decoded_known_value(record, "PeriodEnd")
+            duration = _decoded_known_value(record, "DurationMin")
+            sessions = _decoded_known_value(record, "SessionCount")
+            if sessions is None:
+                sessions = len(record.get("sessionDurationEntries", []))
+            print(f"  record {record['record']}: {start} -> {end} "
+                  f"duration_min={duration} sessions={sessions}", file=out)
+        return
+
+    found_samples = False
+    for record in records:
+        signals = record.get("signals", [])
+        for signal in signals:
+            values = signal.get("values", [])
+            start = signal.get("startTime", "n/a")
+            interval = signal.get("intervalMs", record.get("intervalMs"))
+            bounds = ""
+            if values:
+                bounds = f" min={min(values):.8g} max={max(values):.8g}"
+            print(f"  record {record['record']} {signal['name']}: "
+                  f"start={start} interval_ms={interval} "
+                  f"samples={len(values)}{bounds}", file=out)
+            found_samples = True
+        if "values" in record and "sampleCount" in record:
+            values = record["values"]
+            bounds = ""
+            if values:
+                bounds = f" min={min(values):.8g} max={max(values):.8g}"
+            print(f"  record {record['record']}: "
+                  f"start={record.get('startTime', 'n/a')} "
+                  f"interval_ms={record.get('intervalMs')} "
+                  f"samples={len(values)}{bounds}", file=out)
+            found_samples = True
+    if found_samples:
+        return
+
+    for record in records:
+        keys = [key for key in record
+                if key not in {"record", "unknownFields"}]
+        print(f"  record {record.get('record')}: {', '.join(keys)}", file=out)
+
+
+def render_spool(decoded: dict, output_format: str, out=None) -> None:
+    """Render one decoded spool model."""
+    if out is None:
+        out = sys.stdout
+    if output_format == "json":
+        json.dump(decoded, out, indent=2, ensure_ascii=True)
+        print(file=out)
+    elif output_format == "csv":
+        _render_decoded_csv(decoded, out)
+    elif output_format == "table":
+        _render_decoded_table(decoded, out)
+    elif output_format == "summary":
+        _render_decoded_summary(decoded, out)
+    else:
+        raise ValueError(f"unknown spool output format: {output_format}")
+
+
 __all__ = [
     "SPOOL_FRAGMENT_SIZE", "SPOOL_FRAGMENT_SIZE_LIMIT",
+    "SPOOL_OUTPUT_FORMATS", "SPOOL_OUTPUT_DEFAULT",
     "SPOOL_LEGENDS",
-    "SpoolError",
+    "SpoolError", "SpoolDecodeError",
     "spool_one_round",
-    "proto_decode", "proto_pretty",
-    "summary_pretty",
-    "spool_payload_shape", "spool_payload_first_field", "detect_spool_type",
-    "setting_profiles_pretty", "configuration_profiles_pretty",
-    "metric_spool_pretty", "periodic_compressed_pretty",
-    "soundcheck_vector_pretty", "diagnostic_blob_pretty",
-    "audio_spool_pretty", "rc03_spool_pretty", "therapy_one_minute_pretty",
-    "event_spool_pretty", "SELECTOR_BY_SPOOL",
-    "print_spool_legend", "print_spool_summary", "spool_walk_events",
+    "proto_decode", "spool_payload_first_field", "detect_spool_type",
+    "SELECTOR_BY_SPOOL", "spool_walk_events",
+    "decode_spool", "render_spool",
 ]
