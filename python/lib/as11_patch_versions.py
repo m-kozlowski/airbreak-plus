@@ -32,6 +32,17 @@ AS11_FGBL_PATCH_VERSIONS = {
 
 AS11_PATCH_VERSIONS = {
     "8_0_1": {
+        "timezone_write": {
+            "metadata_gate": {
+                "address": 0x08198E24, "before": "e10f", "after": "0121",
+            },
+            "data_rule_gate": {
+                "address": 0x081661D4, "before": "17ead47f", "after": "002f00bf",
+            },
+            "menu_warning_action": {
+                "address": 0x0805A35C, "before": "06f045fd", "after": "00bf00bf",
+            },
+        },
         "mop_callback_dispatcher": {
             "writeback": 0x0806E070,
             "vtable_slot": 0x081925E8,
@@ -45,6 +56,17 @@ AS11_PATCH_VERSIONS = {
         },
     },
     "8_3_0": {
+        "timezone_write": {
+            "metadata_gate": {
+                "address": 0x081A57D0, "before": "e10f", "after": "0121",
+            },
+            "data_rule_gate": {
+                "address": 0x0816C14A, "before": "16ead47f", "after": "002e00bf",
+            },
+            "menu_warning_action": {
+                "address": 0x0805AA62, "before": "06f038fd", "after": "00bf00bf",
+            },
+        },
         "mop_callback_dispatcher": {
             "writeback": 0x0806E928,
             "vtable_slot": 0x0819EA20,
@@ -76,6 +98,17 @@ AS11_PATCH_VERSIONS = {
         },
     },
     "8_4_0": {
+        "timezone_write": {
+            "metadata_gate": {
+                "address": 0x081AA640, "before": "e10f", "after": "0121",
+            },
+            "data_rule_gate": {
+                "address": 0x081691CE, "before": "16ead47f", "after": "002e00bf",
+            },
+            "menu_warning_action": {
+                "address": 0x0805DE0A, "before": "05f048f8", "after": "00bf00bf",
+            },
+        },
         "mop_callback_dispatcher": {
             "writeback": 0x08070998,
             "vtable_slot": 0x081A332C,
@@ -107,6 +140,17 @@ AS11_PATCH_VERSIONS = {
         },
     },
     "8_5_0": {
+        "timezone_write": {
+            "metadata_gate": {
+                "address": 0x081AC438, "before": "e10f", "after": "0121",
+            },
+            "data_rule_gate": {
+                "address": 0x0815F720, "before": "17ead47f", "after": "002f00bf",
+            },
+            "menu_warning_action": {
+                "address": 0x0805DE44, "before": "05f019f9", "after": "00bf00bf",
+            },
+        },
         "mop_callback_dispatcher": {
             "writeback": 0x08070EFC,
             "vtable_slot": 0x081A52E0,
@@ -142,6 +186,17 @@ AS11_PATCH_VERSIONS = {
         },
     },
     "8_6_0": {
+        "timezone_write": {
+            "metadata_gate": {
+                "address": 0x081AD428, "before": "e10f", "after": "0121",
+            },
+            "data_rule_gate": {
+                "address": 0x0815EA0C, "before": "17ead47f", "after": "002f00bf",
+            },
+            "menu_warning_action": {
+                "address": 0x0805E374, "before": "05f02df9", "after": "00bf00bf",
+            },
+        },
         "mop_callback_dispatcher": {
             "writeback": 0x08071570,
             "vtable_slot": 0x081A6190,

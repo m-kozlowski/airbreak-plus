@@ -83,6 +83,7 @@ instead of producing that reduced result.
 |-------|--------------|--------|
 | RPC profile visibility | Exposes supported therapy and feature profile nodes in RPC JSON | `--patch-rpc-json-profile-visibility` |
 | RPC permissions | Applies configured command permissions for each communication-interface VCID | `--patch-rpc-permissions` |
+| Time-zone write | Allows the time zone to be changed through RPC or the device menu after therapy history exists | `--patch-timezone-write` |
 
 ### Quality of Life
 

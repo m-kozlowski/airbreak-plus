@@ -1871,6 +1871,52 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             print("motor_nagscreen: threshold not found!")
             return PatchOutcome.warn("threshold not found")
 
+    def timezone_write(self):
+        """Keep time-zone writes available after summary history exists."""
+        version_key = self.asf.appx_version_key()
+        version = AS11_PATCH_VERSIONS.get(version_key, {}).get(
+            "timezone_write"
+        )
+        if version is None:
+            raise ValueError(
+                "timezone_write: no anchors for APPX %s" % version_key
+            )
+
+        # r4 >> 31 is the firmware's (FTS == 0) boolean. At metadata_gate:
+        #   e10f       lsrs  r1, r4, #31  ->  0121      movs r1, #1
+        # At data_rule_gate, r6/r7 holds TZG. Replace:
+        #   17ead47f   tst.w r7, r4, lsr #31  ->  002f00bf  cmp r7, #0; nop
+        #   16ead47f   tst.w r6, r4, lsr #31  ->  002e00bf  cmp r6, #0; nop
+        # This preserves the TZG test while removing only the FTS == 0 term.
+        # menu_warning_action replaces its version-specific BL with two NOPs.
+        def patch_site(name):
+            site = version[name]
+            off = self.asf.ptr_to_off(site["address"])
+            before = bytes.fromhex(site["before"])
+            after = bytes.fromhex(site["after"])
+            current = bytes(self.asf.fw[off:off + len(before)])
+            if current == after:
+                return False
+            if current != before:
+                raise ValueError(
+                    "timezone_write: %s at 0x%08X is %s, expected %s" %
+                    (name, site["address"], current.hex(), before.hex())
+                )
+            self.asf.patch(after, addr=off, verbose=False)
+            return True
+
+        changed = []
+        if patch_site("metadata_gate"):
+            changed.append("metadata_gate")
+        if patch_site("data_rule_gate"):
+            changed.append("data_rule_gate")
+        if patch_site("menu_warning_action"):
+            changed.append("menu_warning_action")
+
+        if changed:
+            return PatchOutcome.ok("enabled: %s" % ", ".join(changed))
+        return PatchOutcome.ok("already enabled")
+
     def rpc_permission_record_flags_are_bits(self, off, stride):
         if off + stride > len(self.asf.fw) or stride < 2:
             return False
@@ -2209,6 +2255,12 @@ PATCH_LIST = [
         "desc": "Enable or block selected RPC commands on configured VCID permissions.",
         "default": True,
         "function": "rpc_permissions",
+    },
+    {
+        "arg": "patch-timezone-write",
+        "desc": "Allow time-zone changes after summary history exists.",
+        "default": True,
+        "function": "timezone_write",
     },
     {
         "arg": "patch-vid-spoof",

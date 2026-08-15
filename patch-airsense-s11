@@ -44,6 +44,7 @@ PATCHES=(
     patch-asv-backup-rate
     patch-custom-settings
     patch-rpc-permissions
+    patch-timezone-write
 )
 
 # METHOD:VCID:BOOL permissions applied by patch-rpc-permissions.

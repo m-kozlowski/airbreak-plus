@@ -80,6 +80,11 @@ class HeaderClockCandidates:
 
 
 @dataclass
+class TimezoneWriteCandidates:
+    sites: dict[str, AddressResult]
+
+
+@dataclass
 class CustomSettingsCandidates:
     sites: dict[str, AddressResult]
     row_constructor: AddressResult
@@ -110,6 +115,7 @@ class OtaDescriptorCandidates:
 class PortCandidates:
     stubs: dict[str, AddressResult]
     mop: MopCandidates
+    timezone_write: TimezoneWriteCandidates
     header_clock: HeaderClockCandidates
     custom_settings: CustomSettingsCandidates
     asv: AsvCandidates
@@ -399,6 +405,26 @@ def thumb2_bl_target(data: bytes, address: int) -> int | None:
     if immediate & (1 << 24):
         immediate -= 1 << 25
     return address + 4 + immediate
+
+
+def thumb2_movw_immediate(
+        data: bytes, address: int, register: int | None = None) -> int | None:
+    """Decode a Thumb-2 MOVW immediate, optionally for one register."""
+    off = address - FLASH_BASE
+    if off < 0 or off + 4 > len(data):
+        return None
+    first, second = struct.unpack_from("<HH", data, off)
+    if (first & 0xFBF0) != 0xF240:
+        return None
+    target = (second >> 8) & 0x0F
+    if register is not None and target != register:
+        return None
+    return (
+        ((first & 0x000F) << 12)
+        | (((first >> 10) & 1) << 11)
+        | (((second >> 12) & 7) << 8)
+        | (second & 0x00FF)
+    )
 
 
 def thumb2_bw_target(data: bytes, address: int) -> int | None:
@@ -916,6 +942,186 @@ def resolve_ota_descriptor_candidates(
     return OtaDescriptorCandidates(table, desc2, desc3)
 
 
+def resolve_timezone_menu_warning_action(
+        target_fw: AS11Firmware,
+        matcher: AddressMatcher,
+        source_address: int) -> AddressResult:
+    """Corroborate the Time Zone row's saved-history warning action."""
+    direct = matcher.site(source_address)
+    tzg_var_id = target_fw._resolve_var_ident("TZG")
+    dispatch = (
+        target_fw.dispatch_var_id(tzg_var_id)
+        if tzg_var_id is not None else None
+    )
+    if dispatch is None or dispatch[0] != "g[5]":
+        return AddressResult(
+            source_address, None, "missing",
+            "TZG does not resolve to a g[5] descriptor",
+            direct.alternatives,
+        )
+
+    seeds = []
+    if direct.address is not None:
+        seeds.append(direct.address)
+    seeds.extend(direct.alternatives)
+    seeds.extend(
+        candidate.address
+        for candidate in matcher.raw_candidates(source_address)
+    )
+
+    matches = []
+    data = target_fw.data
+    for seed in dict.fromkeys(seeds):
+        start = max(FLASH_BASE + APPX_BASE, seed - 0x10)
+        end = min(FLASH_BASE + len(data) - 4, seed + 0x12)
+        for address in range(start & ~1, end + 1, 2):
+            first_target = thumb2_bl_target(data, address)
+            off = address - FLASH_BASE
+            if first_target is None or struct.unpack_from(
+                    "<H", data, off + 4)[0] != 0x200C:
+                continue
+
+            tzg_loads = []
+            row_alloc_setups = []
+            for candidate in range(address + 4, address + 0x30, 2):
+                candidate_off = candidate - FLASH_BASE
+                if struct.unpack_from("<H", data, candidate_off)[0] == 0x2050:
+                    row_alloc_setups.append(candidate)
+                if (thumb2_movw_immediate(data, candidate, register=1) ==
+                        tzg_var_id):
+                    tzg_loads.append(candidate)
+            if len(tzg_loads) != 1 or len(row_alloc_setups) != 1:
+                continue
+            load_off = tzg_loads[0] - FLASH_BASE
+            if struct.unpack_from("<H", data, load_off - 2)[0] != 0x2201:
+                continue
+            later_targets = [
+                target
+                for candidate in range(
+                    row_alloc_setups[0] - 8, row_alloc_setups[0], 2
+                )
+                if (target := thumb2_bl_target(data, candidate)) is not None
+            ]
+            if later_targets == [first_target]:
+                matches.append(address)
+
+    matches = list(dict.fromkeys(matches))
+    if len(matches) != 1:
+        return AddressResult(
+            source_address, None, "missing",
+            "found %d structurally matching Time Zone warning actions" %
+            len(matches),
+            tuple(matches) or direct.alternatives,
+        )
+    evidence = (
+        "unique warning-action prepend followed by resolved TZG=1 action"
+    )
+    if direct.address == matches[0] or matches[0] in direct.alternatives:
+        evidence += "; generic site transfer agrees"
+    return AddressResult(source_address, matches[0], "strong", evidence)
+
+
+def resolve_timezone_write_candidates(
+        target_fw: AS11Firmware,
+        matcher: AddressMatcher,
+        reference: dict) -> TimezoneWriteCandidates:
+    """Transfer the time-zone metadata, data-rule, and menu-action sites."""
+    metadata = matcher.site(reference["metadata_gate"]["address"])
+    source_gate = reference["data_rule_gate"]["address"]
+    direct_data_rule_gate = matcher.site(source_gate)
+    source_gate_off = source_gate - FLASH_BASE
+    prologues = []
+    for signature in (bytes.fromhex("f0b58db0"), bytes.fromhex("78b58db0")):
+        start = max(APPX_BASE, source_gate_off - 0x60)
+        while True:
+            found = matcher.source.find(signature, start, source_gate_off)
+            if found < 0:
+                break
+            prologues.append(found)
+            start = found + 1
+    if len(prologues) != 1:
+        data_rule_gate = AddressResult(
+            source_gate, None, "missing",
+            "reference time-zone data-rule prologue is not unique",
+        )
+        return TimezoneWriteCandidates({
+            "metadata_gate": metadata,
+            "data_rule_gate": data_rule_gate,
+            "menu_warning_action": resolve_timezone_menu_warning_action(
+                target_fw, matcher,
+                reference["menu_warning_action"]["address"]
+            ),
+        })
+
+    source_callback = FLASH_BASE + prologues[0]
+    callback = matcher.function(source_callback)
+    body_candidates = matcher.raw_candidates(source_callback)
+    body_strong = bool(
+        body_candidates
+        and body_candidates[0].score >= 80
+        and body_candidates[0].support >= 15
+    )
+    matches = []
+    callback_candidates = []
+    if callback.address is not None:
+        callback_candidates.append(callback.address)
+    callback_candidates.extend(callback.alternatives)
+    for callback_address in dict.fromkeys(callback_candidates):
+        callback_off = callback_address - FLASH_BASE
+        end = min(len(matcher.target), callback_off + 0x80)
+        patterns = (
+            bytes.fromhex("17ead47f0ed06846"),
+            bytes.fromhex("16ead47f0ed06846"),
+            bytes.fromhex("002f00bf0ed06846"),
+            bytes.fromhex("002e00bf0ed06846"),
+        )
+        for pattern in patterns:
+            start = callback_off
+            while True:
+                found = matcher.target.find(pattern, start, end)
+                if found < 0:
+                    break
+                matches.append(FLASH_BASE + found)
+                start = found + 1
+    matches = list(dict.fromkeys(matches))
+    if len(matches) == 1:
+        direct_agreement = (
+            direct_data_rule_gate.address == matches[0]
+            or matches[0] in direct_data_rule_gate.alternatives
+        )
+        quality = (
+            "strong" if direct_agreement or body_strong else callback.quality
+        )
+        evidence = "unique FTS gate in transferred time-zone data rule: %s" % callback.evidence
+        if direct_agreement:
+            evidence += "; direct site transfer agrees"
+        elif body_strong:
+            evidence += "; strong body transfer"
+        data_rule_gate = AddressResult(
+            source_gate,
+            matches[0],
+            quality,
+            evidence,
+        )
+    else:
+        data_rule_gate = AddressResult(
+            source_gate,
+            None,
+            "missing",
+            "found %d FTS gates in transferred time-zone data rule" %
+            len(matches),
+            tuple(matches),
+        )
+    return TimezoneWriteCandidates({
+        "metadata_gate": metadata,
+        "data_rule_gate": data_rule_gate,
+        "menu_warning_action": resolve_timezone_menu_warning_action(
+            target_fw, matcher,
+            reference["menu_warning_action"]["address"]
+        ),
+    })
+
+
 def resolve_port_candidates(
         target_fw: AS11Firmware,
         reference_fw: AS11Firmware,
@@ -929,6 +1135,7 @@ def resolve_port_candidates(
         )
     required = (
         ("MOP dispatcher", "mop_callback_dispatcher"),
+        ("time-zone write", "timezone_write"),
         ("header clock", "header_clock"),
         ("custom settings", "custom_settings"),
         ("ASV backup rate", "asv_backup_rate"),
@@ -948,6 +1155,9 @@ def resolve_port_candidates(
     mop = resolve_mop_candidates(
         target_fw.data, matcher, reference["mop_callback_dispatcher"]
     )
+    timezone_write = resolve_timezone_write_candidates(
+        target_fw, matcher, reference["timezone_write"]
+    )
     header_clock = resolve_header_clock_candidates(
         target_fw, matcher, stubs, reference["header_clock"]
     )
@@ -964,7 +1174,8 @@ def resolve_port_candidates(
         reference_release,
     )
     return PortCandidates(
-        stubs, mop, header_clock, custom_settings, asv, ota_descriptor
+        stubs, mop, timezone_write, header_clock, custom_settings, asv,
+        ota_descriptor
     )
 
 
@@ -1135,6 +1346,16 @@ def self_check_candidates(
                 "unique pointer to transferred writeback",
             ),
         ))
+
+    timezone_expected = expected_version.get("timezone_write")
+    if timezone_expected is not None:
+        for name in ("metadata_gate", "data_rule_gate", "menu_warning_action"):
+            result = candidates.timezone_write.sites[name]
+            checks.append(compare_candidate(
+                "timezone_write.%s" % name,
+                timezone_expected[name]["address"],
+                CandidateValue(result.address, result.quality, result.evidence),
+            ))
 
     header_clock_expected = expected_version.get("header_clock")
     if header_clock_expected is not None:
@@ -1358,6 +1579,7 @@ def prepare(args) -> int:
     mop_writeback = candidates.mop.writeback
     mop_vtable = candidates.mop.vtable_slot
     mop_vtable_matches = candidates.mop.pointer_refs
+    timezone_write_sites = candidates.timezone_write.sites
     header_clock_sites = candidates.header_clock.sites
     custom_site_results = candidates.custom_settings.sites
     row_ctor_result = candidates.custom_settings.row_constructor
@@ -1374,6 +1596,10 @@ def prepare(args) -> int:
         ("mop", "writeback", mop_writeback),
         ("ota", "descriptor_words", ota_descriptor.table),
     ]
+    address_rows.extend(
+        ("timezone_write", name, result)
+        for name, result in timezone_write_sites.items()
+    )
     address_rows.extend(
         ("header_clock", name, result)
         for name, result in header_clock_sites.items()
@@ -1449,6 +1675,39 @@ def prepare(args) -> int:
     )
     store_size = len(bytes.fromhex(reminder_ref["row_store"][1]))
 
+    reviewed_timezone = AS11_PATCH_VERSIONS.get(
+        target_id.appx_key, {}
+    ).get("timezone_write")
+    timezone_snippet_lines = ["    \"timezone_write\": {"]
+    for name in ("metadata_gate", "data_rule_gate", "menu_warning_action"):
+        result = timezone_write_sites[name]
+        if reviewed_timezone is not None:
+            before = reviewed_timezone[name]["before"]
+            after = reviewed_timezone[name]["after"]
+        elif result.address is not None:
+            width = 2 if name == "metadata_gate" else 4
+            off = result.address - FLASH_BASE
+            before = bytes(target_fw.data[off:off + width]).hex()
+            if name == "metadata_gate":
+                after = "0121" if before == "e10f" else "TODO"
+            elif name == "menu_warning_action":
+                after = "00bf00bf"
+            else:
+                after = {
+                    "17ead47f": "002f00bf",
+                    "16ead47f": "002e00bf",
+                }.get(before, "TODO")
+        else:
+            before = after = "TODO"
+        timezone_snippet_lines.extend((
+            "        \"%s\": {" % name,
+            "            \"address\": %s," % format_address(result.address),
+            "            \"before\": \"%s\"," % before,
+            "            \"after\": \"%s\"," % after,
+            "        },",
+        ))
+    timezone_snippet_lines.append("    },")
+
     snippets = [
         "# Candidate entry for AS11_PATCH_VERSIONS.",
         "# Verify against the target firmware before copying.",
@@ -1458,6 +1717,7 @@ def prepare(args) -> int:
         "        \"writeback\": %s," % format_address(mop_writeback.address),
         "        \"vtable_slot\": %s," % format_address(mop_vtable),
         "    },",
+        *timezone_snippet_lines,
         "    \"header_clock\": {",
         "        \"draw_call\": %s," % format_address(
             header_clock_sites["draw_call"].address
