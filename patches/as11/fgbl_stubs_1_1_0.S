@@ -39,3 +39,6 @@ NDATA(0x24026B20, sram_flash_writer_singleton)
 NDATA(0x24026FF0, sram_writer_wrapper_singleton)
 NDATA(0x2401FFF0, fgbl_service_cookie)
 NDATA(0x2401FFF4, fgbl_service_active)
+/* Service-owned workspace above the native updater stack. */
+NDATA(0x24030000, sram_service_lz4_state)
+NDATA(0x24035000, sram_service_lz4_buffer)

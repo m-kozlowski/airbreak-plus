@@ -14,6 +14,16 @@ extern volatile u32 fgbl_service_cookie;
 extern volatile u32 fgbl_service_active;
 extern u8 sram_flash_writer_singleton;
 extern u8 sram_writer_wrapper_singleton;
+extern u8 sram_service_lz4_state;
+extern u8 sram_service_lz4_buffer;
+
+/* Vendored LZ4 block API. */
+extern int LZ4_compress_fast_extState(
+    void *state, const char *source, char *destination,
+    int source_size, int destination_capacity, int acceleration);
+extern int LZ4_decompress_safe(
+    const char *source, char *destination,
+    int compressed_size, int destination_capacity);
 
 /* Native SRAM updater entry and periodic status/watchdog service. */
 extern void sram_updater_run_staged_upgrade_flow(void *context);
@@ -65,6 +75,8 @@ extern int sram_flash_writer_flush_partial(void *writer);
 #define SERVICE_COMMAND_ERASE 0x04u
 #define SERVICE_COMMAND_WRITE 0x05u
 #define SERVICE_COMMAND_RESET 0x06u
+#define SERVICE_COMMAND_READ_LZ4 0x07u
+#define SERVICE_COMMAND_WRITE_LZ4 0x08u
 
 #define SERVICE_STATUS_OK              0x00u
 #define SERVICE_STATUS_BAD_COMMAND     0x01u
@@ -77,6 +89,7 @@ extern int sram_flash_writer_flush_partial(void *writer);
 #define SERVICE_STATUS_ERASE_FAILURE   0x08u
 #define SERVICE_STATUS_WRITE_FAILURE   0x09u
 #define SERVICE_STATUS_VERIFY_FAILURE  0x0Au
+#define SERVICE_STATUS_DECODE_FAILURE  0x0Cu
 
 /* Stable storage target identifiers. */
 #define SERVICE_TARGET_FGCB 0x01u
@@ -105,9 +118,17 @@ extern int sram_flash_writer_flush_partial(void *writer);
 #define SERVICE_READ_METADATA_SIZE 7u
 #define SERVICE_ERASE_METADATA_SIZE 9u
 #define SERVICE_WRITE_METADATA_SIZE 5u
+#define SERVICE_READ_LZ4_METADATA_SIZE 3u
+#define SERVICE_WRITE_LZ4_METADATA_SIZE 7u
 #define SERVICE_MAX_READ_DATA SERVICE_MAX_RESPONSE_PAYLOAD
 #define SERVICE_MAX_WRITE_DATA \
     (SERVICE_MAX_REQUEST_PAYLOAD - SERVICE_WRITE_METADATA_SIZE)
+#define SERVICE_MAX_LZ4_DATA 4080u
+#define SERVICE_MAX_WRITE_LZ4_DATA \
+    (SERVICE_MAX_REQUEST_PAYLOAD - SERVICE_WRITE_LZ4_METADATA_SIZE)
+
+#define SERVICE_CODEC_RAW 0u
+#define SERVICE_CODEC_LZ4 1u
 
 /* Storage geometry and SPI-NOR commands. */
 #define FLASH_BASE 0x08000000u
@@ -954,6 +975,36 @@ static int backup_sram_write(u32 offset, const u8 *source, u32 length)
     return result;
 }
 
+static int storage_read(u8 target, u32 offset, u8 *destination, u32 length)
+{
+    u32 i;
+
+    if (target == SERVICE_TARGET_FGCB) {
+        for (i = 0u; i != length; ++i) {
+            destination[i] = *(volatile const u8 *)(offset + i);
+        }
+        return 1;
+    }
+    if (target == SERVICE_TARGET_BKPS) {
+        backup_sram_read(offset, destination, length);
+        return 1;
+    }
+    return nor_read_range(offset, destination, length);
+}
+
+/* Return 1 on success, 0 on write failure, and -1 on verify failure. */
+static int storage_write(u8 target, u32 offset,
+                         const u8 *source, u32 length)
+{
+    if (target == SERVICE_TARGET_FGCB) {
+        return flash_write_range(offset, source, length);
+    }
+    if (target == SERVICE_TARGET_BKPS) {
+        return backup_sram_write(offset, source, length);
+    }
+    return nor_write_range(offset, source, length);
+}
+
 /* Validate service requests and dispatch them to one storage backend. */
 static void handle_read_request(const u8 *request, const u8 *payload,
                                 u16 payload_length)
@@ -964,7 +1015,6 @@ static void handle_read_request(const u8 *request, const u8 *payload,
     u32 offset;
     u16 length;
     u8 status;
-    u32 i;
 
     if (payload_length != SERVICE_READ_METADATA_SIZE) {
         send_error(request, SERVICE_STATUS_BAD_LENGTH);
@@ -984,17 +1034,9 @@ static void handle_read_request(const u8 *request, const u8 *payload,
         return;
     }
 
-    if (target == SERVICE_TARGET_FGCB) {
-        for (i = 0u; i != length; ++i) {
-            response[i] = *(volatile const u8 *)(offset + i);
-        }
-    } else if (target == SERVICE_TARGET_BKPS) {
-        backup_sram_read(offset, response, length);
-    } else {
-        if (nor_read_range(offset, response, length) == 0) {
-            send_error(request, SERVICE_STATUS_READ_FAILURE);
-            return;
-        }
+    if (storage_read(target, offset, response, length) == 0) {
+        send_error(request, SERVICE_STATUS_READ_FAILURE);
+        return;
     }
 
     send_packet(SERVICE_COMMAND_READ, SERVICE_STATUS_OK, sequence,
@@ -1079,18 +1121,10 @@ static void handle_write_request(const u8 *request, const u8 *payload,
             send_error(request, SERVICE_STATUS_RANGE_ERROR);
             return;
         }
-        result = flash_write_range(
-            offset, payload + SERVICE_WRITE_METADATA_SIZE, length
-        );
-    } else if (target == SERVICE_TARGET_BKPS) {
-        result = backup_sram_write(
-            offset, payload + SERVICE_WRITE_METADATA_SIZE, length
-        );
-    } else {
-        result = nor_write_range(
-            offset, payload + SERVICE_WRITE_METADATA_SIZE, length
-        );
     }
+    result = storage_write(
+        target, offset, payload + SERVICE_WRITE_METADATA_SIZE, length
+    );
 
     if (result == 0) {
         send_error(request, SERVICE_STATUS_WRITE_FAILURE);
@@ -1101,6 +1135,123 @@ static void handle_write_request(const u8 *request, const u8 *payload,
         return;
     }
     send_packet(SERVICE_COMMAND_WRITE, SERVICE_STATUS_OK, sequence, 0, 0u);
+}
+
+static void handle_read_lz4_request(const u8 *request, const u8 *payload,
+                                    u16 payload_length)
+{
+    u8 response[SERVICE_MAX_RESPONSE_PAYLOAD];
+    u8 *raw = &sram_service_lz4_buffer;
+    u16 sequence = get_u16_le(request + 4);
+    u8 target;
+    u32 offset;
+    u16 length;
+    u8 status;
+    int compressed_length;
+    u32 i;
+
+    if (payload_length != SERVICE_READ_METADATA_SIZE) {
+        send_error(request, SERVICE_STATUS_BAD_LENGTH);
+        return;
+    }
+    target = payload[0];
+    offset = get_u32_le(payload + 1);
+    length = get_u16_le(payload + 5);
+    if (length == 0u || length > SERVICE_MAX_LZ4_DATA) {
+        send_error(request, SERVICE_STATUS_BAD_LENGTH);
+        return;
+    }
+    status = target_range_status(target, offset, length);
+    if (status != SERVICE_STATUS_OK) {
+        send_error(request, status);
+        return;
+    }
+    if (storage_read(target, offset, raw, length) == 0) {
+        send_error(request, SERVICE_STATUS_READ_FAILURE);
+        return;
+    }
+
+    compressed_length = LZ4_compress_fast_extState(
+        &sram_service_lz4_state, (const char *)raw,
+        (char *)(response + SERVICE_READ_LZ4_METADATA_SIZE),
+        length, length - 1u, 1
+    );
+    put_u16_le(response + 1, length);
+    if (compressed_length > 0) {
+        response[0] = SERVICE_CODEC_LZ4;
+        send_packet(
+            SERVICE_COMMAND_READ_LZ4, SERVICE_STATUS_OK, sequence,
+            response, SERVICE_READ_LZ4_METADATA_SIZE + compressed_length
+        );
+        return;
+    }
+
+    response[0] = SERVICE_CODEC_RAW;
+    for (i = 0u; i != length; ++i) {
+        response[SERVICE_READ_LZ4_METADATA_SIZE + i] = raw[i];
+    }
+    send_packet(
+        SERVICE_COMMAND_READ_LZ4, SERVICE_STATUS_OK, sequence,
+        response, SERVICE_READ_LZ4_METADATA_SIZE + length
+    );
+}
+
+static void handle_write_lz4_request(const u8 *request, const u8 *payload,
+                                     u16 payload_length)
+{
+    u8 *raw = &sram_service_lz4_buffer;
+    u16 sequence = get_u16_le(request + 4);
+    u8 target;
+    u32 offset;
+    u16 raw_length;
+    u32 compressed_length;
+    u8 status;
+    int result;
+
+    if (payload_length <= SERVICE_WRITE_LZ4_METADATA_SIZE) {
+        send_error(request, SERVICE_STATUS_BAD_LENGTH);
+        return;
+    }
+    target = payload[0];
+    offset = get_u32_le(payload + 1);
+    raw_length = get_u16_le(payload + 5);
+    compressed_length = payload_length - SERVICE_WRITE_LZ4_METADATA_SIZE;
+    if (raw_length == 0u || raw_length > SERVICE_MAX_LZ4_DATA ||
+        compressed_length > SERVICE_MAX_WRITE_LZ4_DATA) {
+        send_error(request, SERVICE_STATUS_BAD_LENGTH);
+        return;
+    }
+    status = target_range_status(target, offset, raw_length);
+    if (status != SERVICE_STATUS_OK) {
+        send_error(request, status);
+        return;
+    }
+    if (target == SERVICE_TARGET_FGCB &&
+        ((offset & (FLASH_PROGRAM_SIZE - 1u)) != 0u ||
+         (raw_length & (FLASH_PROGRAM_SIZE - 1u)) != 0u)) {
+        send_error(request, SERVICE_STATUS_RANGE_ERROR);
+        return;
+    }
+    result = LZ4_decompress_safe(
+        (const char *)(payload + SERVICE_WRITE_LZ4_METADATA_SIZE),
+        (char *)raw, compressed_length, raw_length
+    );
+    if (result != (int)raw_length) {
+        send_error(request, SERVICE_STATUS_DECODE_FAILURE);
+        return;
+    }
+    result = storage_write(target, offset, raw, raw_length);
+    if (result == 0) {
+        send_error(request, SERVICE_STATUS_WRITE_FAILURE);
+        return;
+    }
+    if (result < 0) {
+        send_error(request, SERVICE_STATUS_VERIFY_FAILURE);
+        return;
+    }
+    send_packet(
+        SERVICE_COMMAND_WRITE_LZ4, SERVICE_STATUS_OK, sequence, 0, 0u
+    );
 }
 
 static void handle_packet(struct rx_packet *packet)
@@ -1154,7 +1305,7 @@ static void handle_packet(struct rx_packet *packet)
             return;
         }
         info[0] = 0u;
-        info[1] = 8u;
+        info[1] = 9u;
         info[2] = 0u;
         for (i = 0; i != sizeof(fgbl_bid); ++i) {
             info[3 + i] = fgbl_bid[i];
@@ -1174,6 +1325,14 @@ static void handle_packet(struct rx_packet *packet)
     }
     if (request[2] == SERVICE_COMMAND_WRITE) {
         handle_write_request(request, payload, payload_length);
+        return;
+    }
+    if (request[2] == SERVICE_COMMAND_READ_LZ4) {
+        handle_read_lz4_request(request, payload, payload_length);
+        return;
+    }
+    if (request[2] == SERVICE_COMMAND_WRITE_LZ4) {
+        handle_write_lz4_request(request, payload, payload_length);
         return;
     }
     if (request[2] == SERVICE_COMMAND_RESET) {

@@ -317,6 +317,10 @@ The service uses fixed classic-CAN and ISO-TP settings, independently of the
 stock DatagramCan and JSON-RPC endpoint. The complete wire contract is in the
 [bootloader service protocol](../as11/bootloader_service_protocol.md).
 
+When the Python `lz4` module and service compression commands are available,
+reads and writes use independent LZ4 blocks automatically. Unsupported or
+incompressible transfers use the normal READ and WRITE commands.
+
 The receiver controls multi-frame transfers with ISO-TP Flow Control frames.
 The AS11 advertises a block size of 32 frames and zero separation time. The
 direct CAN host advertises a block size of 255 and zero separation time;

@@ -8,6 +8,11 @@ import struct
 import time
 from dataclasses import dataclass
 
+try:
+    import lz4.block as _lz4_block
+except ImportError:
+    _lz4_block = None
+
 from as11_can_common import CanTxBufferFull
 from as11_rpc import FramingError, TransportError
 
@@ -23,8 +28,11 @@ COMMAND_READ = 0x03
 COMMAND_ERASE = 0x04
 COMMAND_WRITE = 0x05
 COMMAND_RESET = 0x06
+COMMAND_READ_LZ4 = 0x07
+COMMAND_WRITE_LZ4 = 0x08
 
 STATUS_OK = 0x00
+STATUS_BAD_COMMAND = 0x01
 STATUS_NAMES = {
     0x00: "OK",
     0x01: "BadCommand",
@@ -38,6 +46,7 @@ STATUS_NAMES = {
     0x09: "WriteFailure",
     0x0A: "VerifyFailure",
     0x0B: "EntryTimeout",
+    0x0C: "DecodeFailure",
 }
 
 TARGET_FGCB = 0x01
@@ -69,11 +78,18 @@ _INFO = struct.Struct("<BBB16s")
 _READ = struct.Struct("<BIH")
 _ERASE = struct.Struct("<BII")
 _WRITE = struct.Struct("<BI")
+_READ_LZ4_RESPONSE = struct.Struct("<BH")
+_WRITE_LZ4 = struct.Struct("<BIH")
 MAX_REQUEST_PAYLOAD = ISOTP_MAX_PACKET_SIZE - _HEADER.size - _CRC.size
 MAX_RESPONSE_PACKET_SIZE = ISOTP_MAX_PACKET_SIZE
 MAX_RESPONSE_PAYLOAD = MAX_RESPONSE_PACKET_SIZE - _HEADER.size - _CRC.size
 MAX_READ_DATA = MAX_RESPONSE_PAYLOAD
 MAX_WRITE_DATA = MAX_REQUEST_PAYLOAD - _WRITE.size
+MAX_LZ4_DATA = 4080
+MAX_WRITE_LZ4_DATA = MAX_REQUEST_PAYLOAD - _WRITE_LZ4.size
+
+CODEC_RAW = 0
+CODEC_LZ4 = 1
 
 
 class ServiceResponseError(TransportError):
@@ -105,6 +121,8 @@ class _ServiceClient:
 
     def __init__(self) -> None:
         self._sequence = time.monotonic_ns() & 0xFFFF
+        self._read_lz4_supported = _lz4_block is not None
+        self._write_lz4_supported = _lz4_block is not None
 
     def _next_sequence(self) -> int:
         self._sequence = (self._sequence + 1) & 0xFFFF
@@ -168,14 +186,65 @@ class _ServiceClient:
             )
         return payload
 
+    def _read_lz4(self, target: int, offset: int, length: int, *,
+                  timeout: float) -> bytes:
+        payload = self.request(
+            COMMAND_READ_LZ4, _READ.pack(target, offset, length),
+            timeout=timeout,
+        )
+        if len(payload) < _READ_LZ4_RESPONSE.size:
+            raise FramingError("service READ_LZ4 response is too short")
+        codec, raw_length = _READ_LZ4_RESPONSE.unpack_from(payload)
+        encoded = payload[_READ_LZ4_RESPONSE.size:]
+        if raw_length != length:
+            raise FramingError(
+                f"service READ_LZ4 length mismatch: requested {length}, "
+                f"response describes {raw_length}"
+            )
+        if codec == CODEC_RAW:
+            data = encoded
+        elif codec == CODEC_LZ4:
+            try:
+                data = _lz4_block.decompress(
+                    encoded, uncompressed_size=raw_length
+                )
+            except Exception as exc:
+                raise FramingError(
+                    f"service READ_LZ4 decompression failed: {exc}"
+                ) from exc
+        else:
+            raise FramingError(f"unknown service codec 0x{codec:02X}")
+        if len(data) != raw_length:
+            raise FramingError(
+                f"service READ_LZ4 produced {len(data)} bytes; "
+                f"expected {raw_length}"
+            )
+        return data
+
     def iter_read(self, target: int, offset: int, length: int, *,
                   timeout: float = 5.0):
         done = 0
         while done < length:
-            chunk_length = min(MAX_READ_DATA, length - done)
-            yield self.read(
-                target, offset + done, chunk_length, timeout=timeout
-            )
+            if self._read_lz4_supported:
+                chunk_length = min(MAX_LZ4_DATA, length - done)
+                try:
+                    chunk = self._read_lz4(
+                        target, offset + done, chunk_length, timeout=timeout
+                    )
+                except ServiceResponseError as exc:
+                    if (exc.command != COMMAND_READ_LZ4 or
+                            exc.status != STATUS_BAD_COMMAND):
+                        raise
+                    self._read_lz4_supported = False
+                    chunk = self.read(
+                        target, offset + done, chunk_length, timeout=timeout
+                    )
+            else:
+                chunk_length = min(MAX_READ_DATA, length - done)
+                chunk = self.read(
+                    target, offset + done, chunk_length, timeout=timeout
+                )
+            yield chunk
             done += chunk_length
 
     def erase(self, target: int, offset: int, length: int, *,
@@ -187,9 +256,32 @@ class _ServiceClient:
 
     def write(self, target: int, offset: int, data: bytes, *,
               timeout: float = 5.0) -> None:
+        data = bytes(data)
+        if self._write_lz4_supported and len(data) <= MAX_LZ4_DATA:
+            encoded = _lz4_block.compress(
+                data, mode="fast", acceleration=1, store_size=False
+            )
+            if len(encoded) < len(data) and len(encoded) <= MAX_WRITE_LZ4_DATA:
+                metadata = _WRITE_LZ4.pack(target, offset, len(data))
+                try:
+                    payload = self.request(
+                        COMMAND_WRITE_LZ4, metadata + encoded,
+                        timeout=timeout,
+                    )
+                except ServiceResponseError as exc:
+                    if (exc.command != COMMAND_WRITE_LZ4 or
+                            exc.status != STATUS_BAD_COMMAND):
+                        raise
+                    self._write_lz4_supported = False
+                else:
+                    if payload:
+                        raise FramingError(
+                            "service WRITE_LZ4 response must not carry a payload"
+                        )
+                    return
         metadata = _WRITE.pack(target, offset)
         payload = self.request(
-            COMMAND_WRITE, metadata + bytes(data), timeout=timeout
+            COMMAND_WRITE, metadata + data, timeout=timeout
         )
         if payload:
             raise FramingError("service WRITE response must not carry a payload")

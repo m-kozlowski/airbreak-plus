@@ -26,6 +26,7 @@ as11_appl_payload_versions = $(strip $(foreach v,$(AS11_PAYLOAD_LAYOUT_VERSIONS)
 as11_fgbl_payload_versions = $(strip $(foreach v,$(AS11_FGBL_PAYLOAD_VERSIONS),$(if $(filter $(1),$(AS11_FGBL_PAYLOADS_$(v))),$(v))))
 as11_payload_versions = $(strip $(call as11_appl_payload_versions,$(1)) $(call as11_fgbl_payload_versions,$(1)))
 as11_payload_bins = $(foreach v,$(call as11_payload_versions,$(1)),$(BUILD)/$(1)_$(v).bin)
+as11_payload_extra_objs = $(foreach o,$(AS11_PAYLOAD_EXTRA_OBJECTS_$(1)),$(BUILD)/$(o)_$(2).o)
 as11_fgbl_payload_region = $(if $(filter $(1),$(AS11_FGBL_SRAM_PAYLOADS_$(2))),fgbl_sram,fgbl)
 as11_layout_field = awk -v name="$(1)" -v field="$(2)" '$$$$1 == name { print $$$$field; found=1; exit } END { if (!found) exit 1 }' $(strip $(3))
 
@@ -41,6 +42,13 @@ AS11_PAYLOAD_LAYOUT_TSVS := \
 AS11_PAYLOAD_CFLAGS_as11_fgbl_service_extension := \
 	-fno-builtin -fno-unwind-tables -fno-asynchronous-unwind-tables \
 	-ffunction-sections
+AS11_PAYLOAD_CFLAGS_as11_fgbl_lz4 := \
+	-fno-unwind-tables -fno-asynchronous-unwind-tables -ffunction-sections \
+	-DLZ4_FREESTANDING=1 -DLZ4_memcpy=service_lz4_memcpy \
+	-DLZ4_memmove=service_lz4_memmove -DLZ4_memset=service_lz4_memset \
+	-isystem $(shell $(CC) -print-file-name=include)
+AS11_PAYLOAD_EXTRA_OBJECTS_as11_fgbl_service_extension := as11_fgbl_lz4
+AS11_PAYLOAD_LDFLAGS_as11_fgbl_service_extension := --gc-sections
 
 AS11_CFLAGS := \
 	-g \
@@ -134,27 +142,32 @@ endef
 
 $(foreach v,$(AS11_PAYLOAD_VERSIONS),$(eval $(call AS11_VERSIONED_OBJECTS_template,$(v))))
 
+$(BUILD)/as11_fgbl_lz4_%.o: \
+		$(SRC)/as11/lz4/lz4.c $(SRC)/as11/lz4/lz4.h
+
 # Probe links derive runtime addresses from storage mappings; final links use
 # the allocator-selected runtime address and must retain the probed size.
 # $(1): payload, $(2): version, $(3): region, $(4): stubs, $(5): layout
 define AS11_PAYLOAD_template
 $$(BUILD)/$(1)_$(2).probe.elf: $$(BUILD)/$(1)_$(2).o $(strip $(4)) \
+		$$(call as11_payload_extra_objs,$(1),$(2)) \
 		$$(SRC)/as11_code_caves.tsv Makefile Makefile.as11 | $$(BUILD)
 	@set -e; mapping=$$$$(awk -v version="$(2)" -v region="$(strip $(3))" \
 		'$$$$1 == version && $$$$2 == region { print $$$$3, $$$$5, $$$$6; found=1; exit } END { if (!found) exit 1 }' \
 		$$(SRC)/as11_code_caves.tsv); \
 	set -- $$$$mapping; \
 	addr=$$$$(printf '0x%08X' $$$$(( $$$$3 + $$$$1 - $$$$2 ))); \
-	$$(LD) --nostdlib --no-dynamic-linker \
+	$$(LD) --nostdlib --no-dynamic-linker $$(AS11_PAYLOAD_LDFLAGS_$(1)) \
 		--Ttext $$$$addr --entry start --sort-section=name \
 		-o $$@ $$(filter %.o,$$^)
 
 $$(BUILD)/$(1)_$(2).probe.bin: $$(BUILD)/$(1)_$(2).probe.elf
 	$$(OBJCOPY) -O binary $$< $$@
 
-$$(BUILD)/$(1)_$(2).elf: $$(BUILD)/$(1)_$(2).o $(strip $(4)) $(strip $(5)) | $$(BUILD)
+$$(BUILD)/$(1)_$(2).elf: $$(BUILD)/$(1)_$(2).o $(strip $(4)) \
+		$$(call as11_payload_extra_objs,$(1),$(2)) $(strip $(5)) | $$(BUILD)
 	@set -e; addr=$$$$($(call as11_layout_field,$(1),2,$(strip $(5)))); \
-	$$(LD) --nostdlib --no-dynamic-linker \
+	$$(LD) --nostdlib --no-dynamic-linker $$(AS11_PAYLOAD_LDFLAGS_$(1)) \
 		--Ttext $$$$addr --entry start --sort-section=name \
 		-o $$@ $$(filter %.o,$$^)
 

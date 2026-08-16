@@ -6,9 +6,9 @@ or writing backup SRAM. It is independent of the application JSON-RPC and
 DatagramCan protocols.
 
 This document describes protocol version 2 and the implementation profile of
-service version 0.8.0. Requirements use `MUST`, `SHOULD`, and `MAY` as
+service version 0.9.0. Requirements use `MUST`, `SHOULD`, and `MAY` as
 normative terms. Text explicitly marked as an implementation profile describes
-0.8.0 rather than a general protocol requirement.
+0.9.0 rather than a general protocol requirement.
 
 ## Contents
 
@@ -25,6 +25,8 @@ normative terms. Text explicitly marked as an implementation profile describes
   - [ERASE](#erase-0x04)
   - [WRITE](#write-0x05)
   - [RESET](#reset-0x06)
+  - [READ_LZ4](#read_lz4-0x07)
+  - [WRITE_LZ4](#write_lz4-0x08)
 - [Status values](#status-values)
 - [Error mapping](#error-mapping)
 - [AirCANnect TCP transport](#aircannect-tcp-transport)
@@ -93,14 +95,14 @@ packet uses a First Frame and at least one Consecutive Frame. Single Frame is
 recognized by the transport decoder but cannot contain a complete service
 packet.
 
-The 0.8.0 service advertises `BS=32`, `STmin=0` while receiving requests. A
+The 0.9.0 service advertises `BS=32`, `STmin=0` while receiving requests. A
 host MUST obey the values in each Flow Control frame rather than assume these
 constants. It MUST stop after each nonzero `BS` block and wait for another
 Continue To Send Flow Control frame.
 
 When sending a response, the service MUST follow the `BS` supplied by the
 host. `BS=0` permits sending the remainder of the packet without another Flow
-Control frame. The 0.8.0 service transmitter supports only `STmin=0`; a
+Control frame. The 0.9.0 service transmitter supports only `STmin=0`; a
 conforming host MUST advertise zero to that implementation. It accepts
 Continue To Send and Wait flow statuses and rejects Overflow or unsupported
 Flow Control values.
@@ -180,9 +182,11 @@ The command field is one byte:
 | `0x04` | ERASE |
 | `0x05` | WRITE |
 | `0x06` | RESET |
-| `0x07..0xff` | reserved for compatible extension |
+| `0x07` | READ_LZ4 |
+| `0x08` | WRITE_LZ4 |
+| `0x09..0xff` | reserved for compatible extension |
 
-A direct-CAN client MUST NOT send a reserved command or ENTER. The 0.8.0
+A direct-CAN client MUST NOT send a reserved command or ENTER. The 0.9.0
 service returns `BadCommand` for any command not listed above.
 
 ## Targets and geometry
@@ -197,7 +201,7 @@ Protocol version 2 assigns these one-byte target IDs:
 | `BKPS` | `0x03` | offset from start of backup SRAM |
 | reserved | `0x04..0xff` | none |
 
-The 0.8.0 implementation profile uses this geometry:
+The 0.9.0 implementation profile uses this geometry:
 
 | Property | `FGCB` | `SPIN` | `BKPS` |
 |----------|--------|--------|--------|
@@ -297,6 +301,41 @@ The request and successful response payloads MUST be empty. The service MUST
 complete CAN transmission of the response before requesting an MCU system
 reset.
 
+### READ_LZ4 (`0x07`)
+
+The request has the same layout as READ. The requested raw length MUST be
+between 1 and 4080 bytes.
+
+Response payload:
+
+| Offset | Type | Field |
+|--------|------|-------|
+| `0x00` | `u8` | codec: `0` raw, `1` LZ4 block |
+| `0x01` | `u16` | raw length |
+| `0x03` | bytes | encoded data |
+
+The raw length MUST equal the requested length. Codec `0` data MUST contain
+exactly that many bytes. Codec `1` data is an independent LZ4 block without a
+size prefix, frame header, checksum, or dictionary. It MUST decode to exactly
+the declared raw length. The service uses codec `1` only when the encoded data
+is smaller than the raw block.
+
+### WRITE_LZ4 (`0x08`)
+
+Request payload:
+
+| Offset | Type | Field |
+|--------|------|-------|
+| `0x00` | `u8` | target |
+| `0x01` | `u32` | offset or absolute address |
+| `0x05` | `u16` | raw length |
+| `0x07` | bytes | LZ4 block |
+
+The raw length MUST be between 1 and 4080 bytes. The encoded block MUST contain
+between 1 and 4078 bytes and MUST decode to exactly the declared raw length.
+The decoded range follows the same target, alignment, erase, programming, and
+readback rules as WRITE. The successful response payload MUST be empty.
+
 ## Status values
 
 | Value | Name | Meaning |
@@ -313,13 +352,14 @@ reset.
 | `0x09` | `WriteFailure` | storage programming failed |
 | `0x0a` | `VerifyFailure` | programmed data did not match readback |
 | `0x0b` | `EntryTimeout` | AirCANnect did not enter service mode in time |
+| `0x0c` | `DecodeFailure` | compressed data is invalid or has the wrong raw length |
 
-Values `0x0c..0xff` are reserved for compatible extension. A client MUST treat
+Values `0x0d..0xff` are reserved for compatible extension. A client MUST treat
 every unknown nonzero status as command failure.
 
 ## Error mapping
 
-The 0.8.0 service reports the first error reached in its validation order.
+The 0.9.0 service reports the first error reached in its validation order.
 Malformed ISO-TP or a packet too short to contain the service header and CRC
 produces no service response.
 
@@ -359,6 +399,14 @@ Command validation:
 | WRITE | storage programming or required readback fails | `WriteFailure` |
 | WRITE | readback data differs from request data | `VerifyFailure` |
 | RESET | payload is not empty | `BadLength` |
+| READ_LZ4 | payload size is not 7 bytes | `BadLength` |
+| READ_LZ4 | raw length is zero or greater than 4080 | `BadLength` |
+| READ_LZ4 | target or range is invalid | same result as READ |
+| READ_LZ4 | storage transfer fails | `ReadFailure` |
+| WRITE_LZ4 | metadata, raw length, or encoded length is invalid | `BadLength` |
+| WRITE_LZ4 | target or range is invalid | same result as WRITE |
+| WRITE_LZ4 | block does not decode to the declared raw length | `DecodeFailure` |
+| WRITE_LZ4 | programming or readback fails | same result as WRITE |
 
 If response transmission itself fails, the service cannot report a status.
 RESET requests the MCU reset only after its successful response has completed
