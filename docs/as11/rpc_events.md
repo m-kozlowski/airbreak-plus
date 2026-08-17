@@ -182,15 +182,28 @@ property.
 `DiagnosticExceptionEvents-AlarmAppErrors`,
 `DiagnosticExceptionEvents-ErrorLogInfos`
 
-`AppErrors`, `FatalErrors`, `ResettableErrors`, and `AlarmAppErrors` use a raw
-16-bit payload. Their code domains are selector-specific and must not be
-decoded through the system-error or alarm-event dictionaries.
+`AppErrors`, `FatalErrors`, and `AlarmAppErrors` use selector-specific raw
+16-bit code domains. `ResettableErrors` also carries a 16-bit code, but its
+values use the `SystemError` enum dictionary.
 
 `AppErrors` includes direct application codes, translated filesystem/backend
 statuses, and the `0x2d76` flood marker. For translated statuses below 2000,
 the stored code is `uint16(status + 0x2d7e)`; statuses of 2000 or greater are
 stored as `0x354e`. Direct application codes overlap this numeric range, so a
 code can have more than one valid interpretation.
+
+The filesystem wrappers normally pass a nonnegative uC/FS `FS_ERR` value to
+the mapper. A negative inverse value identifies an out-of-domain mapper input,
+not a named filesystem error.
+
+`RmVolumes.cpp:399` reports one code selected by the affected volume:
+
+| Code | Volume | Role |
+|------|--------|------|
+| `0x2b8b` | `nor:0:` | settings |
+| `0x2b8c` | `nor:1:` | datalog |
+| `0x2b8d` | `nor:2:` | upgrade |
+| `0x2ce3` | `sdc:0:` | SD card |
 
 `FatalErrors` contains the fatal code retained before a reset. A valid retained
 code in the range 1 through 70 is published during the next startup and then
@@ -199,13 +212,39 @@ cleared. Source filename and line are not included in the event.
 `ResettableErrors` contains a persisted resettable-error snapshot. Firmware
 stores the error code with date and time, then publishes the snapshot when a
 valid settings unit is loaded. Codes can come from a mapped `PsTransferLocal`
-status word or from direct internal producers; no complete symbolic code
-dictionary is available.
+status word or from direct internal producers.
+
+| Code | `SystemError` symbol |
+|-----:|----------------------|
+| 1 | `MotorStallHW` |
+| 2 | `FastOverPressure` |
+| 3 | `OverTemperature` |
+| 4 | `OverVoltage` |
+| 5 | `MotorStallSW` |
+| 6 | `MotorHwFault` |
+| 7 | `MotorSticky` |
+| 8 | `MotorFETs` |
+| 9 | `MotorHwMitigationIC` |
+| 10 | `NoFlowData` |
+| 11 | `SettingsReset` |
+| 12 | `CalibrationReset` |
+| 13 | `PressureStuckHigh` |
+| 14 | `PressureStuckLow` |
+| 15 | `PressureStuckMid` |
+| 16 | `PressureSensorDrift` |
+| 17 | `PressureSensorsPlausibility` |
+| 18 | `FlowSensorStuckLow` |
+| 19 | `FlowSensorStuckHigh` |
+| 20 | `ImplausibleSupplyVoltage` |
+| 21 | `FaultyHWFaultDetectionCircuitry` |
+
+The same enum also defines `0` as `NoError` and `22` as `AlarmModuleComms`.
+Neither value is established as a persisted `ResettableErrors` record.
 
 `AlarmAppErrors` contains the unmodified `EventCode` received from the alarm
-application. The selector is present in the checked 8.4.0 and 8.5.0 images but
-not in 8.3.0. The flow-generator application does not provide a local symbolic
-dictionary for these values.
+application. The selector is present in the checked 8.4.0 through 8.6.0 images
+but not in 8.3.0. The flow-generator application does not provide a local
+symbolic dictionary for these values.
 
 `ErrorLogInfos` uses a different payload: an 8-bit type followed by a 32-bit
 value. For type 1, the value is the stacked program counter retained by an NMI,

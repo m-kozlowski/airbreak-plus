@@ -214,8 +214,9 @@ as11_config.py spool DiagnosticExceptionEvents-AppErrors --input app-errors.bin 
 ```
 
 The output retains the numeric code and lists every matching direct producer,
-producer call site, and mapped backend status. Codes with more than one
-candidate are marked `[ambiguous]`.
+producer call site, mapped filesystem status, and recognized NOR/SD volume
+monitor. `ResettableErrors` records also include the firmware `SystemError`
+symbol. Codes with more than one possible producer are marked `[ambiguous]`.
 
 `Summary` records contain the period range, duration, timezone offset, session
 entries, scalar values, and percentile metrics.

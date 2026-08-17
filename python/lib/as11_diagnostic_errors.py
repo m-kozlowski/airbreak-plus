@@ -113,11 +113,21 @@ def _decode_dynamic_mapper(code: int, mapper: dict) -> list[dict]:
         })
     status = _signed(code - transform["addend"], bits)
     if status < threshold:
-        candidates.append({
+        candidate = {
             "kind": "dynamic_status",
             "status": status,
             "callers": mapper["callers"],
-        })
+        }
+        expected = mapper.get("expected_input")
+        if expected is not None:
+            candidate["expected_input"] = expected
+            minimum = expected.get("minimum")
+            maximum = expected.get("maximum")
+            candidate["outside_expected_domain"] = (
+                (minimum is not None and status < minimum) or
+                (maximum is not None and status > maximum)
+            )
+        candidates.append(candidate)
     return candidates
 
 
@@ -130,7 +140,13 @@ def _decode_aee(section: dict, code: int) -> list[dict]:
         if site["code"] == code:
             candidates.append(dict(site))
     for mapper in section["dynamic_mappers"]:
-        candidates.extend(_decode_dynamic_mapper(code, mapper))
+        mapped = _decode_dynamic_mapper(code, mapper)
+        if candidates:
+            mapped = [
+                candidate for candidate in mapped
+                if not candidate.get("outside_expected_domain")
+            ]
+        candidates.extend(mapped)
     return candidates
 
 
@@ -194,10 +210,16 @@ def decode_diagnostic_code(spool_type: str, code: int,
             section = manifest.get("selectors", {}).get(selector)
             if section is None or section.get("present") is False:
                 continue
-            rows.append({
+            row = {
                 "version": version,
                 "candidates": _decode_section(selector, section, code),
-            })
+            }
+            symbol = section.get("code_dictionary", {}).get(
+                "symbols", {}
+            ).get(str(code))
+            if symbol is not None:
+                row["symbol"] = symbol
+            rows.append(row)
     return {
         "selector": selector,
         "code": code,
@@ -250,9 +272,25 @@ def _candidate_label(candidate: dict, *, details: bool) -> str:
         return label
     if kind == "event_flood_marker":
         return f"event flood marker {_source_location(candidate)}"
+    if kind == "rm_volume_runtime_code":
+        label = (
+            f"{_source_location(candidate)} {candidate['role']} volume "
+            f"{candidate['root']}"
+        )
+        if details:
+            label += f" @{candidate['producer_address']}"
+        return label
     if kind == "dynamic_status":
+        expected = candidate.get("expected_input")
+        if candidate.get("outside_expected_domain") and expected:
+            return (
+                f"backend input {candidate['status']} outside "
+                f"{expected['type']} domain"
+            )
         operations = _backend_operations(candidate)
         suffix = f" via {operations}" if operations else ""
+        if expected:
+            return f"{expected['type']} {candidate['status']}{suffix}"
         return f"backend status {candidate['status']}{suffix}"
     if kind == "dynamic_status_overflow":
         return (
@@ -311,17 +349,18 @@ def summarize_diagnostic_code(spool_type: str, code: int,
         )
         return f"selector absent in {versions}"
 
-    grouped: dict[tuple[tuple[str, ...], bool], list[str]] = {}
+    grouped: dict[tuple[str | None, tuple[str, ...], bool], list[str]] = {}
     for row in rows:
         candidates = row["candidates"]
         labels = _candidate_labels(candidates, details=details)
-        key = (labels, len(candidates) > 1)
+        key = (row.get("symbol"), labels, len(candidates) > 1)
         grouped.setdefault(key, []).append(_release(row["version"]))
 
     rendered = []
     show_versions = len(grouped) > 1
-    for (labels, ambiguous), versions in grouped.items():
-        value = "; ".join(labels) if labels else "not mapped"
+    for (symbol, labels, ambiguous), versions in grouped.items():
+        parts = ([symbol] if symbol else []) + list(labels)
+        value = "; ".join(parts) if parts else "not mapped"
         if ambiguous:
             value += " [ambiguous]"
         if show_versions:
