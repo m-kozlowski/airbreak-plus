@@ -13,6 +13,7 @@ does not describe any specific USB-CAN adapter protocol.
 - [DatagramCan frame format](#datagramcan-frame-format)
   - [Single-frame datagram](#single-frame-datagram)
   - [Multi-frame datagram](#multi-frame-datagram)
+- [NCP binary RPC over CAN](#ncp-binary-rpc-over-can)
 - [JSON RPC over CAN](#json-rpc-over-can)
 - [Local accessories](#local-accessories)
   - [TxLink 2](#txlink-2)
@@ -36,6 +37,8 @@ Bus settings:
 
 | CAN ID | Direction | Meaning |
 |--------|-----------|---------|
+| `0x381` | host to device | NCP binary RPC request datagrams |
+| `0x380` | device to host | NCP binary RPC response datagrams |
 | `0x383` | host to device | JSON RPC request datagrams |
 | `0x382` | device to host | JSON RPC response and notification datagrams |
 | `0x259` | accessory to device | power-supply identification datagrams |
@@ -73,6 +76,21 @@ the end frame arrives.
 
 There is no datagram sequence number. The receiver depends on CAN ordering for
 frames with the same arbitration ID.
+
+## NCP binary RPC over CAN
+
+The small CAN RPC lane carries binary `NcpCommandBuffer` records:
+
+| Direction | CAN ID |
+|-----------|--------|
+| host to device | `0x381` |
+| device to host | `0x380` |
+
+NCP addresses the same RPC service registry as JSON by numeric command ID. It
+also provides binary-only commands for direct DataItem access, effective
+numeric bounds, bounded memory windows, and periodic raw-sample mappings. The
+stack, record format, permissions, and additional commands are documented in
+the [NCP binary RPC protocol](ncp_protocol.md).
 
 ## JSON RPC over CAN
 

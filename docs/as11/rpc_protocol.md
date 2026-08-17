@@ -1,8 +1,9 @@
 # Air11 RPC Protocol
 
-Air11 firmware exposes a JSON-RPC command layer over BLE, CAN, and internal
-cellular channels. All channels use the same method dispatcher, with separate
-method permissions and payload-size limits.
+Air11 firmware exposes an RPC command layer over BLE, CAN, and internal
+cellular channels. Large channels use JSON-RPC; small channels use the binary
+[NCP command encoding](ncp_protocol.md). Both encodings feed the same numeric
+command registry and per-channel permission table.
 
 This document is the command reference. Transport framing is documented in
 the [Bluetooth protocol](bluetooth_protocol.md) and
@@ -57,60 +58,60 @@ the `result` value unless the complete envelope matters.
 
 ## Method index
 
-`Version` is the request contract version advertised by `GetVersion`, or the
-native `2.0` version used by plaintext BLE pairing methods. A dash marks a name
-omitted from the capability map. `Stock access` refers only to the permission
-sets in [Permission channels](#permission-channels); it does not bypass a
-method's state or hardware gates. Method availability can vary by firmware
-release and channel; the device's `GetVersion` result is authoritative for
-advertised methods. Select a method name to open its full reference.
+`Command` is the numeric ID used by the shared dispatcher and the NCP
+encoding. `Version` is the request contract version advertised by `GetVersion`,
+or the native `2.0` version used by plaintext BLE pairing methods. A dash marks
+a name omitted from the capability map. `Stock access` refers only to the
+permission sets in [Permission channels](#permission-channels); it does not
+bypass a method's state or hardware gates. Method availability can vary by
+channel; the device's `GetVersion` result is authoritative for advertised
+methods. Select a method name to open its full reference.
 
-| Method | Version | Stock access | Parameters | Purpose |
-|--------|---------|--------------|------------|---------|
-| [`ApplyAuthenticatedUpgrade`](#applyauthenticatedupgrade) | 1.0 | all | `upgradeFileHash`, `authentication` | apply a staged upgrade using an HMAC |
-| [`ApplyUpgrade`](#applyupgrade) | 1.1 | service | `upgradeFileHash`, `resetSettingsToDefault` | apply a staged upgrade without HMAC authentication |
-| [`CheckSessionIntegrity`](#checksessionintegrity) | 2.0 | BLE plaintext | `response` | finish BLE session authentication |
-| [`CheckUpgradeFile`](#checkupgradefile) | 1.0 | all | `upgradeFileHash` | validate a completely transferred upgrade file |
-| [`ClearAutoConnectList`](#clearautoconnectlist) | 1.0 | service | none | clear the Bluetooth auto-connect list |
-| [`ConfirmKeyExchange`](#confirmkeyexchange) | 2.0 | BLE plaintext | `clientConfirmation` | confirm first-pairing SRP key exchange |
-| [`DiscardPairKey`](#discardpairkey) | 1.0 | BLE encrypted | none | remove stored BLE pairing material |
-| [`EnableSecurity`](#enablesecurity) | 1.0 | service | none | store the retained security-request marker |
-| [`EnterLearnTargets`](#enterlearntargets) | 1.0 | application | none | enter learn-targets state |
-| [`EnterMaskFit`](#entermaskfit) | 2.0 | application | `maskFitPressure` | enter mask-fit state at a requested pressure |
-| [`EnterStandby`](#enterstandby) | 1.0 | application | none | request standby state |
-| [`EnterTest`](#entertest) | - | service | `testMode` | enter a manufacturing or diagnostic test mode |
-| [`EnterTestDrive`](#entertestdrive) | 1.0 | BLE encrypted | none | enter test-drive state |
-| [`EnterTherapy`](#entertherapy) | 1.0 | application | none | request therapy state |
-| [`EraseData`](#erasedata) | 1.0 | application | `eraseMethod`, `dataTypes` | erase selected persistent data classes |
-| [`GenerateAuthCode`](#generateauthcode) | 1.1 | application | `nonce`, `keyLocation`, `algorithm` | compute an HMAC from a device key-provider entry |
-| [`Get`](#get) | 1.0 | application | array of object names | read settings, profiles, and data items |
-| [`GetDateTime`](#getdatetime) | 1.0 | all | none | read device date and time |
-| [`GetLedStatus`](#getledstatus) | 1.0 | service | none | read LED and LCD-backlight output state |
-| [`GetRtcAndSystemClocks`](#getrtcandsystemclocks) | - | service | none | read RTC and high-resolution clocks |
-| [`GetVersion`](#getversion) | 2.0 | all | none | read identification and advertised RPC capabilities |
-| [`InitiateUpgrade`](#initiateupgrade) | 1.0 | all | `upgradeFileSize` | create an upgrade transfer session |
-| [`InjectLoggedEvent`](#injectloggedevent) | - | service | `EventType`, `EventCode` | inject an event into a selected log family |
-| [`InsertSdCard`](#insertsdcard) | - | service | `writeProtected`, `size`, `error`, `pendingError` | populate the service SD-card proxy |
-| [`PullSpoolFragments`](#pullspoolfragments) | 1.0 | application | `spoolId`, `maxFragmentSize`, `maxNotifications` | request fragments from an open spool |
-| [`RemoveSdCard`](#removesdcard) | - | service | none | clear the service SD-card proxy |
-| [`RequestSession`](#requestsession) | 2.0 | BLE plaintext | `clientId` | begin reconnect authentication for a paired client |
-| [`ResetDevice`](#resetdevice) | 1.0 | service | `type` | request a controlled device reset |
-| [`Set`](#set) | 1.0 | application | object of names and values | write settings and data items |
-| [`SetDateTime`](#setdatetime) | 1.1 | service | `dateTime` | set device date and time |
-| [`SetNextPowerUpDateTime`](#setnextpowerupdatetime) | 1.0 | service | `value` | set the RTC value restored at the next application startup |
-| [`StartKeyExchange`](#startkeyexchange) | 2.0 | BLE plaintext | `clientPk` | begin first-pairing SRP key exchange |
-| [`StartSpool`](#startspool) | 1.0 | application | `spoolAddress`, `maxSpoolSize` | open a stored-data spool |
-| [`StartStream`](#startstream) | 1.0 | application | `dataIds`, `sampleIntervalMs`, `reportIntervalMs` | start periodic live-data reporting |
-| [`StoreSecurityData`](#storesecuritydata) | 1.0 | service | `verifier`, `data` | store a verified security-data block |
-| [`SubscribeEvent`](#subscribeevent) | 1.0 | application | `dataIds` | subscribe to event families or DataItem value changes |
-| [`UpgradeDataBlock`](#upgradedatablock) | 1.0 | all | `fileOffset`, `encoding`, `data` | transfer one upgrade-file block |
-| [`VerifySecurityData`](#verifysecuritydata) | 1.0 | service | `verifier` | verify stored security data |
+| Method | Command | Version | Stock access | Parameters | Purpose |
+|--------|--------:|---------|--------------|------------|---------|
+| [`ApplyAuthenticatedUpgrade`](#applyauthenticatedupgrade) | `0x42` | 1.0 | all | `upgradeFileHash`, `authentication` | apply a staged upgrade using an HMAC |
+| [`ApplyUpgrade`](#applyupgrade) | `0x18` | 1.1 | service | `upgradeFileHash`, `resetSettingsToDefault` | apply a staged upgrade without HMAC authentication |
+| [`CheckSessionIntegrity`](#checksessionintegrity) | `0x4b` | 2.0 | BLE plaintext | `response` | finish BLE session authentication |
+| [`CheckUpgradeFile`](#checkupgradefile) | `0x17` | 1.0 | all | `upgradeFileHash` | validate a completely transferred upgrade file |
+| [`ClearAutoConnectList`](#clearautoconnectlist) | `0x56` | 1.0 | service | none | clear the Bluetooth auto-connect list |
+| [`ConfirmKeyExchange`](#confirmkeyexchange) | `0x49` | 2.0 | BLE plaintext | `clientConfirmation` | confirm first-pairing SRP key exchange |
+| [`DiscardPairKey`](#discardpairkey) | `0x57` | 1.0 | BLE encrypted | none | remove stored BLE pairing material |
+| [`EnableSecurity`](#enablesecurity) | `0x6e` | 1.0 | service | none | store the retained security-request marker |
+| [`EnterLearnTargets`](#enterlearntargets) | `0x6f` | 1.0 | application | none | enter learn-targets state |
+| [`EnterMaskFit`](#entermaskfit) | `0x41` | 2.0 | application | `maskFitPressure` | enter mask-fit state at a requested pressure |
+| [`EnterStandby`](#enterstandby) | `0x1a` | 1.0 | application | none | request standby state |
+| [`EnterTest`](#entertest) | `0x1c` | - | service | `testMode` | enter a manufacturing or diagnostic test mode |
+| [`EnterTestDrive`](#entertestdrive) | `0x6d` | 1.0 | BLE encrypted | none | enter test-drive state |
+| [`EnterTherapy`](#entertherapy) | `0x1b` | 1.0 | application | none | request therapy state |
+| [`EraseData`](#erasedata) | `0x3d` | 1.0 | application | `eraseMethod`, `dataTypes` | erase selected persistent data classes |
+| [`GenerateAuthCode`](#generateauthcode) | `0x4c` | 1.1 | application | `nonce`, `keyLocation`, `algorithm` | compute an HMAC from a device key-provider entry |
+| [`Get`](#get) | `0x43` | 1.0 | application | array of object names | read settings, profiles, and data items |
+| [`GetDateTime`](#getdatetime) | `0x04` | 1.0 | all | none | read device date and time |
+| [`GetLedStatus`](#getledstatus) | `0x19` | 1.0 | service | none | read LED and LCD-backlight output state |
+| [`GetRtcAndSystemClocks`](#getrtcandsystemclocks) | `0x47` | - | service | none | read RTC and high-resolution clocks |
+| [`GetVersion`](#getversion) | `0x06` | 2.0 | all | none | read identification and advertised RPC capabilities |
+| [`InitiateUpgrade`](#initiateupgrade) | `0x15` | 1.0 | all | `upgradeFileSize` | create an upgrade transfer session |
+| [`InjectLoggedEvent`](#injectloggedevent) | `0x7f` | - | service | `EventType`, `EventCode` | inject an event into a selected log family |
+| [`InsertSdCard`](#insertsdcard) | `0x6b` | - | service | `writeProtected`, `size`, `error`, `pendingError` | populate the service SD-card proxy |
+| [`PullSpoolFragments`](#pullspoolfragments) | `0x5f` | 1.0 | application | `spoolId`, `maxFragmentSize`, `maxNotifications` | request fragments from an open spool |
+| [`RemoveSdCard`](#removesdcard) | `0x6c` | - | service | none | clear the service SD-card proxy |
+| [`RequestSession`](#requestsession) | `0x4a` | 2.0 | BLE plaintext | `clientId` | begin reconnect authentication for a paired client |
+| [`ResetDevice`](#resetdevice) | `0x3f` | 1.0 | service | `type` | request a controlled device reset |
+| [`Set`](#set) | `0x44` | 1.0 | application | object of names and values | write settings and data items |
+| [`SetDateTime`](#setdatetime) | `0x05` | 1.1 | service | `dateTime` | set device date and time |
+| [`SetNextPowerUpDateTime`](#setnextpowerupdatetime) | `0x1f` | 1.0 | service | `value` | set the RTC value restored at the next application startup |
+| [`StartKeyExchange`](#startkeyexchange) | `0x48` | 2.0 | BLE plaintext | `clientPk` | begin first-pairing SRP key exchange |
+| [`StartSpool`](#startspool) | `0x5e` | 1.0 | application | `spoolAddress`, `maxSpoolSize` | open a stored-data spool |
+| [`StartStream`](#startstream) | `0x13` | 1.0 | application | `dataIds`, `sampleIntervalMs`, `reportIntervalMs` | start periodic live-data reporting |
+| [`StoreSecurityData`](#storesecuritydata) | `0x40` | 1.0 | service | `verifier`, `data` | store a verified security-data block |
+| [`SubscribeEvent`](#subscribeevent) | `0x3a` | 1.0 | application | `dataIds` | subscribe to event families or DataItem value changes |
+| [`UpgradeDataBlock`](#upgradedatablock) | `0x16` | 1.0 | all | `fileOffset`, `encoding`, `data` | transfer one upgrade-file block |
+| [`VerifySecurityData`](#verifysecuritydata) | `0x46` | 1.0 | service | `verifier` | verify stored security data |
 
 ### Unregistered method names
 
 The following names occur in the firmware method-name table but have no
-registered synchronous or asynchronous command handler in releases 14.8.3.0
-through 17.8.6.0:
+registered synchronous or asynchronous command handler:
 
 ```text
 CheckLcdBitmap
@@ -1437,17 +1438,17 @@ The firmware permission table is keyed by the even VCID used for
 device-to-host responses. The adjacent odd VCID carries host-to-device
 requests.
 
-| Permission VCID | Request VCID | Buffer | Channel role |
-|-----------------|--------------|-------:|--------------|
-| `0x0380` | `0x0381` | 600 | CAN small RPC |
-| `0x0382` | `0x0383` | 7650 | CAN large/service RPC |
-| `0x0390` | `0x0391` | 600 | BLE plaintext small RPC |
-| `0x0392` | `0x0393` | 7650 | BLE plaintext large pairing/session RPC |
-| `0x0394` | `0x0395` | 632 | BLE encrypted small RPC |
-| `0x0396` | `0x0397` | 7682 | BLE encrypted large application RPC |
+| Permission VCID | Request VCID | Response/request capacity | Encoding and channel role |
+|-----------------|--------------|--------------------------:|---------------------------|
+| `0x0380` | `0x0381` | 600 / 600 | CAN NCP binary RPC |
+| `0x0382` | `0x0383` | 7650 / 7650 | CAN JSON service RPC |
+| `0x0390` | `0x0391` | 600 / 600 | BLE plaintext NCP binary RPC |
+| `0x0392` | `0x0393` | 7650 / 7650 | BLE plaintext JSON pairing/session RPC |
+| `0x0394` | `0x0395` | 632 / 600 | BLE encrypted NCP binary RPC |
+| `0x0396` | `0x0397` | 7682 / 7650 | BLE encrypted JSON application RPC |
 | `0x0398` | unknown | unknown | permission selector without a matching endpoint-catalog row |
-| `0x0780` | `0x0781` | 1024 | internal/cellular small RPC |
-| `0x0788` | `0x0789` | 7650 | internal/cellular large RPC |
+| `0x0780` | `0x0781` | 1024 / 1024 | internal/cellular NCP binary RPC |
+| `0x0788` | `0x0789` | 7650 / 7650 | internal/cellular JSON RPC |
 
 The stock access names used in the method index expand to:
 
@@ -1459,9 +1460,11 @@ The stock access names used in the method index expand to:
 | BLE plaintext | `0x0390`, `0x0392` |
 | BLE encrypted | `0x0394`, `0x0396`, `0x0398` |
 
-A permission bit controls whether the dispatcher accepts a method from that
-channel. Method-specific parameter, state, hardware, and authentication gates
-still apply.
+A permission bit controls whether the dispatcher accepts a numeric command
+from that channel. The endpoint catalog independently selects NCP or JSON
+decoding; permission does not change the endpoint encoding. Command-specific
+parameter, state, hardware, and authentication gates still apply. See the
+[NCP RPC stack](ncp_protocol.md#rpc-stack) for the shared dispatch path.
 
 ## Error codes
 

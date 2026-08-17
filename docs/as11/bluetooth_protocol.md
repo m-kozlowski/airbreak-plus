@@ -3,9 +3,9 @@
 Air11 Bluetooth uses a BLE GATT pipe carrying FIG packets. Normal local RPC
 traffic runs inside an SRP-derived AES session.
 
-The BLE radio is handled by a separate NCP. The STM32 firmware contains the
-RPC dispatcher and the FIG/security plumbing, but not every low-level GATT
-detail.
+The BLE radio is handled by a separate network coprocessor. The STM32 firmware
+contains the RPC dispatcher and the FIG/security plumbing, but not every
+low-level GATT detail.
 
 ## Contents
 
@@ -23,7 +23,7 @@ detail.
 
 ## GATT
 
-Observed service and characteristics:
+Service and characteristics:
 
 | Item | UUID | Direction |
 |------|------|-----------|
@@ -59,17 +59,23 @@ the full payload, then validates the payload CRC.
 
 ## VCIDs
 
-Known BLE RPC/session lanes:
+BLE RPC/session lanes:
 
 | Device TX / permission selector | Device RX / host request VCID | Payload | Device TX/RX buffers | Notes |
 |-------------------------------|-------------------------------|---------|----------------------|-------|
-| `0x0390` | `0x0391` | plaintext JSON | 600 / 600 bytes | security/session lane |
+| `0x0390` | `0x0391` | plaintext `NcpCommandBuffer` RPC | 600 / 600 bytes | small binary lane |
 | `0x0392` | `0x0393` | plaintext JSON | 7650 / 7650 bytes | security/session lane used by current tools |
-| `0x0394` | `0x0395` | encrypted JSON | 632 / 600 bytes | encrypted RPC lane |
-| `0x0396` | `0x0397` | encrypted JSON | 7682 / 7650 bytes | encrypted RPC lane used by current tools |
+| `0x0394` | `0x0395` | encrypted `NcpCommandBuffer` RPC | 632 / 600 bytes | small binary lane |
+| `0x0396` | `0x0397` | encrypted JSON | 7682 / 7650 bytes | application lane used by current tools |
 
-The device accepts only the key exchange/session methods on the plaintext
-path. Ordinary calls such as `GetVersion`, `Get`, and `Set` require the
+The binary RPC stack and record format are documented in the
+[NCP binary RPC protocol](ncp_protocol.md). Standard RPC services retain their
+normal per-channel permissions. The stock permission table denies the
+additional DataItem, memory-window, mapping, and diagnostic commands on both
+BLE binary lanes.
+
+The plaintext JSON path accepts only the key exchange/session methods.
+Ordinary JSON calls such as `GetVersion`, `Get`, and `Set` require the
 encrypted session.
 
 ## Security/session model
@@ -238,7 +244,7 @@ The encrypted JSON is the RPC payload described in the
 | `masterPairKey` | SRP `K`, reused for challenge HMAC |
 | `sessionKey` | local cache/display field; not used for reconnect and may not contain the full AES key |
 | `nonce` | latest nonce used for key derivation |
-| `serverPk` | last server SRP public key observed during pairing |
+| `serverPk` | server SRP public key returned during pairing |
 | `serverConfirmation` | server SRP proof returned during pairing |
 
 Only `clientId` and `masterPairKey` are logically required for reconnect.
