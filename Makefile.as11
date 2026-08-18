@@ -10,7 +10,7 @@ AS11_PATCHER_DEPS := \
 
 # Register APPL payloads by APPX version and FGBL payloads by BID.
 AS11_PAYLOAD_LAYOUT_VERSIONS := 8_0_1 8_3_0 8_4_0 8_5_0 8_6_0
-AS11_PAYLOADS_8_0_1 := as11_mop_callback_dispatcher as11_vid_spoof as11_header_clock
+AS11_PAYLOADS_8_0_1 := as11_mop_callback_dispatcher as11_rpc_dispatcher as11_vid_spoof as11_header_clock as11_airbreak_info
 AS11_PAYLOADS_8_3_0 := $(AS11_PAYLOADS_8_0_1) as11_asv_backup_rate as11_custom_settings
 AS11_PAYLOADS_8_4_0 := $(AS11_PAYLOADS_8_3_0)
 AS11_PAYLOADS_8_5_0 := $(AS11_PAYLOADS_8_3_0)
@@ -129,7 +129,8 @@ $(BUILD)/as11_fgbl_stubs_%.o: $(SRC)/as11/fgbl_stubs_%.S Makefile Makefile.as11 
 # APPL and FGBL payloads share one versioned object rule.
 define AS11_VERSIONED_OBJECTS_template
 $$(BUILD)/as11_%_$(1).o: $$(SRC)/as11/%.c $$(SRC)/as11/stubs.h \
-		$$(SRC)/as11/vars.h $$(wildcard $$(SRC)/as11/vars_$(1).h) \
+		$$(SRC)/as11/rpc_object.h $$(SRC)/as11/vars.h \
+		$$(wildcard $$(SRC)/as11/vars_$(1).h) \
 		Makefile Makefile.as11 | $$(BUILD)
 	$$(CC) $$(AS11_CFLAGS) $$(AS11_PAYLOAD_CFLAGS_as11_$$*) \
 		-DAPPX_VER_$(1) -DFGBL_VER_$(1) -c -o $$@ $$<

@@ -61,6 +61,12 @@ name, FeatureProfiles field, SettingProfilesCollection field, and any other
 schema references remain stock unless another patch changes them explicitly.
 The custom GUI label affects only the menu row.
 
+A claim with `custom_name` publishes its runtime meaning under `dataItems` in
+[AirbreakInfo](patch_airbreak_info.md). The entry is keyed by the unchanged RPC
+short selector and includes the owning patch plus any menu and enum metadata
+available to the framework. Claims without `custom_name` remain private to the
+feature patch.
+
 ## Reclaimed Resources
 
 The current provider reclaims the persistent replacement-reminder profile:
@@ -176,7 +182,8 @@ A feature using reclaimed persistence should:
 
 1. install and validate its compiled payload independently
 2. define standalone behavior for an unpatched `0xFFFF` ABI slot
-3. claim an exact field from a reclaim pool
+3. claim an exact field from a reclaim pool, supplying `custom_name` when the
+   new meaning should be published through AirbreakInfo
 4. replace only the descriptor fields required by the new setting
 5. optionally add a menu row with its section, label, mode mask, and factory
 6. bind the resolved variable ID to the payload ABI slot
@@ -191,5 +198,5 @@ menu and callsite anchors belong in the provider layout; setting semantics and
 GUI labels remain in the feature patch.
 
 Compiled payload layout and ABI conventions are documented in
-[Air11 Patch Payloads](patch_payloads.md). DataItem descriptor layouts are
-documented in [Air11 CONF Block Format](conf_block_format.md).
+[Patch Payloads](patch_payloads.md). DataItem descriptor layouts are
+documented in [CONF Block Format](conf_block_format.md).

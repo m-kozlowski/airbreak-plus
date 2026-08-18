@@ -9,6 +9,12 @@ extern void AsvFeature_update(void *ctx);
 extern void FeedbackInput_get_ref(int **value, unsigned int slot);
 extern void FeedbackOutput_get_ref(float **value, unsigned int slot);
 extern void *heap_alloc(unsigned int size);
+
+/* Native registry and encoder entry points used by Airbreak RPC providers. */
+extern void rpc_profile_json_formatter_registry_ctor(void);
+extern void *rpc_profile_json_formatter_registration_ctor(void *registration);
+extern int json_encoder_write_raw_span(
+    void *formatter, void *encoder, const void *span);
 extern void GuiTextValueFormatter_ctor(void *formatter);
 extern void GuiTextValueFormatter_dtor(void *formatter);
 extern void *GuiMenuTextValueListItem_ctor(

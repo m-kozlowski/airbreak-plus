@@ -86,6 +86,8 @@ class TimezoneWriteCandidates:
 
 @dataclass
 class CustomSettingsCandidates:
+    rpc_enum_symbols: AddressResult
+    rpc_enum_symbol_count: int | None
     sites: dict[str, AddressResult]
     row_constructor: AddressResult
     scheduler_target: AddressResult
@@ -111,9 +113,15 @@ class OtaCompatibilityCandidates:
     fgbl_appl_compatibility_fingerprint: int | None
 
 
+@dataclass(frozen=True)
+class RpcDispatcherCandidates:
+    init_entry: AddressResult
+
+
 @dataclass
 class PortCandidates:
     stubs: dict[str, AddressResult]
+    rpc_dispatcher: RpcDispatcherCandidates
     mop: MopCandidates
     timezone_write: TimezoneWriteCandidates
     header_clock: HeaderClockCandidates
@@ -405,6 +413,96 @@ def thumb2_bl_target(data: bytes, address: int) -> int | None:
     if immediate & (1 << 24):
         immediate -= 1 << 25
     return address + 4 + immediate
+
+
+def rel32_target(data: bytes, address: int) -> int | None:
+    """Decode one signed 32-bit relative initializer-table entry."""
+    off = address - FLASH_BASE
+    if off < 0 or off + 4 > len(data):
+        return None
+    value = struct.unpack_from("<I", data, off)[0]
+    displacement = value
+    if displacement & 0x80000000:
+        displacement -= 0x100000000
+    return (address + displacement) & 0xFFFFFFFF
+
+
+def rel32_references_to(data: bytes, target: int) -> tuple[int, ...]:
+    return tuple(
+        FLASH_BASE + off
+        for off in range(APPX_BASE, len(data) - 3, 4)
+        if rel32_target(data, FLASH_BASE + off) == target
+    )
+
+
+def resolve_rpc_dispatcher_candidates(
+        target_data: bytes,
+        reference: dict,
+        stubs: dict[str, AddressResult]) -> RpcDispatcherCandidates:
+    """Resolve the formatter-registry constructor and its init-table entry."""
+    registry_name = "rpc_profile_json_formatter_registry_ctor"
+    registry = stubs.get(registry_name)
+    if registry is None:
+        return RpcDispatcherCandidates(AddressResult(
+            reference["init_entry"], None, "missing",
+            "registry constructor is absent from reference stubs",
+        ))
+
+    # A changed provider list can leave the generic matcher on a function-body
+    # address. The init table independently identifies the containing entry.
+    body_candidates = tuple(dict.fromkeys(
+        value for value in (registry.address, *registry.alternatives)
+        if value is not None
+    ))
+    matches = []
+    for off in range(APPX_BASE + 4, len(target_data) - 7, 4):
+        entry = FLASH_BASE + off
+        target = rel32_target(target_data, entry)
+        previous = rel32_target(target_data, entry - 4)
+        following = rel32_target(target_data, entry + 4)
+        if not all(
+                value is not None and value & 1 and
+                FLASH_BASE + APPX_BASE <= value < FLASH_BASE + len(target_data)
+                for value in (previous, target, following)):
+            continue
+        function = target & ~1
+        if any(function <= body < function + 16 for body in body_candidates):
+            matches.append((entry, function))
+    matches = list(dict.fromkeys(matches))
+
+    if len(matches) == 1:
+        init_entry, function = matches[0]
+        stubs[registry_name] = AddressResult(
+            registry.source_address,
+            function,
+            "strong",
+            "unique REL32 initializer containing transferred function body",
+        )
+        return RpcDispatcherCandidates(AddressResult(
+            reference["init_entry"],
+            init_entry,
+            "strong",
+            "unique REL32 reference to formatter registry constructor",
+        ))
+
+    init_refs = (
+        rel32_references_to(target_data, registry.address | 1)
+        if registry.address is not None else ()
+    )
+    if len(init_refs) == 1:
+        return RpcDispatcherCandidates(AddressResult(
+            reference["init_entry"],
+            init_refs[0],
+            registry.quality,
+            "unique REL32 reference to transferred registry constructor",
+        ))
+    return RpcDispatcherCandidates(AddressResult(
+        reference["init_entry"],
+        None,
+        "missing",
+        "found %d matching constructor-table entries" % len(matches),
+        tuple(entry for entry, _function in matches),
+    ))
 
 
 def thumb2_movw_immediate(
@@ -700,11 +798,23 @@ def resolve_header_clock_candidates(
 
 
 def resolve_custom_settings_candidates(
-        data: bytes,
+        firmware: AS11Firmware,
         matcher: AddressMatcher,
         stubs: dict[str, AddressResult],
         reference: dict) -> CustomSettingsCandidates:
     """Locate the clinical-menu hook and the stock Reminders resources."""
+    data = firmware.data
+    firmware._ensure_option_table()
+    enum_table_off = firmware.opt_table_off
+    rpc_enum_symbols = AddressResult(
+        reference["rpc_enum_symbols"],
+        (
+            firmware.off_to_addr(enum_table_off)
+            if enum_table_off is not None else None
+        ),
+        "strong" if enum_table_off is not None else "missing",
+        "structurally decoded RPC enum symbol table",
+    )
     reminders = reference["reclaim"]["reminders"]
     sites = {
         "scroller_call": matcher.site(reference["menu"]["scroller_call"]),
@@ -827,6 +937,10 @@ def resolve_custom_settings_candidates(
                 )
 
     return CustomSettingsCandidates(
+        rpc_enum_symbols=rpc_enum_symbols,
+        rpc_enum_symbol_count=(
+            firmware.opt_table_count if enum_table_off is not None else None
+        ),
         sites=sites,
         row_constructor=row_constructor,
         scheduler_target=scheduler_target,
@@ -1144,6 +1258,7 @@ def resolve_port_candidates(
             "no reviewed patch data for reference APPX %s" % reference_key
         )
     required = (
+        ("RPC dispatcher", "rpc_dispatcher"),
         ("MOP dispatcher", "mop_callback_dispatcher"),
         ("time-zone write", "timezone_write"),
         ("header clock", "header_clock"),
@@ -1167,6 +1282,9 @@ def resolve_port_candidates(
         name: matcher.function(address)
         for name, address in parse_stubs(reference_key).items()
     }
+    rpc_dispatcher = resolve_rpc_dispatcher_candidates(
+        target_fw.data, reference["rpc_dispatcher"], stubs
+    )
     mop = resolve_mop_candidates(
         target_fw.data, matcher, reference["mop_callback_dispatcher"]
     )
@@ -1177,7 +1295,7 @@ def resolve_port_candidates(
         target_fw, matcher, stubs, reference["header_clock"]
     )
     custom_settings = resolve_custom_settings_candidates(
-        target_fw.data, matcher, stubs, reference["custom_settings"]
+        target_fw, matcher, stubs, reference["custom_settings"]
     )
     asv = resolve_asv_candidates(
         target_fw, reference_fw, stubs, reference["asv_backup_rate"]
@@ -1189,8 +1307,8 @@ def resolve_port_candidates(
         reference_release,
     )
     return PortCandidates(
-        stubs, mop, timezone_write, header_clock, custom_settings, asv,
-        ota_compatibility
+        stubs, rpc_dispatcher, mop, timezone_write, header_clock,
+        custom_settings, asv, ota_compatibility
     )
 
 
@@ -1344,6 +1462,15 @@ def self_check_candidates(
         "generated erased tail must contain the reviewed allocation range",
     ))
 
+    rpc_dispatcher_expected = expected_version.get("rpc_dispatcher")
+    if rpc_dispatcher_expected is not None:
+        result = candidates.rpc_dispatcher.init_entry
+        checks.append(compare_candidate(
+            "rpc_dispatcher.init_entry",
+            rpc_dispatcher_expected["init_entry"],
+            CandidateValue(result.address, result.quality, result.evidence),
+        ))
+
     mop_expected = expected_version.get("mop_callback_dispatcher")
     if mop_expected is not None:
         writeback = candidates.mop.writeback
@@ -1396,6 +1523,24 @@ def self_check_candidates(
 
     custom_expected = expected_version.get("custom_settings")
     if custom_expected is not None:
+        enum_table = candidates.custom_settings.rpc_enum_symbols
+        checks.append(compare_candidate(
+            "custom_settings.rpc_enum_symbols",
+            custom_expected["rpc_enum_symbols"],
+            CandidateValue(
+                enum_table.address, enum_table.quality, enum_table.evidence
+            ),
+        ))
+        checks.append(compare_candidate(
+            "custom_settings.rpc_enum_symbol_count",
+            custom_expected["rpc_enum_symbol_count"],
+            CandidateValue(
+                candidates.custom_settings.rpc_enum_symbol_count,
+                enum_table.quality,
+                "record count of structurally decoded RPC enum symbol table",
+            ),
+        ))
+
         sites = candidates.custom_settings.sites
         reminders = custom_expected["reclaim"]["reminders"]
         scroller = sites["scroller_call"]
@@ -1594,6 +1739,9 @@ def prepare(args) -> int:
         reference_id.firmware_release,
     )
     stub_results = candidates.stubs
+    rpc_enum_symbols = candidates.custom_settings.rpc_enum_symbols
+    rpc_enum_symbol_count = candidates.custom_settings.rpc_enum_symbol_count
+    rpc_dispatcher_init_entry = candidates.rpc_dispatcher.init_entry
     mop_writeback = candidates.mop.writeback
     mop_vtable = candidates.mop.vtable_slot
     mop_vtable_matches = candidates.mop.pointer_refs
@@ -1611,6 +1759,8 @@ def prepare(args) -> int:
     ota_compatibility = candidates.ota_compatibility
 
     address_rows: list[tuple[str, str, AddressResult]] = [
+        ("custom_settings", "rpc_enum_symbols", rpc_enum_symbols),
+        ("rpc_dispatcher", "init_entry", rpc_dispatcher_init_entry),
         ("mop", "writeback", mop_writeback),
         ("ota", "compatibility_fingerprints", ota_compatibility.table),
     ]
@@ -1731,6 +1881,11 @@ def prepare(args) -> int:
         "# Verify against the target firmware before copying.",
         "",
         "%r: {" % target_id.appx_key,
+        "    \"rpc_dispatcher\": {",
+        "        \"init_entry\": %s," % format_address(
+            rpc_dispatcher_init_entry.address
+        ),
+        "    },",
         "    \"mop_callback_dispatcher\": {",
         "        \"writeback\": %s," % format_address(mop_writeback.address),
         "        \"vtable_slot\": %s," % format_address(mop_vtable),
@@ -1754,6 +1909,13 @@ def prepare(args) -> int:
         ),
         "    },",
         "    \"custom_settings\": {",
+        "        \"rpc_enum_symbols\": %s," % format_address(
+            rpc_enum_symbols.address
+        ),
+        "        \"rpc_enum_symbol_count\": %s," % (
+            "TODO" if rpc_enum_symbol_count is None
+            else str(rpc_enum_symbol_count)
+        ),
         "        \"menu\": {",
         "            \"scroller_call\": %s," % format_address(
             custom_site_results["scroller_call"].address

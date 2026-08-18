@@ -5,18 +5,10 @@ system measures every payload, allocates non-overlapping storage addresses,
 links final binaries at their runtime addresses, and generates one layout per
 firmware-region version.
 
-## Payload matrix
+## Payload registration
 
-The APPL build matrix is defined by `AS11_PAYLOADS_<version>` in
-`Makefile.as11`:
-
-| APPX key | Payloads |
-|----------|----------|
-| `8_0_1` | `as11_mop_callback_dispatcher`, `as11_vid_spoof`, `as11_header_clock` |
-| `8_3_0` | `as11_mop_callback_dispatcher`, `as11_vid_spoof`, `as11_header_clock`, `as11_asv_backup_rate`, `as11_custom_settings` |
-| `8_4_0` | `as11_mop_callback_dispatcher`, `as11_vid_spoof`, `as11_header_clock`, `as11_asv_backup_rate`, `as11_custom_settings` |
-| `8_5_0` | `as11_mop_callback_dispatcher`, `as11_vid_spoof`, `as11_header_clock`, `as11_asv_backup_rate`, `as11_custom_settings` |
-| `8_6_0` | `as11_mop_callback_dispatcher`, `as11_vid_spoof`, `as11_header_clock`, `as11_asv_backup_rate`, `as11_custom_settings` |
+The APPL payloads built for each application version are defined by
+`AS11_PAYLOADS_<version>` in `Makefile.as11`.
 
 The patcher derives the key from the first three components of the application
 version. For example, APPX `8.5.0.9cd562102` selects `8_5_0`.
@@ -67,9 +59,12 @@ Example generated 8.5.0 layout:
 ```text
 payload                         runtime      size  runtime_end  storage      storage_end
 as11_mop_callback_dispatcher    0x081DBAD0   72    0x081DBB18   0x081DBAD0   0x081DBB18
-as11_vid_spoof                  0x081DBB18   51    0x081DBB4B   0x081DBB18   0x081DBB4B
-as11_asv_backup_rate            0x081DBB4C   102   0x081DBBB2   0x081DBB4C   0x081DBBB2
-as11_custom_settings            0x081DBBB4   1136  0x081DC024   0x081DBBB4   0x081DC024
+as11_rpc_dispatcher             0x081DBB18   308   0x081DBC4C   0x081DBB18   0x081DBC4C
+as11_vid_spoof                  0x081DBC4C   51    0x081DBC7F   0x081DBC4C   0x081DBC7F
+as11_header_clock               0x081DBC80   296   0x081DBDA8   0x081DBC80   0x081DBDA8
+as11_airbreak_info              0x081DBDA8   2216  0x081DC650   0x081DBDA8   0x081DC650
+as11_asv_backup_rate            0x081DC650   102   0x081DC6B6   0x081DC650   0x081DC6B6
+as11_custom_settings            0x081DC6B8   1136  0x081DCB28   0x081DC6B8   0x081DCB28
 ```
 
 Build all Air11 payloads and inspect a layout with:
@@ -144,15 +139,38 @@ installed.
 The dispatcher is injected only when at least one selected patch registers a
 handler. Its table reserves space for four feature handlers.
 
+## RPC dispatcher
+
+`as11_rpc_dispatcher` owns one registration in the stock JSON RPC
+profile-formatter registry. Feature payloads register `rpc_object_t`
+descriptors through the patcher; the dispatcher resolves their names and
+adapts them to the native formatter interface.
+
+The provider ABI, callback contracts, and integration procedure are documented
+in the [Air11 RPC Provider Interface](patch_rpc_dispatcher.md).
+
+The object ABI is declared in `patches/as11/rpc_object.h`. Each object supplies
+its name, current-value writer, optional schema and availability callbacks, and
+an optional value-application callback. The stock `Get` method calls the value
+writer. The stock `Set` method passes the JSON value assigned to that object to
+the application callback, then uses the value writer for the result. Omitting
+the application callback makes an object read-only.
+
+The dispatcher is injected only when at least one object is registered; its
+table reserves space for eight objects. It extends the objects accepted by
+`Get` and `Set`; it does not add JSON RPC method names.
+
 ## Payload families
 
-| Payload | APPX keys | Integration |
-|---------|-----------|-------------|
-| `as11_mop_callback_dispatcher` | `8_0_1`, `8_3_0`, `8_4_0`, `8_5_0`, `8_6_0` | owns the shared enum-writeback vtable slot and calls registered MOP handlers |
-| `as11_vid_spoof` | `8_0_1`, `8_3_0`, `8_4_0`, `8_5_0`, `8_6_0` | MOP handler; reads `MOP` and writes `VID` through native DataItem functions |
-| `as11_header_clock` | `8_0_1`, `8_3_0`, `8_4_0`, `8_5_0`, `8_6_0` | replaces the dashboard and therapy-screen title labels and reuses the root-widget timer for minute updates |
-| `as11_asv_backup_rate` | `8_3_0`, `8_4_0`, `8_5_0`, `8_6_0` | wraps the ASV feature update callback through its own vtable slot |
-| `as11_custom_settings` | `8_3_0`, `8_4_0`, `8_5_0`, `8_6_0` | appends persistent controls to selected clinical menu sections and updates their runtime visibility after MOP changes |
+| Payload | Integration |
+|---------|-------------|
+| `as11_airbreak_info` | read-only [AirbreakInfo](patch_airbreak_info.md) RPC object |
+| `as11_mop_callback_dispatcher` | owns the shared enum-writeback vtable slot and calls registered MOP handlers |
+| `as11_rpc_dispatcher` | adapts registered Airbreak objects to the stock `Get` and `Set` formatter paths |
+| `as11_vid_spoof` | MOP handler; reads `MOP` and writes `VID` through native DataItem functions |
+| `as11_header_clock` | replaces the dashboard and therapy-screen title labels and reuses the root-widget timer for minute updates |
+| `as11_asv_backup_rate` | wraps the ASV feature update callback through its own vtable slot |
+| `as11_custom_settings` | appends persistent controls to selected clinical menu sections and updates their runtime visibility after MOP changes |
 
 With [custom settings](custom_settings.md), the ASV backup-rate payload exposes
 a `Backup Rate` control that defaults to stock behavior. Without custom
@@ -173,6 +191,10 @@ settings, the payload suppresses backup breaths directly.
 A MOP-dependent payload should register its `start` symbol with the shared
 dispatcher. A payload tied to another firmware callback should preserve the
 stock call path unless replacing it is the explicit purpose of the patch.
+
+A payload that adds a named JSON RPC object should expose an `rpc_object_t`
+using the RPC dispatcher ABI and register its address during finalization
+instead of installing another profile-formatter registry hook.
 
 Do not add a fixed payload address to source or patcher code. Code-cave
 ownership belongs to `as11_code_caves.tsv` and the generated layouts.

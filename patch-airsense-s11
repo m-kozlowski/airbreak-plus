@@ -30,6 +30,7 @@ fi
 # Comment/uncomment patch names here to choose what this compatibility wrapper applies.
 # The Python patcher always refreshes FGBL/CONF/APPL CRCs after selected patches.
 PATCHES=(
+    patch-airbreak-info
     patch-fgbl-service
     patch-unlock-features
     patch-unlock-languages

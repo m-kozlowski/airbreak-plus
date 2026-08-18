@@ -12,11 +12,14 @@
 # See LICENSE in main repository for distribution license and additional restrictions.
 
 import argparse
+import datetime
 import fnmatch
 import io
-import os.path
+import json
+import os
 import re
 import struct
+import subprocess
 import sys
 from contextlib import redirect_stdout
 from dataclasses import dataclass
@@ -89,6 +92,36 @@ def parse_rpc_permission(value):
 
 def clean_ascii(data):
     return data.decode("ascii", errors="replace").split("\x00")[0]
+
+
+def airbreak_version():
+    """Return the release label embedded in AirbreakInfo."""
+    override = os.environ.get("AIRBREAK_VERSION")
+    if override:
+        return override
+
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    try:
+        return subprocess.check_output(["git", "-C", repo, "describe", "--tags", "--always", "--dirty"], stderr=subprocess.DEVNULL, universal_newlines=True).strip()
+    except (OSError, subprocess.CalledProcessError):
+        return "unknown"
+
+
+def airbreak_build_timestamp():
+    """Return the UTC time embedded in the patched image manifest."""
+    epoch = os.environ.get("SOURCE_DATE_EPOCH")
+    if epoch is None:
+        stamp = datetime.datetime.now(datetime.timezone.utc)
+    else:
+        stamp = datetime.datetime.fromtimestamp(
+            int(epoch), datetime.timezone.utc
+        )
+    return stamp.isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def airbreak_patch_name(name):
+    """Return a patch name without the CLI switch prefix."""
+    return name[6:] if name.startswith("patch-") else name
 
 
 # Mode bit, APPL setting prefix, RPC profile node, supported-by-patcher flag.
@@ -243,11 +276,15 @@ AS11_VID_SPOOF_PAYLOAD = "as11_vid_spoof"
 
 AS11_MOP_CALLBACK_DISPATCHER_PAYLOAD = "as11_mop_callback_dispatcher"
 
+AS11_RPC_DISPATCHER_PAYLOAD = "as11_rpc_dispatcher"
+
 AS11_ASV_BACKUP_RATE_PAYLOAD = "as11_asv_backup_rate"
 
 AS11_CUSTOM_SETTINGS_PAYLOAD = "as11_custom_settings"
 
 AS11_HEADER_CLOCK_PAYLOAD = "as11_header_clock"
+
+AS11_AIRBREAK_INFO_PAYLOAD = "as11_airbreak_info"
 
 
 class S11Firmware(object):
@@ -725,6 +762,34 @@ class S11Firmware(object):
             field_off, width = layout[field]
             writers[width](row["offset"] + field_off, value)
 
+    def enum_rpc_values(self, row, table):
+        """Return enabled RPC symbols from a final g[5] descriptor."""
+        if row["array"] != "g5":
+            raise ValueError("enum RPC values require a g5 descriptor")
+
+        table_off = self.ptr_to_off(table["rpc_enum_symbols"])
+        symbols = {}
+        for index in range(table["rpc_enum_symbol_count"]):
+            off = table_off + index * 12
+            enum_index = self.u32(off)
+            raw_value = self.u32(off + 4)
+            if enum_index == row["index"]:
+                symbol = self.string_at_ptr(self.u32(off + 8))
+                if symbol is not None:
+                    symbols[raw_value] = symbol
+
+        enabled = [
+            option for option in range(row["n_options"])
+            if option >= 32 or row["option_mask"] & (1 << option)
+        ]
+        missing = [option for option in enabled if option not in symbols]
+        if missing:
+            raise ValueError(
+                "missing RPC enum symbols for %s option(s) %s" %
+                (row["short_name"], ", ".join(map(str, missing)))
+            )
+        return [symbols[option] for option in enabled]
+
     def rpc_json_index(self):
         if self._rpc_json_index is None:
             rows = {}
@@ -817,6 +882,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
     }
     CUSTOM_SETTING_RECLAIM_POOLS = {
         "reminders": {
+            "stock_feature": "Reminders",
             "resources": (
                 "RIF", "RIM", "RIT", "RIC",
                 "RDF", "RDM", "RDT", "RDH",
@@ -834,10 +900,18 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         self._init_compiled_payloads()
         self.mop_callback_handlers = []
         self.mop_callback_handler_seen = set()
+        self.rpc_objects = []
+        self.rpc_object_seen = set()
+        self.rpc_dispatcher_context = None
+        self.rpc_dispatcher_outcome = None
         self.custom_settings_enabled = False
         self.custom_setting_claims = {}
         self.custom_menu_entries = []
         self.custom_setting_bindings = []
+        self.airbreak_info_enabled = False
+        self.patch_outcomes = {}
+        self.claimed_dataitems = {}
+        self.disabled_stock_features = set()
         if rpc_permissions is None:
             rpc_permissions = DEFAULT_RPC_PERMISSIONS
         self.rpc_permission_rules = {
@@ -887,6 +961,10 @@ class S11FirmwarePatches(CompiledPayloadMixin):
                 "SKIP", "%s does not apply to APPX %s" % (feature, ver)
             )
         return data
+
+    def record_patch_outcome(self, name, outcome):
+        """Record the current status of one enabled patch."""
+        self.patch_outcomes[name] = outcome.status
 
     def patch_fgbl_service(self):
         """Add bootloader support for firmware dump and restore over CAN."""
@@ -964,6 +1042,106 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             (original, start | 1)
         )
 
+    def rpc_object_register(self, rpc_object, name):
+        """Register one rpc_object_t with the shared named-object dispatcher."""
+        outcome = self._prepare_rpc_dispatcher()
+        if outcome.status != "OK":
+            summary = "RPC dispatcher unavailable"
+            if outcome.summary:
+                summary += ": " + outcome.summary
+            return PatchOutcome.skip(summary)
+
+        rpc_object = int(rpc_object)
+        if rpc_object in self.rpc_object_seen:
+            return PatchOutcome.ok()
+        self.rpc_object_seen.add(rpc_object)
+        self.rpc_objects.append(rpc_object)
+        print("  RPC object: %s at 0x%08X" % (name, rpc_object))
+        return PatchOutcome.ok()
+
+    @staticmethod
+    def _rel32_target(address, value):
+        displacement = value
+        if displacement & 0x80000000:
+            displacement -= 0x100000000
+        return (address + displacement) & 0xFFFFFFFF
+
+    def patch_rpc_dispatcher(self):
+        """Install the shared JSON RPC named-object dispatcher."""
+        if self.rpc_dispatcher_outcome is not None and self.rpc_dispatcher_outcome.status != "OK":
+            return self.rpc_dispatcher_outcome
+        if not self.rpc_objects:
+            return PatchOutcome.skip("no RPC objects registered")
+
+        outcome = self._prepare_rpc_dispatcher()
+        if outcome.status != "OK":
+            return outcome
+
+        context = self.rpc_dispatcher_context
+        data = context["data"]
+        object_table = context["object_table"]
+        object_capacity = context["object_capacity"]
+        init_entry = context["init_entry"]
+        original_entry = context["original_entry"]
+        start = context["start"]
+        ver = context["version"]
+        if len(self.rpc_objects) > object_capacity:
+            raise ValueError(
+                "rpc_dispatcher: too many objects (%d; capacity %d)" %
+                (len(self.rpc_objects), object_capacity)
+            )
+
+        flash, _off = self._inject_payload(AS11_RPC_DISPATCHER_PAYLOAD, data)
+        table_off = object_table - self.asf.FLASH_BASE
+        for index, rpc_object in enumerate(self.rpc_objects):
+            self.asf.write_u32(table_off + index * 4, rpc_object)
+        self.asf.write_u32(table_off + len(self.rpc_objects) * 4, 0xFFFFFFFF)
+
+        replacement_entry = ((start | 1) - init_entry) & 0xFFFFFFFF
+        self.asf.patch_exact(init_entry, struct.pack("<I", original_entry), struct.pack("<I", replacement_entry))
+        print("  RPC dispatcher: build/%s_%s.bin (%dB) at 0x%08X" % (AS11_RPC_DISPATCHER_PAYLOAD, ver, len(data), flash))
+        return PatchOutcome.ok()
+
+    def _prepare_rpc_dispatcher(self):
+        """Resolve and validate the dispatcher without modifying the image."""
+        if self.rpc_dispatcher_outcome is not None:
+            return self.rpc_dispatcher_outcome
+
+        ver = self._payload_version_key()
+        try:
+            anchors = self._patch_version_data("rpc_dispatcher", ver)
+        except PatchVersionUnavailable as exc:
+            self.rpc_dispatcher_outcome = PatchOutcome(exc.status, str(exc))
+            return self.rpc_dispatcher_outcome
+
+        data, _ = self._load_versioned_bin(AS11_RPC_DISPATCHER_PAYLOAD, required=True)
+        elf_path = self._versioned_artifact_path(AS11_RPC_DISPATCHER_PAYLOAD, "elf", ver)
+        start = self._elf_symbol_addr(elf_path, "start")
+        registry_ctor = self._elf_symbol_addr(elf_path, "rpc_profile_json_formatter_registry_ctor")
+        object_table = self._elf_symbol_addr(elf_path, "rpc_object_table")
+        object_table_size = self._elf_symbol_size(elf_path, "rpc_object_table")
+        init_entry = anchors["init_entry"]
+        init_off = self.asf.ptr_to_off(init_entry)
+        original_entry = self.asf.u32(init_off)
+        original_target = self._rel32_target(init_entry, original_entry)
+        if original_target != (registry_ctor | 1):
+            raise ValueError(
+                "RPC object initializer names 0x%08X, expected 0x%08X" %
+                (original_target, registry_ctor | 1)
+            )
+
+        self.rpc_dispatcher_context = {
+            "data": data,
+            "init_entry": init_entry,
+            "object_capacity": object_table_size // 4 - 1,
+            "object_table": object_table,
+            "original_entry": original_entry,
+            "start": start,
+            "version": ver,
+        }
+        self.rpc_dispatcher_outcome = PatchOutcome.ok()
+        return self.rpc_dispatcher_outcome
+
     def enable_custom_settings(self):
         """Enable custom settings requested by payload patches."""
         self.custom_settings_enabled = True
@@ -993,7 +1171,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
                 return pool
         return None
 
-    def custom_setting_claim(self, name, owner):
+    def custom_setting_claim(self, name, owner, custom_name=None):
         """Reserve one reclaimed DataItem for a feature patch."""
         name = self._custom_setting_key(name)
         pool = self._custom_setting_reclaim_pool(name)
@@ -1009,6 +1187,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         self.custom_setting_claims[name] = {
             "owner": owner,
             "pool": pool,
+            "custom_name": custom_name,
             "definition": None,
         }
         return name
@@ -1124,7 +1303,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
                 AS11_CUSTOM_SETTINGS_PAYLOAD
             )
             if data is None:
-                return
+                return PatchOutcome.skip("compiled payload unavailable")
 
             elf_path = self._versioned_artifact_path(
                 AS11_CUSTOM_SETTINGS_PAYLOAD, "elf", ver
@@ -1220,11 +1399,48 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             )
 
         # Recast claimed persistent DataItems for their new feature roles.
+        menu_metadata = {
+            request["setting"]: {
+                "section": request["section"],
+                "mode_mask": request["mode_mask"],
+            }
+            for request in self.custom_menu_entries
+        }
         for setting, claim in self.custom_setting_claims.items():
             if claim["definition"] is not None:
                 self.asf.write_descriptor_fields(
                     setting_rows[setting], claim["definition"]
                 )
+
+            stock_row = setting_rows[setting]
+            row = self.asf.descriptor(stock_row["array"], stock_row["index"])
+            custom_name = claim["custom_name"]
+            if custom_name:
+                metadata = {
+                    "name": custom_name,
+                    "owner": airbreak_patch_name(claim["owner"]),
+                }
+                if stock_row["long_name"]:
+                    metadata["stock"] = stock_row["long_name"]
+                menu = menu_metadata.get(setting)
+                if menu is not None:
+                    metadata["menu"] = {
+                        "section": menu["section"],
+                        "modes": [
+                            profile
+                            for bit, _prefix, profile, _supported
+                            in THERAPY_MODES
+                            if menu["mode_mask"] & (1 << bit)
+                        ],
+                    }
+                if row["array"] == "g5":
+                    metadata["enum"] = self.asf.enum_rpc_values(row, layout)
+                self.claimed_dataitems["_" + row["short_name"]] = metadata
+
+        for pool in pools:
+            stock_feature = self.CUSTOM_SETTING_RECLAIM_POOLS[pool].get("stock_feature")
+            if stock_feature:
+                self.disabled_stock_features.add(stock_feature)
 
         # Compiled feature payloads receive resolved var_ids through explicit
         # 16-bit ABI slots, keeping descriptor indexes out of their code.
@@ -1795,9 +2011,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         self.asf.write_u32(vtable_update_off, start | 1)
         # Without custom-settings finalization, the untouched 0xFFFF slot keeps
         # backup-rate suppression active unconditionally.
-        backup_rate_setting = self.custom_setting_claim(
-            "RIF", "asv_backup_rate"
-        )
+        backup_rate_setting = self.custom_setting_claim("RIF", "patch-asv-backup-rate", custom_name="ASVBackupRateEnable")
         self.custom_setting_define(
             backup_rate_setting,
             default_option=1,
@@ -2103,8 +2317,76 @@ class S11FirmwarePatches(CompiledPayloadMixin):
 
         patch_edf_superset(self.asf)
 
+    def enable_airbreak_info(self):
+        """Request the runtime AirbreakInfo RPC object."""
+        self.airbreak_info_enabled = True
+
+    def _airbreak_info_manifest(self):
+        patch_statuses = {}
+        for status in ("OK", "WARN", "SKIP"):
+            names = sorted(
+                airbreak_patch_name(name)
+                for name, outcome in self.patch_outcomes.items()
+                if outcome == status
+            )
+            if names:
+                patch_statuses[status.lower()] = names
+
+        return {
+            "schema": 4,
+            "version": airbreak_version(),
+            "builtAt": airbreak_build_timestamp(),
+            "patches": patch_statuses,
+            "disabledFeatures": sorted(self.disabled_stock_features),
+            "dataItems": dict(sorted(self.claimed_dataitems.items())),
+        }
+
+    def finalize_airbreak_info(self):
+        """Install the AirbreakInfo RPC object with the completed manifest."""
+        if not self.airbreak_info_enabled:
+            return PatchOutcome.skip("AirbreakInfo disabled")
+
+        ver = self._payload_version_key()
+        data, _payload_ver = self._load_versioned_bin(AS11_AIRBREAK_INFO_PAYLOAD)
+        if data is None:
+            return PatchOutcome.skip("compiled payload unavailable")
+        elf_path = self._versioned_artifact_path(AS11_AIRBREAK_INFO_PAYLOAD, "elf", ver)
+        rpc_object = self._elf_symbol_addr(elf_path, "airbreak_info_rpc_object")
+        manifest_addr = self._elf_symbol_addr(elf_path, "airbreak_info_json")
+        manifest_capacity = self._elf_symbol_size(elf_path, "airbreak_info_json")
+        manifest_length_addr = self._elf_symbol_addr(elf_path, "airbreak_info_json_length")
+
+        manifest = json.dumps(
+            self._airbreak_info_manifest(),
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("ascii")
+        if len(manifest) > manifest_capacity:
+            raise ValueError(
+                "AirbreakInfo manifest is %d bytes; payload capacity is %d" %
+                (len(manifest), manifest_capacity)
+            )
+
+        outcome = self.rpc_object_register(rpc_object, "AirbreakInfo")
+        if outcome.status != "OK":
+            return outcome
+
+        flash, _off = self._inject_payload(AS11_AIRBREAK_INFO_PAYLOAD, data)
+        self.asf.patch(manifest, addr=manifest_addr - self.asf.FLASH_BASE, verbose=False)
+        self.asf.write_u32(manifest_length_addr - self.asf.FLASH_BASE, len(manifest))
+
+        print("  AirbreakInfo: build/%s_%s.bin (%dB) at 0x%08X; manifest %dB" % (AS11_AIRBREAK_INFO_PAYLOAD, ver, len(data), flash, len(manifest)))
+        return PatchOutcome.ok("Get AirbreakInfo")
+
 
 PATCH_LIST = [
+    {
+        "arg": "patch-airbreak-info",
+        "desc": "Expose Airbreak version and applied patch metadata through RPC Get.",
+        "default": True,
+        "function": "enable_airbreak_info",
+    },
     {
         "arg": "patch-fgbl-service",
         "desc": "Add bootloader support for firmware dump and restore over CAN.",
@@ -2302,6 +2584,7 @@ def apply_reported_patch(option, method, args, detail_log=None):
         print_patch_output(output.getvalue(), detail_log)
     if outcome.status in ("WARN", "SKIP") and outcome.summary:
         print("  " + outcome.summary)
+    return outcome
 
 
 def run_patcher(args, detail_log=None):
@@ -2330,20 +2613,22 @@ def run_patcher(args, detail_log=None):
             else:
                 enabled = args.all_patches
         if enabled:
-            apply_reported_patch(
-                patch["arg"], getattr(patches, patch["function"]),
-                args, detail_log,
-            )
+            outcome = apply_reported_patch(patch["arg"], getattr(patches, patch["function"]), args, detail_log)
+            patches.record_patch_outcome(patch["arg"], outcome)
+
 
     print("\n=== Finalization")
-    apply_reported_patch(
-        "finalize-custom-settings", patches.finalize_custom_settings,
-        args, detail_log,
-    )
-    apply_reported_patch(
-        "patch-mop-callback-dispatcher", patches.patch_mop_callback_dispatcher,
-        args, detail_log,
-    )
+    custom_settings_outcome = apply_reported_patch("finalize-custom-settings", patches.finalize_custom_settings, args, detail_log)
+    if "patch-custom-settings" in patches.patch_outcomes:
+        patches.record_patch_outcome("patch-custom-settings", custom_settings_outcome)
+
+    apply_reported_patch("patch-mop-callback-dispatcher", patches.patch_mop_callback_dispatcher, args, detail_log)
+
+    if patches.airbreak_info_enabled:
+        airbreak_info_outcome = apply_reported_patch("finalize-airbreak-info", patches.finalize_airbreak_info, args, detail_log)
+        patches.record_patch_outcome("patch-airbreak-info", airbreak_info_outcome)
+
+    apply_reported_patch("patch-rpc-dispatcher", patches.patch_rpc_dispatcher, args, detail_log)
 
     output = io.StringIO()
     try:

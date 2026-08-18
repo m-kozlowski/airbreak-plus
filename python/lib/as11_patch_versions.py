@@ -34,6 +34,9 @@ AS11_FGBL_PATCH_VERSIONS = {
 # An explicit None means that the patch does not apply to that APPX.
 AS11_PATCH_VERSIONS = {
     "8_0_1": {
+        "rpc_dispatcher": {
+            "init_entry": 0x0817EE14,
+        },
         "timezone_write": {
             "metadata_gate": {
                 "address": 0x08198E24, "before": "e10f", "after": "0121",
@@ -58,6 +61,9 @@ AS11_PATCH_VERSIONS = {
         },
     },
     "8_3_0": {
+        "rpc_dispatcher": {
+            "init_entry": 0x08189C6C,
+        },
         "timezone_write": {
             "metadata_gate": {
                 "address": 0x081A57D0, "before": "e10f", "after": "0121",
@@ -81,6 +87,8 @@ AS11_PATCH_VERSIONS = {
             "empty_text_id": 0x006A,
         },
         "custom_settings": {
+            "rpc_enum_symbols": 0x08105318,
+            "rpc_enum_symbol_count": 974,
             "menu": {
                 "scroller_call": 0x0805AC68,
             },
@@ -100,6 +108,9 @@ AS11_PATCH_VERSIONS = {
         },
     },
     "8_4_0": {
+        "rpc_dispatcher": {
+            "init_entry": 0x0818E21C,
+        },
         "timezone_write": {
             "metadata_gate": {
                 "address": 0x081AA640, "before": "e10f", "after": "0121",
@@ -123,6 +134,8 @@ AS11_PATCH_VERSIONS = {
             "empty_text_id": 0x0068,
         },
         "custom_settings": {
+            "rpc_enum_symbols": 0x081070A0,
+            "rpc_enum_symbol_count": 1027,
             "menu": {
                 "scroller_call": 0x0805E014,
             },
@@ -142,6 +155,9 @@ AS11_PATCH_VERSIONS = {
         },
     },
     "8_5_0": {
+        "rpc_dispatcher": {
+            "init_entry": 0x08190614,
+        },
         "timezone_write": {
             "metadata_gate": {
                 "address": 0x081AC438, "before": "e10f", "after": "0121",
@@ -165,6 +181,8 @@ AS11_PATCH_VERSIONS = {
             "empty_text_id": 0x006A,
         },
         "custom_settings": {
+            "rpc_enum_symbols": 0x08107BA8,
+            "rpc_enum_symbol_count": 1032,
             "menu": {
                 # Final GuiScroller_ctor call in the clinical-settings
                 # constructor; redirected through the menu bridge.
@@ -188,6 +206,9 @@ AS11_PATCH_VERSIONS = {
         },
     },
     "8_6_0": {
+        "rpc_dispatcher": {
+            "init_entry": 0x081916DC,
+        },
         "timezone_write": {
             "metadata_gate": {
                 "address": 0x081AD428, "before": "e10f", "after": "0121",
@@ -211,6 +232,8 @@ AS11_PATCH_VERSIONS = {
             "empty_text_id": 0x006A,
         },
         "custom_settings": {
+            "rpc_enum_symbols": 0x08108398,
+            "rpc_enum_symbol_count": 1041,
             "menu": {
                 "scroller_call": 0x0805E586,
             },

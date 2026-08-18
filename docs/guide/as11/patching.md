@@ -98,6 +98,7 @@ instead of producing that reduced result.
 
 | Patch | What it does | Switch |
 |-------|--------------|--------|
+| [Runtime identity](../../as11/patch_airbreak_info.md) | Exposes the Airbreak version and installed changes through RPC | `--patch-airbreak-info` |
 | Bootloader service | Adds internal-flash and SPI-NOR read/write service over CAN for bootloader 1.1.0 | `--patch-fgbl-service` |
 
 See [Features](features.md) for additional behavior details.
