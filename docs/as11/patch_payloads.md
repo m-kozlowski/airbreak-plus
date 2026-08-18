@@ -137,7 +137,9 @@ custom-settings visibility handler register here when their patches are
 installed.
 
 The dispatcher is injected only when at least one selected patch registers a
-handler. Its table reserves space for four feature handlers.
+handler. Dependent patches register before modifying the image and are skipped
+when the dispatcher is unavailable for the application version. Its table
+reserves space for four feature handlers.
 
 ## RPC dispatcher
 

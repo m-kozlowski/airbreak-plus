@@ -900,6 +900,8 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         self._init_compiled_payloads()
         self.mop_callback_handlers = []
         self.mop_callback_handler_seen = set()
+        self.mop_callback_dispatcher_context = None
+        self.mop_callback_dispatcher_outcome = None
         self.rpc_objects = []
         self.rpc_object_seen = set()
         self.rpc_dispatcher_context = None
@@ -985,38 +987,45 @@ class S11FirmwarePatches(CompiledPayloadMixin):
 
     def mop_callback_register_handler(self, handler, name):
         """Register one feature handler to run after a MOP writeback."""
+        outcome = self._prepare_mop_callback_dispatcher()
+        if outcome.status != "OK":
+            summary = "MOP callback dispatcher unavailable"
+            if outcome.summary:
+                summary += ": " + outcome.summary
+            return PatchOutcome.skip(summary)
+
         handler = int(handler) | 1
         if handler in self.mop_callback_handler_seen:
-            return
+            return PatchOutcome.ok()
         self.mop_callback_handler_seen.add(handler)
         self.mop_callback_handlers.append(handler)
         print("  MOP callback handler: %s at 0x%08X" % (name, handler))
+        return PatchOutcome.ok()
 
     def patch_mop_callback_dispatcher(self):
         """Install the shared EnumDataItem writeback dispatcher."""
+        if (self.mop_callback_dispatcher_outcome is not None and
+                self.mop_callback_dispatcher_outcome.status != "OK"):
+            return self.mop_callback_dispatcher_outcome
         if not self.mop_callback_handlers:
             return PatchOutcome.skip("no callback handlers registered")
-        if len(self.mop_callback_handlers) > 4:
+
+        outcome = self._prepare_mop_callback_dispatcher()
+        if outcome.status != "OK":
+            return outcome
+
+        context = self.mop_callback_dispatcher_context
+        if len(self.mop_callback_handlers) > context["handler_capacity"]:
             raise ValueError(
-                "mop_callback_dispatcher: too many handlers (%d)" %
-                len(self.mop_callback_handlers)
+                "mop_callback_dispatcher: too many handlers (%d; capacity %d)" %
+                (len(self.mop_callback_handlers), context["handler_capacity"])
             )
 
-        ver = self._payload_version_key()
-        anchors = self._patch_version_data("mop_callback_dispatcher", ver)
-        data, _ = self._load_versioned_bin(
-            AS11_MOP_CALLBACK_DISPATCHER_PAYLOAD, required=True
-        )
-        elf_path = self._versioned_artifact_path(
-            AS11_MOP_CALLBACK_DISPATCHER_PAYLOAD, "elf", ver
-        )
-        start = self._elf_symbol_addr(elf_path, "start")
-        handler_table = self._elf_symbol_addr(
-            elf_path, "mop_callback_handler_table"
-        )
-
-        writeback = anchors["writeback"]
-        original = writeback | 1
+        data = context["data"]
+        handler_table = context["handler_table"]
+        original = context["original"]
+        start = context["start"]
+        ver = context["version"]
 
         flash, _off = self._inject_payload(
             AS11_MOP_CALLBACK_DISPATCHER_PAYLOAD, data
@@ -1029,7 +1038,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             table_off + (len(self.mop_callback_handlers) + 1) * 4, 0xFFFFFFFF
         )
         self.asf.patch_exact(
-            anchors["vtable_slot"], struct.pack("<I", original),
+            context["vtable_slot"], struct.pack("<I", original),
             struct.pack("<I", start | 1),
         )
 
@@ -1041,6 +1050,64 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             "  EnumDataItem writeback: 0x%08X -> 0x%08X" %
             (original, start | 1)
         )
+        return PatchOutcome.ok()
+
+    def _prepare_mop_callback_dispatcher(self):
+        """Resolve and validate the dispatcher without modifying the image."""
+        if self.mop_callback_dispatcher_outcome is not None:
+            return self.mop_callback_dispatcher_outcome
+
+        ver = self._payload_version_key()
+        try:
+            anchors = self._patch_version_data(
+                "mop_callback_dispatcher", ver
+            )
+        except PatchVersionUnavailable as exc:
+            self.mop_callback_dispatcher_outcome = PatchOutcome(
+                exc.status, str(exc)
+            )
+            return self.mop_callback_dispatcher_outcome
+
+        data, _ = self._load_versioned_bin(
+            AS11_MOP_CALLBACK_DISPATCHER_PAYLOAD, required=True
+        )
+        elf_path = self._versioned_artifact_path(
+            AS11_MOP_CALLBACK_DISPATCHER_PAYLOAD, "elf", ver
+        )
+        start = self._elf_symbol_addr(elf_path, "start")
+        handler_table = self._elf_symbol_addr(
+            elf_path, "mop_callback_handler_table"
+        )
+        handler_table_size = self._elf_symbol_size(
+            elf_path, "mop_callback_handler_table"
+        )
+        if handler_table_size < 8 or handler_table_size % 4:
+            raise ValueError(
+                "mop_callback_dispatcher: invalid handler table size %d" %
+                handler_table_size
+            )
+
+        original = anchors["writeback"] | 1
+        vtable_slot = anchors["vtable_slot"]
+        vtable_off = self.asf.ptr_to_off(vtable_slot)
+        current = self.asf.u32(vtable_off)
+        if current not in (original, start | 1):
+            raise ValueError(
+                "mop_callback_dispatcher: vtable slot contains 0x%08X, "
+                "expected 0x%08X" % (current, original)
+            )
+
+        self.mop_callback_dispatcher_context = {
+            "data": data,
+            "handler_capacity": handler_table_size // 4 - 2,
+            "handler_table": handler_table,
+            "original": original,
+            "start": start,
+            "version": ver,
+            "vtable_slot": vtable_slot,
+        }
+        self.mop_callback_dispatcher_outcome = PatchOutcome.ok()
+        return self.mop_callback_dispatcher_outcome
 
     def rpc_object_register(self, rpc_object, name):
         """Register one rpc_object_t with the shared named-object dispatcher."""
@@ -1391,6 +1458,13 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             menu_symbols["call_off"] = call_off
             menu_payload = data
 
+            if menu_entries:
+                outcome = self.mop_callback_register_handler(
+                    menu_symbols["start"], "custom_settings"
+                )
+                if outcome.status != "OK":
+                    return outcome
+
         # Apply the prepared payload, descriptor, ABI, and reclaim changes.
         menu_flash = None
         if menu_payload is not None:
@@ -1487,11 +1561,6 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             self.asf.write_thumb2_bl_target(
                 menu_symbols["call_off"], menu_symbols["wrapper"]
             )
-            if menu_entries:
-                # Refresh custom row visibility whenever MOP is committed.
-                self.mop_callback_register_handler(
-                    menu_symbols["start"], "custom_settings"
-                )
 
         for request in self.custom_menu_entries:
             row = setting_rows[request["setting"]]
@@ -2297,14 +2366,18 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         data, ver = self._load_versioned_bin(AS11_VID_SPOOF_PAYLOAD)
         if data is None:
             return PatchOutcome.skip("compiled payload unavailable")
-        flash, _off = self._inject_payload(AS11_VID_SPOOF_PAYLOAD, data)
         elf_path = self._versioned_artifact_path(AS11_VID_SPOOF_PAYLOAD, "elf", ver)
         handler = self._elf_symbol_addr(elf_path, "start")
+        outcome = self.mop_callback_register_handler(handler, "vid_spoof")
+        if outcome.status != "OK":
+            return outcome
+
+        flash, _off = self._inject_payload(AS11_VID_SPOOF_PAYLOAD, data)
         print(
             "Patching runtime VID spoof... build/%s_%s.bin (%dB) at 0x%08X" %
             (AS11_VID_SPOOF_PAYLOAD, ver, len(data), flash)
         )
-        self.mop_callback_register_handler(handler, "vid_spoof")
+        return PatchOutcome.ok()
 
     def patch_edf_superset(self):
         """Expose the official S11 EDF schema superset."""
@@ -2622,7 +2695,17 @@ def run_patcher(args, detail_log=None):
     if "patch-custom-settings" in patches.patch_outcomes:
         patches.record_patch_outcome("patch-custom-settings", custom_settings_outcome)
 
-    apply_reported_patch("patch-mop-callback-dispatcher", patches.patch_mop_callback_dispatcher, args, detail_log)
+    mop_dispatcher_outcome = apply_reported_patch(
+        "patch-mop-callback-dispatcher",
+        patches.patch_mop_callback_dispatcher,
+        args,
+        detail_log,
+    )
+    if (patches.mop_callback_dispatcher_outcome is not None or
+            patches.mop_callback_handlers):
+        patches.record_patch_outcome(
+            "patch-mop-callback-dispatcher", mop_dispatcher_outcome
+        )
 
     if patches.airbreak_info_enabled:
         airbreak_info_outcome = apply_reported_patch("finalize-airbreak-info", patches.finalize_airbreak_info, args, detail_log)
