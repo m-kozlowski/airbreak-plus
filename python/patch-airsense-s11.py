@@ -78,20 +78,31 @@ def parse_u16(value):
 def parse_rpc_permission(value):
     parts = [part.strip() for part in value.split(":")]
     if len(parts) != 3 or not parts[0]:
-        raise argparse.ArgumentTypeError("expected METHOD:VCID:BOOL")
-    method, vcid_text, enabled_text = parts
+        raise argparse.ArgumentTypeError(
+            "expected METHOD:VCID:BOOL or DATAITEM:FLAG:BOOL"
+        )
+    target, selector, enabled_text = parts
     try:
-        vcid = parse_u16(vcid_text)
         enabled = str2bool(enabled_text)
     except argparse.ArgumentTypeError as exc:
         raise argparse.ArgumentTypeError(
             "invalid RPC permission %r: %s" % (value, exc)
         ) from None
-    return method, vcid, enabled
 
+    flag = selector.upper()
+    if flag in RPC_DATAITEM_PERMISSION_FLAGS:
+        if re.fullmatch(r"(?:0[xX][0-9a-fA-F]+|[0-9]+)", target):
+            target = parse_u16(target)
+        return "dataitem", target, flag, enabled
 
-def clean_ascii(data):
-    return data.decode("ascii", errors="replace").split("\x00")[0]
+    try:
+        vcid = parse_u16(selector)
+    except argparse.ArgumentTypeError:
+        raise argparse.ArgumentTypeError(
+            "invalid RPC permission %r: selector must be a VCID, RPC, or RPW" %
+            value
+        ) from None
+    return "method", target, vcid, enabled
 
 
 def airbreak_version():
@@ -162,9 +173,9 @@ UNLOCKED_ENUM_SETTING_NAMES = (
     "HeightDisplayUnit",
 )
 
-# RPC permissions set by patch-rpc-permissions. The outer key is the method,
+# Method permissions set by patch-rpc-permissions. The outer key is the method,
 # and each nested map assigns the permission state for one or more VCIDs.
-DEFAULT_RPC_PERMISSIONS = {
+DEFAULT_RPC_METHOD_PERMISSIONS = {
     "SetDateTime": {
         0x0396: True,
     },
@@ -186,6 +197,31 @@ DEFAULT_RPC_PERMISSIONS = {
     # "ApplyAuthenticatedUpgrade": {0x0780: False, 0x0788: False},
 }
 
+# DataItem permissions set by patch-rpc-permissions. Targets may be long names,
+# short tags, or numeric var IDs. Unspecified descriptor flags are preserved.
+DEFAULT_RPC_DATAITEM_PERMISSIONS = {
+    "WUP": {
+        "RPC": True,
+        "RPW": True,
+    },
+}
+
+DATAITEM_FLAG_MASKS = {
+    "ACT": 0x0001,
+    "VIS": 0x0002,
+    "MOD": 0x0004,
+    "SGN": 0x0008,
+    "INH": 0x0010,
+    "VAL": 0x0020,
+    "ULK": 0x0040,
+    "RAW": 0x0080,
+    "MON": 0x0100,
+    "RPC": 0x0200,
+    "RPW": 0x0400,
+    "PST": 0x0800,
+}
+RPC_DATAITEM_PERMISSION_FLAGS = frozenset(("RPC", "RPW"))
+
 # Known RPC permission selector values
 KNOWN_RPC_PERMISSION_VCIDS = (
     0x0380,  # CAN small JSON-RPC lane, 600-byte buffer; paired with host 0x0381
@@ -200,7 +236,7 @@ KNOWN_RPC_PERMISSION_VCIDS = (
 )
 
 # RPC method names known from AS11 firmware dispatch tables. Used only to
-# locate the moving method->command-id table; patch defaults live in DEFAULT_RPC_PERMISSIONS
+# locate the moving method->command-id table; patch defaults live above
 KNOWN_RPC_METHODS = (
     "GetVersion",
     "EnterTherapy",
@@ -423,7 +459,7 @@ class S11Firmware(object):
         return "_".join(match.groups())
 
     def read_str(self, off, length):
-        return clean_ascii(bytes(self.fw[off:off + length]))
+        return bytes(self.fw[off:off + length]).decode("ascii", errors="replace").split("\x00")[0]
 
     def u8(self, off):
         return self.fw[off]
@@ -680,14 +716,8 @@ class S11Firmware(object):
                 out[vid] = name
         return out
 
-    def var_short_name(self, vid):
-        return self.short_names.get(vid, "")
-
-    def var_long_name(self, vid):
-        return self.appl_nodes.get(vid, "")
-
     def var_name(self, vid):
-        return self.var_long_name(vid) or self.var_short_name(vid)
+        return self.appl_nodes.get(vid, "") or self.short_names.get(vid, "")
 
     def descriptor(self, array, idx):
         spec = self.arrays[array]
@@ -695,15 +725,17 @@ class S11Firmware(object):
             raise IndexError("%s[%d] outside table" % (array, idx))
         off = spec["base"] + idx * spec["stride"]
         vid = spec["id_base"] + idx
+        short_name = self.short_names.get(vid, "")
+        long_name = self.appl_nodes.get(vid, "")
         row = {
             "array": array,
             "index": idx,
             "offset": off,
             "address": self.off_to_addr(off),
             "var_id": vid,
-            "short_name": self.var_short_name(vid),
-            "long_name": self.var_long_name(vid),
-            "name": self.var_name(vid),
+            "short_name": short_name,
+            "long_name": long_name,
+            "name": long_name or short_name,
             "flags": self.u16(off),
             "active": bool(self.u16(off) & 1),
         }
@@ -727,22 +759,37 @@ class S11Firmware(object):
         for idx in range(self.arrays[array]["count"]):
             yield self.descriptor(array, idx)
 
-    def normalize_short_name(self, name):
-        return name.upper().lstrip("_")
-
-    def descriptor_matches_name(self, row, name):
-        wanted_short = self.normalize_short_name(name)
-        if row["short_name"] and self.normalize_short_name(row["short_name"]) == wanted_short:
-            return True
-        return bool(row["long_name"] and row["long_name"] == name)
-
-    def find_descriptors_by_name(self, name, arrays=("g1", "g2", "g3", "g5")):
+    def find_descriptors(self, identifier, arrays=("g1", "g2", "g3", "g5")):
         rows = []
-        for array in arrays:
-            for row in self.iter_descriptors(array):
-                if self.descriptor_matches_name(row, name):
-                    rows.append(row)
+        if isinstance(identifier, int):
+            for array in arrays:
+                spec = self.arrays[array]
+                idx = identifier - spec["id_base"]
+                if 0 <= idx < spec["count"]:
+                    rows.append(self.descriptor(array, idx))
+        else:
+            wanted_short = identifier.upper().lstrip("_")
+            for array in arrays:
+                for row in self.iter_descriptors(array):
+                    short_name = row["short_name"]
+                    if ((short_name and short_name.upper().lstrip("_") == wanted_short) or
+                            row["long_name"] == identifier):
+                        rows.append(row)
         return rows
+
+    def update_descriptor_flags(self, row, values):
+        """Set selected DataItem flags while preserving all other bits."""
+        flags = self.u16(row["offset"])
+        updated = flags
+        for name, enabled in values.items():
+            flag = name.upper()
+            if flag not in DATAITEM_FLAG_MASKS:
+                raise ValueError("unknown DataItem flag %s" % name)
+            mask = DATAITEM_FLAG_MASKS[flag]
+            updated = updated | mask if enabled else updated & ~mask
+        if updated != flags:
+            self.write_u16(row["offset"], updated)
+        return flags, updated
 
     def write_descriptor_fields(self, row, fields):
         """Update named fields in an existing DataItem descriptor."""
@@ -806,21 +853,6 @@ class S11Firmware(object):
                     nodes[name] = int(value[1:])
             self._rpc_json_index = rows, nodes
         return self._rpc_json_index
-
-    def find_rpc_nodes(self, names):
-        wanted = set(names)
-        nodes = self.rpc_json_index()[1]
-        return {
-            name: node_id for name, node_id in nodes.items()
-            if name in wanted
-        }
-
-    def find_rpc_feature_nodes(self):
-        return {
-            name: node_id
-            for name, node_id in self.rpc_json_index()[1].items()
-            if name.endswith("Feature")
-        }
 
     def find_rpc_feature_setting_names(self):
         rows, _ = self.rpc_json_index()
@@ -895,7 +927,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         "text_value": "custom_menu_text_value_factory",
     }
 
-    def __init__(self, asf, rpc_permissions=None):
+    def __init__(self, asf, rpc_method_permissions=None, rpc_dataitem_permissions=None):
         self.asf = asf
         self._init_compiled_payloads()
         self.mop_callback_handlers = []
@@ -914,12 +946,8 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         self.patch_outcomes = {}
         self.claimed_dataitems = {}
         self.disabled_stock_features = set()
-        if rpc_permissions is None:
-            rpc_permissions = DEFAULT_RPC_PERMISSIONS
-        self.rpc_permission_rules = {
-            method: dict(vcid_permissions)
-            for method, vcid_permissions in rpc_permissions.items()
-        }
+        self.rpc_method_permission_rules = DEFAULT_RPC_METHOD_PERMISSIONS if rpc_method_permissions is None else rpc_method_permissions
+        self.rpc_dataitem_permission_rules = DEFAULT_RPC_DATAITEM_PERMISSIONS if rpc_dataitem_permissions is None else rpc_dataitem_permissions
 
     def _payload_version_key(self, region=None):
         region = "APPL" if region is None else region
@@ -1333,7 +1361,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         )
         setting_rows = {}
         for setting in setting_names:
-            rows = self.asf.find_descriptors_by_name(setting)
+            rows = self.asf.find_descriptors(setting)
             if not rows:
                 raise ValueError(
                     "custom settings: descriptor %s not found" % setting
@@ -1612,17 +1640,6 @@ class S11FirmwarePatches(CompiledPayloadMixin):
                 n += 1
         return n
 
-    def named_g5_rows(self, names):
-        seen = set()
-        out = []
-        for name in names:
-            for row in self.asf.find_descriptors_by_name(name, ("g5",)):
-                if row["offset"] in seen:
-                    continue
-                seen.add(row["offset"])
-                out.append(row)
-        return out
-
     def is_editable_g5_target(self, row, feature_setting_offsets):
         if self.is_blacklisted_setting(row):
             return None
@@ -1633,22 +1650,6 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             if supported and long_name.startswith(prefix + "-"):
                 return "therapy"
         return None
-
-    def default_target_label(self, target):
-        if isinstance(target, int):
-            return "0x%04X" % target
-        return str(target)
-
-    def find_default_rows(self, target):
-        if isinstance(target, int):
-            rows = []
-            for array in ("g2", "g5"):
-                spec = self.asf.arrays[array]
-                idx = target - spec["id_base"]
-                if 0 <= idx < spec["count"]:
-                    rows.append(self.asf.descriptor(array, idx))
-            return rows
-        return self.asf.find_descriptors_by_name(target, ("g2", "g5"))
 
     def write_default_value(self, row, value):
         off = row["offset"]
@@ -1678,8 +1679,8 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         n_missing = 0
         n_invalid = 0
         for target, desired in DEFAULT_SETTINGS:
-            rows = self.find_default_rows(target)
-            label = self.default_target_label(target)
+            rows = self.asf.find_descriptors(target, ("g2", "g5"))
+            label = "0x%04X" % target if isinstance(target, int) else str(target)
             if not rows:
                 print("  default %s not found" % label)
                 n_missing += 1
@@ -1716,7 +1717,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         # editable_mask=0x07FFFFFF allows changing LanguageConfiguration but also
         # requires manually changgin LanguageConfiguration for the new languages to appear
         editable_mask = 0x00000000
-        lnc_rows = self.asf.find_descriptors_by_name("LanguageConfiguration", ("g3",))
+        lnc_rows = self.asf.find_descriptors("LanguageConfiguration", ("g3",))
         if not lnc_rows:
             print("  language LanguageConfiguration not found")
             n_missing += 1
@@ -1759,7 +1760,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         changed = 0
         already_visible = 0
         for tag, mode_indexes in visibility_plan.items():
-            descriptors = self.asf.find_descriptors_by_name(tag, ("g2",))
+            descriptors = self.asf.find_descriptors(tag, ("g2",))
             if not descriptors:
                 raise ValueError("therapy screen: %s descriptor not found" % tag)
             row_off = rows_by_var.get(descriptors[0]["var_id"])
@@ -1780,8 +1781,8 @@ class S11FirmwarePatches(CompiledPayloadMixin):
 
     def fix_ivaps_patient_height_range(self):
         """Replace the stripped metric-height descriptor with usable bounds."""
-        pht_rows = self.asf.find_descriptors_by_name("PHT", ("g2",))
-        phi_rows = self.asf.find_descriptors_by_name("PHI", ("g2",))
+        pht_rows = self.asf.find_descriptors("PHT", ("g2",))
+        phi_rows = self.asf.find_descriptors("PHI", ("g2",))
         if not pht_rows or not phi_rows:
             raise ValueError("iVAPS height descriptors are missing")
 
@@ -1837,7 +1838,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
 
         feature_setting_offsets = set()
         for name in self.asf.find_rpc_feature_setting_names():
-            for row in self.asf.find_descriptors_by_name(name, ("g5",)):
+            for row in self.asf.find_descriptors(name, ("g5",)):
                 if not self.is_blacklisted_setting(row):
                     feature_setting_offsets.add(row["offset"])
 
@@ -1861,7 +1862,12 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         # builds and n_options alone is not identity.
         n_modes = 0
         supported_mask = sum(1 << bit for bit, _prefix, _profile, supported in THERAPY_MODES if supported)
-        for row in self.named_g5_rows(MODE_SELECTOR_NAMES):
+        mode_rows = [
+            row
+            for name in MODE_SELECTOR_NAMES
+            for row in self.asf.find_descriptors(name, ("g5",))
+        ]
+        for row in mode_rows:
             n_options = row["n_options"]
             mask = self.asf.u32(row["offset"] + 12)
             if n_options != 11:
@@ -1880,7 +1886,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         n_enum_missing = 0
         n_enum_skipped = 0
         for name in UNLOCKED_ENUM_SETTING_NAMES:
-            rows = self.asf.find_descriptors_by_name(name, ("g5",))
+            rows = self.asf.find_descriptors(name, ("g5",))
             if not rows:
                 print("  enum option mask %s not found" % name)
                 n_enum_missing += 1
@@ -1939,20 +1945,24 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         mode_profile_nodes = tuple(
             profile for _bit, _prefix, profile, supported in THERAPY_MODES if supported
         )
-        feature_nodes = self.asf.find_rpc_feature_nodes()
         blacklisted_nodes = tuple(
             profile for _bit, _prefix, profile, supported in THERAPY_MODES if not supported
         ) + BLACKLISTED_FEATURE_PROFILE_NODE_NAMES
         blacklisted_nodes = set(blacklisted_nodes)
 
-        nodes = self.asf.find_rpc_nodes(mode_profile_nodes)
-        for name, node_id in feature_nodes.items():
-            if name not in blacklisted_nodes:
-                nodes[name] = node_id
+        rpc_nodes = self.asf.rpc_json_index()[1]
+        nodes = {
+            name: node_id for name, node_id in rpc_nodes.items()
+            if (name in mode_profile_nodes or
+                (name.endswith("Feature") and name not in blacklisted_nodes))
+        }
         if not nodes:
             raise ValueError("metadata: no RPC JSON profile nodes resolved")
 
-        hidden_nodes = self.asf.find_rpc_nodes(blacklisted_nodes)
+        hidden_nodes = {
+            name: node_id for name, node_id in rpc_nodes.items()
+            if name in blacklisted_nodes
+        }
         permission_count = discover_rpc_json_permission_count(
             self.asf.fw, self.asf.APPL_OFF
         )
@@ -1996,12 +2006,12 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         )
 
         for max_name, min_name in pairs:
-            found = self.asf.find_descriptors_by_name(max_name, ("g2",))
+            found = self.asf.find_descriptors(max_name, ("g2",))
             if len(found) != 1:
                 raise ValueError("asv_pressure_support_range: expected one %s descriptor, found %d" %
                                  (max_name, len(found)))
             max_row = found[0]
-            found = self.asf.find_descriptors_by_name(min_name, ("g2",))
+            found = self.asf.find_descriptors(min_name, ("g2",))
             if len(found) != 1:
                 raise ValueError("asv_pressure_support_range: expected one %s descriptor, found %d" %
                                  (min_name, len(found)))
@@ -2176,14 +2186,30 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         # Its order is firmware-specific, so resolve the VCID before patching.
         known = set(KNOWN_RPC_PERMISSION_VCIDS)
         appl_end = self.asf.APPL_OFF + self.asf.APPL_SIZE
+        image = bytes(self.asf.fw)
+
+        # Every valid table starts with a known VCID. Let bytes.find() locate
+        # those sparse candidates before decoding the complete table row.
+        candidate_offsets = set()
+        for vcid in known:
+            needle = struct.pack("<H", vcid)
+            off = image.find(needle, self.asf.APPL_OFF, appl_end)
+            while off >= 0:
+                if off % 2 == 0:
+                    candidate_offsets.add(off)
+                off = image.find(needle, off + 1, appl_end)
+
         candidates = []
-        for off in range(self.asf.APPL_OFF, appl_end - flag_count * 2, 2):
-            vcids = tuple(self.asf.u16(off + idx * 2) for idx in range(flag_count))
+        row_format = "<%dH" % flag_count
+        for off in sorted(candidate_offsets):
+            if off + flag_count * 2 > appl_end:
+                continue
+            vcids = struct.unpack_from(row_format, image, off)
             if len(set(vcids)) != flag_count:
                 continue
             if any(vcid not in known for vcid in vcids):
                 continue
-            after = bytes(self.asf.fw[off + flag_count * 2:off + flag_count * 2 + 64])
+            after = image[off + flag_count * 2:off + flag_count * 2 + 64]
             score = 0
             for marker in (b"UnsupportedCommand", b"StorageFailure", b"InvalidObject"):
                 if marker in after:
@@ -2238,71 +2264,101 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             raise ValueError("RPC dispatch table not found")
         return best[1], best[2]
 
-    def rpc_method_cmds(self):
-        _base, seq = self.find_rpc_dispatch_table()
-        out = {}
-        for name, cmd, _off in seq:
-            out[name] = cmd
-        return out
-
     def rpc_permissions(self):
-        if not self.rpc_permission_rules:
+        if (not self.rpc_method_permission_rules and
+                not self.rpc_dataitem_permission_rules):
             return PatchOutcome.skip("no permission rules configured")
 
-        method_cmds = self.rpc_method_cmds()
-        base, stride = self.find_rpc_permission_table()
-        rows, scanned = self.rpc_permission_rows(base, stride)
-        vcid_table_off, vcids = self.find_rpc_permission_vcid_table(stride - 1)
-        vcid_columns = {vcid: idx + 1 for idx, vcid in enumerate(vcids)}
+        # Resolve both permission layers before modifying the image.
+        method_plan = []
+        method_rows_missing = []
+        scanned = 0
+        vcids = ()
+        vcid_table_off = None
+        if self.rpc_method_permission_rules:
+            dispatch_rows = self.find_rpc_dispatch_table()[1]
+            method_cmds = {name: cmd for name, cmd, _off in dispatch_rows}
+            base, stride = self.find_rpc_permission_table()
+            rows, scanned = self.rpc_permission_rows(base, stride)
+            vcid_table_off, vcids = self.find_rpc_permission_vcid_table(stride - 1)
+            vcid_columns = {vcid: idx + 1 for idx, vcid in enumerate(vcids)}
 
-        for method, vcid_permissions in self.rpc_permission_rules.items():
-            if method not in method_cmds:
-                raise ValueError("rpc_permissions: RPC method %r not found" % method)
-            for vcid, allowed in vcid_permissions.items():
-                if vcid not in vcid_columns:
-                    raise ValueError("rpc_permissions: VCID 0x%04X not present in permission table" % vcid)
-                if not isinstance(allowed, bool):
-                    raise ValueError(
-                        "rpc_permissions: %s VCID 0x%04X permission must be bool" %
-                        (method, vcid)
-                    )
+            for method, vcid_permissions in self.rpc_method_permission_rules.items():
+                if method not in method_cmds:
+                    raise ValueError("rpc_permissions: RPC method %r not found" % method)
+                cmd = method_cmds[method]
+                off = rows.get(cmd)
+                if off is None:
+                    method_rows_missing.append((method, cmd))
+                    continue
+                for vcid, allowed in vcid_permissions.items():
+                    if vcid not in vcid_columns:
+                        raise ValueError("rpc_permissions: VCID 0x%04X not present in permission table" % vcid)
+                    method_plan.append((method, cmd, vcid, off + vcid_columns[vcid], allowed))
+
+        dataitem_plan = []
+        for target, flag_permissions in self.rpc_dataitem_permission_rules.items():
+            rows = self.asf.find_descriptors(target)
+            if not rows:
+                raise ValueError("rpc_permissions: DataItem %r not found" % target)
+            row = rows[0]
+            for flag, allowed in flag_permissions.items():
+                if flag.upper() not in RPC_DATAITEM_PERMISSION_FLAGS:
+                    raise ValueError("rpc_permissions: DataItem permission must be RPC or RPW")
+            dataitem_plan.append((target, row, flag_permissions))
 
         enabled = 0
         blocked = 0
-        missing = 0
         already = 0
-        print("Patching RPC permissions... table 0x%05X, VCIDs %s" % (
-            vcid_table_off,
-            ", ".join("0x%04X" % vcid for vcid in vcids),
-        ))
-        for label, vcid_permissions in self.rpc_permission_rules.items():
-            cmd = method_cmds[label]
-            off = rows.get(cmd)
-            if off is None:
-                print("  %s -> id %d: permission row missing" % (label, cmd))
-                missing += 1
-                continue
-            for vcid, allowed in vcid_permissions.items():
+        if self.rpc_method_permission_rules:
+            print("Patching RPC method permissions... table 0x%05X, VCIDs %s" % (
+                vcid_table_off,
+                ", ".join("0x%04X" % vcid for vcid in vcids),
+            ))
+            for method, cmd in method_rows_missing:
+                print("  %s -> id %d: permission row missing" % (method, cmd))
+            for method, cmd, vcid, flag_off, allowed in method_plan:
                 value = int(allowed)
                 action = "enabled" if allowed else "blocked"
-                flag_off = off + vcid_columns[vcid]
                 if self.asf.u8(flag_off) != value:
                     self.asf.write_u8(flag_off, value)
                     print("  %s -> id %d VCID 0x%04X: %s" %
-                          (label, cmd, vcid, action))
+                          (method, cmd, vcid, action))
                     if allowed:
                         enabled += 1
                     else:
                         blocked += 1
                 else:
                     print("  %s -> id %d VCID 0x%04X: already %s" %
-                          (label, cmd, vcid, action))
+                          (method, cmd, vcid, action))
                     already += 1
-        print("Patching RPC permissions... %d enabled, %d blocked, %d already set, %d missing "
-              "(%d entries scanned)" %
-              (enabled, blocked, already, missing, scanned))
-        if missing:
-            return PatchOutcome.warn("%d permission rows missing" % missing)
+            print("Patching RPC method permissions... %d enabled, %d blocked, "
+                  "%d already set, %d missing (%d entries scanned)" %
+                  (enabled, blocked, already, len(method_rows_missing), scanned))
+
+        dataitems_changed = 0
+        dataitems_already = 0
+        if dataitem_plan:
+            print("Patching RPC DataItem permissions...")
+            for target, row, flag_permissions in dataitem_plan:
+                old_flags, new_flags = self.asf.update_descriptor_flags(row, flag_permissions)
+                values = ", ".join(
+                    "%s=%d" % (flag.upper(), allowed)
+                    for flag, allowed in flag_permissions.items()
+                )
+                print("  %s -> %s var 0x%04X: %s, flags 0x%04X -> 0x%04X" % (
+                    target, row["array"], row["var_id"], values,
+                    old_flags, new_flags,
+                ))
+                if old_flags == new_flags:
+                    dataitems_already += 1
+                else:
+                    dataitems_changed += 1
+            print("Patching RPC DataItem permissions... %d changed, %d already set" %
+                  (dataitems_changed, dataitems_already))
+
+        if method_rows_missing:
+            return PatchOutcome.warn("%d permission rows missing" % len(method_rows_missing))
         return PatchOutcome.ok()
 
     def header_clock(self):
@@ -2534,7 +2590,7 @@ PATCH_LIST = [
     },
     {
         "arg": "patch-rpc-permissions",
-        "desc": "Enable or block selected RPC commands on configured VCID permissions.",
+        "desc": "Apply configured RPC method and DataItem permissions.",
         "default": True,
         "function": "rpc_permissions",
     },
@@ -2620,9 +2676,10 @@ def build_arg_parser():
         "--rpc-permission",
         action="append",
         type=parse_rpc_permission,
-        metavar="METHOD:VCID:BOOL",
+        metavar="TARGET:VCID|FLAG:BOOL",
         default=None,
-        help="Set METHOD permission on VCID; repeatable. Overrides the built-in rule for the same pair.",
+        help=("Set METHOD:VCID or DATAITEM:RPC|RPW permission; repeatable. "
+              "Overrides the built-in rule for the same pair."),
     )
     return parser
 
@@ -2668,14 +2725,25 @@ def run_patcher(args, detail_log=None):
     if args.OPERATION == "INFO":
         return 0
 
-    rpc_permissions = {
+    rpc_method_permissions = {
         method: dict(vcid_permissions)
-        for method, vcid_permissions in DEFAULT_RPC_PERMISSIONS.items()
+        for method, vcid_permissions in DEFAULT_RPC_METHOD_PERMISSIONS.items()
     }
-    for method, vcid, allowed in args.rpc_permission or ():
-        rpc_permissions.setdefault(method, {})[vcid] = allowed
+    rpc_dataitem_permissions = {
+        target: dict(flag_permissions)
+        for target, flag_permissions in DEFAULT_RPC_DATAITEM_PERMISSIONS.items()
+    }
+    for kind, target, selector, allowed in args.rpc_permission or ():
+        if kind == "method":
+            rpc_method_permissions.setdefault(target, {})[selector] = allowed
+        else:
+            rpc_dataitem_permissions.setdefault(target, {})[selector] = allowed
 
-    patches = S11FirmwarePatches(asf, rpc_permissions=rpc_permissions)
+    patches = S11FirmwarePatches(
+        asf,
+        rpc_method_permissions=rpc_method_permissions,
+        rpc_dataitem_permissions=rpc_dataitem_permissions,
+    )
 
     print("\n=== Patches")
     for patch in PATCH_LIST:

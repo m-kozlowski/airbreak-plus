@@ -48,14 +48,18 @@ PATCHES=(
     patch-timezone-write
 )
 
-# METHOD:VCID:BOOL permissions applied by patch-rpc-permissions.
+# METHOD:VCID:BOOL and DATAITEM:RPC|RPW:BOOL rules applied by patch-rpc-permissions.
 # Known method sets:
 #   docs/as11/rpc_protocol.md#method-sets
 # Known VCIDs and their transport roles:
 #   docs/as11/rpc_protocol.md#rpc-permission-selectors
+# DataItem RPC/RPW flags:
+#   docs/as11/conf_block_format.md#flags-field
 RPC_PERMISSIONS=(
     SetDateTime:0x0396:1
     ApplyUpgrade:0x0396:1
+    WUP:RPC:1
+    WUP:RPW:1
 
     # GetLedStatus:0x0396:1
     # SetNextPowerUpDateTime:0x0396:1

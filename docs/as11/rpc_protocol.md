@@ -1466,6 +1466,11 @@ decoding; permission does not change the endpoint encoding. Command-specific
 parameter, state, hardware, and authentication gates still apply. See the
 [NCP RPC stack](ncp_protocol.md#rpc-stack) for the shared dispatch path.
 
+`Get` requires the target DataItem's `RPC_EXPOSED` descriptor flag; `Set`
+additionally requires `RPC_WRITABLE`. These flags are global to the DataItem
+rather than selected per VCID. Their definitions are in the
+[CONF flags table](conf_block_format.md#flags-field).
+
 ## Error codes
 
 Standard JSON-RPC errors:

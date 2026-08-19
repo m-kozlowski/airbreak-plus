@@ -446,7 +446,7 @@ class S11EdfSupersetPatcher:
     def resolve_stream_signals(self, wanted_signals):
         out = []
         for var_name, label, unit, scale in wanted_signals:
-            rows = self.asf.find_descriptors_by_name(var_name)
+            rows = self.asf.find_descriptors(var_name)
             if not rows:
                 raise ValueError("EDF stream variable %s not found" % var_name)
             if len(rows) != 1:
@@ -599,7 +599,7 @@ class S11EdfSupersetPatcher:
         if stream is None:
             return 0
 
-        rows = self.asf.find_descriptors_by_name("BYV", ("g5",))
+        rows = self.asf.find_descriptors("BYV", ("g5",))
         if len(rows) != 1:
             raise ValueError("EDF TCV source BYV is missing or ambiguous")
         row = rows[0]

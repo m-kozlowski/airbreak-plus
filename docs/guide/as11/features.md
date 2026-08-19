@@ -58,8 +58,9 @@ The RPC profile patch exposes supported therapy and feature profile nodes that
 are hidden by product configuration.
 
 The permission patch enables `SetDateTime` and plain `ApplyUpgrade` over the
-paired BLE connection by default. Additional permission changes can be
-configured in the `RPC_PERMISSIONS` array in `patch-airsense-s11`.
+paired BLE connection and allows `_WUP` to be written through RPC by default.
+Additional method/VCID and DataItem permission changes can be configured in
+the `RPC_PERMISSIONS` array in `patch-airsense-s11`.
 
 ## EDF Recording
 

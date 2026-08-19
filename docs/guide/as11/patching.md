@@ -82,7 +82,7 @@ instead of producing that reduced result.
 | Patch | What it does | Switch |
 |-------|--------------|--------|
 | RPC profile visibility | Exposes supported therapy and feature profile nodes in RPC JSON | `--patch-rpc-json-profile-visibility` |
-| RPC permissions | Applies configured command permissions for each communication-interface VCID | `--patch-rpc-permissions` |
+| RPC permissions | Applies configured method/VCID and DataItem RPC permissions | `--patch-rpc-permissions` |
 | Time-zone write | Allows the time zone to be changed through RPC or the device menu after therapy history exists | `--patch-timezone-write` |
 
 ### Quality of Life
@@ -106,8 +106,10 @@ See [Features](features.md) for additional behavior details.
 ## Selecting Patches
 
 Edit `PATCHES` near the top of `patch-airsense-s11` to choose the standard
-patches. RPC method permissions use the `RPC_PERMISSIONS` array in the same
-file.
+patches. RPC permissions use the `RPC_PERMISSIONS` array in the same file.
+Entries use `METHOD:VCID:BOOL` for method access or `DATAITEM:FLAG:BOOL` for
+the `RPC` and `RPW` DataItem flags. `DATAITEM` may be a long name, short tag,
+or numeric var ID.
 
 For a one-off image, invoke the Python patcher directly:
 
