@@ -52,15 +52,24 @@ patient access to ramp and pressure relief.
 Persisted settings can take precedence over firmware defaults on an existing
 device. A default patch is not a command to overwrite every current setting.
 
-## RPC Profiles and Permissions
+## Remote Access
 
-The RPC profile patch exposes supported therapy and feature profile nodes that
-are hidden by product configuration.
+The remote-access patches expose additional therapy and feature settings to
+compatible tools. They can make selected commands available over connections
+where the stock firmware blocks them. By default, this includes `SetDateTime`
+and `ApplyUpgrade` over paired Bluetooth, allowing the date and time to be set
+and firmware to be updated without extracting the device OTA key. Commands can
+also be blocked; for example, firmware updates arriving through the cellular
+module can be disabled.
 
-The permission patch enables `SetDateTime` and plain `ApplyUpgrade` over the
-paired BLE connection and allows `_WUP` to be written through RPC by default.
-Additional method/VCID and DataItem permission changes can be configured in
-the `RPC_PERMISSIONS` array in `patch-airsense-s11`.
+Selected device settings can also be made available for remote reading or
+writing. By default, this includes Warmup, which preheats the humidifier before
+therapy.
+
+## Time Zone
+
+The time-zone patch allows the configured time zone to be changed without
+erasing patient data.
 
 ## EDF Recording
 

@@ -48,7 +48,7 @@ Cellular Module & Antenna (CAM) Board
 | ---			| --- | --- | --- | --- |
 | Main uC		| R5F5210ABDFP | Renesas | [Datasheet](https://www.renesas.com/eu/en/doc/products/mpumcu/doc/rx_family/r01ds0041ej0150_rx210.pdf) | LFQFP 100-pin |
 | CDMA Radio Module| ce910-dual | Telit | [Datasheet](https://static6.arrow.com/aropdfconversion/1e95506f859937cecfcd3d7fd07cc25d6eab906d/telit_ce910-dual_datasheet.pdf) | [qualcomm qsc1105 chipset](https://fccid.io/RI7CE910-DUAL/Internal-Photos/Internal-Photos-1760716) |
-| 3G Radio Module| HE910-D | Telit | [Datasheet](hhttps://www.telit.com/wp-content/uploads/2017/09/160229_DS_HE910.pdf) | [Uknown chipset- FCC photos obscured](https://fccid.io/RI7HE910/Internal-Photos/Internal-Photos-1654391)|
+| 3G Radio Module| HE910-D | Telit | [Datasheet](https://www.telit.com/wp-content/uploads/2017/09/160229_DS_HE910.pdf) | [Uknown chipset- FCC photos obscured](https://fccid.io/RI7HE910/Internal-Photos/Internal-Photos-1654391)|
 | 4G Radio Module| cinterion els61-us | Gemalto | [Datasheet](https://www.gemalto.com/brochures-site/download-site/Documents/M2M_ELS61_datasheet.pdf) | Cat 1 LTE w/ 2G/3G fallback | 
 
 Alarm Board (Only A10STACD, A10STA3G, AIR104G)

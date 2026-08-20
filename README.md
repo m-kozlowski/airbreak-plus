@@ -44,8 +44,6 @@ Best support for SX567-0401 and SX567-0402 firmware. Other versions are handled 
 - [Unlocks configured languages and selected firmware defaults](docs/guide/as11/features.md#languages-and-defaults)
 - [Removes the design-life warning triggered after ~20,000 hours of runtime](docs/guide/as11/features.md#device-design-life-message)
 
-iVAPS and PAC are not enabled by the standard Air11 patch.
-
 ## Getting started
 
 Windows users can prepare the common build environment with the
