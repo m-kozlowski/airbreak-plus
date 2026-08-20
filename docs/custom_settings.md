@@ -184,5 +184,5 @@ Firmware-stable variables used directly by compiled code belong in the
 versioned `s10_vars` headers. Reclaimed assignments and other patch-time choices
 belong in ABI slots. See [Patch payloads](patch_payloads.md).
 
-Both patchers print unused reclaimed variables and string IDs after patching.
+The patcher prints unused reclaimed variables and string IDs after patching.
 This summary is the authoritative resource count for the selected feature set.

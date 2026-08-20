@@ -133,13 +133,13 @@ the selected `ETR` command, polls until `ETR=0000`, then restores the original
 | Group | Content |
 |-------|---------|
 | AGL | AutoSet params |
-| BGL | Board/identity |
+| BGL | Board identity and calibration |
 | CGL | CPAP params |
 | DGL | Bilevel timing |
 | EGL | EPR params |
 | IGL | Bilevel pressure |
 | MGL | Machine settings |
-| NGL | Backlight (?) |
+| NGL | Backlight settings |
 | PGL | Peripherals/accessories |
 | QXH | ASVAuto params |
 | QXJ | iVAPS params |

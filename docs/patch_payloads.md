@@ -68,7 +68,8 @@ cat build/payload_layout_0402.tsv
 
 ## Patcher checks
 
-Both patchers consume the generated TSV layout. Before injection they verify:
+The Python patcher consumes the generated TSV layout. Before injection it
+verifies:
 
 - the payload exists in the selected CDX layout
 - the binary size matches the measured layout size

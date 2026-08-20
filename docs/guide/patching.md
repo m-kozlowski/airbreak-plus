@@ -58,10 +58,11 @@ All patches below are **enabled by default** unless noted.
 
 | Patch | What it does | Switch |
 |-------|-------------|--------|
-| Unlock all modes | Enables all therapy modes in the mode selector (CPAP, AutoSet, VAuto, ASV, ASVAuto, iVAPS, ...) | `--patch-extra-modes` |
-| Unlock settings | Exposes all settings linked to unlocked modes by toggling their visibility flag | `--patch-gui-config` |
-| Unlock pressure range | Extends min/max pressure limits to 1.0-30.0 cmH2O for all modes | `--patch-unlock-uilimits` |
-| Unlock ASV PS range | Removes the Min PS + 5 cmH2O floor on ASV/ASVAuto pressure support | `--patch-asv-ps-range` |
+| Unlock all modes | Enables all built-in therapy modes and their respiratory-event reporting | `--patch-extra-modes` |
+| Unlock options | Enables all built-in tube and ramp choices, including the 3m tube and Auto ramp | `--patch-unlock-options` |
+| Unlock settings | Makes the clinical settings used by unlocked modes available and editable | `--patch-gui-config` |
+| Unlock pressure range | Expands standard pressure settings to 1.0-30.0 cmH2O | `--patch-unlock-uilimits` |
+| Unlock ASV PS range | Expands ASV/ASVAuto pressure support to 0-25 cmH2O, allows Max PS below Min PS + 5, and raises fixed ASV EPAP to the device pressure limit | `--patch-asv-ps-range` |
 
 ### Therapy data and reporting
 

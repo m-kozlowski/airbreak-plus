@@ -26,8 +26,7 @@ Bare numeric values are decimal. Use `0x` for hexadecimal.
 
 ### info
 
-Show the firmware identity, language set, loaded `globals[]` tables, and
-variable count.
+Show the firmware identity, language set, therapy modes, and variable count.
 
 ```
 as10_descriptors.py firmware.bin info
