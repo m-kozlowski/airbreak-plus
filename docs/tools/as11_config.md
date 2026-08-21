@@ -28,10 +28,19 @@ Read one or more variables by name or group.
 
 ```
 as11_config.py -d ble:as11 get SerialNumber
-as11_config.py -d ble:as11 get _MOP _GOM _TOM
+as11_config.py -d ble:as11 get MOP GOM TOM
 as11_config.py -d ble:as11 get --group DeviceConfiguration
+as11_config.py -d ble:as11 get HST
 as11_config.py -d ble:as11 get SerialNumber --group Network
 ```
+
+Three-character variable tags may be passed with or without the leading `_`.
+
+Three-character CONF groups may be passed directly or through `--group`:
+`BGL`, `DDO`, `DID`, `HST`, `MCA`, `MCF`, `TLP`, and `PDL`. Other named groups
+require `--group`. Use `--list-groups` to list group sizes and
+`known groups <group>` to list members. The CONF groups are described in
+[CONF g[6] and g[7]](../as11/conf_block_format.md#g6----external-nor-settingsgroup-schemas).
 
 ### set
 
@@ -39,6 +48,7 @@ Write one or more settings using the `Set` RPC. Values default to strings unless
 
 ```
 as11_config.py -d ble:as11 set TherapyMode AutoSet
+as11_config.py -d ble:as11 set MOP AutoSetProfile
 as11_config.py -d ble:as11 set SetPressure 10 --type int RampEnable true --type bool
 as11_config.py -d ble:as11 set --json '{"SetPressure":10}'
 ```
@@ -228,8 +238,9 @@ Offline listing of known variables, groups, streams, events, and spool types.
 ```
 as11_config.py known
 as11_config.py known vars
-as11_config.py known vars groups
-as11_config.py known vars subtrees
+as11_config.py known groups
+as11_config.py known groups HST
+as11_config.py known subtrees
 as11_config.py known streams
 as11_config.py known streams BRP
 as11_config.py known streams BRP,SA2
@@ -240,7 +251,7 @@ as11_config.py known events --selector SystemActivityEvents-FrequentActivityEven
 as11_config.py known spools
 ```
 
-`known vars subtrees` prints the named non-DataItem selectors accepted by
+`known subtrees` prints the named non-DataItem selectors accepted by
 `Get`; their semantics and release-scoped catalog are documented in the
 [Air11 RPC Get Input Reference](../as11/rpc_get_inputs.md).
 `known streams <EDF>` prints the data IDs behind an EDF stream alias.

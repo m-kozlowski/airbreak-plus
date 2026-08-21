@@ -64,7 +64,7 @@ from as11_rpc_vars import (  # noqa: E402
     VAR_NAMES, VAR_SUBTREES, STREAM_EDF_ALIASES, STREAM_EDF_SAMPLE_MS,
     STREAM_GROUPS, EVENT_FAMILIES,
     REGISTRIES,
-    filter_vars, var_groups_summary, print_var_pairs,
+    filter_vars, print_var_pairs,
 )
 from as11_spool import (  # noqa: E402
     SPOOL_FRAGMENT_SIZE, SPOOL_FRAGMENT_SIZE_LIMIT,
@@ -184,6 +184,8 @@ def setup_session_readline(command_names: tuple[str, ...]) -> None:
         set(session_commands)
         | set(completion_names(REGISTRIES))
         | set(completion_names(VAR_NAMES))
+        | {tag for _, tag in VAR_NAMES}
+        | set(VAR_GROUPS)
         | set(completion_names(VAR_SUBTREES))
     )
 
@@ -333,6 +335,12 @@ def print_response(resp: dict) -> None:
     print(json.dumps(resp, indent=2))
 
 
+def normalize_var_selector(name: str) -> str:
+    if len(name) == 3 and name.isascii() and name.isalnum():
+        return "_" + name.upper()
+    return name
+
+
 
 def cmd_get(args: argparse.Namespace) -> int:
     if getattr(args, "list_groups", False):
@@ -341,8 +349,14 @@ def cmd_get(args: argparse.Namespace) -> int:
             print(f"  {name:<24s}  {len(members):3d} vars")
         return 0
 
-    names: list[str] = list(args.names or [])
+    names: list[str] = []
     groups = list(args.groups or [])
+    for target in args.names or []:
+        group = resolve_group(target)
+        if group is not None and len(group) == 3:
+            groups.append(group)
+        else:
+            names.append(target)
     if groups:
         try:
             names.extend(expand_groups(groups))
@@ -353,8 +367,9 @@ def cmd_get(args: argparse.Namespace) -> int:
             "get: at least one name or --group required "
             "(use --list-groups to see known groups)"
         )
+    names = [normalize_var_selector(name) for name in names]
     seen: set[str] = set()
-    unique = [n for n in names if not (n in seen or seen.add(n))]
+    unique = [name for name in names if not (name in seen or seen.add(name))]
     with connect_transport(args) as t:
         resp = call_rpc(t, args, "Get", unique)
     print_response(resp)
@@ -373,6 +388,9 @@ def cmd_rpc(args: argparse.Namespace) -> int:
 
 def cmd_set(args: argparse.Namespace) -> int:
     params = set_params_from_args(args)
+    if args.json_payload is None:
+        params = {normalize_var_selector(name): value
+                  for name, value in params.items()}
     with connect_transport(args) as t:
         resp = call_rpc(t, args, "Set", params)
     print_response(resp)
@@ -910,9 +928,7 @@ def cmd_known(args: argparse.Namespace) -> int:
 
     `known`               list registries (vars, streams, events, spools, ...)
     `known <reg> [pat]`   list one registry, optionally filtered
-    `known vars groups`   summary of var groupings
-    `known vars subtrees` named non-DataItem Get targets
-    `known vars <group>`  members of a firmware subtree group
+    `known groups [name]` list groups or members of one group
     `known vars <pat>`    filter known name/tag pairs by mode/topic/substring
     """
     action = args.known_action
@@ -920,9 +936,8 @@ def cmd_known(args: argparse.Namespace) -> int:
         for name, (_, desc) in REGISTRIES.items():
             print(f"  {name:<8}  {desc}")
         print()
-        print("  hint: `known vars groups` lists subgroupings "
-              "(therapy modes, topics, subtree groups)")
-        print("  hint: `known vars subtrees` non-DataItem Get targets "
+        print("  hint: `known groups <group>` lists members of one group")
+        print("  hint: `known subtrees` lists non-DataItem Get targets "
               "(SettingProfiles, CpapProfile, ...)")
         return 0
 
@@ -930,22 +945,6 @@ def cmd_known(args: argparse.Namespace) -> int:
 
     # vars has rich filtering and tabular output
     if action == "vars":
-        if pat.lower() == "groups":
-            var_groups_summary()
-            return 0
-        if pat.lower() == "subtrees":
-            for name in sorted(VAR_SUBTREES, key=str.lower):
-                print(name)
-            return 0
-        # If pat names a known group (case-insensitive), list its members.
-        canon = resolve_group(pat) if pat else None
-        if canon is not None:
-            members = VAR_GROUPS.get(canon, [])
-            print(f"group {canon}: {len(members)} members")
-            print()
-            for m in members:
-                print(f"  {m}")
-            return 0
         pairs = filter_vars(pat) if pat else list(VAR_NAMES)
         print_var_pairs(pairs)
 
@@ -958,6 +957,28 @@ def cmd_known(args: argparse.Namespace) -> int:
                 width = max(len(n) for n in sub_hits)
                 for name in sorted(sub_hits, key=str.lower):
                     print(f"{name:<{width}}  ~subtree")
+        return 0
+
+    if action == "groups":
+        if not pat:
+            for name, members in sorted(VAR_GROUPS.items(), key=lambda item: item[0].lower()):
+                print(f"  {name:<24} ({len(members)} vars)")
+            return 0
+
+        canon = resolve_group(pat)
+        if canon is None:
+            known = ", ".join(sorted(VAR_GROUPS))
+            raise SystemExit(f"known groups: unknown group {pat!r}; known: {known}")
+        members = VAR_GROUPS[canon]
+        tag_names = {tag: name for name, tag in VAR_NAMES}
+        display = [member[1:] if member.startswith("_") else member
+                   for member in members]
+        width = max(len(member) for member in display)
+        print(f"  {canon}  ({len(members)} vars)")
+        for member, shown in zip(members, display):
+            long_name = tag_names.get(shown) if member.startswith("_") else None
+            suffix = f"  {long_name}" if long_name else ""
+            print(f"    {shown:<{width}}{suffix}")
         return 0
 
     if action == "streams":
@@ -1201,14 +1222,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="read one or more config variables (Get RPC)",
         epilog="examples:\n"
                "  get SerialNumber\n"
-               "  get _MOP _GOM _TOM\n"
+               "  get MOP GOM TOM\n"
+               "  get BGL\n"
                "  get --group DeviceConfiguration\n"
                "  get --group TherapyProfile --group FeatureProfiles\n"
                "  get SerialNumber --group Network\n",
         formatter_class=raw_fmt,
     )
     add_rpc_args(g)
-    g.add_argument("names", nargs="*", help="variable names")
+    g.add_argument("names", nargs="*",
+                   help="variable names or three-character CONF groups")
     g.add_argument("--group", "-g", dest="groups", action="append",
                    default=[], metavar="NAME",
                    help="expand to all vars in a group; repeat for multiple")
@@ -1240,6 +1263,7 @@ def build_parser() -> argparse.ArgumentParser:
                "types: str (default), int, float, bool, json.\n\n"
                "examples:\n"
                "  set TherapyMode AutoSet\n"
+               "  set MOP AutoSetProfile\n"
                "  set SetPressure 10 --type int Mode AutoSet\n"
                "  set RampEnable true --type bool\n"
                "  set --json '{\"SetPressure\":10}'\n"
@@ -1393,12 +1417,12 @@ def build_parser() -> argparse.ArgumentParser:
         epilog="examples:\n"
                "  known                      list registries\n"
                "  known vars                 list every known variable\n"
-               "  known vars groups          summary of var groupings\n"
-               "  known vars subtrees        named non-DataItem Get targets\n"
+               "  known groups               list variable groups\n"
+               "  known groups HST           list members of one group\n"
+               "  known subtrees             named non-DataItem Get targets\n"
                "  known vars autoset         filter by therapy-mode prefix\n"
                "  known vars cellular        filter by topic keyword\n"
                "  known vars Pressure        substring filter\n"
-               "  known vars TherapyMode     list members of a subtree group\n"
                "  known streams              valid `stream --data-ids`\n"
                "  known streams BRP          data IDs behind an EDF stream alias\n"
                "  known edf                  valid `stream --edf` aliases\n"

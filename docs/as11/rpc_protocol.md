@@ -645,7 +645,7 @@ technical input forms are documented in the
 The maintained object-selector list is available offline:
 
 ```console
-python3 python/as11_config.py known vars subtrees
+python3 python/as11_config.py known subtrees
 ```
 
 Known leaf names, short tags, ranges, and enum options are listed in the

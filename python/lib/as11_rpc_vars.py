@@ -4,7 +4,7 @@ Enumerations of valid RPC parameter values (variable names, spool
 types, stream/event ids, etc.).
 
 Contents:
-    VAR_GROUPS                   Get/Set firmware-subtree-keyed var groups
+    VAR_GROUPS                   Get RPC variable groups
     resolve_group/expand_groups  helpers for CLI --group expansion
     SPOOL_REGISTRY               single source of truth for StartSpool spool types
     SPOOL_TYPES                  StartSpool valid spool_type values (derived)
@@ -19,7 +19,7 @@ Contents:
     VAR_MODE_PREFIXES            human-friendly therapy-mode prefix groupings
     VAR_TOPIC_KEYWORDS           human-friendly topic substring groupings
     REGISTRIES                   {action: (data, description)} for `known`
-    filter_vars/var_groups_summary/print_var_pairs   helpers for `known`
+    filter_vars/print_var_pairs      helpers for `known`
 
 """
 
@@ -229,6 +229,53 @@ VAR_GROUPS: dict[str, list[str]] = {
         "ExpirationSetPressure", "InspirationSetPressure", "CpapSetPressure",
     ],
 }
+
+# CONF globals[6] SettingsGroup schemas and the globals[7] PDL snapshot.
+# Each list is the union of members found in known firmware releases.
+VAR_GROUPS.update({
+    "BGL": "_PSH _PZH _PS1 _PZ1 _FLG _FLZ".split(),
+    "DDO": """
+        _CP1 _CP2 _CP3 _DDN _DCT _DDP _DPT _DOP _DOT _DMM _DMT _DUE _DUT
+        _DTE _DTF _DDE _DET _DEV _DHE _DHT _DDY _DNF _DNS _DEE _DEF _DEL
+        _DER _DDS _DDT _DAS _DAT _DCA _DCE _DGA _DGE _SVA _SVE _DSV _DSF
+        _DMA _DMF _DTP _DTT _DAV _DVT _DUC _DTC _DEG _DEH _DEI _DEJ _DRF
+        _DRT _DMP _MPT _DML _MLT _DIP _IPT _ADP _IAT _DCP _DPD _DAA
+    """.split(),
+    "DID": """
+        _PCD _SRN _PNA _GUD _UDI _SVC _PGI _PCB _HSN _HPI _HVI _CPM _CPP
+    """.split(),
+    "HST": """
+        _MPA _MPI _STU _AFC _HMA _HMI _HSP _IPC _C11 _STP _EPR _EPT _EPX
+        _EPA _SCF _SST _SSP _DAH _RMA _RPE _MRT _RMT _DPE _RDE _MRD _SRT
+        _MOP _SP1 _SP2 _SP3 _MSK _TBT _ABF _EXH _HMS _HMX _HTX _CCO _HTS
+        _ZZ1 _ZZ2 _ZZ3 _ZZ4 _ZZ5 _ZZ6 _ZZ7 _ZZ8 _ZZ9 _Z10 _Z16 _Z17 _Z11
+        _Z12 _XA1 _XA2 _XA3 _XAC _XAD _XA6 _XA7 _XA8 _XA9 _XAA _XAM _XAP
+        _ZU1 _XAB _XB1 _XB2 _XB0 _XB4 _XB5 _XB6 _XB7 _IHU _PHT _PHI _IEU
+        _IMX _IMN _EPI _WPM _WPA _IVS _ITV _IBR _IVX _IVN _IRC _IRT _IRZ
+        _IRL _VTS _VCS _ZIC _ZLP _ZIE _PA1 _PA2 _PA0 _PA6 _PA5 _PA3 _PA4
+        _P11 _P12 _PA7 _XC0 _XC1 _XC3 _XC2 _XD2 _XD1 _XD0 _XD4 _XD3 _XE1
+        _XE2 _XE0 _XE3 _XE4 _XE5 _XE6 _XE7 _LNC _LAN _SLS _RIM _RDM _RTM
+        _RIT _RDT _RTT _RIC _RDH _RTH _RIF _RDF _RTF _SCP _TMU _ACC _TZO
+        _MAI _SCO _SCK _TUD _SSE _LMC _LMT _ANC _APV _AVQ _TLF _NMA _HLA
+        _SSY _MKD _CCA _MAS _CFC _BBE _XB9 _XBA
+    """.split(),
+    "MCA": ["_CMD"],
+    "MCF": ["_MAD"],
+    "PDL": """
+        _REM _ZSE _ZDT _ZDD _FW0 _FW1 _FWC _FE0 _FE1 _FE2 _BTU _BUC _XSS
+        _LRE _RFP _ZFE _ILS _SMN _SVN _CUD _CED _PHM _MHR _MHS _MHU _LMS
+        _LPD _LI9 _PTF _RCM _MDM _RCT _MDT _RCH _MDW _RCF _MDF _DTU _DTD
+        _CCT _ABU _AUP _SET _BMS _ZBM _DME _MTP _TOC _GBE _PST _PSS _PAH
+        _PL7 _PL9 _PPI _PPE _PAT _PRR _PVT _PMT _PIS _PIE _PVS _PVC _PAS
+        _POS _PCI
+    """.split(),
+    "TLP": """
+        _ZLT _RLL _MGN _HPF _BCV _BA0 _BP0 _FBD _FTS _D0A _PTS _BFI _HCO
+        _OUS _LDT _CLU _CLP _CDM _MEN _CLA _BCP _OAP _ORP _VTD _QFC _DSC
+        _MER _ZPK _MMR _ZLH _ZTH _OAN _OAA _OAT _HCS _TUB _LFS _LFB _LAI
+        _LAB _DBM _SC2 _SC3 _COV
+    """.split(),
+})
 
 
 def resolve_group(name: str) -> str | None:
@@ -1376,6 +1423,7 @@ VAR_NAMES = [
 
 REGISTRIES = {
     "vars":     (VAR_NAMES,                   "variable names (for `get` / `set`)"),
+    "groups":   (VAR_GROUPS,                  "variable groups (for `get --group`)"),
     "subtrees": (sorted(VAR_SUBTREES, key=str.lower),
                  "named non-DataItem `Get` targets"),
 #    "reserved": (VAR_RESERVED,               "reserved `_NAME` specials"),
@@ -1425,30 +1473,10 @@ def filter_vars(pat: str) -> list[tuple[str, str]]:
             if key in n.lower() or key in f"_{t}".lower()]
 
 
-def var_groups_summary() -> None:
-    print("therapy modes (exact prefix):")
-    for key, prefix in sorted(VAR_MODE_PREFIXES.items()):
-        n = sum(1 for name, _ in VAR_NAMES if name.startswith(prefix))
-        print(f"  {key:<10}  {prefix:<10}  {n:3d}")
-    print()
-    print("topics (substring):")
-    for key, keywords in sorted(VAR_TOPIC_KEYWORDS.items()):
-        n = sum(1 for name, _ in VAR_NAMES
-                if any(k in name.lower() for k in keywords))
-        hint = ", ".join(keywords)
-        print(f"  {key:<10}  {n:3d}  ({hint})")
-    print()
-    print("firmware subtree groups (for `get --group`):")
-    non_empty = [(g, v) for g, v in VAR_GROUPS.items() if v]
-    for g, v in sorted(non_empty, key=lambda x: -len(x[1])):
-        print(f"  {g:<24s}  {len(v):3d}")
-    print()
-
-
 def print_var_pairs(pairs: list[tuple[str, str]]) -> None:
-    """Two-column output: long name left, _TAG right."""
+    """Two-column output: long name left, three-character tag right."""
     if not pairs:
         return
     width = max(len(n) for n, _ in pairs)
     for name, tag in sorted(pairs):
-        print(f"{name:<{width}}  _{tag}")
+        print(f"{name:<{width}}  {tag}")
