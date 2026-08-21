@@ -170,13 +170,13 @@ table reserves space for eight objects. It extends the objects accepted by
 | `as11_mop_callback_dispatcher` | owns the shared enum-writeback vtable slot and calls registered MOP handlers |
 | `as11_rpc_dispatcher` | adapts registered Airbreak objects to the stock `Get` and `Set` formatter paths |
 | `as11_vid_spoof` | MOP handler; reads `MOP` and writes `VID` through native DataItem functions |
-| `as11_header_clock` | replaces the dashboard and therapy-screen title labels and reuses the root-widget timer for minute updates |
+| `as11_header_clock` | replaces the dashboard and therapy-screen title labels, reuses the root-widget timer for minute updates, and optionally binds a Configuration control through custom settings |
 | `as11_asv_backup_rate` | wraps the ASV feature update callback through its own vtable slot |
 | `as11_custom_settings` | appends persistent controls to selected clinical menu sections and updates their runtime visibility after MOP changes |
 
-With [custom settings](custom_settings.md), the ASV backup-rate payload exposes
-a `Backup Rate` control that defaults to stock behavior. Without custom
-settings, the payload suppresses backup breaths directly.
+With [custom settings](custom_settings.md), the ASV backup-rate and header-clock
+payloads expose persistent clinical-menu controls. Without custom settings,
+each payload uses its standalone behavior.
 
 ## Adding a payload
 

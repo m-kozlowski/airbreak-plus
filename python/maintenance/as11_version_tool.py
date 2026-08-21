@@ -718,11 +718,15 @@ def resolve_header_clock_candidates(
         matcher: AddressMatcher,
         stubs: dict[str, AddressResult],
         reference: dict) -> HeaderClockCandidates:
-    """Locate the title draw, root constructor, and owned-timer callback."""
+    """Locate clock draw hooks, root constructor, and owned-timer callback."""
     data = fw.data
     sites = {
         name: matcher.site(reference[name])
-        for name in ("draw_call", "root_ctor_call", "timer_callback_slot")
+        for name in (
+            "draw_call", "menu_draw_call", "root_ctor_call",
+            "timer_callback_slot",
+        )
+        if name in reference
     }
 
     draw_stub = stubs["GuiPaint_DrawLocalizedTextById"]
@@ -730,6 +734,11 @@ def resolve_header_clock_candidates(
     sites["draw_call"] = resolve_callsite(
         data, sites["draw_call"], draw_stub, "GuiPaint_DrawLocalizedTextById"
     )
+    if "menu_draw_call" in sites:
+        sites["menu_draw_call"] = resolve_callsite(
+            data, sites["menu_draw_call"], draw_stub,
+            "GuiMenuTextValueListItem label draw",
+        )
     sites["root_ctor_call"] = resolve_callsite(
         data, sites["root_ctor_call"], ctor_stub, "root-widget constructor"
     )
@@ -793,6 +802,7 @@ def resolve_header_clock_candidates(
     text_ids = {
         "home_text_id": find_exact_gui_text_id(fw, "Home"),
         "empty_text_id": find_exact_gui_text_id(fw, ""),
+        "menu_text_id": find_exact_gui_text_id(fw, "Reminders"),
     }
     return HeaderClockCandidates(sites, text_ids)
 
@@ -1501,7 +1511,11 @@ def self_check_candidates(
 
     header_clock_expected = expected_version.get("header_clock")
     if header_clock_expected is not None:
-        for name in ("draw_call", "root_ctor_call", "timer_callback_slot"):
+        for name in (
+                "draw_call", "menu_draw_call", "root_ctor_call",
+                "timer_callback_slot"):
+            if name not in header_clock_expected:
+                continue
             expected = header_clock_expected[name]
             result = candidates.header_clock.sites[name]
             checks.append(compare_candidate(
@@ -1509,7 +1523,9 @@ def self_check_candidates(
                 expected,
                 CandidateValue(result.address, result.quality, result.evidence),
             ))
-        for name in ("home_text_id", "empty_text_id"):
+        for name in ("home_text_id", "empty_text_id", "menu_text_id"):
+            if name not in header_clock_expected:
+                continue
             value = candidates.header_clock.text_ids[name]
             checks.append(compare_candidate(
                 "header_clock.%s" % name,
@@ -1895,6 +1911,9 @@ def prepare(args) -> int:
         "        \"draw_call\": %s," % format_address(
             header_clock_sites["draw_call"].address
         ),
+        "        \"menu_draw_call\": %s," % format_address(
+            header_clock_sites["menu_draw_call"].address
+        ),
         "        \"root_ctor_call\": %s," % format_address(
             header_clock_sites["root_ctor_call"].address
         ),
@@ -1906,6 +1925,9 @@ def prepare(args) -> int:
         ),
         "        \"empty_text_id\": %s," % format_text_id(
             candidates.header_clock.text_ids["empty_text_id"]
+        ),
+        "        \"menu_text_id\": %s," % format_text_id(
+            candidates.header_clock.text_ids["menu_text_id"]
         ),
         "    },",
         "    \"custom_settings\": {",

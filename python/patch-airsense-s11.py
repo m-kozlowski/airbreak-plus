@@ -2373,6 +2373,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             AS11_HEADER_CLOCK_PAYLOAD, "elf", ver
         )
         draw_wrapper = self._elf_symbol_addr(elf_path, "start")
+        menu_draw_wrapper = self._elf_symbol_addr(elf_path, "header_clock_menu_label_draw")
         ctor_wrapper = self._elf_symbol_addr(
             elf_path, "header_clock_root_widget_ctor"
         )
@@ -2382,6 +2383,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         text_ids = self._elf_symbol_addr(
             elf_path, "header_clock_text_ids"
         )
+        setting_slot = self._elf_symbol_addr(elf_path, "header_clock_var_id")
         stock_draw = self._elf_symbol_addr(
             elf_path, "GuiPaint_DrawLocalizedTextById"
         )
@@ -2394,10 +2396,17 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         )
 
         draw_call = self.asf.ptr_to_off(anchors["draw_call"])
+        menu_draw_call = (
+            self.asf.ptr_to_off(anchors["menu_draw_call"])
+            if "menu_draw_call" in anchors else None
+        )
         ctor_call = self.asf.ptr_to_off(anchors["root_ctor_call"])
         timer_slot = self.asf.ptr_to_off(anchors["timer_callback_slot"])
         if self.asf.read_thumb2_bl_target(draw_call) != stock_draw:
             raise ValueError("header_clock: title-bar draw call does not match")
+        if (menu_draw_call is not None and
+                self.asf.read_thumb2_bl_target(menu_draw_call) != stock_draw):
+            raise ValueError("header_clock: menu-label draw call does not match")
         if self.asf.read_thumb2_bl_target(ctor_call) != stock_ctor:
             raise ValueError("header_clock: root-widget constructor call does not match")
         if self.asf.u32(timer_slot) != (stock_timer_callback | 1):
@@ -2407,9 +2416,21 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         text_ids_off = text_ids - self.asf.FLASH_BASE
         self.asf.write_u16(text_ids_off, anchors["home_text_id"])
         self.asf.write_u16(text_ids_off + 2, anchors["empty_text_id"])
+        if menu_draw_call is not None:
+            self.asf.write_u16(text_ids_off + 4, anchors["menu_text_id"])
         self.asf.write_thumb2_bl_target(draw_call, draw_wrapper)
+        if menu_draw_call is not None:
+            self.asf.write_thumb2_bl_target(menu_draw_call, menu_draw_wrapper)
         self.asf.write_thumb2_bl_target(ctor_call, ctor_wrapper)
         self.asf.write_u32(timer_slot, timer_callback | 1)
+
+        if menu_draw_call is not None:
+            setting = self.custom_setting_claim("RIM", "patch-header-clock", custom_name="HeaderClockEnable")
+            self.custom_setting_define(setting, default_option=0)
+            # TODO: Replace this label shim with framework-managed GUI string
+            # redefinition once custom settings can reclaim localized text IDs.
+            self.custom_menu_add("configuration", setting, anchors["menu_text_id"], 0xFFFF, "text_value")
+            self.custom_setting_bind(setting, setting_slot)
 
         print(
             "Patching header clock... build/%s_%s.bin (%dB) at 0x%08X" %
@@ -2567,7 +2588,7 @@ PATCH_LIST = [
     {
         "arg": "patch-header-clock",
         "desc": "Show local time in the dashboard and therapy-screen headers.",
-        "default": False,
+        "default": True,
         "function": "header_clock",
     },
     {

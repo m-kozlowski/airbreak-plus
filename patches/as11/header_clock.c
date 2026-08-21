@@ -13,6 +13,7 @@
 typedef struct {
     unsigned short home;
     unsigned short empty;
+    unsigned short menu;
 } header_clock_text_ids_t;
 
 /* Native root-widget prefix; the owned-timer callback receives &gui_object. */
@@ -29,7 +30,18 @@ volatile const header_clock_text_ids_t header_clock_text_ids
     __attribute__((used, section(".rodata.params"))) = {
         0xFFFFu,
         0xFFFFu,
+        0xFFFFu,
     };
+
+/* Replaced with the reclaimed setting ID when custom settings are enabled. */
+volatile const unsigned short header_clock_var_id
+    __attribute__((used, section(".rodata.params.var_id"))) = 0xFFFFu;
+
+static int clock_is_enabled(void)
+{
+    return header_clock_var_id == 0xFFFFu ||
+        DataItem_read_value_by_id(header_clock_var_id) != 0;
+}
 
 static int read_local_milliseconds(unsigned int *result)
 {
@@ -78,7 +90,7 @@ start(
     char clock[6];
 
     /* The hook is shared by other title bars; preserve their stock labels. */
-    if (!clock_replaces_label(text_id) ||
+    if (!clock_is_enabled() || !clock_replaces_label(text_id) ||
             !read_local_milliseconds(&local_ms)) {
         GuiPaint_DrawLocalizedTextById(
             text_id, rect, text_size, font, clip, alignment);
@@ -98,6 +110,32 @@ start(
     /* Draw dynamic text with the font slot selected for the replaced label. */
     GuiPaint_DrawStringInRect(
         clock,
+        rect,
+        text_size,
+        font,
+        clip,
+        alignment,
+        gui_localized_text_font_slot_for_id(text_id));
+}
+
+void header_clock_menu_label_draw(
+    unsigned int text_id,
+    void *rect,
+    unsigned int text_size,
+    unsigned int font,
+    int clip,
+    unsigned int alignment)
+{
+    /* The custom row reuses the detached Reminders text ID. */
+    if (header_clock_var_id == 0xFFFFu ||
+            text_id != header_clock_text_ids.menu) {
+        GuiPaint_DrawLocalizedTextById(
+            text_id, rect, text_size, font, clip, alignment);
+        return;
+    }
+
+    GuiPaint_DrawStringInRect(
+        "Clock",
         rect,
         text_size,
         font,

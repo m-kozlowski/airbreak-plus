@@ -81,10 +81,12 @@ AS11_PATCH_VERSIONS = {
         },
         "header_clock": {
             "draw_call": 0x08061F52,
+            "menu_draw_call": 0x08066A7A,
             "root_ctor_call": 0x0809D554,
             "timer_callback_slot": 0x081A3AC0,
             "home_text_id": 0x0072,
             "empty_text_id": 0x006A,
+            "menu_text_id": 0x00BB,
         },
         "custom_settings": {
             "rpc_enum_symbols": 0x08105318,
@@ -128,10 +130,12 @@ AS11_PATCH_VERSIONS = {
         },
         "header_clock": {
             "draw_call": 0x0806393E,
+            "menu_draw_call": 0x08068DEE,
             "root_ctor_call": 0x0809FA98,
             "timer_callback_slot": 0x081A8604,
             "home_text_id": 0x0075,
             "empty_text_id": 0x0068,
+            "menu_text_id": 0x012C,
         },
         "custom_settings": {
             "rpc_enum_symbols": 0x081070A0,
@@ -175,10 +179,12 @@ AS11_PATCH_VERSIONS = {
         },
         "header_clock": {
             "draw_call": 0x08063B1A,
+            "menu_draw_call": 0x08068FCA,
             "root_ctor_call": 0x080A001C,
             "timer_callback_slot": 0x081AA5C0,
             "home_text_id": 0x0078,
             "empty_text_id": 0x006A,
+            "menu_text_id": 0x0131,
         },
         "custom_settings": {
             "rpc_enum_symbols": 0x08107BA8,
@@ -226,10 +232,12 @@ AS11_PATCH_VERSIONS = {
         },
         "header_clock": {
             "draw_call": 0x08064076,
+            "menu_draw_call": 0x08069606,
             "root_ctor_call": 0x080A0864,
             "timer_callback_slot": 0x081AB534,
             "home_text_id": 0x0078,
             "empty_text_id": 0x006A,
+            "menu_text_id": 0x0131,
         },
         "custom_settings": {
             "rpc_enum_symbols": 0x08108398,

@@ -13,9 +13,13 @@ unchanged.
 | Feature | Setting | Backing field | Table | Section | Visible in | Default |
 |---------|---------|---------------|-------|---------|------------|---------|
 | [ASV Backup Rate](../guide/as11/features.md#asv-backup-rate) | Backup Rate | `RIF` / `ReminderFilterEnable` | g[5] | Therapy | ASV, ASVAuto | On |
+| Header clock | Clock | `RIM` / `ReminderMaskEnable` | g[5] | Configuration | all modes | Off |
 
 For Backup Rate, `On` preserves stock ASV behavior. `Off` suppresses backup
 breaths while leaving the stock no-breathing detector active.
+
+For Header clock, `On` shows local time in the dashboard and therapy-screen
+headers. `Off` preserves the stock header labels.
 
 ## Application Sequence
 
@@ -44,7 +48,7 @@ value `0xFFFF`. The finalizer replaces it with the claimed DataItem ID.
 When `patch-custom-settings` is disabled, no field is reclaimed, no menu row is
 added, and the slot remains `0xFFFF`. The feature payload must recognize that
 sentinel and use its standalone behavior. The ASV backup-rate payload treats
-it as backup rate disabled.
+it as backup rate disabled; the header-clock payload displays the clock.
 
 ## Persistence
 
@@ -112,6 +116,9 @@ tables.
 
 The ASV backup-rate feature uses the stock localized `Backup Rate` text in each
 supported application version.
+
+The header-clock feature draws `Clock` for its menu row. That label is not
+localized.
 
 ## Menu Registry
 
