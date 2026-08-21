@@ -1486,7 +1486,9 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             menu_symbols["call_off"] = call_off
             menu_payload = data
 
-            if menu_entries:
+            if any(
+                    request["mode_mask"] != 0xFFFF
+                    for request in self.custom_menu_entries):
                 outcome = self.mop_callback_register_handler(
                     menu_symbols["start"], "custom_settings"
                 )

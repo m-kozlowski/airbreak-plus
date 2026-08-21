@@ -65,7 +65,7 @@ static unsigned int custom_menu_entry_count(void)
     return count;
 }
 
-static void apply_custom_menu_visibility(void)
+static void apply_custom_menu_visibility(unsigned int mode_dependent_only)
 {
     unsigned int count = custom_menu_entry_count();
     unsigned int mode = (unsigned int)DataItem_read_value_by_id(VAR_ID_MOP);
@@ -75,8 +75,12 @@ static void apply_custom_menu_visibility(void)
     for (index = 0; index < count; ++index) {
         const volatile custom_menu_entry_t *entry =
             &custom_menu_entries[index];
-        int visible = mode < 16u &&
-            (entry->mode_mask & (1u << mode)) != 0u;
+        int visible;
+
+        if (mode_dependent_only && entry->mode_mask == 0xFFFFu)
+            continue;
+        visible = entry->mode_mask == 0xFFFFu ||
+            (mode < 16u && (entry->mode_mask & (1u << mode)) != 0u);
 
         DataItem_set_visible_by_id(entry->var_id, visible);
     }
@@ -187,7 +191,7 @@ void *custom_settings_clinical_scroller_ctor(
             arg8, arg9, arg10, arg11, arg12);
     }
 
-    apply_custom_menu_visibility();
+    apply_custom_menu_visibility(0u);
     output_count = item_count + entry_count;
     expanded = (void **)heap_alloc(
         output_count * (unsigned int)sizeof(void *));
@@ -229,5 +233,5 @@ void __attribute__((section(".text.0.main")))
 start(void)
 {
     /* MOP dispatcher entry: refresh visibility after the mode is committed. */
-    apply_custom_menu_visibility();
+    apply_custom_menu_visibility(1u);
 }

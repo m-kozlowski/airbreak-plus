@@ -176,12 +176,14 @@ to their native UI class.
 ## Mode Visibility
 
 Clinical menu rows are constructed once. During construction, the menu bridge
-reads `MOP`, tests its bit in each entry's `mode_mask`, and updates the backing
-DataItem through the native visibility API.
+marks a `0xFFFF` entry visible in every mode. Other entries test the current
+`MOP` bit in `mode_mask`. Visibility is applied through the native DataItem
+API.
 
-The same visibility handler is registered with the shared MOP callback
-dispatcher. It runs after stock MOP writeback so changing therapy mode updates
-custom rows without reconstructing the menu.
+When at least one entry has a mode-dependent mask, the visibility handler is
+registered with the shared MOP callback dispatcher. It runs after stock MOP
+writeback and updates only those entries. Global entries do not require or use
+the dispatcher.
 
 ## Adding a Feature
 
