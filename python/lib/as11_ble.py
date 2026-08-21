@@ -252,6 +252,7 @@ class As11Connection:
         self._response_event = asyncio.Event()
         self._response_data = None
         self._mtu = 244
+        self._write_without_response = False
         self._session_key = None
         self._notification_cb = None
         self._raw_packet_cb = None
@@ -309,19 +310,28 @@ class As11Connection:
         await self._client.connect()
         log.info("connected to %s", address)
 
-        # device supports MTU 247, pull negotiated chunk size from write char
+        # A JSON-RPC response acknowledges the complete FIG packet, so write
+        # commands can carry every fragment when the characteristic allows it.
         try:
             svcs = self._client.services
             for svc in svcs:
                 for char in svc.characteristics:
                     if char.uuid == TX_CHAR_UUID:
                         self._mtu = char.max_write_without_response_size
+                        properties = set(char.properties)
+                        self._write_without_response = (
+                            "write-without-response" in properties
+                        )
                         break
         except Exception:
             pass
         if self._mtu < 244:
             self._mtu = 244
-        log.info("write chunk size: %d", self._mtu)
+        if self._write_without_response:
+            mode = "write commands"
+        else:
+            mode = "acknowledged writes"
+        log.info("write chunk size: %d (%s)", self._mtu, mode)
 
         STEEHL_CHARS = [
             "3d5085ac-d8a2-4a56-8d2e-1dc7508e67bc",
@@ -417,10 +427,13 @@ class As11Connection:
         chunk_size = max(self._mtu, 20)
         for offset in range(0, len(data), chunk_size):
             chunk = data[offset:offset + chunk_size]
+            response = not self._write_without_response
             if self.debug:
-                log.debug("TX chunk (%d/%d bytes): %s",
-                          len(chunk), len(data), chunk.hex())
-            await self._client.write_gatt_char(TX_CHAR_UUID, chunk, response=True)
+                log.debug("TX chunk (%d/%d bytes, response=%s): %s",
+                          len(chunk), len(data), response, chunk.hex())
+            await self._client.write_gatt_char(
+                TX_CHAR_UUID, chunk, response=response
+            )
 
     async def send_rpc(self, method: str, params=None, timeout: float = 60.0,
                        encrypted: bool = False, vcid_override: int = None,
