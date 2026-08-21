@@ -54,8 +54,7 @@ the patcher validates the required structures before producing the output.
 On Debian or Ubuntu:
 
 ```bash
-sudo apt install git make gcc-arm-none-eabi binutils-arm-none-eabi \
-    python3 python3-crcmod
+sudo apt install git make gcc-arm-none-eabi binutils-arm-none-eabi python3
 git clone https://github.com/m-kozlowski/airbreak-plus.git
 cd airbreak-plus
 ```

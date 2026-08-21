@@ -12,6 +12,7 @@
 # See LICENSE in main repository for distribution license and additional restrictions.
 
 import argparse
+import binascii
 import datetime
 import fnmatch
 import io
@@ -32,11 +33,6 @@ from lib.as11_conf_discovery import (
 from lib.as11_patch_versions import AS11_FGBL_PATCH_VERSIONS, AS11_PATCH_VERSIONS
 from lib.compiled_payload import CompiledPayloadMixin
 
-try:
-    import crcmod.predefined
-except ImportError:
-    crcmod = None
-
 
 class PatchVersionUnavailable(ValueError):
     def __init__(self, status, summary):
@@ -45,14 +41,7 @@ class PatchVersionUnavailable(ValueError):
 
 
 def crc16_ccitt_false(data, crc=0xFFFF):
-    for byte in data:
-        crc ^= byte << 8
-        for _ in range(8):
-            if crc & 0x8000:
-                crc = ((crc << 1) ^ 0x1021) & 0xFFFF
-            else:
-                crc = (crc << 1) & 0xFFFF
-    return crc
+    return binascii.crc_hqx(data, crc)
 
 
 def str2bool(value):
@@ -390,7 +379,7 @@ class S11Firmware(object):
 
     def __init__(self, fileobj):
         self.fw = bytearray(fileobj.read())
-        self.crcfunc = self.make_crcfunc()
+        self.crcfunc = crc16_ccitt_false
         self._rpc_json_index = None
 
         self.validate()
@@ -428,11 +417,6 @@ class S11Firmware(object):
             ("CONF", self.CONF_OFF, self.CONF_SIZE),
             ("APPL", self.APPL_OFF, self.APPL_SIZE),
         )
-
-    def make_crcfunc(self):
-        if crcmod is not None:
-            return crcmod.predefined.mkCrcFun("crc-ccitt-false")
-        return crc16_ccitt_false
 
     def find_app_version(self):
         last = None

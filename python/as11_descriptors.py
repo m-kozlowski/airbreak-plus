@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import binascii
 import os
 import math
 import re
@@ -825,14 +826,7 @@ GUI_TEXT_POOL_STRING_PTR_OFF = 52
 GUI_TEXT_POOL_RECORD_BASE_OFF = 60
 
 def crc16_ccitt_false(data, crc=0xFFFF):
-    for byte in data:
-        crc ^= byte << 8
-        for _ in range(8):
-            if crc & 0x8000:
-                crc = ((crc << 1) ^ 0x1021) & 0xFFFF
-            else:
-                crc = (crc << 1) & 0xFFFF
-    return crc
+    return binascii.crc_hqx(data, crc)
 
 
 class DescriptorEditField:

@@ -53,7 +53,7 @@ Reopen the Ubuntu shell - the next launch brings up a fresh kernel and init.
 In Ubuntu:
 
 ```bash
-sudo apt install git make openocd python3-pip python3-crcmod \
+sudo apt install git make openocd python3-pip \
     gcc-arm-none-eabi binutils-arm-none-eabi telnet-ssl
 ```
 
