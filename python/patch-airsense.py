@@ -2018,14 +2018,18 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         """Enable every compiled-in language that has firmware font support."""
         self.asf.load_firmware_string_metadata()
         lan = self.asf.find_var('LAN')
+        lan_mask = self.asf.read_u32(lan + self.asf.G8_BITMASK)
         base_str = self.asf.read_u16(lan + self.asf.G8_BASE_STR)
         languages = [self.asf.firmware_string(base_str + lang_id)
                      for lang_id in self.asf.fw_lang_ids]
         addr = self.asf.find_var('LNC')
         # make variable read only to prevent overwriting with eeprom data
         self.asf.write_u8(addr, 0x06)
-        # 0x007fffff, except font-reserved bits jp (13,19) and cn (16,17).
-        self.asf.write_u32(addr + 0x08, 0x0074dfff)
+        # unlocking both jp and cn is forbidden
+        # retain jp (13,19) OR cn (16,17) if bits present in LAN
+        font_bits = (1 << 13) | (1 << 16) | (1 << 17) | (1 << 19)
+        language_mask = 0x0074dfff | (lan_mask & font_bits)
+        self.asf.write_u32(addr + 0x08, language_mask)
         return PatchOutcome.ok("Languages: " + ", ".join(languages))
 
     def patch_therapy_screen(self):
