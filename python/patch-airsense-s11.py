@@ -406,10 +406,17 @@ class S11Firmware(object):
         print("  Application      " + self.appl_ver)
         print("  Platform         %s / %s / %s" % (self.platform, self.model, self.codename))
 
+        bad_crcs = []
         for name, off, size in self.blocks():
-            crc = self.crcfunc(bytes(self.fw[off:off + size]))
-            if crc != 0:
-                print("  WARN: %s CRC currently 0x%04X (will be refreshed on PATCH)" % (name, crc))
+            crc_off = off + size - 2
+            stored = (self.fw[crc_off] << 8) | self.fw[crc_off + 1]
+            computed = self.crcfunc(bytes(self.fw[off:crc_off]))
+            if stored != computed:
+                bad_crcs.append("%s stored=0x%04X computed=0x%04X" %
+                                (name, stored, computed))
+        if bad_crcs:
+            raise ValueError("invalid input firmware CRC: %s" %
+                             ", ".join(bad_crcs))
 
     def blocks(self):
         return (
