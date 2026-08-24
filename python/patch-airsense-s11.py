@@ -276,7 +276,8 @@ KNOWN_RPC_METHODS = (
 # GUI/config descriptors that must stay hidden even when activating tables.
 BLACKLISTED_SETTING_PATTERNS = (
     # "HeightDisplayUnit",
-    # "LearnTargets*",
+    "LearnMode",
+    "LearnTargets*",
     "*RampDown*",
     # "PHI",  # iVAPS-PatientHeight, inches
     # "iVAPS-*",
@@ -782,8 +783,7 @@ class S11Firmware(object):
             self.write_u16(row["offset"], updated)
         return flags, updated
 
-    def write_descriptor_fields(self, row, fields):
-        """Update named fields in an existing DataItem descriptor."""
+    def _descriptor_field_layout(self, row, fields):
         layout = self.DESCRIPTOR_FIELDS[row["array"]]
         unknown = set(fields) - set(layout)
         if unknown:
@@ -791,14 +791,29 @@ class S11Firmware(object):
                 "unknown %s descriptor field(s): %s" %
                 (row["array"], ", ".join(sorted(unknown)))
             )
+        return [(field,) + layout[field] for field in fields]
+
+    def write_descriptor_fields(self, row, fields):
+        """Update named fields in an existing DataItem descriptor."""
         writers = {
             1: self.write_u8,
             2: self.write_u16,
             4: self.write_u32,
         }
-        for field, value in fields.items():
-            field_off, width = layout[field]
-            writers[width](row["offset"] + field_off, value)
+        for field, field_off, width in self._descriptor_field_layout(row, fields):
+            writers[width](row["offset"] + field_off, fields[field])
+
+    def read_descriptor_fields(self, row, fields):
+        """Read named fields from an existing DataItem descriptor."""
+        readers = {
+            1: self.u8,
+            2: self.u16,
+            4: self.u32,
+        }
+        return {
+            field: readers[width](row["offset"] + field_off)
+            for field, field_off, width in self._descriptor_field_layout(row, fields)
+        }
 
     def enum_rpc_values(self, row, table):
         """Return enabled RPC symbols from a final g[5] descriptor."""
@@ -1823,8 +1838,26 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         )
         return 1
 
+    def fix_st_respiratory_rate_range(self):
+        """Hydrate the stripped ST backup-rate default and lower bound."""
+        rows = self.asf.find_descriptors("ST-SetRespiratoryRate", ("g2",))
+        row = rows[0]
+        current = self.asf.read_descriptor_fields(row, ("default", "min"))
+        desired = {"default": 50, "min": 25}
+        if current == desired:
+            print("Patching ST respiratory-rate range... already hydrated")
+            return 0
+
+        # Official S/ST firmware stores 5..50 bpm with a 10 bpm default.
+        self.asf.write_descriptor_fields(row, desired)
+        print("Patching ST respiratory-rate range... default=10 range=5..50 step=1")
+        return 1
+
     def unlock_features(self):
         """Unlock therapy modes and related GUI settings at descriptor level."""
+        if any(prefix == "ST" and supported
+               for _bit, prefix, _profile, supported in THERAPY_MODES):
+            self.fix_st_respiratory_rate_range()
         if any(prefix == "iVAPS" and supported
                for _bit, prefix, _profile, supported in THERAPY_MODES):
             self.fix_ivaps_patient_height_range()
