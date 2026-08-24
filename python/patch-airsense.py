@@ -2515,19 +2515,18 @@ class ASFirmwarePatches(CompiledPayloadMixin):
 
         self.asf.patch(b'\xCC\x33\x00\x00', base + 0x24, clobber=True)
 
-        for off in (0x00, 0x1C, 0x28, 0x40, 0x44, 0x48, 0x54, 0x70, 0x7C, 0x94, 0x98, 0x9C):
+        for off in (0x00, 0x1C, 0x28, 0x40, 0x44, 0x48):
             self.asf.patch(b'\xFF\xBB\x44\x00', base + off, clobber=True)
 
-        for off in (0x04, 0x0C, 0x58, 0x60, 0x74):
+        for off in (0x04, 0x0C):
             self.asf.patch(b'\x96\x48\x48\x00', base + off, clobber=True)
 
-        for off in (0x08, 0x5C):
-            self.asf.patch(b'\x64\x32\x32\x00', base + off, clobber=True)
+        self.asf.patch(b'\x64\x32\x32\x00', base + 0x08, clobber=True)
 
-        for off in (0x10, 0x14, 0x30, 0x4C, 0x64, 0x68, 0x84, 0xA0):
+        for off in (0x10, 0x14, 0x30, 0x4C):
             self.asf.patch(b'\x40\x20\x20\x00', base + off, clobber=True)
 
-        for off in (0x18, 0x34, 0x50, 0x6C, 0x88, 0xA4):
+        for off in (0x18, 0x34, 0x50):
             self.asf.patch(b'\x08\x00\x08\x00', base + off, clobber=True)
 
         return PatchOutcome.ok(None, "Palette table: 0x%08X" % (self.asf.FLASH_BASE + base))
