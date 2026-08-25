@@ -1824,7 +1824,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         )
         placeholder = (0, 0x7FFFFFFF, 0x80000001, expected[3])
         if current == expected:
-            print("Patching iVAPS patient height... already hydrated")
+            print("Patching iVAPS patient height... already patched")
             return 0
         if current != placeholder:
             raise ValueError("iVAPS metric-height descriptor has unexpected bounds")
@@ -1838,26 +1838,34 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         )
         return 1
 
-    def fix_st_respiratory_rate_range(self):
-        """Hydrate the stripped ST backup-rate default and lower bound."""
-        rows = self.asf.find_descriptors("ST-SetRespiratoryRate", ("g2",))
-        row = rows[0]
-        current = self.asf.read_descriptor_fields(row, ("default", "min"))
+    def fix_unlocked_respiratory_rate_ranges(self):
+        """Patch zero defaults and lower bounds required in stripped descriptors"""
         desired = {"default": 50, "min": 25}
-        if current == desired:
-            print("Patching ST respiratory-rate range... already hydrated")
-            return 0
+        changed = 0
+        for mode, name in (
+            ("ST", "ST-SetRespiratoryRate"),
+            ("PAC", "PAC-SetRespiratoryRate"),
+        ):
+            rows = self.asf.find_descriptors(name, ("g2",))
+            row = rows[0]
+            current = self.asf.read_descriptor_fields(row, ("default", "min"))
+            if current == desired:
+                print("Patching %s respiratory-rate range... already patched" % mode)
+                continue
 
-        # Official S/ST firmware stores 5..50 bpm with a 10 bpm default.
-        self.asf.write_descriptor_fields(row, desired)
-        print("Patching ST respiratory-rate range... default=10 range=5..50 step=1")
-        return 1
+            self.asf.write_descriptor_fields(row, desired)
+            print(
+                "Patching %s respiratory-rate range... "
+                "default=10 range=5..50 step=1" % mode
+            )
+            changed += 1
+        return changed
 
     def unlock_features(self):
         """Unlock therapy modes and related GUI settings at descriptor level."""
-        if any(prefix == "ST" and supported
+        if any(prefix in ("ST", "PAC") and supported
                for _bit, prefix, _profile, supported in THERAPY_MODES):
-            self.fix_st_respiratory_rate_range()
+            self.fix_unlocked_respiratory_rate_ranges()
         if any(prefix == "iVAPS" and supported
                for _bit, prefix, _profile, supported in THERAPY_MODES):
             self.fix_ivaps_patient_height_range()
