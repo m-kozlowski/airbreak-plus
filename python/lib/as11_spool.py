@@ -11,6 +11,7 @@ from collections import Counter
 import csv
 import hashlib
 import json
+import re
 import sys
 import textwrap
 from typing import Iterator
@@ -2351,6 +2352,16 @@ def _table_time(value: object) -> str:
     return text.replace("T", " ")
 
 
+_ISO_DATETIME_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?"
+    r"(?:Z|[+-]\d{2}:\d{2})?$"
+)
+
+
+def _is_iso_datetime(value: object) -> bool:
+    return isinstance(value, str) and _ISO_DATETIME_RE.fullmatch(value) is not None
+
+
 def _write_table(headers, rows, out, *, indent: str = "") -> None:
     rendered = [[_table_cell(cell) for cell in row] for row in rows]
     if not rendered:
@@ -2387,7 +2398,7 @@ def _decoded_value_cell(value: object) -> str:
         return _table_cell(value)
     if "value" in value or "raw" in value:
         display = value.get("value", value.get("name", value.get("raw")))
-        if isinstance(display, str) and "T" in display:
+        if _is_iso_datetime(display):
             display = _table_time(display)
         text = _table_cell(display)
         if value.get("unit"):
@@ -2403,7 +2414,7 @@ def _decoded_value_parts(value: object) -> tuple[object, str, object]:
     if not isinstance(value, dict):
         return value, "", ""
     display = value.get("value", value.get("name", value.get("raw", "")))
-    if isinstance(display, str) and "T" in display:
+    if _is_iso_datetime(display):
         display = _table_time(display)
     raw = value.get("raw", "")
     return display, value.get("unit", ""), "" if display == raw else raw
