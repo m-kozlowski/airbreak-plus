@@ -160,7 +160,22 @@ DEFAULT_SETTINGS = (
 UNLOCKED_ENUM_SETTING_NAMES = (
     "TSS",  # Treatment screen style: Dots, PressureBar, FlowWave
     "HeightDisplayUnit",
+    "ZRM",  # FGState: include LearnTargets
 )
+
+# Some sensitivity settings have separate DataItems for list, percentage, and
+# split-screen presentation. Firmware callbacks keep these aliases in sync;
+# all aliases need matching option masks when the source setting is unlocked.
+ENUM_SETTING_MIRRORS = {
+    "Cpap-TriggerSensitivity": ("C12",),
+    "Spont-CycleSensitivity": ("Z18", "Z19"),
+    "Spont-TriggerSensitivity": ("Z07",),
+    "ST-CycleSensitivity": ("XAX", "XAS"),
+    "ST-TriggerSensitivity": ("ZU2",),
+    "iVAPS-CycleSensitivity": ("VCV", "VCP"),
+    "iVAPS-TriggerSensitivity": ("VAQ",),
+    "PAC-TriggerSensitivity": ("PAQ",),
+}
 
 # Method permissions set by patch-rpc-permissions. The outer key is the method,
 # and each nested map assigns the permission state for one or more VCIDs.
@@ -276,8 +291,8 @@ KNOWN_RPC_METHODS = (
 # GUI/config descriptors that must stay hidden even when activating tables.
 BLACKLISTED_SETTING_PATTERNS = (
     # "HeightDisplayUnit",
-    "LearnMode",
-    "LearnTargets*",
+    # "LearnMode",
+    # "LearnTargets*",
     "*RampDown*",
     # "PHI",  # iVAPS-PatientHeight, inches
     # "iVAPS-*",
@@ -1659,6 +1674,40 @@ class S11FirmwarePatches(CompiledPayloadMixin):
                 return "therapy"
         return None
 
+    def enum_setting_mirrors(self, source):
+        """Return validated UI aliases for one named g5 enum setting."""
+        tags = ENUM_SETTING_MIRRORS.get(source["long_name"], ())
+        if not tags:
+            return []
+
+        source_fields = self.asf.read_descriptor_fields(
+            source,
+            ("default_option", "n_options", "change_event_queue_index"),
+        )
+        mirrors = []
+        for tag in tags:
+            rows = self.asf.find_descriptors(tag, ("g5",))
+            if not rows:
+                continue
+            mirror = rows[0]
+            mirror_fields = self.asf.read_descriptor_fields(
+                mirror,
+                (
+                    "data_rule_id",
+                    "default_option",
+                    "n_options",
+                    "change_event_queue_index",
+                ),
+            )
+            expected = dict(source_fields, data_rule_id=0)
+            if mirror_fields != expected:
+                raise ValueError(
+                    "enum setting mirror %s does not match %s" %
+                    (tag, source["long_name"])
+                )
+            mirrors.append(mirror)
+        return mirrors
+
     def write_default_value(self, row, value):
         off = row["offset"]
         array = row["array"]
@@ -1838,34 +1887,53 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         )
         return 1
 
-    def fix_unlocked_respiratory_rate_ranges(self):
-        """Patch zero defaults and lower bounds required in stripped descriptors"""
-        desired = {"default": 50, "min": 25}
+    def fix_unlocked_setting_ranges(self):
+        """Restore usable ranges in stripped or malformed descriptors."""
+        fixes = {
+            "ST-SetRespiratoryRate": {"default": 10, "min": 5, "max": 50, "step": 1},
+            "PAC-SetRespiratoryRate": {"default": 10, "min": 5, "max": 50, "step": 1},
+            "iVAPS-RiseTime": {"default": 0.3, "min": 0.15, "max": 0.9, "step": 0.05},
+            "iVAPS-TargetRespiratoryRate": {"default": 15, "min": 8, "max": 30, "step": 1},
+            "iVAPS-TargetAlveolarVentilation": {"default": 5.2, "min": 1.0, "max": 30.0, "step": 0.1},
+        }
         changed = 0
-        for mode, name in (
-            ("ST", "ST-SetRespiratoryRate"),
-            ("PAC", "PAC-SetRespiratoryRate"),
-        ):
-            rows = self.asf.find_descriptors(name, ("g2",))
-            row = rows[0]
-            current = self.asf.read_descriptor_fields(row, ("default", "min"))
-            if current == desired:
-                print("Patching %s respiratory-rate range... already patched" % mode)
+        fields = ("default", "min", "max", "step", "scale")
+        range_fields = ("default", "min", "max")
+        for name, values in fixes.items():
+            row = self.asf.find_descriptors(name, ("g2",))[0]
+            current = self.asf.read_descriptor_fields(row, fields)
+            desired = {
+                field: int(round(values[field] * current["scale"]))
+                for field in ("default", "min", "max", "step")
+            }
+            if all(current[field] == desired[field] for field in desired):
+                print("Patching %s range... already patched" % name)
                 continue
-
-            self.asf.write_descriptor_fields(row, desired)
+            stripped = current["default"] == 0 and current["min"] == 0
+            scaled_twice = all(
+                current[field] == desired[field] * current["scale"]
+                for field in range_fields
+            )
+            if current["step"] != desired["step"] or not (stripped or scaled_twice):
+                print(
+                    "Patching %s range... preserving firmware values" % name
+                )
+                continue
+            self.asf.write_descriptor_fields(
+                row,
+                {field: desired[field] for field in range_fields},
+            )
             print(
-                "Patching %s respiratory-rate range... "
-                "default=10 range=5..50 step=1" % mode
+                "Patching %s range... default=%s range=%s..%s step=%s" %
+                (name, values["default"], values["min"], values["max"],
+                 values["step"])
             )
             changed += 1
         return changed
 
     def unlock_features(self):
         """Unlock therapy modes and related GUI settings at descriptor level."""
-        if any(prefix in ("ST", "PAC") and supported
-               for _bit, prefix, _profile, supported in THERAPY_MODES):
-            self.fix_unlocked_respiratory_rate_ranges()
+        self.fix_unlocked_setting_ranges()
         if any(prefix == "iVAPS" and supported
                for _bit, prefix, _profile, supported in THERAPY_MODES):
             self.fix_ivaps_patient_height_range()
@@ -1883,6 +1951,14 @@ class S11FirmwarePatches(CompiledPayloadMixin):
                 row = dict(row)
                 row["edit_kind"] = kind
                 editable_rows.append(row)
+
+        mirror_count = 0
+        for source in tuple(editable_rows):
+            for row in self.enum_setting_mirrors(source):
+                row = dict(row)
+                row["edit_kind"] = source["edit_kind"] + "-mirror"
+                editable_rows.append(row)
+                mirror_count += 1
 
         # ACT flags are the basic "can this menu/data item appear?" gate.
         n_hidden_act, n_hidden_masks = self.hide_blacklisted_settings()
@@ -1968,8 +2044,8 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         print("Patching standalone enum options... %d enabled, %d already enabled, %d missing, %d skipped" % (
             n_enum_options, n_enum_already, n_enum_missing, n_enum_skipped
         ))
-        print("Patching GUI enum editability... %d/%d masks enabled (%d already enabled, %d skipped)" % (
-            n_editable, len(editable_rows), n_already, n_skipped
+        print("Patching GUI enum editability... %d/%d masks enabled (%d already enabled, %d skipped, %d mirrors)" % (
+            n_editable, len(editable_rows), n_already, n_skipped, mirror_count
         ))
 
     def rpc_json_profile_visibility(self):
