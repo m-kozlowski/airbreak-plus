@@ -4505,8 +4505,7 @@ def _run_edit(fw, args):
 
     work_fw = AS11Firmware(fw.path, data=fw.data)
     for edit in edits:
-        rec = work_fw.read_descriptor(edit["array"], edit["index"])
-        edit["field"].write_storage(work_fw, rec, edit["new_value"])
+        edit["field"].write_storage(work_fw, edit["rec"], edit["new_value"])
 
     crc = work_fw.fix_conf_crc()
     new_fw = AS11Firmware(fw.path, data=work_fw.data)
