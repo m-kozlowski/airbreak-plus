@@ -6,7 +6,7 @@ BUILD=build
 PATCH_STUBS=$(SRC)/stubs
 MAKE_LOG ?= make.log
 
-PATCHER_OUTPUT_ARGS := --log-file $(abspath $(MAKE_LOG))
+PATCHER_OUTPUT_ARGS := --log-file '$(abspath $(MAKE_LOG))'
 ifeq ($(V),1)
 PATCHER_OUTPUT_ARGS += --verbose
 endif
