@@ -31,6 +31,9 @@ NSTUB(0x080658B1, menu_create_static_string)
 NSTUB(0x08066391, variable_lookup_handler)
 NSTUB(0x080663AD, variable_handler_release)
 NSTUB(0x0806664F, variable_set_visible_from_handler)
+NSTUB(0x080664BA, variable_handler_get_uart_name)
+NSTUB(0x0806658E, variable_handler_wire_width)
+NSTUB(0x08004100, ccx_get_globals)
 
 // Config persistence
 NSTUB(0x0809D911, file_get_size)

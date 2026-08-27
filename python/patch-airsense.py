@@ -810,6 +810,13 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         'SX567-0401': 0x75f48,
         'SX567-0402': 0x75f48,
     }
+    UART_STREAM_SCHEMA_HOOKS = {
+        'SX567-0302': (0xfb3e0, 0x080d947d),
+        'SX567-0305': (0xfbb28, 0x080d9c6d),
+        'SX567-0306': (0xfbb2c, 0x080d9b81),
+        'SX567-0401': (0xfbd8c, 0x080d9de1),
+        'SX567-0402': (0xfc034, 0x080da059),
+    }
     CUSTOM_MENU_FLAG_G4_NUMERIC = 1
     CUSTOM_MENU_FLAG_HEADING = 2
     CUSTOM_MENU_FLAG_PAGE = 4
@@ -886,7 +893,8 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         return address
 
     def _inject_function_pointer_payload(self, name, pointer_off, hook_name,
-                                         original_symbol=None):
+                                         original_symbol=None,
+                                         expected_original=None):
         """Inject a payload and redirect one stock function-table pointer."""
         data, _, elf_path = self._load_versioned_payload(name)
         start = self._elf_symbol_addr(elf_path, 'start')
@@ -899,6 +907,10 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             original = self.asf.read_u32(pointer_off)
             if original == target:
                 original = self.asf.read_u32(original_slot - self.asf.FLASH_BASE)
+            if expected_original is not None and original != expected_original:
+                raise ValueError(
+                    "%s: unexpected function pointer 0x%08X at 0x%08X" %
+                    (name, original, self.asf.FLASH_BASE + pointer_off))
 
         flash, _ = self._inject_payload(name, data)
         if original_slot is not None:
@@ -2495,6 +2507,17 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             self._payload_detail('vid_spoof', len(data), flash),
             self._mop_handler_detail('vid_spoof', handler))
 
+    def patch_uart_stream_schema(self):
+        """Report current globals[26]/globals[27] field layouts through G C."""
+        hook = self.UART_STREAM_SCHEMA_HOOKS.get(self.asf.cdx_ver)
+        if hook is None:
+            return PatchOutcome.skip("unsupported CDX version %s" % self.asf.cdx_ver)
+        pointer_off, original = hook
+        details = self._inject_function_pointer_payload(
+            'uart_stream_schema', pointer_off, 'G C command handler',
+            'uart_stream_schema_original_handler', original)
+        return PatchOutcome.ok(None, *details)
+
     def custom_palette(self):
         """Patch custom color palette."""
         signatures = {
@@ -2690,6 +2713,9 @@ PATCH_PHASES = (
     )),
 
     ('Therapy data and reporting', (
+        PatchSpec('patch-uart-stream-schema',
+                  'Report live-stream field layouts over UART.',
+                  True, 'patch_uart_stream_schema'),
         PatchSpec('patch-fw-vidspoof',
                   'Set VID from therapy mode, using a regional variant where known.',
                   True, 'patch_vid_spoof'),

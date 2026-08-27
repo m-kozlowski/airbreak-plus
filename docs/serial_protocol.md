@@ -53,7 +53,7 @@ command families:
 |---------|---------|
 | `G S` | Read variables and `&` channel state |
 | `P S` | Write variables and enable/disable live channels |
-| `G C` | Read `#` variable capabilities |
+| `G C` | Read `#` variable capabilities and, with the Airbreak extension, `&` live-stream schemas |
 | `G F` | Query stored EEPROM streams |
 | `G V` | Date-filtered stored stream query path |
 
@@ -78,6 +78,23 @@ R: G C #VAR = CAPABILITY_DATA
 Q: G C #VAR INDEX
 R: G C #VAR INDEX = CAPABILITY_DATA
 ```
+
+### Live Stream Schemas
+
+Airbreak-patched firmware accepts `G C &TAG` for channels in g[26] and g[27]:
+
+```
+Q: G C &TAG
+R: G C &TAG = NN VAR:WW VAR:WW ...
+```
+
+`NN` is the number of fields. Each `VAR:WW` pair gives the UART variable name
+and its width in hexadecimal characters. Both `NN` and `WW` are encoded as two
+uppercase hexadecimal digits. Fields are returned in the order used by the
+channel's `L` frames.
+
+The command reads the active g[26]/g[27] descriptors, including layouts changed
+by the EDF signal merge. Stock firmware returns `0x6009` for this command.
 
 ### Live Stream Reporting
 
