@@ -15,7 +15,11 @@ from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 
-RPC_VERSIONS: dict[str, str] = {
+AS11_RPC_PROFILE = "as11"
+AIRMINI_RPC_PROFILE = "airmini"
+
+
+AS11_RPC_VERSIONS: dict[str, str] = {
     "GetDateTime": "1.0", "SetDateTime": "1.1", "GetVersion": "2.0",
     "StartStream": "1.0", "InitiateUpgrade": "1.0", "UpgradeDataBlock": "1.0",
     "CheckUpgradeFile": "1.0", "ApplyUpgrade": "1.1", "GetLedStatus": "1.0",
@@ -27,8 +31,46 @@ RPC_VERSIONS: dict[str, str] = {
     "ClearAutoConnectList": "1.0", "DiscardPairKey": "1.0",
     "StartSpool": "1.0", "PullSpoolFragments": "1.0",
     "EnterTestDrive": "1.0", "EnableSecurity": "1.0",
+    "StartKeyExchange": "2.0", "ConfirmKeyExchange": "2.0",
+    "RequestSession": "2.0", "CheckSessionIntegrity": "2.0",
 }
 
+# AirMini shares most command contracts with AirSense 11, but the versions of
+# these methods differ in the AirMini firmware.  Its SDK-facing methods and
+# unknown extension calls use JSON-RPC 2.0.
+AIRMINI_RPC_VERSIONS: dict[str, str] = {
+    **AS11_RPC_VERSIONS,
+    "SetDateTime": "1.0",
+    "EnterMaskFit": "1.0",
+    "GetPairKey": "2.0",
+    "GetSessionKey": "2.0",
+    "GetLoggedData": "2.0",
+    "GetHistory": "2.0",
+    "BtDisconnect": "2.0",
+}
+
+RPC_VERSION_PROFILES: dict[str, dict[str, str]] = {
+    AS11_RPC_PROFILE: AS11_RPC_VERSIONS,
+    AIRMINI_RPC_PROFILE: AIRMINI_RPC_VERSIONS,
+}
+RPC_DEFAULT_VERSIONS: dict[str, str] = {
+    AS11_RPC_PROFILE: "1.0",
+    AIRMINI_RPC_PROFILE: "2.0",
+}
+
+# Backwards-compatible name for callers that are explicitly AS11-only.
+RPC_VERSIONS = AS11_RPC_VERSIONS
+
+
+def rpc_version(method: str, profile: str = AS11_RPC_PROFILE, *,
+                default: str | None = None) -> str:
+    """Return the request contract version for one device-family profile."""
+    try:
+        versions = RPC_VERSION_PROFILES[profile]
+        profile_default = RPC_DEFAULT_VERSIONS[profile]
+    except KeyError as exc:
+        raise ValueError(f"unknown RPC profile: {profile!r}") from exc
+    return versions.get(method, profile_default if default is None else default)
 
 
 class TransportError(RuntimeError):
@@ -89,19 +131,20 @@ class Transport(Protocol):
     @property
     def supports_encrypted(self) -> bool:
         """True if this transport can reach the encrypted admin VCID
-        (BLE). False for plaintext CAN. Consulted by the OTA flow to
+        (BLE or AirMini SPP). False for plaintext CAN. Consulted by the OTA flow to
         pick the default apply mode."""
         ...
 
 
 
-def build_request(method: str, params: object | None, rpc_id: int) -> bytes:
+def build_request(method: str, params: object | None, rpc_id: int, *,
+                  profile: str = AS11_RPC_PROFILE) -> bytes:
     """Produce the JSON-RPC request payload for a given method.
 
     Callers supply the id; transports own their own id counters.
     """
     req: dict = {
-        "jsonrpc": RPC_VERSIONS.get(method, "1.0"),
+        "jsonrpc": rpc_version(method, profile),
         "method": method,
         "id": rpc_id,
     }
@@ -294,7 +337,14 @@ def parse_flex_datetime(s: str) -> _dt.datetime:
 
 
 __all__ = [
+    "AS11_RPC_PROFILE",
+    "AIRMINI_RPC_PROFILE",
+    "AS11_RPC_VERSIONS",
+    "AIRMINI_RPC_VERSIONS",
+    "RPC_VERSION_PROFILES",
+    "RPC_DEFAULT_VERSIONS",
     "RPC_VERSIONS",
+    "rpc_version",
     "Transport",
     "TransportError",
     "FramingError",

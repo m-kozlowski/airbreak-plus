@@ -8,35 +8,60 @@ Classes and helpers used by as11_config.py and as11_flash.py:
                      protocol; runs an asyncio event loop in a background
                      thread so callers stay synchronous like CAN does
 
-Plus a credentials file at ~/.as11_ble.json and address/alias resolution.
+Uses the shared Bluetooth credential store at ~/.as11_ble.json.
 
 """
 
 from __future__ import annotations
 
 import asyncio
-import binascii
-import hashlib
 import json
 import logging
-import os
-import re
 import struct
 import sys
 import threading
 import time
-from pathlib import Path
 
 try:
     from bleak import BleakClient, BleakScanner
 except ImportError:
     sys.exit("bleak not installed. Run: pip install bleak")
 
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import hashes, hmac
 
 # lib/ is on sys.path; import the shared Transport surface.
-from as11_rpc import RPC_VERSIONS, TransportError
+from as11_rpc import (
+    AIRMINI_RPC_PROFILE,
+    AS11_RPC_PROFILE,
+    TransportError,
+    rpc_version,
+)
+from resmed_fig import (
+    FIG_HEADER_LEN,
+    FIG_SYNC,
+    FIG_SYNC_BYTES,
+    FIG_VCID_RPC,
+    FIG_VCID_RPC_ENC,
+    FIG_VCID_RX_ENC,
+    FigCodec,
+    H,
+    SRPClient,
+    aes_decrypt,
+    aes_encrypt,
+    derive_session_key,
+    session_integrity_response,
+)
+from resmed_credentials import (
+    CRED_FILE,
+    MAC_RE,
+    UUID_RE,
+    credential_family,
+    load_all_credentials,
+    load_credentials,
+    resolve_address,
+    save_all_credentials,
+    save_credentials,
+)
 
 
 # GATT UUIDs + FIG constants.
@@ -47,167 +72,7 @@ RX_CHAR_UUID = "a6220003-35f1-4b20-afae-cb089d2044aa"   # device -> app
 
 DEVICE_NAME_PREFIX = "ResMed"
 
-FIG_SYNC       = 0xCAFEBABE
-FIG_SYNC_BYTES = struct.pack('<I', FIG_SYNC)
-FIG_HEADER_LEN = 12
-FIG_VCID_RPC       = 0x0393  # plaintext, key exchange only
-FIG_VCID_RPC_ENC   = 0x0397  # encrypted TX
-FIG_VCID_RX_ENC    = 0x0396  # encrypted RX
-
-CRED_FILE = Path.home() / ".as11_ble.json"
-
 log = logging.getLogger("as11.ble")
-
-
-# SRP-6a (RFC 5054 2048-bit group, SHA-256, no identity).
-
-_SRP_N = int(
-    "AC6BDB41324A9A9BF166DE5E1389582FAF72B6651987EE07FC3192943DB56050"
-    "A37329CBB4A099ED8193E0757767A13DD52312AB4B03310DCD7F48A9DA04FD50"
-    "E8083969EDB767B0CF6095179A163AB3661A05FBD5FAAAE82918A9962F0B93B"
-    "855F97993EC975EEAA80D740ADBF4FF747359D041D5C33EA71D281E446B1477"
-    "3BCA97B43A23FB801676BD207A436C6481F1D2B9078717461A5B9D32E688F87"
-    "748544523B524B0D57D5EA77A2775D2ECFA032CFBDBF52FB3786160279004E5"
-    "7AE6AF874E7303CE53299CCC041C7BC308D82A5698F3A8D0C38271AE35F8E9D"
-    "BFBB694B5C803D89F7AE435DE236D525F54759B65E372FCD68EF20FA7111F9E"
-    "4AFF73", 16)
-_SRP_G = 2
-_SRP_PAD_LEN = 256
-
-
-def _srp_pad(n):
-    return n.to_bytes(_SRP_PAD_LEN, "big")
-
-
-def H(*args):
-    """SHA-256 of concatenated byte arguments (ints padded to 256 bytes BE)."""
-    h = hashlib.sha256()
-    for a in args:
-        if isinstance(a, int):
-            a = _srp_pad(a)
-        h.update(a)
-    return h.digest()
-
-
-class SRPClient:
-    def __init__(self, passkey):
-        self.passkey = passkey
-        self.a = int.from_bytes(os.urandom(32), "big")
-        self.A = pow(_SRP_G, self.a, _SRP_N)
-        self.S = None
-        self.K = None
-        self.M1 = None
-        self.M2 = None
-
-    @property
-    def public_key_hex(self):
-        return _srp_pad(self.A).hex().upper()
-
-    def process(self, server_pk_hex, salt_hex):
-        B = int(server_pk_hex, 16)
-        if B % _SRP_N == 0:
-            raise ValueError("invalid server public key (B mod N == 0)")
-
-        k = int.from_bytes(H(_srp_pad(_SRP_N), _srp_pad(_SRP_G)), "big")
-        salt = bytes.fromhex(salt_hex)
-        x = int.from_bytes(H(salt, H(self.passkey.encode('ascii'))), "big")
-        u = int.from_bytes(H(_srp_pad(self.A), _srp_pad(B)), "big")
-        if u == 0:
-            raise ValueError("invalid u (== 0)")
-
-        self.S = pow(B - k * pow(_SRP_G, x, _SRP_N), self.a + u * x, _SRP_N) % _SRP_N
-        self.K = H(_srp_pad(self.S))
-
-        h_N = H(_srp_pad(_SRP_N))
-        h_g = H(_srp_pad(_SRP_G))
-        h_xor = bytes(a ^ b for a, b in zip(h_N, h_g))
-        self.M1 = H(h_xor, salt, _srp_pad(self.A), _srp_pad(B), self.K)
-        self.M2 = H(_srp_pad(self.A), self.M1, self.K)
-
-    @property
-    def client_proof_hex(self):
-        return self.M1.hex().upper()
-
-    @property
-    def session_key_hex(self):
-        return self.K.hex().upper()
-
-    def derive_session_key(self, nonce_hex):
-        """SHA256(K || nonce) - matches figlib SrpKeyExchange::GenerateSessionKey."""
-        self.aes_key = H(self.K, bytes.fromhex(nonce_hex))
-        return self.aes_key.hex().upper()
-
-    def verify_server(self, server_proof_hex):
-        if server_proof_hex.upper() != self.M2.hex().upper():
-            raise ValueError("server proof mismatch")
-
-
-# FIG codec.
-
-class FigCodec:
-    """FIG packet encoder/decoder.
-
-    Frame: [4 SYNC] [2 VCID] [2 LEN] [4 PAYLOAD_CRC] [4 HEADER_CRC] [N PAYLOAD]
-    All integers little-endian, CRC32 IEEE.
-    """
-
-    def __init__(self):
-        self._rx_buf = bytearray()
-
-    @staticmethod
-    def crc32(data: bytes) -> int:
-        return binascii.crc32(data) & 0xFFFFFFFF
-
-    @staticmethod
-    def encode(vcid: int, payload: bytes) -> bytes:
-        payload_crc = FigCodec.crc32(payload)
-        header = struct.pack('<HH I', vcid, len(payload), payload_crc)
-        header_crc = FigCodec.crc32(header)
-        return FIG_SYNC_BYTES + header + struct.pack('<I', header_crc) + payload
-
-    def feed(self, data: bytes):
-        self._rx_buf.extend(data)
-
-    def decode(self) -> list:
-        """Pop complete packets from RX buffer. Returns [(vcid, payload), ...]."""
-        packets = []
-        while True:
-            idx = self._rx_buf.find(FIG_SYNC_BYTES)
-            if idx < 0:
-                if len(self._rx_buf) > 3:
-                    self._rx_buf = self._rx_buf[-3:]
-                break
-
-            if idx > 0:
-                log.debug("discarding %d bytes before sync", idx)
-                self._rx_buf = self._rx_buf[idx:]
-
-            if len(self._rx_buf) < 4 + FIG_HEADER_LEN:
-                break
-
-            hdr = bytes(self._rx_buf[4:16])
-            vcid, payload_len, payload_crc, header_crc = struct.unpack('<HH II', hdr)
-
-            if FigCodec.crc32(hdr[:8]) != header_crc:
-                log.warning("header CRC mismatch, skipping sync")
-                self._rx_buf = self._rx_buf[4:]
-                continue
-
-            total = 4 + FIG_HEADER_LEN + payload_len
-            if len(self._rx_buf) < total:
-                break
-
-            payload = bytes(self._rx_buf[16:16 + payload_len])
-
-            if FigCodec.crc32(payload) != payload_crc:
-                log.warning("payload CRC mismatch (vcid=%d len=%d)", vcid, payload_len)
-                self._rx_buf = self._rx_buf[4:]
-                continue
-
-            packets.append((vcid, payload))
-            self._rx_buf = self._rx_buf[total:]
-
-        return packets
 
 
 def decode_ncp_packet(payload: bytes):
@@ -245,7 +110,7 @@ def decode_ncp_packet(payload: bytes):
 
 
 class As11Connection:
-    def __init__(self, debug=False):
+    def __init__(self, debug=False, rpc_profile=AS11_RPC_PROFILE):
         self._client = None
         self._codec = FigCodec()
         self._rpc_id = 0
@@ -257,6 +122,7 @@ class As11Connection:
         self._notification_cb = None
         self._raw_packet_cb = None
         self._plain_vcids = set()
+        self._rpc_profile = rpc_profile
         self.debug = debug
 
     def set_session_key(self, key_hex):
@@ -267,42 +133,29 @@ class As11Connection:
 
     def _aes_encrypt(self, plaintext, length_prefix=True):
         """AES-CBC(key, random IV). Wire: [IV][cipher([u16 len][payload][zero pad])]."""
-        if length_prefix:
-            framed = struct.pack('<H', len(plaintext)) + plaintext
-        else:
-            framed = plaintext
-        pad_len = (16 - len(framed) % 16) % 16
-        padded = framed + b'\x00' * pad_len
-        iv = os.urandom(16)
-        cipher = Cipher(algorithms.AES(self._session_key), modes.CBC(iv))
-        enc = cipher.encryptor()
-        ct = enc.update(padded) + enc.finalize()
-        return iv + ct
+        return aes_encrypt(plaintext, self._session_key,
+                           length_prefix=length_prefix)
 
     def _aes_decrypt(self, data):
-        iv = data[:16]
-        ct = data[16:]
-        cipher = Cipher(algorithms.AES(self._session_key), modes.CBC(iv))
-        dec = cipher.decryptor()
-        plaintext = dec.update(ct) + dec.finalize()
-        if len(plaintext) >= 2:
-            payload_len = struct.unpack_from('<H', plaintext, 0)[0]
-            return plaintext[2:2 + payload_len]
-        return plaintext.rstrip(b'\x00')
+        return aes_decrypt(data, self._session_key)
 
     @staticmethod
-    async def scan(timeout=10.0):
-        """Returns [(address, name, rssi), ...]."""
-        devices = await BleakScanner.discover(
-            timeout=timeout,
-            service_uuids=[SERVICE_UUID],
-            return_adv=True,
-        )
+    async def scan(timeout=10.0, include_all=False):
+        """Return address, name, RSSI, and advertised service UUIDs."""
+        scan_args = {"timeout": timeout, "return_adv": True}
+        if not include_all:
+            scan_args["service_uuids"] = [SERVICE_UUID]
+        devices = await BleakScanner.discover(**scan_args)
         results = []
         for addr, (dev, adv) in devices.items():
             name = dev.name or adv.local_name or ""
-            if name.startswith(DEVICE_NAME_PREFIX):
-                results.append((dev.address, name, adv.rssi))
+            if include_all or name.startswith(DEVICE_NAME_PREFIX):
+                results.append((
+                    dev.address,
+                    name,
+                    adv.rssi,
+                    tuple(adv.service_uuids or ()),
+                ))
         return results
 
     async def connect(self, address: str):
@@ -440,7 +293,10 @@ class As11Connection:
                        length_prefix: bool = True, hmac_key: bytes = None,
                        post_send_delay: float = 0.1) -> dict:
         self._rpc_id += 1
-        version = RPC_VERSIONS.get(method, "2.0")
+        # Preserve the AS11 BLE transport's historic 2.0 fallback. AirMini
+        # uses its own profile default for unknown extension methods.
+        fallback = "2.0" if self._rpc_profile == AS11_RPC_PROFILE else None
+        version = rpc_version(method, self._rpc_profile, default=fallback)
         msg = {"id": self._rpc_id, "jsonrpc": version, "method": method}
         if params:
             msg["params"] = params
@@ -513,9 +369,9 @@ class As11Connection:
 
         K_bytes = bytes.fromhex(master_pair_key)
         challenge_bytes = bytes.fromhex(challenge_hex)
-        h = hmac.HMAC(K_bytes, hashes.SHA256())
-        h.update(challenge_bytes)
-        response_hex = h.finalize().hex().upper()
+        response_hex = session_integrity_response(
+            K_bytes, challenge_bytes
+        ).hex().upper()
         log.info("reconnect: response=%s...", response_hex[:16])
 
         resp2 = await self.send_rpc_raw(
@@ -528,7 +384,7 @@ class As11Connection:
         log.info("reconnect: session verified")
 
         nonce_bytes = bytes.fromhex(nonce_hex)
-        aes_key = H(K_bytes, nonce_bytes)
+        aes_key = derive_session_key(K_bytes, nonce_bytes)
         aes_key_hex = aes_key.hex().upper()
         self.set_session_key(aes_key_hex)
         log.info("reconnect: AES key=%s...", aes_key_hex[:16])
@@ -621,52 +477,15 @@ class As11Connection:
         }
 
 
-# Credentials + address resolution.
-
-MAC_RE  = re.compile(r'^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$')
-UUID_RE = re.compile(r'^[0-9A-Fa-f]{8}-([0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12}$')
-
-
-def load_all_credentials() -> dict:
-    if not CRED_FILE.exists():
-        return {}
-    return json.loads(CRED_FILE.read_text())
-
-
-def save_all_credentials(all_creds: dict):
-    CRED_FILE.write_text(json.dumps(all_creds, indent=2))
-
-
-def save_credentials(address: str, creds: dict):
-    all_creds = load_all_credentials()
-    existing = all_creds.get(address, {})
-    existing.update(creds)
-    all_creds[address] = existing
-    save_all_credentials(all_creds)
-    log.info("credentials saved to %s", CRED_FILE)
-
-
-def load_credentials(address: str) -> dict:
-    return load_all_credentials().get(address, {})
-
-
 def resolve_addr(arg: str = None) -> str:
     """MAC/UUID -> as-is (MAC uppercased). Alias -> looked up from credentials.
     None falls back to $AS11_ADDR."""
-    if arg is None:
-        arg = os.environ.get("AS11_ADDR")
-    if not arg:
-        raise SystemExit("no address: pass --addr or set AS11_ADDR")
-
-    if MAC_RE.match(arg):
-        return arg.upper()
-    if UUID_RE.match(arg):
-        return arg
-
-    for addr, data in load_all_credentials().items():
-        if data.get("alias") == arg:
-            return addr
-    raise SystemExit(f"no MAC/UUID/alias matched: {arg!r}")
+    return resolve_address(
+        arg,
+        env_var="AS11_ADDR",
+        allow_uuid=True,
+        expected_family="as11",
+    )
 
 
 class BleTransport:
@@ -686,10 +505,21 @@ class BleTransport:
     DEFAULT_TIMEOUT = 10.0
 
     def __init__(self, address: str, *, debug: bool = False,
-                 scan_timeout: float = 20.0) -> None:
-        self._address = resolve_addr(address) if address else resolve_addr(None)
+                 scan_timeout: float = 20.0,
+                 rpc_profile: str = AS11_RPC_PROFILE,
+                 family: str = "as11", name_prefix: str = "ble",
+                 address_env: str = "AS11_ADDR") -> None:
+        self._address = resolve_address(
+            address,
+            env_var=address_env,
+            allow_uuid=True,
+            expected_family=family,
+        )
         self._debug = debug
         self._scan_timeout = scan_timeout
+        self._rpc_profile = rpc_profile
+        self._family = family
+        self._name_prefix = name_prefix
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._conn: As11Connection | None = None
@@ -705,7 +535,7 @@ class BleTransport:
 
     @property
     def name(self) -> str:
-        return f"ble:{self._address}"
+        return f"{self._name_prefix}:{self._address}"
 
     @property
     def supports_encrypted(self) -> bool:
@@ -764,10 +594,14 @@ class BleTransport:
             return
         self._start_loop()
         try:
-            self._conn = As11Connection(debug=self._debug)
+            self._conn = As11Connection(
+                debug=self._debug, rpc_profile=self._rpc_profile
+            )
             self._submit(self._conn.connect(self._address),
                          timeout=self._scan_timeout + 5)
             creds = load_credentials(self._address)
+            if creds and credential_family(creds) != self._family:
+                creds = {}
             if creds.get("clientId") and creds.get("masterPairKey"):
                 try:
                     new_creds = self._submit(
@@ -864,6 +698,31 @@ class BleTransport:
             return
 
 
+class MiniBleTransport(BleTransport):
+    """Experimental AirMini FIG transport over the known ResMed BLE GATT.
+
+    This is deliberately a probe: it assumes the same FD56 service and A622
+    characteristics as AS11, while selecting AirMini JSON-RPC versions and
+    the shared Mini credential family.
+    """
+
+    def __init__(self, address: str, *, debug: bool = False,
+                 scan_timeout: float = 20.0) -> None:
+        super().__init__(
+            address,
+            debug=debug,
+            scan_timeout=scan_timeout,
+            rpc_profile=AIRMINI_RPC_PROFILE,
+            family="mini",
+            name_prefix="mini-ble",
+            address_env="AIRMINI_ADDR",
+        )
+
+    @classmethod
+    def from_args(cls, target: str, args) -> "MiniBleTransport":
+        return cls(address=target, debug=getattr(args, "debug", False))
+
+
 __all__ = [
     # Constants
     "SERVICE_UUID", "TX_CHAR_UUID", "RX_CHAR_UUID", "DEVICE_NAME_PREFIX",
@@ -872,6 +731,7 @@ __all__ = [
     "CRED_FILE", "MAC_RE", "UUID_RE",
     # Classes
     "SRPClient", "FigCodec", "As11Connection", "BleTransport",
+    "MiniBleTransport",
     # Helpers
     "H", "decode_ncp_packet",
     "load_all_credentials", "save_all_credentials",
