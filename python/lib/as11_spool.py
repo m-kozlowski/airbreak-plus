@@ -376,6 +376,8 @@ SPOOL_LEGENDS: dict[str, dict] = {
             3: "CellularComponentsStopping",
             5: "NetworkGeneration",
             6: "TcpConnectStarted",
+            7: "PdpContextActivated",
+            9: "PdpContextDeactivated",
             10: "TcpConnected",
             11: "TcpDisconnected",
             12: "TcpConnectFailed",
