@@ -2,9 +2,12 @@
 #define AS11_STUBS_H
 
 extern int DataItem_get_var_id_virtual(void *item);
+extern int DataItem_read_bytes_by_id(unsigned short var_id, void *buffer, unsigned int buffer_size);
 extern int DataItem_read_value_by_id(unsigned short var_id);
 extern void DataItem_set_visible_by_id(unsigned short var_id, int visible);
 extern void DataItem_write_raw_by_id(unsigned short var_id, int raw_value);
+extern void DataItem_write_text_notify_by_id(unsigned short var_id, const char *text);
+extern void *memset(void *dest, int value, unsigned int length);
 extern void AsvFeature_update(void *ctx);
 extern void FeedbackInput_get_ref(int **value, unsigned int slot);
 extern void FeedbackOutput_get_ref(float **value, unsigned int slot);

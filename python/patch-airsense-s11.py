@@ -2733,7 +2733,7 @@ PATCH_LIST = [
     },
     {
         "arg": "patch-vid-spoof",
-        "desc": "Install runtime MOP-based VariantIdentifier spoofing.",
+        "desc": "Install runtime MOP-based software variant spoofing.",
         "default": True,
         "function": "vid_spoof",
     },

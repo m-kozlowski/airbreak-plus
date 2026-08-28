@@ -8,8 +8,11 @@
 .text
 
 NSTUB(0x0806E7DE, DataItem_get_var_id_virtual)
+NSTUB(0x080683F6, DataItem_read_bytes_by_id)
 NSTUB(0x08068118, DataItem_read_value_by_id)
 NSTUB(0x08067F8E, DataItem_write_raw_by_id)
+NSTUB(0x0806848E, DataItem_write_text_notify_by_id)
+NSTUB(0x0812C502, memset)
 NSTUB(0x08061370, heap_alloc)
 NSTUB(0x08143BE0, rpc_profile_json_formatter_registry_ctor)
 NSTUB(0x08144296, rpc_profile_json_formatter_registration_ctor)

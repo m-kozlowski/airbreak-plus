@@ -75,7 +75,7 @@ instead of producing that reduced result.
 | Patch | What it does | Switch |
 |-------|--------------|--------|
 | EDF superset | Adds all supported signals to SD-card therapy files, including signals used by unlocked modes | `--patch-edf-superset` |
-| VID spoof | Updates `VariantIdentifier` when therapy mode changes so EDF and cloud identity follow the mapped device family | `--patch-vid-spoof` |
+| VID spoof | Reports the mapped AirSense or AirCurve variant when therapy mode changes | `--patch-vid-spoof` |
 
 ### Connectivity and Control
 
