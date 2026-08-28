@@ -190,7 +190,7 @@ DEFAULT_RPC_METHOD_PERMISSIONS = {
     },
     # "GetLedStatus": {0x0396: True},
     # "SetNextPowerUpDateTime": {0x0396: True},
-    # "ResetDevice": {0x0396: True},
+    "ResetDevice": {0x0396: True},
     # "StoreSecurityData": {0x0396: True},
     # "VerifySecurityData": {0x0396: True},
     # "ClearAutoConnectList": {0x0396: True},

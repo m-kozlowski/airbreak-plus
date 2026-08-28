@@ -58,6 +58,7 @@ PATCHES=(
 RPC_PERMISSIONS=(
     SetDateTime:0x0396:1
     ApplyUpgrade:0x0396:1
+    ResetDevice:0x0396:1
     WUP:RPC:1
     WUP:RPW:1
 
