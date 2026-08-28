@@ -2362,14 +2362,15 @@ def _is_iso_datetime(value: object) -> bool:
     return isinstance(value, str) and _ISO_DATETIME_RE.fullmatch(value) is not None
 
 
-def _write_table(headers, rows, out, *, indent: str = "") -> None:
+def _write_table(headers, rows, out, *, indent: str = "",
+                 max_width: int | None = 40) -> None:
     rendered = [[_table_cell(cell) for cell in row] for row in rows]
     if not rendered:
         return
     widths = []
     for index, header in enumerate(headers):
         widest = max([len(str(header))] + [len(row[index]) for row in rendered])
-        widths.append(min(widest, 40))
+        widths.append(widest if max_width is None else min(widest, max_width))
 
     def wrapped_row(row):
         columns = [textwrap.wrap(cell, width=max(width, 1),
@@ -2461,25 +2462,79 @@ def _render_table_tree(title: str, value: object, out,
     print(child_indent + _table_cell(value), file=out)
 
 
-def _render_event_table(decoded: dict, out) -> None:
+def _compact_event_extra(extra: dict) -> str:
+    value = extra.get("value")
+    if isinstance(value, dict) and "errorId" in value:
+        error_id = value["errorId"]
+        error_name = value.get("errorName")
+        if error_name:
+            error_id = f"{error_id}({error_name})"
+        parts = [f"error_id={error_id}"]
+        if value.get("detailId") is not None:
+            parts.append(f"detail_id={value['detailId']}")
+        return ",".join(parts)
+
+    name = extra.get("name")
+    if not name:
+        name = f"f{extra.get('field')}/{extra.get('wireType')}"
+    raw = extra.get("raw")
+    if isinstance(value, str):
+        if name == "text":
+            display = repr(value)
+        elif isinstance(raw, int) and value != raw:
+            display = f"{raw}({value})"
+        else:
+            display = value
+    elif value is not None:
+        display = _table_cell(value)
+    else:
+        display = _table_cell(raw)
+    return f"{name}={display}"
+
+
+def _event_details_cell(record: dict) -> str:
+    return ",".join(
+        _compact_event_extra(extra)
+        for extra in record.get("extraFields", [])
+    )
+
+
+def _unknown_event_extras(record: dict) -> list[dict]:
+    unknown = []
+    for extra in record.get("extraFields", []):
+        value = extra.get("value")
+        packed_log_error = isinstance(value, dict) and "errorId" in value
+        if not extra.get("name") and not packed_log_error:
+            unknown.append(extra)
+    return unknown
+
+
+def _render_event_table(decoded: dict, out, *, details: bool = False) -> None:
     records = decoded["records"]
     _write_table(
-        ("#", "Event", "Type", "Start", "End", "Duration"),
+        ("#", "Event", "Type", "Start", "End", "Duration", "Details"),
         ((record.get("record"), record.get("name") or "unknown",
           record.get("type"), _table_time(record.get("startTime")),
-          _table_time(record.get("endTime")), record.get("durationMs"))
+          _table_time(record.get("endTime")), record.get("durationMs"),
+          _event_details_cell(record))
          for record in records),
         out,
+        max_width=None,
     )
+    if not details:
+        return
     for record in records:
-        details = {
+        expanded = {
             key: record[key]
-            for key in ("extraFields", "interpretation", "unknownFields")
+            for key in ("interpretation", "unknownFields")
             if record.get(key)
         }
-        if details:
+        unknown_extras = _unknown_event_extras(record)
+        if unknown_extras:
+            expanded["unknownExtraFields"] = unknown_extras
+        if expanded:
             _render_table_tree(f"Event {record.get('record')} details",
-                               details, out)
+                               expanded, out)
 
 
 def _render_summary_table(decoded: dict, out) -> None:
@@ -2615,7 +2670,7 @@ def _render_signal_table(decoded: dict, out) -> None:
             )
 
 
-def _render_decoded_table(decoded: dict, out) -> None:
+def _render_decoded_table(decoded: dict, out, *, details: bool = False) -> None:
     print(f"{decoded['spoolType']} ({decoded['family']}), "
           f"{len(decoded['records'])} record(s)", file=out)
     if not decoded["records"]:
@@ -2623,7 +2678,7 @@ def _render_decoded_table(decoded: dict, out) -> None:
     print(file=out)
     family = decoded["family"]
     if family == "event":
-        _render_event_table(decoded, out)
+        _render_event_table(decoded, out, details=details)
     elif family == "summary":
         _render_summary_table(decoded, out)
     elif family in {"periodic", "periodic_compressed", "rc03"}:
@@ -2697,7 +2752,8 @@ def _render_decoded_summary(decoded: dict, out) -> None:
         print(f"  record {record.get('record')}: {', '.join(keys)}", file=out)
 
 
-def render_spool(decoded: dict, output_format: str, out=None) -> None:
+def render_spool(decoded: dict, output_format: str, out=None, *,
+                 details: bool = False) -> None:
     """Render one decoded spool model."""
     if out is None:
         out = sys.stdout
@@ -2707,7 +2763,7 @@ def render_spool(decoded: dict, output_format: str, out=None) -> None:
     elif output_format == "csv":
         _render_decoded_csv(decoded, out)
     elif output_format == "table":
-        _render_decoded_table(decoded, out)
+        _render_decoded_table(decoded, out, details=details)
     elif output_format == "summary":
         _render_decoded_summary(decoded, out)
     else:

@@ -679,7 +679,7 @@ def spool_address_for(spool_type: str, from_dt: str) -> dict:
 
 def _decode_spool_file(path: str, spool_type: str | None,
                        output_format: str | None,
-                       app_version: str | None) -> int:
+                       app_version: str | None, *, details: bool = False) -> int:
     try:
         with open(path, "rb") as f:
             data = f.read()
@@ -693,6 +693,7 @@ def _decode_spool_file(path: str, spool_type: str | None,
         render_spool(
             decode_spool(spool_type, data, app_version=app_version),
             output_format or SPOOL_OUTPUT_DEFAULT,
+            details=details,
         )
         return 0
 
@@ -714,6 +715,7 @@ def _decode_spool_file(path: str, spool_type: str | None,
     render_spool(
         decode_spool(spool_type, data, app_version=app_version),
         output_format or SPOOL_OUTPUT_DEFAULT,
+        details=details,
     )
     return 0
 
@@ -817,18 +819,23 @@ def cmd_spool(args: argparse.Namespace) -> int:
     if getattr(args, "list_types", False):
         print_spool_types()
         return 0
+    if args.no_decode and args.input:
+        raise SystemExit("spool: --no-decode cannot be used with --input")
+    if args.no_decode and args.format is not None:
+        raise SystemExit("spool: --format cannot be used with --no-decode")
+    if args.no_decode and args.details:
+        raise SystemExit("spool: --details cannot be used with --no-decode")
+    if args.details and args.format not in (None, "table"):
+        raise SystemExit("spool: --details requires --format table")
     if args.input:
-        if args.no_decode:
-            raise SystemExit("spool: --no-decode cannot be used with --input")
         return _decode_spool_file(
-            args.input, args.spool_type, args.format, args.app_version
+            args.input, args.spool_type, args.format, args.app_version,
+            details=args.details,
         )
     if not getattr(args, "spool_type", None):
         raise SystemExit(
             "spool: spool_type required (or use --input/--list-types)"
         )
-    if args.no_decode and args.format is not None:
-        raise SystemExit("spool: --format cannot be used with --no-decode")
     spool_type = args.spool_type
     from_dt = args.from_dt or "2000-01-01T00:00:00.000Z"
     spool_address = spool_address_for(spool_type, from_dt)
@@ -897,6 +904,7 @@ def cmd_spool(args: argparse.Namespace) -> int:
         render_spool(
             decode_spool(spool_type, data, app_version=app_version),
             args.format or SPOOL_OUTPUT_DEFAULT,
+            details=args.details,
         )
         if last_next and final_status == "SPOOL_COMPLETE_MORE_DATA_PENDING":
             eprint(f"\n# status={final_status}")
@@ -1399,6 +1407,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--format", choices=SPOOL_OUTPUT_FORMATS, default=None,
                     help="decoded output format; default: "
                          f"{SPOOL_OUTPUT_DEFAULT}")
+    sp.add_argument(
+        "--details", action="store_true",
+        help="show event interpretations and unknown fields below the table",
+    )
     sp.add_argument("--app-version", default=None,
                     help="APPX version for diagnostic error decoding; queried "
                          "for live downloads when omitted")

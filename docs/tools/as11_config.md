@@ -130,6 +130,7 @@ Download and decode spool data.
 ```
 as11_config.py -d ble:as11 spool Summary
 as11_config.py -d ble:as11 spool TherapyEvents-RespiratoryEvents --format table
+as11_config.py -d ble:as11 spool DiagnosticExceptionEvents-AppErrors --details
 as11_config.py -d ble:as11 spool RespiratoryFlow6p25Hz --format csv
 as11_config.py -d ble:as11 spool Summary --format summary
 as11_config.py -d ble:as11 spool Summary --from-dt 2026-08-01
@@ -170,6 +171,10 @@ Spool payloads are decoded by default. `--format` selects the presentation:
 | `json` | Complete decoded model. |
 | `csv` | Complete model flattened to `path,value` rows. |
 | `summary` | Compact record, event-count, or sample-range summary. |
+
+Event tables contain one line per record. Known event-specific values are
+included in the `Details` column. `--details` additionally prints diagnostic
+interpretations and unrecognized fields below the table.
 
 The complete model includes all decoded samples, raw values, units, timing,
 compression metadata, and unrecognized protobuf fields. `--no-decode` instead
