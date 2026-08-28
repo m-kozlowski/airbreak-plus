@@ -2,7 +2,10 @@
 
 UART configuration tool for ResMed Air 10 / s9 series
 
-Read, write, dump, and restore device variables over the serial port. Works with direct serial, TCP via AirBridge, and offline by writing a `Settings.ecp` file to an SD card for the device to consume on next mount.
+Read, write, dump, and restore device variables over the serial port. The tool
+can also subscribe to live runtime streams. It works with direct serial, TCP via
+AirBridge, and offline by writing a `Settings.ecp` file to an SD card for the
+device to consume on next mount.
 
 ## Connection
 
@@ -89,6 +92,37 @@ Send one raw UART command to a live device.
 
 ```
 resmed_config.py -p /dev/ttyACM0 raw 'G S #BID'
+```
+
+### stream
+
+Subscribe to one or more live `L`-frame channels. Known fields are split,
+named, and scaled by default.
+
+```
+resmed_config.py -p /dev/ttyACM0 stream PMD
+resmed_config.py -p /dev/ttyACM0 stream PMD PBT BRH
+resmed_config.py -p /dev/ttyACM0 stream PMD --duration 30
+```
+
+Airbreak-patched firmware reports the active field layout through `G C &TAG`.
+On stock firmware, the tool selects the public stream layout from ResScan
+metadata using the device MID and VID. Internal channels absent from that
+metadata can still be captured without decoding:
+
+```
+resmed_config.py -p /dev/ttyACM0 stream RAW FTX --raw
+```
+
+`--raw` prints each `L` payload unchanged. Without `--duration`, streaming
+continues until Ctrl-C. All channels enabled by the command are disabled before
+the tool exits.
+
+AirBridge streaming requires transparent mode because text mode handles one
+command response at a time:
+
+```
+resmed_config.py -p tcp:airbridge-host --tcp-mode transparent stream PMD
 ```
 
 ### caps

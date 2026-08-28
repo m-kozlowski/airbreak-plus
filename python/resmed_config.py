@@ -445,6 +445,65 @@ VAR_SCALE = {
     'VA9': (8, 1, 'L/min'), 'VAA': (8, 1, 'L/min'), 'VAM': (8, 1, 'L/min'),
 }
 
+# Live layouts from the ResScan MetaData_M*_V*.txt G C &TAG records. The
+# Airbreak G C &TAG extension takes precedence because it reports the active
+# descriptor tables, including layouts changed by firmware patches.
+STREAM_FIELD_WIDTHS = {
+    'AAV': 2, 'AET': 4, 'ATP': 3, 'CET': 5, 'CSR': 4, 'DUR': 2,
+    'EXT': 3, 'INT': 3, 'LKF': 2, 'LYK': 2, 'MKP': 3, 'MV5': 2,
+    'RFL': 3, 'RRR': 2, 'TCV': 4, 'TEP': 3, 'TGT': 2, 'TID': 2,
+    'TIP': 3,
+}
+
+
+def _xml_stream_profile(**streams):
+    return {
+        tag: tuple((name, STREAM_FIELD_WIDTHS[name]) for name in fields.split())
+        for tag, fields in streams.items()
+    }
+
+
+_XML_COMMON = {'APN': 'AET DUR', 'PMD': 'MKP RFL LYK'}
+XML_STREAM_PROFILES = {
+    1: _xml_stream_profile(**_XML_COMMON, BRH='TID ATP', CSN='CET CSR',
+                           PBT='MV5 RRR LKF TIP TEP', TCE='MKP RFL LYK'),
+    2: _xml_stream_profile(**_XML_COMMON, BRH='TID', CSN='CET CSR',
+                           PBT='MV5 RRR LKF TIP TEP', TCE='MKP RFL LYK'),
+    3: _xml_stream_profile(**_XML_COMMON, BRH='TID ATP INT EXT',
+                           PBT='MV5 RRR LKF TIP TEP', TCE='MKP RFL LYK'),
+    4: _xml_stream_profile(**_XML_COMMON, BRH='TID INT EXT',
+                           PBT='MV5 RRR LKF TIP TEP', TCE='TCV MKP RFL LYK'),
+    5: _xml_stream_profile(**_XML_COMMON, BRH='TID ATP',
+                           PBT='MV5 TGT RRR LKF TIP TEP', TCE='MKP RFL LYK'),
+    6: _xml_stream_profile(**_XML_COMMON, BRH='TID ATP INT EXT',
+                           PBT='MV5 RRR LKF TIP TEP', TCE='TCV MKP RFL LYK'),
+    7: _xml_stream_profile(**_XML_COMMON, PBT='LKF TIP TEP',
+                           TCE='MKP RFL LYK'),
+    8: _xml_stream_profile(**_XML_COMMON, BRH='ATP', PBT='LKF TIP TEP',
+                           TCE='MKP RFL LYK'),
+    9: _xml_stream_profile(**_XML_COMMON, BRH='TID INT EXT',
+                           PBT='MV5 RRR LKF TIP TEP AAV',
+                           TCE='TCV MKP RFL LYK'),
+}
+
+# Keys are numeric MID and VID values. Metadata filenames use their decimal
+# forms, for example M36_V19 for MID=0x24 and VID=0x13.
+XML_STREAM_PROFILE_BY_DEVICE = {
+    **{(0x24, vid): 1 for vid in (1, 25, 26, 34, 37, 39)},
+    **{(0x24, vid): 2 for vid in (2, 38)},
+    (0x24, 5): 3,
+    **{(0x24, vid): 4 for vid in (7, 11, 12, 28)},
+    (0x24, 19): 5,
+    **{(0x24, vid): 6 for vid in (9, 27)},
+    **{(0x24, vid): 7 for vid in (3, 35)},
+    (0x24, 36): 8,
+    **{(0x28, vid): 4 for vid in (41, 43, 45)},
+    **{(0x28, vid): 5 for vid in (50, 51)},
+    **{(0x28, vid): 9 for vid in (44, 46, 48, 49)},
+}
+
+STREAM_SIGNED_FIELDS = {'BFL', 'FLW', 'RFL'}
+
 # Enum option labels from ResScan metadata (M36 V39), plus firmware-traced
 # service selectors where noted.
 # Values are {int_value: 'label'}
@@ -612,7 +671,7 @@ EEPROM_ACTIONS = {
 INFO_VARS = ['BID', 'SID', 'CID', 'PCB', 'SRN', 'PCD', 'PNA']
 
 
-def format_value(name, raw_str):
+def format_value(name, raw_str, signed_bits=None):
     """Return a human-readable annotation for a raw hex value, or None."""
     if raw_str is None:
         return None
@@ -629,7 +688,9 @@ def format_value(name, raw_str):
         try:
             val = int(raw_str, 16)
             scale, decimals, unit = VAR_SCALE[name]
-            if val > 0x7FFF and scale in (50, 5, 10, 500, 100, 8):
+            if signed_bits is not None and val & (1 << (signed_bits - 1)):
+                val -= 1 << signed_bits
+            elif val > 0x7FFF and scale in (50, 5, 10, 500, 100, 8):
                 val = val - 0x10000
             display = val / scale
             unit_str = f" {unit}" if unit else ""
@@ -701,25 +762,47 @@ def build_frame(frame_type: str, payload: bytes) -> bytes:
 def build_q_frame(cmd: str) -> bytes:
     return build_frame('Q', cmd.encode())
 
-def parse_responses(data: bytes) -> list:
+def extract_responses(data: bytes):
+    """Parse complete UART frames and return (responses, incomplete_tail)."""
     responses = []
     i = 0
     while i < len(data):
-        if data[i:i+1] == b'U' and i+1 < len(data) and data[i+1:i+2] != b'U':
+        if data[i:i+1] == b'U' and i + 1 >= len(data):
+            return responses, data[i:]
+        if data[i:i+1] == b'U' and data[i+1:i+2] != b'U':
             try:
                 ft = chr(data[i+1])
                 if ft in 'EFKLOPQRTf':
+                    if i + 5 > len(data):
+                        return responses, data[i:]
                     length = int(data[i+2:i+5], 16)
-                    if i + length <= len(data):
-                        raw_payload = data[i+5:i+length-4]
-                        payload = raw_payload.replace(b'UU', b'U')
-                        responses.append({'type': ft, 'payload': payload})
-                        i += length
-                        continue
+                    if i + length > len(data):
+                        return responses, data[i:]
+                    raw_payload = data[i+5:i+length-4]
+                    payload = raw_payload.replace(b'UU', b'U')
+                    responses.append({'type': ft, 'payload': payload})
+                    i += length
+                    continue
             except (ValueError, IndexError):
                 pass
         i += 1
-    return responses
+    return responses, b''
+
+
+def parse_responses(data: bytes) -> list:
+    return extract_responses(data)[0]
+
+
+class FrameReader:
+    """Incrementally decode UART frames from a persistent serial connection."""
+
+    def __init__(self):
+        self.buffer = b''
+
+    def feed(self, data):
+        self.buffer += data
+        responses, self.buffer = extract_responses(self.buffer)
+        return responses
 
 def read_responses(ser, timeout=1.0, multi_frame=False):
     old_timeout = ser.timeout
@@ -936,6 +1019,148 @@ def get_var_caps(ser, name):
     return (None, None)
 
 
+def parse_stream_schema(value):
+    """Parse Airbreak G C &TAG output into (name, hex_width) fields."""
+    parts = value.strip().upper().split()
+    if not parts:
+        raise ValueError("empty schema")
+    if len(parts[0]) != 2 or any(ch not in '0123456789ABCDEF' for ch in parts[0]):
+        raise ValueError("invalid field count")
+    try:
+        field_count = int(parts[0], 16)
+    except ValueError as exc:
+        raise ValueError("invalid field count") from exc
+    if len(parts) != field_count + 1:
+        raise ValueError(f"field count is {field_count}, response contains {len(parts) - 1}")
+
+    fields = []
+    for part in parts[1:]:
+        if ':' not in part:
+            raise ValueError(f"invalid field {part!r}")
+        name, width_text = part.split(':', 1)
+        if len(name) != 3 or any(ch not in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+                                 for ch in name):
+            raise ValueError(f"invalid field name {name!r}")
+        if len(width_text) != 2 or any(ch not in '0123456789ABCDEF'
+                                       for ch in width_text):
+            raise ValueError(f"invalid width for {name}")
+        try:
+            width = int(width_text, 16)
+        except ValueError as exc:
+            raise ValueError(f"invalid width for {name}") from exc
+        if width <= 0:
+            raise ValueError(f"invalid width for {name}")
+        fields.append((name, width))
+    return tuple(fields)
+
+
+def get_stream_schema(ser, tag):
+    """Query the Airbreak stream-schema extension. Return None on stock firmware."""
+    _, responses = send_cmd(ser, f"G C &{tag}", timeout=0.5, quiet=True)
+    for response in responses:
+        if response['type'] != 'R':
+            continue
+        payload = response['payload'].decode('ascii', errors='replace')
+        if '=' not in payload:
+            continue
+        try:
+            return parse_stream_schema(payload.split('=', 1)[1])
+        except ValueError as exc:
+            raise RuntimeError(f"{tag}: invalid firmware stream schema: {exc}") from exc
+    return None
+
+
+def get_xml_stream_schemas(ser):
+    """Select the ResScan stream layout for the device MID and VID."""
+    mft, mid_text = get_var(ser, 'MID')
+    vft, vid_text = get_var(ser, 'VID')
+    if mft != 'R' or vft != 'R' or mid_text is None or vid_text is None:
+        return None, None, None
+    try:
+        mid = int(mid_text, 16)
+        vid = int(vid_text, 16)
+    except ValueError:
+        return None, None, None
+    profile_id = XML_STREAM_PROFILE_BY_DEVICE.get((mid, vid))
+    return XML_STREAM_PROFILES.get(profile_id), mid, vid
+
+
+def resolve_stream_schemas(ser, tags):
+    """Prefer active firmware schemas, then fill gaps from ResScan metadata."""
+    schemas = {}
+    missing = []
+    for tag in tags:
+        schema = get_stream_schema(ser, tag)
+        if schema is None:
+            missing.append(tag)
+        else:
+            schemas[tag] = (schema, 'firmware')
+
+    mid = vid = None
+    if missing:
+        xml_schemas, mid, vid = get_xml_stream_schemas(ser)
+        if xml_schemas:
+            for tag in missing:
+                if tag in xml_schemas:
+                    schemas[tag] = (xml_schemas[tag], 'ResScan XML')
+    return schemas, mid, vid
+
+
+def stream_control(ser, tag, enabled, timeout=1.0):
+    """Enable or disable one live root while other roots may still be reporting."""
+    state = '1' if enabled else '0'
+    command = f"P S &{tag} {state}"
+    ser.write(build_q_frame(command))
+    ser.flush()
+
+    reader = FrameReader()
+    old_timeout = ser.timeout
+    ser.timeout = min(timeout, 0.05)
+    deadline = time.monotonic() + timeout
+    try:
+        while time.monotonic() < deadline:
+            for response in reader.feed(ser.read(4096)):
+                payload = response['payload'].decode('ascii', errors='replace')
+                if tag not in payload:
+                    continue
+                if response['type'] == 'R' and '=' in payload:
+                    return payload.split('=', 1)[1].strip() == state
+                if response['type'] == 'E':
+                    return False
+    finally:
+        ser.timeout = old_timeout
+    return False
+
+
+def decode_stream_payload(payload, schemas):
+    """Split one L payload according to its resolved stream schema."""
+    text = payload.decode('ascii', errors='strict').upper()
+    if len(text) < 5:
+        raise ValueError("payload is shorter than TAG and sequence")
+    tag, sequence, data = text[:3], text[3:5], text[5:]
+    if tag not in schemas:
+        raise ValueError(f"no schema for {tag}")
+    schema = schemas[tag][0]
+    expected = sum(width for _, width in schema)
+    if len(data) != expected:
+        raise ValueError(f"{tag} data has {len(data)} hex characters, expected {expected}")
+    if any(ch not in '0123456789ABCDEF' for ch in sequence + data):
+        raise ValueError(f"{tag} payload contains non-hex data")
+
+    values = []
+    pos = 0
+    for name, width in schema:
+        raw = data[pos:pos + width]
+        pos += width
+        signed_bits = width * 4 if name in STREAM_SIGNED_FIELDS else None
+        annotation = format_value(name, raw, signed_bits=signed_bits)
+        value = f"{name}={raw}"
+        if annotation is not None:
+            value += f" [{annotation}]"
+        values.append(value)
+    return f"{tag} seq={sequence} " + ' '.join(values)
+
+
 def require_var_result(name, frame_type, value, action):
     """Return an uppercase R-frame value or raise RuntimeError."""
     if frame_type == 'R' and value is not None:
@@ -1095,6 +1320,96 @@ def cmd_info(ser, verbose=False):
             print(f"  {var:4s} = [E] {val}{desc_str}")
         else:
             print(f"  {var:4s} = (no response){desc_str}")
+
+
+def cmd_stream(ser, requested_tags, raw=False, duration=None):
+    """Subscribe to one or more live roots and print their L frames."""
+    tags = []
+    for value in requested_tags:
+        tag = value.upper()
+        if len(tag) != 3 or any(ch not in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+                                for ch in tag):
+            print(f"[!] Invalid stream name: {value!r}")
+            return 1
+        if tag not in tags:
+            tags.append(tag)
+
+    schemas = {}
+    if not raw:
+        try:
+            schemas, mid, vid = resolve_stream_schemas(ser, tags)
+        except RuntimeError as exc:
+            print(f"[!] {exc}")
+            return 1
+        missing = [tag for tag in tags if tag not in schemas]
+        if missing:
+            device = ''
+            if mid is not None and vid is not None:
+                device = f" for MID={mid:04X} VID={vid:04X}"
+            print(f"[!] No stream schema for {', '.join(missing)}{device}.")
+            print("    Install the Airbreak stream-schema patch or use --raw.")
+            return 1
+        print("[*] Stream schemas:")
+        for tag in tags:
+            schema, source = schemas[tag]
+            fields = ' '.join(f"{name}:{width:02X}" for name, width in schema)
+            print(f"    {tag}: {fields} ({source})")
+
+    enabled = []
+    failed = False
+    interrupted = False
+    old_timeout = ser.timeout
+    ser.reset_input_buffer()
+    try:
+        for tag in tags:
+            if not stream_control(ser, tag, True):
+                print(f"[!] Failed to subscribe to {tag}")
+                failed = True
+                break
+            enabled.append(tag)
+
+        if not failed:
+            if duration is None:
+                print(f"[*] Streaming {', '.join(tags)}; press Ctrl-C to stop.")
+            else:
+                print(f"[*] Streaming {', '.join(tags)} for {duration:g} seconds; "
+                      "press Ctrl-C to stop early.")
+            reader = FrameReader()
+            ser.timeout = 0.1
+            started = time.monotonic()
+            while duration is None or time.monotonic() - started < duration:
+                chunk = ser.read(4096)
+                if not chunk:
+                    continue
+                for response in reader.feed(chunk):
+                    if response['type'] != 'L':
+                        continue
+                    payload = response['payload']
+                    tag = payload[:3].decode('ascii', errors='ignore').upper()
+                    if tag not in tags:
+                        continue
+                    if raw:
+                        print(payload.decode('ascii', errors='replace'), flush=True)
+                        continue
+                    try:
+                        print(decode_stream_payload(payload, schemas), flush=True)
+                    except (UnicodeDecodeError, ValueError) as exc:
+                        text = payload.decode('ascii', errors='replace')
+                        print(f"[!] Cannot decode L frame {text!r}: {exc}", file=sys.stderr,
+                              flush=True)
+    except KeyboardInterrupt:
+        interrupted = True
+    finally:
+        ser.timeout = old_timeout
+        if enabled:
+            if interrupted:
+                print()
+            print("[*] Stopping streams...")
+            for tag in reversed(enabled):
+                if not stream_control(ser, tag, False):
+                    print(f"[!] Failed to unsubscribe from {tag}")
+                    failed = True
+    return 1 if failed else 0
 
 def cmd_get(ser, targets, verbose=False):
     """Get one or more variables/groups."""
@@ -1540,6 +1855,7 @@ Commands:
   info                          Show device identity
   get <var|group|all>           Read variables
   set <var> <value> [...]       Write one or more variables
+  stream <tag> [tag ...]        Subscribe to live L-frame streams
   dump                          Dump all variables to JSON
   restore                       Restore variables from JSON
   list                          List known variables and descriptions (offline)
@@ -1557,6 +1873,8 @@ Examples:
   %(prog)s -p /dev/ttyACM0 set SPT 0001 EPR 0002
   %(prog)s -p /dev/ttyACM0 setv IPC 10.0            # 10.0 cmH2O -> 01F4
   %(prog)s -p /dev/ttyACM0 setv MOP AutoSet          # enum label -> 0001
+  %(prog)s -p /dev/ttyACM0 stream PMD PBT BRH
+  %(prog)s -p /dev/ttyACM0 stream RAW --raw --duration 10
   %(prog)s -p ecp:/media/RESMED/SETTINGS set PNA AirSense_10_airbreak
   %(prog)s -p /dev/ttyACM0 dump -o config.json
   %(prog)s -p /dev/ttyACM0 dump --groups MGL EGL -o therapy.json
@@ -1595,6 +1913,14 @@ Examples:
     p_setv = sub.add_parser('setv', help='Write variable(s) (scaled/human value)')
     p_setv.add_argument('pairs', nargs='+', metavar='VAR VALUE',
                         help='One or more VAR VALUE pairs')
+
+    p_stream = sub.add_parser('stream', help='Subscribe to live L-frame streams')
+    p_stream.add_argument('tags', nargs='+', metavar='TAG',
+                          help='One or more live stream names, such as PMD PBT BRH')
+    p_stream.add_argument('--raw', action='store_true',
+                          help='Print undecoded L-frame payloads')
+    p_stream.add_argument('--duration', type=float,
+                          help='Stop after this many seconds (default: until Ctrl-C)')
 
     p_dump = sub.add_parser('dump', help='Dump variables to JSON')
     p_dump.add_argument('-o', '--output', required=True, help='Output JSON file')
@@ -1671,6 +1997,17 @@ Examples:
         print("[!] --port is required for this command")
         return 1
 
+    if args.command == 'stream':
+        if args.duration is not None and args.duration <= 0:
+            print("[!] --duration must be greater than zero")
+            return 1
+        if args.port.startswith('ecp:'):
+            print("[!] stream requires a live device")
+            return 1
+        if args.port.startswith('tcp:') and args.tcp_mode == 'text':
+            print("[!] stream cannot use AirBridge text mode; use --tcp-mode transparent")
+            return 1
+
     if args.port.startswith('ecp:'):
         try:
             ser = EcpFileDevice(args.port)
@@ -1702,6 +2039,9 @@ Examples:
             except ValueError as e:
                 print(f"  [!] {e}")
                 return 1
+
+        elif args.command == 'stream':
+            return cmd_stream(ser, args.tags, raw=args.raw, duration=args.duration)
 
         elif args.command == 'dump':
             data = cmd_dump(ser, args.groups, args.exclude_groups, args.exclude_vars)
