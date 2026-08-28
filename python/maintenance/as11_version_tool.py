@@ -118,9 +118,15 @@ class RpcDispatcherCandidates:
     init_entry: AddressResult
 
 
+@dataclass(frozen=True)
+class CloudFirmwareChangeCandidates:
+    sites: dict[str, AddressResult]
+
+
 @dataclass
 class PortCandidates:
     stubs: dict[str, AddressResult]
+    cloud_firmware_change: CloudFirmwareChangeCandidates
     rpc_dispatcher: RpcDispatcherCandidates
     mop: MopCandidates
     timezone_write: TimezoneWriteCandidates
@@ -413,6 +419,47 @@ def thumb2_bl_target(data: bytes, address: int) -> int | None:
     if immediate & (1 << 24):
         immediate -= 1 << 25
     return address + 4 + immediate
+
+
+def thumb16_adr_target(
+        data: bytes, address: int, register: int | None = None) -> int | None:
+    """Resolve one Thumb ADR Rd, label instruction."""
+    off = address - FLASH_BASE
+    if off < 0 or off + 2 > len(data):
+        return None
+    instruction = struct.unpack_from("<H", data, off)[0]
+    if instruction & 0xF800 != 0xA000:
+        return None
+    if register is not None and ((instruction >> 8) & 7) != register:
+        return None
+    return ((address + 4) & ~3) + (instruction & 0xFF) * 4
+
+
+def thumb16_compare_branch(
+        data: bytes, address: int) -> tuple[bool, int, int] | None:
+    """Return (nonzero, register, target) for one Thumb CBZ or CBNZ."""
+    off = address - FLASH_BASE
+    if off < 0 or off + 2 > len(data):
+        return None
+    instruction = struct.unpack_from("<H", data, off)[0]
+    if instruction & 0xF500 != 0xB100:
+        return None
+    immediate = ((instruction >> 9) & 1) << 6 | ((instruction >> 3) & 0x1F) << 1
+    return bool(instruction & 0x0800), instruction & 7, address + 4 + immediate
+
+
+def thumb16_branch_target(data: bytes, address: int) -> int | None:
+    """Resolve one 16-bit unconditional Thumb branch."""
+    off = address - FLASH_BASE
+    if off < 0 or off + 2 > len(data):
+        return None
+    instruction = struct.unpack_from("<H", data, off)[0]
+    if instruction & 0xF800 != 0xE000:
+        return None
+    displacement = (instruction & 0x7FF) << 1
+    if displacement & 0x800:
+        displacement -= 0x1000
+    return address + 4 + displacement
 
 
 def rel32_target(data: bytes, address: int) -> int | None:
@@ -1256,6 +1303,121 @@ def resolve_timezone_write_candidates(
     })
 
 
+def resolve_cloud_firmware_change_candidates(
+        target_data: bytes,
+        matcher: AddressMatcher,
+        reference: dict) -> CloudFirmwareChangeCandidates:
+    """Locate the download and apply gates in the cloud-upgrade path."""
+    download_source = reference["suppress_download"]["address"]
+    apply_source = reference["suppress_apply"]["address"]
+    download_direct = matcher.site(download_source)
+    apply_direct = matcher.site(apply_source)
+
+    def literal_is(address: int | None, value: bytes) -> bool:
+        if address is None:
+            return False
+        off = address - FLASH_BASE
+        return 0 <= off <= len(target_data) - len(value) and target_data[off:off + len(value)] == value
+
+    # Current releases compare FG, AM, and CM through one helper. Version 8.0.1
+    # uses separate FG and CM predicate wrappers around the same configuration
+    # lookup. In both layouts, the first CBNZ accepts flow-generator downloads.
+    download_matches = []
+    for off in range(APPX_BASE + 6, len(target_data) - 0x10, 2):
+        address = FLASH_BASE + off
+        branch = thumb16_compare_branch(target_data, address)
+        if branch is None or not branch[0] or branch[1] != 0:
+            continue
+        accepted = branch[2]
+        if not literal_is(accepted, bytes.fromhex("0120")):
+            continue
+
+        compare = thumb2_bl_target(target_data, address - 4)
+        fg_literal = thumb16_adr_target(target_data, address - 6, register=1)
+        if compare is not None and literal_is(fg_literal, b"FG\0"):
+            compared_types = set()
+            for candidate in range(address + 2, accepted, 2):
+                literal = thumb16_adr_target(target_data, candidate, register=1)
+                if not (literal_is(literal, b"AM\0") or literal_is(literal, b"CM\0")):
+                    continue
+                if any(
+                        thumb2_bl_target(target_data, call) == compare
+                        for call in range(candidate + 2, min(candidate + 12, accepted), 2)):
+                    compared_types.add(bytes(
+                        target_data[literal - FLASH_BASE:literal - FLASH_BASE + 2]
+                    ))
+            if compared_types == {b"AM", b"CM"}:
+                download_matches.append(address)
+                continue
+
+        fg_predicate = compare
+        cm_predicate = thumb2_bl_target(target_data, address + 4)
+        second_branch = thumb16_compare_branch(target_data, address + 8)
+        fg_type = None if fg_predicate is None else thumb16_adr_target(
+            target_data, fg_predicate + 4, register=2
+        )
+        cm_type = None if cm_predicate is None else thumb16_adr_target(
+            target_data, cm_predicate + 4, register=2
+        )
+        if (fg_predicate is not None and cm_predicate is not None and
+                literal_is(fg_type, b"FG\0") and literal_is(cm_type, b"CM\0") and
+                second_branch is not None and not second_branch[0] and
+                second_branch[1] == 0):
+            download_matches.append(address)
+    if len(download_matches) == 1:
+        download = download_matches[0]
+        evidence = "FG type predicate and shared accepted branch"
+        if (download_direct.address == download or
+                download in download_direct.alternatives):
+            evidence += "; generic site transfer agrees"
+        download_result = AddressResult(
+            download_source, download, "strong", evidence
+        )
+    else:
+        download_result = AddressResult(
+            download_source,
+            None,
+            "missing",
+            "found %d flow-generator download gates" % len(download_matches),
+            tuple(download_matches) or download_direct.alternatives,
+        )
+
+    # The common OTA storage wrapper has adjacent CheckUpgradeFile and
+    # ApplyUpgrade selectors. Both branch to the same operation dispatcher.
+    apply_matches = []
+    for off in range(APPX_BASE, len(target_data) - 8, 2):
+        if (target_data[off:off + 2] != bytes.fromhex("0222") or
+                target_data[off + 4:off + 6] != bytes.fromhex("0322")):
+            continue
+        check_branch = thumb16_branch_target(
+            target_data, FLASH_BASE + off + 2
+        )
+        apply_branch = thumb16_branch_target(
+            target_data, FLASH_BASE + off + 6
+        )
+        if check_branch is not None and check_branch == apply_branch:
+            apply_matches.append(FLASH_BASE + off + 4)
+    if len(apply_matches) == 1:
+        apply = apply_matches[0]
+        evidence = "adjacent CheckUpgradeFile and ApplyUpgrade selectors"
+        if apply_direct.address == apply or apply in apply_direct.alternatives:
+            evidence += "; generic site transfer agrees"
+        apply_result = AddressResult(apply_source, apply, "strong", evidence)
+    else:
+        apply_result = AddressResult(
+            apply_source,
+            None,
+            "missing",
+            "found %d ApplyUpgrade selectors" % len(apply_matches),
+            tuple(apply_matches) or apply_direct.alternatives,
+        )
+
+    return CloudFirmwareChangeCandidates({
+        "suppress_download": download_result,
+        "suppress_apply": apply_result,
+    })
+
+
 def resolve_port_candidates(
         target_fw: AS11Firmware,
         reference_fw: AS11Firmware,
@@ -1268,6 +1430,7 @@ def resolve_port_candidates(
             "no reviewed patch data for reference APPX %s" % reference_key
         )
     required = (
+        ("cloud FirmwareChange", "cloud_firmware_change"),
         ("RPC dispatcher", "rpc_dispatcher"),
         ("MOP dispatcher", "mop_callback_dispatcher"),
         ("time-zone write", "timezone_write"),
@@ -1292,6 +1455,9 @@ def resolve_port_candidates(
         name: matcher.function(address)
         for name, address in parse_stubs(reference_key).items()
     }
+    cloud_firmware_change = resolve_cloud_firmware_change_candidates(
+        target_fw.data, matcher, reference["cloud_firmware_change"]
+    )
     rpc_dispatcher = resolve_rpc_dispatcher_candidates(
         target_fw.data, reference["rpc_dispatcher"], stubs
     )
@@ -1317,7 +1483,7 @@ def resolve_port_candidates(
         reference_release,
     )
     return PortCandidates(
-        stubs, rpc_dispatcher, mop, timezone_write, header_clock,
+        stubs, cloud_firmware_change, rpc_dispatcher, mop, timezone_write, header_clock,
         custom_settings, asv, ota_compatibility
     )
 
@@ -1471,6 +1637,29 @@ def self_check_candidates(
         cave,
         "generated erased tail must contain the reviewed allocation range",
     ))
+
+    cloud_expected = expected_version.get("cloud_firmware_change")
+    if cloud_expected is not None:
+        for name in ("suppress_download", "suppress_apply"):
+            expected_site = cloud_expected[name]
+            result = candidates.cloud_firmware_change.sites[name]
+            checks.append(compare_candidate(
+                "cloud_firmware_change.%s" % name,
+                expected_site["address"],
+                CandidateValue(result.address, result.quality, result.evidence),
+            ))
+            before = image_bytes_at(target_fw.data, result.address, 2)
+            after = {"suppress_download": "00bf", "suppress_apply": "0222"}[name] if result.address is not None else None
+            for field, value in (("before", before), ("after", after)):
+                checks.append(compare_candidate(
+                    "cloud_firmware_change.%s_%s" % (name, field),
+                    expected_site[field],
+                    CandidateValue(
+                        value,
+                        result.quality,
+                        "bytes at the resolved cloud-upgrade site",
+                    ),
+                ))
 
     rpc_dispatcher_expected = expected_version.get("rpc_dispatcher")
     if rpc_dispatcher_expected is not None:
@@ -1755,6 +1944,7 @@ def prepare(args) -> int:
         reference_id.firmware_release,
     )
     stub_results = candidates.stubs
+    cloud_firmware_change = candidates.cloud_firmware_change
     rpc_enum_symbols = candidates.custom_settings.rpc_enum_symbols
     rpc_enum_symbol_count = candidates.custom_settings.rpc_enum_symbol_count
     rpc_dispatcher_init_entry = candidates.rpc_dispatcher.init_entry
@@ -1775,6 +1965,9 @@ def prepare(args) -> int:
     ota_compatibility = candidates.ota_compatibility
 
     address_rows: list[tuple[str, str, AddressResult]] = [
+        ("cloud_firmware_change", name, result)
+        for name, result in cloud_firmware_change.sites.items()
+    ] + [
         ("custom_settings", "rpc_enum_symbols", rpc_enum_symbols),
         ("rpc_dispatcher", "init_entry", rpc_dispatcher_init_entry),
         ("mop", "writeback", mop_writeback),
@@ -1892,11 +2085,26 @@ def prepare(args) -> int:
         ))
     timezone_snippet_lines.append("    },")
 
+    cloud_snippet_lines = ["    \"cloud_firmware_change\": {"]
+    for name in ("suppress_download", "suppress_apply"):
+        result = cloud_firmware_change.sites[name]
+        before = image_bytes_at(target_fw.data, result.address, 2)
+        after = {"suppress_download": "00bf", "suppress_apply": "0222"}[name] if result.address is not None else None
+        cloud_snippet_lines.extend((
+            "        \"%s\": {" % name,
+            "            \"address\": %s," % format_address(result.address),
+            "            \"before\": %r," % (before or "TODO"),
+            "            \"after\": %r," % (after or "TODO"),
+            "        },",
+        ))
+    cloud_snippet_lines.append("    },")
+
     snippets = [
         "# Candidate entry for AS11_PATCH_VERSIONS.",
         "# Verify against the target firmware before copying.",
         "",
         "%r: {" % target_id.appx_key,
+        *cloud_snippet_lines,
         "    \"rpc_dispatcher\": {",
         "        \"init_entry\": %s," % format_address(
             rpc_dispatcher_init_entry.address

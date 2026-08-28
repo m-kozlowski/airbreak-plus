@@ -83,6 +83,7 @@ instead of producing that reduced result.
 |-------|--------------|--------|
 | RPC profile visibility | Exposes supported therapy and feature profile nodes in RPC JSON | `--patch-rpc-json-profile-visibility` |
 | RPC permissions | Applies configured method/VCID and DataItem RPC permissions | `--patch-rpc-permissions` |
+| Cloud firmware changes | Retains cellular flow-generator updates without installing them | `--patch-cloud-firmware-change` |
 | Time-zone write | Allows the time zone to be changed through RPC or the device menu after therapy history exists | `--patch-timezone-write` |
 
 ### Quality of Life
@@ -106,7 +107,9 @@ See [Features](features.md) for additional behavior details.
 ## Selecting Patches
 
 Edit `PATCHES` near the top of `patch-airsense-s11` to choose the standard
-patches. RPC permissions use the `RPC_PERMISSIONS` array in the same file.
+patches. The cloud firmware-change patch defaults to retaining only the update
+details; `CLOUD_FIRMWARE_CHANGE_MODE` can instead retain the downloaded file.
+RPC permissions use the `RPC_PERMISSIONS` array in the same file.
 Entries use `METHOD:VCID:BOOL` for method access or `DATAITEM:FLAG:BOOL` for
 the `RPC` and `RPW` DataItem flags. `DATAITEM` may be a long name, short tag,
 or numeric var ID.

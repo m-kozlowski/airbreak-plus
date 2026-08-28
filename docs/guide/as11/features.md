@@ -59,12 +59,17 @@ compatible tools. They can make selected commands available over connections
 where the stock firmware blocks them. By default, this includes `SetDateTime`
 and `ApplyUpgrade` over paired Bluetooth, allowing the date and time to be set
 and firmware to be updated without extracting the device OTA key. Commands can
-also be blocked; for example, firmware updates arriving through the cellular
-module can be disabled.
+also be blocked on selected direct-control connections.
 
 Selected device settings can also be made available for remote reading or
 writing. By default, this includes Warmup, which preheats the humidifier before
 therapy.
+
+An optional cloud-update patch prevents flow-generator updates received from
+the cellular service from being installed. By default, it records the update
+details without downloading the file. It can instead download and retain the
+file for inspection without installing it. Modem and alarm-module updates are
+unaffected.
 
 ## Time Zone
 

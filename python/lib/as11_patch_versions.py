@@ -34,6 +34,18 @@ AS11_FGBL_PATCH_VERSIONS = {
 # An explicit None means that the patch does not apply to that APPX.
 AS11_PATCH_VERSIONS = {
     "8_0_1": {
+        "cloud_firmware_change": {
+            "suppress_download": {
+                "address": 0x080BAA26,
+                "before": "18b9",
+                "after": "00bf",
+            },
+            "suppress_apply": {
+                "address": 0x080DAFA4,
+                "before": "0322",
+                "after": "0222",
+            },
+        },
         "rpc_dispatcher": {
             "init_entry": 0x0817EE14,
         },
@@ -61,6 +73,18 @@ AS11_PATCH_VERSIONS = {
         },
     },
     "8_3_0": {
+        "cloud_firmware_change": {
+            "suppress_download": {
+                "address": 0x080BBD42,
+                "before": "50b9",
+                "after": "00bf",
+            },
+            "suppress_apply": {
+                "address": 0x080DE780,
+                "before": "0322",
+                "after": "0222",
+            },
+        },
         "rpc_dispatcher": {
             "init_entry": 0x08189C6C,
         },
@@ -110,6 +134,18 @@ AS11_PATCH_VERSIONS = {
         },
     },
     "8_4_0": {
+        "cloud_firmware_change": {
+            "suppress_download": {
+                "address": 0x080BE24A,
+                "before": "50b9",
+                "after": "00bf",
+            },
+            "suppress_apply": {
+                "address": 0x080E0E18,
+                "before": "0322",
+                "after": "0222",
+            },
+        },
         "rpc_dispatcher": {
             "init_entry": 0x0818E21C,
         },
@@ -159,6 +195,18 @@ AS11_PATCH_VERSIONS = {
         },
     },
     "8_5_0": {
+        "cloud_firmware_change": {
+            "suppress_download": {
+                "address": 0x080BEA86,
+                "before": "50b9",
+                "after": "00bf",
+            },
+            "suppress_apply": {
+                "address": 0x080E16C8,
+                "before": "0322",
+                "after": "0222",
+            },
+        },
         "rpc_dispatcher": {
             "init_entry": 0x08190614,
         },
@@ -212,6 +260,18 @@ AS11_PATCH_VERSIONS = {
         },
     },
     "8_6_0": {
+        "cloud_firmware_change": {
+            "suppress_download": {
+                "address": 0x080BF266,
+                "before": "50b9",
+                "after": "00bf",
+            },
+            "suppress_apply": {
+                "address": 0x080E1E00,
+                "before": "0322",
+                "after": "0222",
+            },
+        },
         "rpc_dispatcher": {
             "init_entry": 0x081916DC,
         },

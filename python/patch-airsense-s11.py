@@ -235,8 +235,8 @@ KNOWN_RPC_PERMISSION_VCIDS = (
     0x0394,  # BLE encrypted small RPC lane, 632-byte buffer; paired with host 0x0395
     0x0396,  # BLE encrypted large RPC lane, 7682-byte buffer; paired with host 0x0397
     0x0398,  # no endpoint-catalog transport row found
-    0x0780,  # Internal/cloud small RPC lane, 1024-byte buffer; paired with 0x0781
-    0x0788,  # Internal/cloud large RPC lane, 7650-byte buffer; paired with 0x0789
+    0x0780,  # Cellular application's internal NCP lane; paired with 0x0781
+    0x0788,  # Cellular application's internal JSON-RPC lane; paired with 0x0789
 )
 
 # RPC method names known from AS11 firmware dispatch tables. Used only to
@@ -948,7 +948,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         "text_value": "custom_menu_text_value_factory",
     }
 
-    def __init__(self, asf, rpc_method_permissions=None, rpc_dataitem_permissions=None):
+    def __init__(self, asf, rpc_method_permissions=None, rpc_dataitem_permissions=None, cloud_firmware_change_mode="metadata"):
         self.asf = asf
         self._init_compiled_payloads()
         self.mop_callback_handlers = []
@@ -969,6 +969,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         self.disabled_stock_features = set()
         self.rpc_method_permission_rules = DEFAULT_RPC_METHOD_PERMISSIONS if rpc_method_permissions is None else rpc_method_permissions
         self.rpc_dataitem_permission_rules = DEFAULT_RPC_DATAITEM_PERMISSIONS if rpc_dataitem_permissions is None else rpc_dataitem_permissions
+        self.cloud_firmware_change_mode = cloud_firmware_change_mode
 
     def _payload_version_key(self, region=None):
         region = "APPL" if region is None else region
@@ -1030,6 +1031,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             storage[role], _ = self._inject_payload(name, data, region="FGBL")
         for hook, role in (("selector_hook", "gate"),
                            ("dispatch_hook_storage", "extension")):
+            # bl stock handler -> bl injected service handler
             self.asf.write_thumb2_bl_target(
                 self.asf.ptr_to_off(version_data[hook]), storage[role]
             )
@@ -1358,6 +1360,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
 
         return {
             "removed_rows": (layout["row_index"],),
+            # bl reminder scheduler -> nop; nop
             "patches": ((scheduler_off, b"\x00\xBF\x00\xBF"),),
         }
 
@@ -1609,6 +1612,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
                     ),
                     verbose=False,
                 )
+            # bl GuiScroller_ctor -> bl custom-settings scroller wrapper
             self.asf.write_thumb2_bl_target(
                 menu_symbols["call_off"], menu_symbols["wrapper"]
             )
@@ -2165,6 +2169,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
 
         n_code = 0
         if self.asf.u8(mul_off) == 5:
+            # movs r0, #5 -> movs r0, #0
             self.asf.write_u8(mul_off, 0)
             n_code = 1
 
@@ -2251,6 +2256,28 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         if changed:
             return PatchOutcome.ok("enabled: %s" % ", ".join(changed))
         return PatchOutcome.ok("already enabled")
+
+    def cloud_firmware_change(self):
+        """Retain a cloud FirmwareChange without applying it."""
+        version = self._patch_version_data("cloud_firmware_change")
+
+        if self.cloud_firmware_change_mode == "metadata":
+            site = version["suppress_download"]
+            # cbnz r0, accepted_flow_generator -> nop
+            # FirmwareChange parsing still stores UPGRD_TYPE=FG and the full
+            # download metadata, but the file-fetcher rejects that type.
+            summary = "metadata stored; download disabled"
+        else:
+            site = version["suppress_apply"]
+            # movs r2, #3 (ApplyUpgrade) -> movs r2, #2 (CheckUpgradeFile)
+            # The downloaded file is checked again, then the stock success
+            # path completes without applying it.
+            summary = "download enabled; apply disabled"
+
+        changed = self.asf.patch_exact(
+            site["address"], site["before"], site["after"]
+        )
+        return PatchOutcome.ok(summary if changed else "already configured")
 
     def rpc_permission_record_flags_are_bits(self, off, stride):
         if off + stride > len(self.asf.fw) or stride < 2:
@@ -2528,9 +2555,12 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         self.asf.write_u16(text_ids_off + 2, anchors["empty_text_id"])
         if menu_draw_call is not None:
             self.asf.write_u16(text_ids_off + 4, anchors["menu_text_id"])
+        # bl stock title draw -> bl clock-aware title draw
         self.asf.write_thumb2_bl_target(draw_call, draw_wrapper)
         if menu_draw_call is not None:
+            # bl stock menu-label draw -> bl clock-setting label draw
             self.asf.write_thumb2_bl_target(menu_draw_call, menu_draw_wrapper)
+        # bl stock root constructor -> bl clock timer constructor wrapper
         self.asf.write_thumb2_bl_target(ctor_call, ctor_wrapper)
         self.asf.write_u32(timer_slot, timer_callback | 1)
 
@@ -2726,6 +2756,12 @@ PATCH_LIST = [
         "function": "rpc_permissions",
     },
     {
+        "arg": "patch-cloud-firmware-change",
+        "desc": "Retain cloud flow-generator firmware changes without applying them.",
+        "default": False,
+        "function": "cloud_firmware_change",
+    },
+    {
         "arg": "patch-timezone-write",
         "desc": "Allow time-zone changes after summary history exists.",
         "default": True,
@@ -2812,6 +2848,14 @@ def build_arg_parser():
         help=("Set METHOD:VCID or DATAITEM:RPC|RPW permission; repeatable. "
               "Overrides the built-in rule for the same pair."),
     )
+    parser.add_argument(
+        "--cloud-firmware-change-mode",
+        choices=("metadata", "stage"),
+        default="metadata",
+        help=("Behavior of patch-cloud-firmware-change: retain download "
+              "metadata only, or stage and verify the file without applying it. "
+              "Default: metadata."),
+    )
     return parser
 
 
@@ -2874,6 +2918,7 @@ def run_patcher(args, detail_log=None):
         asf,
         rpc_method_permissions=rpc_method_permissions,
         rpc_dataitem_permissions=rpc_dataitem_permissions,
+        cloud_firmware_change_mode=args.cloud_firmware_change_mode,
     )
 
     print("\n=== Patches")

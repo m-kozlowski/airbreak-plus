@@ -45,8 +45,14 @@ PATCHES=(
     patch-asv-backup-rate
     patch-custom-settings
     patch-rpc-permissions
+    # patch-cloud-firmware-change
     patch-timezone-write
 )
+
+# When selected, patch-cloud-firmware-change keeps the command metadata without
+# downloading. Uncomment the second assignment to download and stage the .abc.
+CLOUD_FIRMWARE_CHANGE_MODE=metadata
+# CLOUD_FIRMWARE_CHANGE_MODE=stage
 
 # METHOD:VCID:BOOL and DATAITEM:RPC|RPW:BOOL rules applied by patch-rpc-permissions.
 # Known method sets:
@@ -69,7 +75,9 @@ RPC_PERMISSIONS=(
     # VerifySecurityData:0x0396:1
     # ClearAutoConnectList:0x0396:1
 
-    # uncomment the following to block OTA over cellular network
+    # Optional restrictions on direct RPC calls from the cellular application.
+    # These do not block broker FirmwareChange commands; use
+    # patch-cloud-firmware-change for that path.
     # InitiateUpgrade:0x0780:0
     # InitiateUpgrade:0x0788:0
     # UpgradeDataBlock:0x0780:0
@@ -82,7 +90,10 @@ RPC_PERMISSIONS=(
     # ApplyAuthenticatedUpgrade:0x0788:0
 )
 
-args=( "--all-patches" "n" )
+args=(
+    "--all-patches" "n"
+    "--cloud-firmware-change-mode" "$CLOUD_FIRMWARE_CHANGE_MODE"
+)
 for patch in "${PATCHES[@]}"; do
     args+=( "--$patch" "Y" )
 done
