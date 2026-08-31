@@ -43,6 +43,7 @@ NSTUB(0x08066D73, variable_set_visible_from_handler)
 NSTUB(0x08066BDE, variable_handler_get_uart_name)
 NSTUB(0x08066CB2, variable_handler_wire_width)
 NSTUB(0x08004100, ccx_get_globals)
+NSTUB(0x0806D09F, string_id_lookup_current_locale)
 
 // Config persistence
 NSTUB(0x0809E4A9, file_get_size)
@@ -59,6 +60,7 @@ NSTUB_VAR(0x20000BE0, magic_ptr)
 // Variable system
 NSTUB(0x08066E7E, variable_set_by_id)
 NSTUB(0x08066FC6, variable_get_by_id)
+NSTUB(0x080D9E94, parse_hex_u16)
 
 // Backlight adaptation
 NSTUB(0x0807A2A4, backlight_state_machine)

@@ -9,3 +9,11 @@
 uart_stream_schema_original_handler:
     .word 0xffffffff
 .size uart_stream_schema_original_handler, . - uart_stream_schema_original_handler
+
+/* Filled with the generated custom menu registry address when one exists. */
+.align 2
+.global uart_custom_settings_registry_addr
+.type uart_custom_settings_registry_addr, %object
+uart_custom_settings_registry_addr:
+    .word 0xffffffff
+.size uart_custom_settings_registry_addr, . - uart_custom_settings_registry_addr

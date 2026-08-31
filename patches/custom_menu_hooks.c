@@ -3,25 +3,13 @@ typedef unsigned short u16;
 typedef unsigned int u32;
 
 #include "s10_vars.h"
+#include "custom_menu_registry.h"
 
 /* Registry entries are emitted by patch-airsense into reclaimed firmware space.
  * container selects a clinical menu section or a generated page; flags carries
  * entry construction hints; mode_mask controls runtime per-MOP visibility.
  * A 0xff/0xffff entry terminates the registry.
  */
-typedef struct {
-	u8 container;
-	u8 flags;
-	u16 item_id;
-	u32 mode_mask;
-} custom_menu_entry_t;
-
-#define CUSTOM_MENU_FLAG_G4_NUMERIC 0x01
-#define CUSTOM_MENU_FLAG_HEADING    0x02
-#define CUSTOM_MENU_FLAG_PAGE       0x04
-
-#define CUSTOM_MENU_PAGE_CONTAINER_BASE 0x80
-#define CUSTOM_MENU_REGISTRY_LIMIT      64
 #define CUSTOM_MENU_INLINE_PAGES_OFFSET 0x3c
 
 extern void *malloc(unsigned size);

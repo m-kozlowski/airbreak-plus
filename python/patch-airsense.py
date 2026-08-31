@@ -2508,14 +2508,23 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             self._mop_handler_detail('vid_spoof', handler))
 
     def patch_uart_stream_schema(self):
-        """Report current globals[26]/globals[27] field layouts through G C."""
+        """Report live-stream layouts and the custom-settings menu registry."""
         hook = self.UART_STREAM_SCHEMA_HOOKS.get(self.asf.cdx_ver)
         if hook is None:
             return PatchOutcome.skip("unsupported CDX version %s" % self.asf.cdx_ver)
         pointer_off, original = hook
-        details = self._inject_function_pointer_payload(
+        details = list(self._inject_function_pointer_payload(
             'uart_stream_schema', pointer_off, 'G C command handler',
-            'uart_stream_schema_original_handler', original)
+            'uart_stream_schema_original_handler', original))
+
+        elf_path = self._require_versioned_artifact('uart_stream_schema', 'elf')
+        registry_slot = self._elf_symbol_addr(
+            elf_path, 'uart_custom_settings_registry_addr')
+        registry = 0xffffffff
+        if self.custom_settings_registry_addr is not None:
+            registry = self.asf.FLASH_BASE + self.custom_settings_registry_addr
+            details.append("Exposed custom settings registry at 0x%08X" % registry)
+        self.asf.write_u32(registry_slot - self.asf.FLASH_BASE, registry)
         return PatchOutcome.ok(None, *details)
 
     def custom_palette(self):
@@ -2714,7 +2723,7 @@ PATCH_PHASES = (
 
     ('Therapy data and reporting', (
         PatchSpec('patch-uart-stream-schema',
-                  'Report live-stream field layouts over UART.',
+                  'Report live-stream layouts and custom-settings metadata over UART.',
                   True, 'patch_uart_stream_schema'),
         PatchSpec('patch-fw-vidspoof',
                   'Set VID from therapy mode, using a regional variant where known.',

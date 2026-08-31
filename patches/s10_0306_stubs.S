@@ -14,6 +14,7 @@
 // GUI / LCD
 NSTUB(0x0807B5E5, GUI_SetColor)
 NSTUB(0x0807B809, LCD_FillRect)
+NSTUB(0x0806D499, snprintf)
 NSTUB_VAR(0x680000A0, gui_context)
 NSTUB(0x0806D38F, gui_invalidate_window)
 NSTUB(0x0806A2E3, gui_method_fc104_setup_and_invalidate)
@@ -34,6 +35,7 @@ NSTUB(0x08066D73, variable_set_visible_from_handler)
 NSTUB(0x08066BDE, variable_handler_get_uart_name)
 NSTUB(0x08066CB2, variable_handler_wire_width)
 NSTUB(0x08004100, ccx_get_globals)
+NSTUB(0x0806D09F, string_id_lookup_current_locale)
 
 // Config persistence
 NSTUB(0x0809E019, file_get_size)
@@ -41,6 +43,7 @@ NSTUB(0x0809E019, file_get_size)
 // Variable system
 NSTUB(0x08066E7E, variable_set_by_id)
 NSTUB(0x08066FC6, variable_get_by_id)
+NSTUB(0x080D99BC, parse_hex_u16)
 
 NSTUB(0x080BC733, pressure_limit_max_difference)
 NSTUB_VAR(0x2000E948, fvars)

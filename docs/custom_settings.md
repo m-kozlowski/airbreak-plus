@@ -160,6 +160,17 @@ pointers in a larger table and appends the generated pages. Each generated page
 has a stock Back row followed by records assigned to its container. Page records
 may use a stock section or an earlier generated page as their parent.
 
+## UART discovery
+
+The UART metadata patch exposes the final menu registry through `G C &CSG`.
+It resolves variable names and localized strings from the patched firmware, so
+external interfaces can build the same menu without a static list of reclaimed
+assignments. Current values and writes continue to use the stock `G S #VAR` and
+`P S #VAR VALUE` paths. Numeric limits and enum options remain available through
+the stock `G C #VAR` capability path. See the
+[serial protocol](serial_protocol.md#custom-settings-registry) for the record
+format.
+
 ## Mode visibility
 
 Clinical menu pages are constructed once. The MOP callback dispatcher calls the

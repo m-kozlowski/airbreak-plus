@@ -133,6 +133,20 @@ Query variable values and limits from the device.
 resmed_config.py -p /dev/ttyACM0 caps IPC MOP EPR
 ```
 
+### custom-settings
+
+Show the custom menu exposed by Airbreak-patched firmware, including localized
+labels, menu containers, mode masks, current values, numeric display metadata,
+and stock variable capabilities.
+
+```
+resmed_config.py -p /dev/ttyACM0 custom-settings
+```
+
+This command requires the UART metadata patch and a live serial or transparent
+TCP connection. See the [serial protocol](../serial_protocol.md#custom-settings-registry)
+for the underlying `G C &CSG` records.
+
 ### calibration eeprom
 
 Run the stock firmware EEPROM/SD maintenance service (`CAL=000B`) from the

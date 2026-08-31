@@ -1070,6 +1070,149 @@ def get_stream_schema(ser, tag):
     return None
 
 
+CUSTOM_MENU_CONTAINERS = {
+    0: 'Therapy',
+    1: 'Comfort',
+    2: 'Accessories',
+    3: 'Options',
+    4: 'Configuration',
+}
+
+
+def _parse_fixed_hex(text, digits, field):
+    if len(text) != digits or any(ch not in '0123456789ABCDEFabcdef' for ch in text):
+        raise ValueError(f"invalid {field}")
+    return int(text, 16)
+
+
+def _parse_signed_hex(text, digits, field):
+    value = _parse_fixed_hex(text, digits, field)
+    sign = 1 << (digits * 4 - 1)
+    return value - (sign << 1) if value & sign else value
+
+
+def parse_custom_settings_header(value):
+    """Parse G C &CSG header output into (version, entry_count)."""
+    parts = value.strip().split()
+    if len(parts) != 2:
+        raise ValueError("expected protocol version and entry count")
+    return (_parse_fixed_hex(parts[0], 2, 'protocol version'),
+            _parse_fixed_hex(parts[1], 2, 'entry count'))
+
+
+def _parse_custom_variable_common(parts):
+    name = parts[3].upper()
+    if len(name) != 3 or any(ch not in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+                             for ch in name):
+        raise ValueError("invalid UART variable name")
+    return {
+        'kind': parts[0],
+        'container': _parse_fixed_hex(parts[1], 2, 'container'),
+        'name': name,
+        'mop_mask': _parse_fixed_hex(parts[2], 8, 'MOP mask'),
+    }
+
+
+def _parse_sized_units(value):
+    if len(value) < 3 or value[2] != ':':
+        raise ValueError("invalid units field")
+    length = _parse_fixed_hex(value[:2], 2, 'units length')
+    text = value[3:]
+    if len(text) < length:
+        raise ValueError("truncated units field")
+    units = text[:length]
+    remainder = text[length:]
+    if remainder:
+        if remainder[0] != ' ':
+            raise ValueError("invalid units/label separator")
+        remainder = remainder[1:]
+    return units, remainder
+
+
+def parse_custom_settings_entry(value):
+    """Parse one indexed G C &CSG registry record."""
+    value = value.rstrip()
+    if value.startswith('V4 '):
+        parts = value.split(' ', 7)
+        if len(parts) != 8:
+            raise ValueError("invalid V4 field count")
+        entry = _parse_custom_variable_common(parts)
+        entry.update({
+            'scale': _parse_signed_hex(parts[4], 4, 'scale'),
+            'step': _parse_signed_hex(parts[5], 4, 'step'),
+            'decimals': _parse_fixed_hex(parts[6], 2, 'decimal places'),
+        })
+        entry['units'], entry['label'] = _parse_sized_units(parts[7])
+        return entry
+
+    if value.startswith('V8 '):
+        parts = value.split(' ', 4)
+        if len(parts) < 4:
+            raise ValueError("invalid V8 field count")
+        entry = _parse_custom_variable_common(parts)
+        entry['label'] = parts[4] if len(parts) == 5 else ''
+        return entry
+
+    if value.startswith('P '):
+        parts = value.split(' ', 2)
+        if len(parts) < 2:
+            raise ValueError("invalid page field count")
+        return {
+            'kind': 'P',
+            'container': _parse_fixed_hex(parts[1], 2, 'parent container'),
+            'label': parts[2] if len(parts) == 3 else '',
+        }
+
+    if value.startswith('H '):
+        parts = value.split(' ', 2)
+        if len(parts) < 2:
+            raise ValueError("invalid heading field count")
+        return {
+            'kind': 'H',
+            'container': _parse_fixed_hex(parts[1], 2, 'container'),
+            'label': parts[2] if len(parts) == 3 else '',
+        }
+
+    raise ValueError("unknown custom-settings record type")
+
+
+def _get_gc_value(ser, command):
+    _, responses = send_cmd(ser, command, timeout=0.5, quiet=True)
+    for response in responses:
+        if response['type'] != 'R':
+            continue
+        payload = response['payload'].decode('latin-1')
+        if '=' in payload:
+            return payload.split('=', 1)[1].strip()
+    return None
+
+
+def get_custom_settings_registry(ser):
+    """Read and parse the Airbreak custom-settings menu registry."""
+    value = _get_gc_value(ser, 'G C &CSG')
+    if value is None:
+        return None
+    version, count = parse_custom_settings_header(value)
+    if version != 1:
+        raise RuntimeError(f"unsupported custom settings protocol version {version}")
+    entries = []
+    page_count = 0
+    for index in range(count):
+        value = _get_gc_value(ser, f'G C &CSG {index:02X}')
+        if value is None:
+            raise RuntimeError(f"custom settings record {index:02X}: no response")
+        try:
+            entry = parse_custom_settings_entry(value)
+            if entry['kind'] == 'P':
+                entry['page_container'] = 0x80 + page_count
+                page_count += 1
+            entries.append(entry)
+        except ValueError as exc:
+            raise RuntimeError(
+                f"custom settings record {index:02X}: {exc}: {value!r}") from exc
+    return version, entries
+
+
 def get_xml_stream_schemas(ser):
     """Select the ResScan stream layout for the device MID and VID."""
     mft, mid_text = get_var(ser, 'MID')
@@ -1751,6 +1894,52 @@ def cmd_caps(ser, targets=None, verbose=False):
     return 0
 
 
+def cmd_custom_settings(ser):
+    """Show the menu registry exposed by Airbreak-patched firmware."""
+    try:
+        registry = get_custom_settings_registry(ser)
+    except (RuntimeError, ValueError) as exc:
+        print(f"[!] Invalid custom settings registry: {exc}")
+        return 1
+    if registry is None:
+        print("[!] Firmware does not expose the custom settings registry")
+        return 1
+
+    version, entries = registry
+    print(f"Custom settings protocol v{version} ({len(entries)} entries)")
+    page_names = {}
+    for index, entry in enumerate(entries):
+        kind = entry['kind']
+        container = entry['container']
+        container_name = CUSTOM_MENU_CONTAINERS.get(
+            container, page_names.get(container, f'container 0x{container:02X}'))
+
+        if kind == 'P':
+            page_names[entry['page_container']] = entry['label']
+            print(f"  [{index:02X}] page     {container_name} -> "
+                  f"0x{entry['page_container']:02X}  {entry['label']}")
+            continue
+        if kind == 'H':
+            print(f"  [{index:02X}] heading  {container_name}: {entry['label']}")
+            continue
+
+        frame_type, current = get_var(ser, entry['name'])
+        current_text = current if frame_type == 'R' else '?'
+        caps_type, caps = get_var_caps(ser, entry['name'])
+        caps_text = caps if caps_type == 'R' else '?'
+        common = (f"  [{index:02X}] {kind} {container_name}: {entry['name']} "
+                  f"= {current_text}  {entry['label']}  "
+                  f"modes=0x{entry['mop_mask']:08X} caps={caps_text}")
+        if kind == 'V8':
+            print(common)
+        else:
+            units = f" {entry['units']}" if entry['units'] else ''
+            print(common +
+                  f" step={entry['step']} scale={entry['scale']}"
+                  f" decimals={entry['decimals']}{units}")
+    return 0
+
+
 def cmd_calibration_eeprom(ser, action, timeout):
     """Run stock-firmware EEPROM/SD maintenance commands via CAL=000B and ETR."""
     spec = EEPROM_ACTIONS.get(action)
@@ -1861,6 +2050,7 @@ Commands:
   list                          List known variables and descriptions (offline)
   known [vars|groups|enums]     Quick offline lookup of names the tool knows about
   caps                          Query variable limits from device
+  custom-settings               Show Airbreak custom menu metadata
   calibration eeprom            Run stock-firmware EEPROM/SD maintenance
 
 Groups: """ + ', '.join(sorted(GROUPS.keys())) + """
@@ -1888,6 +2078,7 @@ Examples:
   %(prog)s known enums MOP
   %(prog)s -p /dev/ttyACM0 caps MGL
   %(prog)s -p /dev/ttyACM0 caps IPC MOP EPR
+  %(prog)s -p /dev/ttyACM0 custom-settings
   %(prog)s -p /dev/ttyACM0 calibration eeprom format-eep-fat --yes --really
   %(prog)s -p /dev/ttyACM0 calibration eeprom sd-backup-raw
   %(prog)s -p /dev/ttyACM0 calibration eeprom sd-restore-raw --yes
@@ -1950,6 +2141,9 @@ Examples:
     p_caps = sub.add_parser('caps', help='Query variable values and limits from device')
     p_caps.add_argument('targets', nargs='*', help='Variable names, group names, or "all" (default: all)')
 
+    sub.add_parser('custom-settings',
+                   help='Show the Airbreak custom-settings menu registry')
+
     p_cal = sub.add_parser('calibration', help='Calibration/service utilities')
     cal_sub = p_cal.add_subparsers(dest='calibration_command', help='Calibration command')
     cal_sub.required = True
@@ -2007,6 +2201,10 @@ Examples:
         if args.port.startswith('tcp:') and args.tcp_mode == 'text':
             print("[!] stream cannot use AirBridge text mode; use --tcp-mode transparent")
             return 1
+
+    if args.command == 'custom-settings' and args.port.startswith('ecp:'):
+        print("[!] custom-settings requires a live device")
+        return 1
 
     if args.port.startswith('ecp:'):
         try:
@@ -2067,6 +2265,9 @@ Examples:
 
         elif args.command == 'caps':
             return cmd_caps(ser, args.targets, verbose=args.verbose)
+
+        elif args.command == 'custom-settings':
+            return cmd_custom_settings(ser)
 
         elif args.command == 'calibration':
             if getattr(ser, 'ecp_file', False):

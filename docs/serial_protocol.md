@@ -53,7 +53,7 @@ command families:
 |---------|---------|
 | `G S` | Read variables and `&` channel state |
 | `P S` | Write variables and enable/disable live channels |
-| `G C` | Read `#` variable capabilities and, with the Airbreak extension, `&` live-stream schemas |
+| `G C` | Read `#` variable capabilities and Airbreak `&` metadata |
 | `G F` | Query stored EEPROM streams |
 | `G V` | Date-filtered stored stream query path |
 
@@ -79,6 +79,16 @@ Q: G C #VAR INDEX
 R: G C #VAR INDEX = CAPABILITY_DATA
 ```
 
+On SX567, the base response for a numeric g[4] variable contains the low four
+descriptor flag bits and the raw minimum and maximum. The base response for an
+enum g[8] variable contains the low four flag bits. Its indexed response adds
+the option count, whether that option is enabled, and its localized label.
+
+The Airbreak custom-settings records below add the menu location, MOP visibility
+mask, localized variable label, and numeric display metadata that are absent
+from the stock response. Limits and enum option metadata remain available
+through the stock commands and are not repeated in the custom records.
+
 ### Live Stream Schemas
 
 Airbreak-patched firmware accepts `G C &TAG` for channels in g[26] and g[27]:
@@ -95,6 +105,74 @@ channel's `L` frames.
 
 The command reads the active g[26]/g[27] descriptors, including layouts changed
 by the EDF signal merge. Stock firmware returns `0x6009` for this command.
+
+### Custom Settings Registry
+
+Airbreak-patched firmware uses the same `G C` extension to expose the generated
+custom-settings menu. The header reports the protocol version and number of
+registry records:
+
+```
+Q: G C &CSG
+R: G C &CSG = VV NN
+```
+
+`VV` is the two-digit protocol version. Version `01` uses the records below.
+`NN` is the two-digit record count. Records are read by a two-digit hexadecimal
+index:
+
+```
+Q: G C &CSG II
+R: G C &CSG II = ENTRY
+```
+
+The entry type is the first token:
+
+```
+V4 CC MOPMASK VAR SCALE STEP DP UL:UNITS LABEL
+V8 CC MOPMASK VAR LABEL
+P  CC LABEL
+H  CC LABEL
+```
+
+| Type | Content |
+|------|---------|
+| `V4` | Numeric g[4] variable |
+| `V8` | Enumerated g[8] variable |
+| `P` | Generated page link |
+| `H` | Static heading |
+
+All numeric fields are uppercase hexadecimal with the width shown by the
+response format. `LABEL` is the localized firmware string and occupies the rest
+of the response. `UL` is the byte length of `UNITS`, allowing a units string to
+contain spaces.
+
+Common variable fields:
+
+| Field | Meaning |
+|-------|---------|
+| `CC` | Menu container |
+| `VAR` | Three-character UART variable name |
+| `MOPMASK` | One visibility bit per MOP option index |
+
+Container values `00` through `04` are Therapy, Comfort, Accessories, Options,
+and Configuration. Each `P` record creates a page under `CC`; generated page
+containers start at `80` in `P` record order. Values starting at `80` on
+variable and heading records place those records on the generated page.
+
+For `V4`, `SCALE` and `STEP` are signed raw descriptor values. A positive
+`SCALE` means the displayed value is the raw value divided by the scale. A
+negative scale means the displayed value is the raw value multiplied by the
+absolute scale. `DP` gives the display precision. `UL` is the byte length of
+`UNITS`, allowing a units string to contain spaces.
+
+Read numeric limits with `G C #VAR`. Read enum permissions and labels with the
+stock `G C #VAR INDEX` command. Read and write current values through the normal
+`G S #VAR` and `P S #VAR VALUE` commands.
+
+`G C &CSG` does not replace the scalar `#CSG` variable path. Firmware with the
+UART metadata patch but no generated custom menu reports version `01` and zero
+records. Stock firmware returns `0x6009`.
 
 ### Live Stream Reporting
 
