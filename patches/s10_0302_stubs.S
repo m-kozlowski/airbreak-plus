@@ -19,6 +19,7 @@ NSTUB(0x0807B095, LCD_FillRect)
 NSTUB(0x0806CD65, snprintf)
 NSTUB(0x08067E05, memcpy_unrolled)
 NSTUB(0x0806C7D9, strlen_fast)
+NSTUB(0x080BD4A1, sqrtf)
 NSTUB(0x08074ED7, format_hex_u16)
 NSTUB(0x08074EFF, format_fixed_width_hex)
 

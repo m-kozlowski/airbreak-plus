@@ -1,7 +1,7 @@
 #ifndef _feat_triggercycle_h_
 #define _feat_triggercycle_h_
 
-const int PRE_CYCLE_MAX_TICKS = 60; // 600ms
+#define PRE_CYCLE_MAX_TICKS 60 // 600ms
 
 // Necessary to monitor actual setting changes despite the memory address being overwritten
 typedef struct {

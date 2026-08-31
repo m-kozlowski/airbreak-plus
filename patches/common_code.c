@@ -21,15 +21,6 @@ float lerp(float from, float to, float coeff) {
    return from + (to - from) * coeff;
 }
 
-// Based on this SO answer: https://stackoverflow.com/a/49991852
-float sqrtf(float n) {
-  float guess = 1.0f;
-  for(int i=0; i <= 10; i++) {
-    guess -= (guess*guess - n) / (2*guess);
-  }
-  return guess;
-}
-
 
 
 typedef struct {

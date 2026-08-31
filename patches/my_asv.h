@@ -9,25 +9,25 @@
 #define ASV_STEP_SKIP 3 // (steps) MUST be at least 1 for the padding code to work correctly
 
 // Low and high targets. The ASV PID will target at least `asv_low` volume and at most `asv_high`
-const float asv_low = 0.94f;
-const float asv_high = 0.96f;
+#define asv_low 0.94f
+#define asv_high 0.96f
 
 // Slow: 0.2f, 0.025f, 0.05f - very slow, fails to do its job a lot of the time. TBH autotriggered breaths can still be jarring
-const float asv_pid_p = 0.5f;
-const float asv_pid_i = 0.1f;
-const float asv_pid_d = 0.2f;
-const float asv_pid_min = 0.0f;
-const float asv_pid_max = 1.5f;
+#define asv_pid_p 0.5f
+#define asv_pid_i 0.1f
+#define asv_pid_d 0.2f
+#define asv_pid_min 0.0f
+#define asv_pid_max 1.5f
 
-const float asv_coeff1 = 0.025f; // 0.025: ~40% contribution from last 20 breaths, ~66% from 40, ~77% from 60
-const float asv_coeff2 = 0.3f;
+#define asv_coeff1 0.025f // ~40% contribution from last 20 breaths, ~66% from 40, ~77% from 60
+#define asv_coeff2 0.3f
 
-const float asv_dampen_max = 0.4f;
+#define asv_dampen_max 0.4f
 
 // Amount of breaths needing ASV to enable and disable asv_factor
 #define ASV_BREATH_SKIP 2
 #define ASV_BREATH_SKIP_OFF 6
-const float ASV_BREATH_SKIP_MAX_FACTOR = 0.2f;
+#define ASV_BREATH_SKIP_MAX_FACTOR 0.2f
 
 /////////////////////////
 // PID controller code //

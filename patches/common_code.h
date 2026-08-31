@@ -44,14 +44,16 @@ static const float *actual_pressure = &fvars[1]; // (cmH2O) Actual current press
 
 static const   int *therapy_mode = &ivars[0x6f]; // It's 0 when device is inactive
 // Values of therapy_mode:
-const int MODE_OFF   = 0; // Inactive
-const int MODE_CPAP  = 1; // CPAP
-const int MODE_APAP  = 2; // APAP / AutoSet / AutoSet For Her
-const int MODE_VAUTO = 3; // VAuto
-const int MODE_S     = 4; // S / ST / PAC (with EasyBreathe=Off)
-const int MODE_IVAPS = 6; // iVAPS
-const int MODE_S_EB  = 8; // S / ST / PAC (with EasyBreathe=On)
-const int MODE_ASV   = 9; // ASV / ASVAuto
+enum {
+  MODE_OFF   = 0, // Inactive
+  MODE_CPAP  = 1, // CPAP
+  MODE_APAP  = 2, // APAP / AutoSet / AutoSet For Her
+  MODE_VAUTO = 3, // VAuto
+  MODE_S     = 4, // S / ST / PAC (with EasyBreathe=Off)
+  MODE_IVAPS = 6, // iVAPS
+  MODE_S_EB  = 8, // S / ST / PAC (with EasyBreathe=On)
+  MODE_ASV   = 9, // ASV / ASVAuto
+};
 
 static const   int *pap_timer = &ivars[0];
 
@@ -142,7 +144,6 @@ float remapc(float s, float start, float end, float new_start, float new_end); /
 float remap01(float s, float start, float end);
 float remap01c(float s, float start, float end); // Version that clamps to 0-1
 float lerp(float from, float to, float coeff);
-float sqrtf(float n);
 
 
 typedef enum {
@@ -213,7 +214,7 @@ typedef struct {
 
 void init_settings(settings_proxy_t *sett);
 
-const float tr_coeff = 0.025f;
+#define tr_coeff 0.025f
 
 typedef struct {
   float last_progress;

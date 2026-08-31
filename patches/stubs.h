@@ -20,6 +20,7 @@ extern int snprintf(char * buf, unsigned len, const char * fmt, ...);
 extern unsigned char * gui_context;
 
 extern unsigned tim_read_tim5(void);
+extern float sqrtf(float value);
 
 typedef unsigned size_t;
 
