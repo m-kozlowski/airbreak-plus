@@ -94,7 +94,7 @@ bool is_cmd_ipap_constant(history_t *hist) {
   const int t = hist->tick;
   const int t1 = t & (HISTORY_LENGTH - 1);
   const int t2 = (t-4) & (HISTORY_LENGTH - 1);
-  return abs(hist->cmd_ipap[t1] - hist->cmd_ipap[t2]) <= 0.041f;
+  return absf(hist->cmd_ipap[t1] - hist->cmd_ipap[t2]) <= 0.041f;
 }
 
 

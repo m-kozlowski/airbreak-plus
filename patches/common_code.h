@@ -123,8 +123,7 @@ static const   int *pap_timer = &ivars[0];
 
 #define clamp01(a) ({ clamp(a, 0.0f, 1.0f) })
 
-#define sign(a) ({a >= 0 ? 1 : -1; })
-#define abs(a) (a * sign(a))
+#define absf(a) __builtin_fabsf(a)
 
 // Usage example: `inplace(max, &a, b)`
 #define inplace(fn, ptr, args...) ({ \

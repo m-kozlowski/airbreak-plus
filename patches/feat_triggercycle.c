@@ -67,7 +67,7 @@ void update_triggercycle(triggercycle_t *trc, tracking_t *tr, history_t *hist) {
         do_trigger += (remap01c(p_error, -0.1f, -0.35f) - remap01c(p_error, 0.1f, 0.35f)) * 0.3f; 
       }
 
-      do_trigger += remap01c(abs(rte-cte), 0.3f, 0.0f) * 0.2f;
+      do_trigger += remap01c(absf(rte-cte), 0.3f, 0.0f) * 0.2f;
 
       if (do_trigger >= 1.0f) {sens_trigger = -5.0f; } // Guarantee trigger
       else { sens_trigger = 999.0f; } // Make trigger impossible
