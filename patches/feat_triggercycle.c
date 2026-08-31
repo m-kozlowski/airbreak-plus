@@ -17,7 +17,7 @@ triggercycle_t* get_triggercycle() {
   return GET_PTR(PTR_TRIGGERCYCLE, triggercycle_t, init_triggercycle);
 }
 
-void update_triggercycle(triggercycle_t *trc, tracking_t *tr) {
+void update_triggercycle(triggercycle_t *trc, tracking_t *tr, history_t *hist) {
   // If the value is changed, it means it was changed by the UI code due to user input. Update the reference value
   if (sens_trigger != trc->last_trigger) {
     trc->real_trigger = sens_trigger;
@@ -29,8 +29,6 @@ void update_triggercycle(triggercycle_t *trc, tracking_t *tr) {
   if (!trc->custom_trigger) { sens_trigger = trc->real_trigger; }
   if (!trc->custom_cycle) { sens_cycle = trc->real_cycle; }
   
-  history_t *hist = get_history();
-
   if (tr->st_inhaling) {
     const float cti = tr->current.ti;
     const float s = trc->real_cycle;
@@ -58,13 +56,14 @@ void update_triggercycle(triggercycle_t *trc, tracking_t *tr) {
     //  * Pressure Error: usually goes to at least 0.2cmH2O below command just before detected inhales, sometimes up to 0.4-0.5. Random fluctuations usually stay within 0.15
     //  * Time-based: Slightly lower trigger threshold within +-0.3s of expected next 
 
-    if (trc->custom_trigger && (is_cmd_ipap_constant(hist) || tr->st_pre_trigger > 0)) {
+    const bool cmd_ipap_constant = trc->custom_trigger && is_cmd_ipap_constant(hist);
+    if (trc->custom_trigger && (cmd_ipap_constant || tr->st_pre_trigger > 0)) {
       float do_trigger = remap01c(*flow_compensated, 0.0f, s);
 
       if (cte >= 1.2f) {
         do_trigger += remap01c(trc->volbased, 0.020f, 0.040f) * 0.3f - remap01c(trc->volbased, 0.015f, 0.05f) * 0.2f;
       }
-      if (is_cmd_ipap_constant(hist)) {
+      if (cmd_ipap_constant) {
         do_trigger += (remap01c(p_error, -0.1f, -0.35f) - remap01c(p_error, 0.1f, 0.35f)) * 0.3f; 
       }
 

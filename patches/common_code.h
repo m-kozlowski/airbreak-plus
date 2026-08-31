@@ -183,7 +183,7 @@ history_t *get_history();
 float get_delta_flow(history_t *hist, int bin_size); // Get the rate of change of the flow curve
 bool is_cmd_ipap_constant(history_t *hist); // Test if cmd_ipap is currently unchanging
 
-void apply_jitter(bool undo);
+void apply_jitter(history_t *hist, bool undo);
 
 
 ///////////////////////////////
@@ -239,7 +239,7 @@ typedef struct {
 
 void init_tracking(tracking_t *tr);
 tracking_t* get_tracking();
-void update_tracking(tracking_t *tr); 
+void update_tracking(tracking_t *tr, history_t *hist);
 
 #include "my_asv.h"
 #include "feat_triggercycle.h"

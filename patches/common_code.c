@@ -98,8 +98,7 @@ bool is_cmd_ipap_constant(history_t *hist) {
 }
 
 
-void apply_jitter(bool undo) {
-  history_t *hist = get_history();
+void apply_jitter(history_t *hist, bool undo) {
   if (undo) { // Undo the previous
     hist->last_jitter *= -1;
   } else { // Get new jitter value
@@ -153,7 +152,7 @@ tracking_t* get_tracking() {
   return GET_PTR(PTR_TRACKING, tracking_t, init_tracking);
 }
 
-void update_tracking(tracking_t *tr) {
+void update_tracking(tracking_t *tr, history_t *hist) {
   const unsigned now = tim_read_tim5();
   // Initialize if it's the first time or more than 0.1s elapsed, suggesting that the therapy was stopped and re-started.
   if ((now - tr->last_time) > 100000) { init_tracking(tr); }
@@ -198,7 +197,6 @@ void update_tracking(tracking_t *tr) {
     inplace(min, &tr->current.exh_maxflow, *flow_compensated);
 
     // If flow extrapolated 80ms(~blower delay) into the future crosses threshold, increment pretrigger
-    history_t *hist = get_history();
     const float flow2 = max(*flow_compensated, *flow_compensated + get_delta_flow(hist, 4)*8.0f); // Flow extrapolated 80ms into the future
     if (flow2 > sens_trigger) { tr->st_pre_trigger += 1; } // Slightly higher than baseline trigger sens
     else { tr->st_pre_trigger = 0; } // This has to reset, flow doesn't slow down during the start of a breath

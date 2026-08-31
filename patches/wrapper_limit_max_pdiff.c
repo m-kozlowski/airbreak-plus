@@ -82,7 +82,7 @@ void MAIN start() {
   history_t *hist = get_history();
   update_history(hist);
   tracking_t *tr = get_tracking();
-  update_tracking(tr);
+  update_tracking(tr, hist);
   asv_data_t *asv = get_asv_data();
   float asv_max = custom_asv_max_cm();
   asv->asv_sens = custom_asv_sens_multiplier();
@@ -91,7 +91,7 @@ void MAIN start() {
 
   features_t *feat = GET_PTR(PTR_FEATURES, features_t, init_features);
 
-  apply_jitter(true);
+  apply_jitter(hist, true);
 
   float dps = 0.0f;
   bool triggercycle_toggle = custom_g8_toggle(wrapper_limit_max_pdiff_triggercycle_var_id, true);
@@ -106,7 +106,7 @@ void MAIN start() {
     trc->custom_trigger = true;
     trc->custom_cycle = true;
   }
-  update_triggercycle(trc, tr);
+  update_triggercycle(trc, tr, hist);
 
   float new_ps = *cmd_ps;
 
@@ -158,5 +158,5 @@ void MAIN start() {
   pressure_limit_max_difference(); // Execute the original function
   *cmd_ps = orig_ps;
 
-  apply_jitter(false);
+  apply_jitter(hist, false);
 }
