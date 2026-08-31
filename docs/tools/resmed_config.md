@@ -135,8 +135,8 @@ resmed_config.py -p /dev/ttyACM0 caps IPC MOP EPR
 
 ### custom-settings
 
-Show the custom menu exposed by Airbreak-patched firmware, including localized
-labels, menu containers, mode masks, current values, numeric display metadata,
+Show the custom variables exposed by Airbreak-patched firmware, including
+localized labels, categories, mode masks, current values, display metadata,
 and stock variable capabilities.
 
 ```

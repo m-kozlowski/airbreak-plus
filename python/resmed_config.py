@@ -1092,7 +1092,7 @@ def _parse_signed_hex(text, digits, field):
 
 
 def parse_custom_settings_header(value):
-    """Parse G C &CSG header output into (version, entry_count)."""
+    """Parse G C &CSG header output into (version, variable_count)."""
     parts = value.strip().split()
     if len(parts) != 2:
         raise ValueError("expected protocol version and entry count")
@@ -1107,7 +1107,7 @@ def _parse_custom_variable_common(parts):
         raise ValueError("invalid UART variable name")
     return {
         'kind': parts[0],
-        'container': _parse_fixed_hex(parts[1], 2, 'container'),
+        'category': _parse_fixed_hex(parts[1], 2, 'category'),
         'name': name,
         'mop_mask': _parse_fixed_hex(parts[2], 8, 'MOP mask'),
     }
@@ -1153,26 +1153,6 @@ def parse_custom_settings_entry(value):
         entry['label'] = parts[4] if len(parts) == 5 else ''
         return entry
 
-    if value.startswith('P '):
-        parts = value.split(' ', 2)
-        if len(parts) < 2:
-            raise ValueError("invalid page field count")
-        return {
-            'kind': 'P',
-            'container': _parse_fixed_hex(parts[1], 2, 'parent container'),
-            'label': parts[2] if len(parts) == 3 else '',
-        }
-
-    if value.startswith('H '):
-        parts = value.split(' ', 2)
-        if len(parts) < 2:
-            raise ValueError("invalid heading field count")
-        return {
-            'kind': 'H',
-            'container': _parse_fixed_hex(parts[1], 2, 'container'),
-            'label': parts[2] if len(parts) == 3 else '',
-        }
-
     raise ValueError("unknown custom-settings record type")
 
 
@@ -1188,7 +1168,7 @@ def _get_gc_value(ser, command):
 
 
 def get_custom_settings_registry(ser):
-    """Read and parse the Airbreak custom-settings menu registry."""
+    """Read custom variable metadata from Airbreak-patched firmware."""
     value = _get_gc_value(ser, 'G C &CSG')
     if value is None:
         return None
@@ -1196,16 +1176,12 @@ def get_custom_settings_registry(ser):
     if version != 1:
         raise RuntimeError(f"unsupported custom settings protocol version {version}")
     entries = []
-    page_count = 0
     for index in range(count):
         value = _get_gc_value(ser, f'G C &CSG {index:02X}')
         if value is None:
             raise RuntimeError(f"custom settings record {index:02X}: no response")
         try:
             entry = parse_custom_settings_entry(value)
-            if entry['kind'] == 'P':
-                entry['page_container'] = 0x80 + page_count
-                page_count += 1
             entries.append(entry)
         except ValueError as exc:
             raise RuntimeError(
@@ -1895,7 +1871,7 @@ def cmd_caps(ser, targets=None, verbose=False):
 
 
 def cmd_custom_settings(ser):
-    """Show the menu registry exposed by Airbreak-patched firmware."""
+    """Show custom variables exposed by Airbreak-patched firmware."""
     try:
         registry = get_custom_settings_registry(ser)
     except (RuntimeError, ValueError) as exc:
@@ -1906,28 +1882,18 @@ def cmd_custom_settings(ser):
         return 1
 
     version, entries = registry
-    print(f"Custom settings protocol v{version} ({len(entries)} entries)")
-    page_names = {}
+    print(f"Custom settings protocol v{version} ({len(entries)} variables)")
     for index, entry in enumerate(entries):
         kind = entry['kind']
-        container = entry['container']
-        container_name = CUSTOM_MENU_CONTAINERS.get(
-            container, page_names.get(container, f'container 0x{container:02X}'))
-
-        if kind == 'P':
-            page_names[entry['page_container']] = entry['label']
-            print(f"  [{index:02X}] page     {container_name} -> "
-                  f"0x{entry['page_container']:02X}  {entry['label']}")
-            continue
-        if kind == 'H':
-            print(f"  [{index:02X}] heading  {container_name}: {entry['label']}")
-            continue
+        category = entry['category']
+        category_name = CUSTOM_MENU_CONTAINERS.get(
+            category, f'category 0x{category:02X}')
 
         frame_type, current = get_var(ser, entry['name'])
         current_text = current if frame_type == 'R' else '?'
         caps_type, caps = get_var_caps(ser, entry['name'])
         caps_text = caps if caps_type == 'R' else '?'
-        common = (f"  [{index:02X}] {kind} {container_name}: {entry['name']} "
+        common = (f"  [{index:02X}] {kind} {category_name}: {entry['name']} "
                   f"= {current_text}  {entry['label']}  "
                   f"modes=0x{entry['mop_mask']:08X} caps={caps_text}")
         if kind == 'V8':
@@ -2142,7 +2108,7 @@ Examples:
     p_caps.add_argument('targets', nargs='*', help='Variable names, group names, or "all" (default: all)')
 
     sub.add_parser('custom-settings',
-                   help='Show the Airbreak custom-settings menu registry')
+                   help='Show Airbreak custom variable metadata')
 
     p_cal = sub.add_parser('calibration', help='Calibration/service utilities')
     cal_sub = p_cal.add_subparsers(dest='calibration_command', help='Calibration command')

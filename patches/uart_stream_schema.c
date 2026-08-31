@@ -13,8 +13,8 @@
  *   G C &CSG       = VV NN
  *   G C &CSG INDEX = ENTRY
  *
- * VV is the extension version and NN is the registry entry count. INDEX is a
- * two-digit hexadecimal record index. The stock G C handler still handles
+ * VV is the extension version and NN is the variable count. INDEX is a
+ * two-digit hexadecimal variable index. The stock G C handler still handles
  * every request outside these extensions.
  */
 
@@ -50,6 +50,10 @@ extern void variable_handler_release(void *handler);
 extern void variable_handler_get_uart_name(void *handler, char *name);
 extern unsigned int variable_handler_wire_width(void *handler);
 extern const char *string_id_lookup_current_locale(const u16 *str_id);
+extern unsigned int strlen_fast(const char *text);
+extern void format_hex_u16(char *buffer, unsigned int value);
+extern void format_fixed_width_hex(char *buffer, unsigned int value,
+                                   unsigned int width);
 extern unsigned int parse_hex_u16(const char *text, int max_length,
                                   int stop_at_space);
 extern int snprintf(char *buffer, unsigned int size, const char *format, ...);
@@ -95,12 +99,6 @@ static const u16 *find_stream(const char *name, u8 *field_count)
     return 0;
 }
 
-static char hex_digit(unsigned int value)
-{
-    value &= 0xf;
-    return (value < 10) ? (char)('0' + value) : (char)('A' + value - 10);
-}
-
 static int append_char(char **cursor, char *end, char value)
 {
     if (*cursor + 1 >= end)
@@ -111,17 +109,11 @@ static int append_char(char **cursor, char *end, char value)
 
 static int append_hex_byte(char **cursor, char *end, unsigned int value)
 {
-    return append_char(cursor, end, hex_digit(value >> 4)) &&
-           append_char(cursor, end, hex_digit(value));
-}
-
-static unsigned int text_length(const char *text)
-{
-    unsigned int length = 0;
-
-    while (text[length] != '\0' && length < 0xff)
-        length++;
-    return length;
+    if ((unsigned int)(end - *cursor) < 3)
+        return 0;
+    format_fixed_width_hex(*cursor, value, 2);
+    *cursor += 2;
+    return 1;
 }
 
 static const char *localized_string(u16 str_id)
@@ -130,16 +122,10 @@ static const char *localized_string(u16 str_id)
     return text ? text : "";
 }
 
-static int write_error(char *response, unsigned int response_size,
-                       const char error[4])
+static int write_error(char *response, unsigned int response_size, u16 error)
 {
-    unsigned int i;
-
-    if (response_size == 0)
-        return 0;
-    for (i = 0; i < 4 && i + 1 < response_size; ++i)
-        response[i] = error[i];
-    response[i] = '\0';
+    if (response_size >= 5)
+        format_hex_u16(response, error);
     return 0;
 }
 
@@ -147,7 +133,7 @@ static int formatted_response(char *response, unsigned int response_size,
                               int length)
 {
     if (length < 0 || (unsigned int)length >= response_size)
-        return write_error(response, response_size, "6052");
+        return write_error(response, response_size, 0x6052);
     return 1;
 }
 
@@ -159,7 +145,7 @@ static int write_schema(const u16 *var_ids, u8 field_count, char *response,
     unsigned int i;
 
     if (!append_hex_byte(&cursor, end, field_count))
-        return write_error(response, response_size, "6052");
+        return write_error(response, response_size, 0x6052);
 
     for (i = 0; i < field_count; ++i) {
         u32 handler[VARIABLE_HANDLER_WORDS];
@@ -178,7 +164,7 @@ static int write_schema(const u16 *var_ids, u8 field_count, char *response,
             !append_char(&cursor, end, name[2]) ||
             !append_char(&cursor, end, ':') ||
             !append_hex_byte(&cursor, end, width))
-            return write_error(response, response_size, "6052");
+            return write_error(response, response_size, 0x6052);
     }
 
     *cursor = '\0';
@@ -200,17 +186,71 @@ static int custom_menu_entry_is_end(const custom_menu_entry_t *entry)
     return entry->container == 0xff || entry->item_id == 0xffff;
 }
 
-static unsigned int custom_settings_entry_count(void)
+static unsigned int custom_settings_variable_count(void)
 {
     const custom_menu_entry_t *entry = custom_settings_registry();
     unsigned int count = 0;
 
-    while (entry && count < CUSTOM_MENU_REGISTRY_LIMIT &&
-           !custom_menu_entry_is_end(entry)) {
-        count++;
-        entry++;
+    for (unsigned int guard = 0; entry && guard < CUSTOM_MENU_REGISTRY_LIMIT;
+         guard++, entry++) {
+        if (custom_menu_entry_is_end(entry))
+            break;
+        if (!(entry->flags & (CUSTOM_MENU_FLAG_PAGE |
+                              CUSTOM_MENU_FLAG_HEADING)))
+            count++;
     }
     return count;
+}
+
+static const custom_menu_entry_t *custom_settings_variable(unsigned int index)
+{
+    const custom_menu_entry_t *entry = custom_settings_registry();
+
+    for (unsigned int guard = 0; entry && guard < CUSTOM_MENU_REGISTRY_LIMIT;
+         guard++, entry++) {
+        if (custom_menu_entry_is_end(entry))
+            break;
+        if (entry->flags & (CUSTOM_MENU_FLAG_PAGE | CUSTOM_MENU_FLAG_HEADING))
+            continue;
+        if (index-- == 0)
+            return entry;
+    }
+    return 0;
+}
+
+static const custom_menu_entry_t *custom_settings_page(u8 container)
+{
+    const custom_menu_entry_t *entry = custom_settings_registry();
+    unsigned int ordinal;
+
+    if (container < CUSTOM_MENU_PAGE_CONTAINER_BASE)
+        return 0;
+    ordinal = container - CUSTOM_MENU_PAGE_CONTAINER_BASE;
+    for (unsigned int guard = 0; entry && guard < CUSTOM_MENU_REGISTRY_LIMIT;
+         guard++, entry++) {
+        if (custom_menu_entry_is_end(entry))
+            break;
+        if (!(entry->flags & CUSTOM_MENU_FLAG_PAGE))
+            continue;
+        if (ordinal-- == 0)
+            return entry;
+    }
+    return 0;
+}
+
+static u8 custom_settings_category(u8 container)
+{
+    for (unsigned int depth = 0; depth < CUSTOM_MENU_REGISTRY_LIMIT; depth++) {
+        const custom_menu_entry_t *page;
+
+        if (container < CUSTOM_MENU_PAGE_CONTAINER_BASE)
+            return container < 5 ? container : 0xff;
+        page = custom_settings_page(container);
+        if (!page)
+            return 0xff;
+        container = page->container;
+    }
+    return 0xff;
 }
 
 static int write_custom_settings_header(char *response,
@@ -220,32 +260,27 @@ static int write_custom_settings_header(char *response,
 
     length = snprintf(response, response_size, "%02X %02X",
                       CUSTOM_SETTINGS_PROTOCOL_VERSION,
-                      custom_settings_entry_count());
+                      custom_settings_variable_count());
     return formatted_response(response, response_size, length);
 }
 
 static int write_custom_settings_entry(unsigned int index, char *response,
                                        unsigned int response_size)
 {
-    const custom_menu_entry_t *registry = custom_settings_registry();
-    unsigned int count = custom_settings_entry_count();
-    const custom_menu_entry_t *entry;
+    const custom_menu_entry_t *entry = custom_settings_variable(index);
     u32 handler[VARIABLE_HANDLER_WORDS];
     const u8 *descriptor = 0;
     char name[4] = {0, 0, 0, 0};
     const char *units;
+    unsigned int units_length;
+    u8 category;
     int length;
 
-    if (!registry || index >= count)
-        return write_error(response, response_size, "6033");
-    entry = registry + index;
-
-    if (entry->flags & (CUSTOM_MENU_FLAG_PAGE | CUSTOM_MENU_FLAG_HEADING)) {
-        length = snprintf(response, response_size, "%c %02X %s",
-                          (entry->flags & CUSTOM_MENU_FLAG_PAGE) ? 'P' : 'H',
-                          entry->container, localized_string(entry->item_id));
-        return formatted_response(response, response_size, length);
-    }
+    if (!entry)
+        return write_error(response, response_size, 0x6033);
+    category = custom_settings_category(entry->container);
+    if (category == 0xff)
+        return write_error(response, response_size, 0x6033);
 
     variable_lookup_handler(handler, entry->item_id, 0);
     descriptor = (const u8 *)handler[3];
@@ -253,19 +288,22 @@ static int write_custom_settings_entry(unsigned int index, char *response,
     if (entry->flags & CUSTOM_MENU_FLAG_G4_NUMERIC) {
         units = localized_string(*(const u16 *)(descriptor +
                                                 G4_UNITS_STR_OFFSET));
+        units_length = strlen_fast(units);
+        if (units_length > 0xff)
+            units_length = 0xff;
         length = snprintf(
             response, response_size,
             "V4 %02X %08X %s %04X %04X %02X %02X:%s %s",
-            entry->container, entry->mode_mask, name,
+            category, entry->mode_mask, name,
             *(const u16 *)(descriptor + G4_SCALE_OFFSET),
             *(const u16 *)(descriptor + G4_STEP_OFFSET),
-            descriptor[G4_DECIMALS_OFFSET], text_length(units), units,
+            descriptor[G4_DECIMALS_OFFSET], units_length, units,
             localized_string(*(const u16 *)(descriptor +
                                              DESCRIPTOR_NAME_STR_OFFSET)));
     } else {
         length = snprintf(
             response, response_size, "V8 %02X %08X %s %s",
-            entry->container, entry->mode_mask, name,
+            category, entry->mode_mask, name,
             localized_string(*(const u16 *)(descriptor +
                                              DESCRIPTOR_NAME_STR_OFFSET)));
     }
@@ -282,10 +320,10 @@ static int handle_custom_settings(const char *request, char *response,
         return write_custom_settings_header(response, response_size);
     if (request[8] != ' ' || request[9] == '\0' || request[10] == '\0' ||
         request[11] != '\0')
-        return write_error(response, response_size, "600E");
+        return write_error(response, response_size, 0x600E);
     index = parse_hex_u16(request + 9, 2, 0);
     if (index == 0xffffffffu)
-        return write_error(response, response_size, "6031");
+        return write_error(response, response_size, 0x6031);
     return write_custom_settings_entry(index, response, response_size);
 }
 

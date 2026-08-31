@@ -162,12 +162,13 @@ may use a stock section or an earlier generated page as their parent.
 
 ## UART discovery
 
-The UART metadata patch exposes the final menu registry through `G C &CSG`.
-It resolves variable names and localized strings from the patched firmware, so
-external interfaces can build the same menu without a static list of reclaimed
-assignments. Current values and writes continue to use the stock `G S #VAR` and
-`P S #VAR VALUE` paths. Numeric limits and enum options remain available through
-the stock `G C #VAR` capability path. See the
+The UART metadata patch exposes custom variables through `G C &CSG`. It
+resolves variable names, categories, and localized strings from the patched
+firmware, so external interfaces do not need a static list of reclaimed
+assignments. Firmware page layout and static headings are not exposed. Current
+values and writes continue to use the stock `G S #VAR` and `P S #VAR VALUE`
+paths. Numeric limits and enum options remain available through the stock
+`G C #VAR` capability path. See the
 [serial protocol](serial_protocol.md#custom-settings-registry) for the record
 format.
 

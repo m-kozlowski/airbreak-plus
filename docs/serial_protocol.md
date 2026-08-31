@@ -84,7 +84,7 @@ descriptor flag bits and the raw minimum and maximum. The base response for an
 enum g[8] variable contains the low four flag bits. Its indexed response adds
 the option count, whether that option is enabled, and its localized label.
 
-The Airbreak custom-settings records below add the menu location, MOP visibility
+The Airbreak custom-settings records below add the category, MOP visibility
 mask, localized variable label, and numeric display metadata that are absent
 from the stock response. Limits and enum option metadata remain available
 through the stock commands and are not repeated in the custom records.
@@ -108,9 +108,8 @@ by the EDF signal merge. Stock firmware returns `0x6009` for this command.
 
 ### Custom Settings Registry
 
-Airbreak-patched firmware uses the same `G C` extension to expose the generated
-custom-settings menu. The header reports the protocol version and number of
-registry records:
+Airbreak-patched firmware uses the same `G C` extension to expose custom
+settings. The header reports the protocol version and number of variables:
 
 ```
 Q: G C &CSG
@@ -131,16 +130,12 @@ The entry type is the first token:
 ```
 V4 CC MOPMASK VAR SCALE STEP DP UL:UNITS LABEL
 V8 CC MOPMASK VAR LABEL
-P  CC LABEL
-H  CC LABEL
 ```
 
 | Type | Content |
 |------|---------|
 | `V4` | Numeric g[4] variable |
 | `V8` | Enumerated g[8] variable |
-| `P` | Generated page link |
-| `H` | Static heading |
 
 All numeric fields are uppercase hexadecimal with the width shown by the
 response format. `LABEL` is the localized firmware string and occupies the rest
@@ -151,14 +146,14 @@ Common variable fields:
 
 | Field | Meaning |
 |-------|---------|
-| `CC` | Menu container |
+| `CC` | Category |
 | `VAR` | Three-character UART variable name |
 | `MOPMASK` | One visibility bit per MOP option index |
 
-Container values `00` through `04` are Therapy, Comfort, Accessories, Options,
-and Configuration. Each `P` record creates a page under `CC`; generated page
-containers start at `80` in `P` record order. Values starting at `80` on
-variable and heading records place those records on the generated page.
+Category values `00` through `04` are Therapy, Comfort, Accessories, Options,
+and Configuration. Variables placed on generated firmware pages report the
+top-level category containing that page; page layout and static headings are
+not part of this interface.
 
 For `V4`, `SCALE` and `STEP` are signed raw descriptor values. A positive
 `SCALE` means the displayed value is the raw value divided by the scale. A
