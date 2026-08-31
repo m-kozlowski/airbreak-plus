@@ -29,6 +29,8 @@ extern void variable_set_visible_from_handler(void *ctx, int visible);
 extern void variable_handler_release(void *ctx);
 extern int variable_get_by_id(int var_id);
 extern unsigned file_get_size(void *file);
+extern void memcpy_unrolled(void *destination, const void *source,
+			    unsigned size);
 
 extern const u32 custom_menu_registry_addr;
 extern const u8 custom_settings_group_index;
@@ -203,8 +205,8 @@ void custom_menu_create_pages(void *menu, void *context)
 	if (!pages)
 		return;
 
-	for (unsigned i = 0; i < custom_menu_stock_page_count; i++)
-		pages[i] = inline_pages[i];
+	memcpy_unrolled(pages, inline_pages,
+			custom_menu_stock_page_count * sizeof(*pages));
 
 	entry = custom_menu_registry();
 	unsigned ordinal = 0;

@@ -25,6 +25,8 @@ extern const uint32 graph_numbers_update_original;
 extern void gui_invalidate_window(void *obj);
 extern void gui_method_fc104_setup_and_invalidate(
 	uint32 hwin, int left, int top, int right, int bottom);
+extern void memcpy_unrolled(void *destination, const void *source,
+			    unsigned size);
 
 STATIC void init_graph_state(graph_state_t *state) {
 	state->last_pos_x = -1;
@@ -68,11 +70,6 @@ STATIC bool graph_widget_is_invalidated(void) {
 
 	return clip[0] <= right && clip[2] >= left &&
 	       clip[1] <= bottom && clip[3] >= top;
-}
-
-STATIC void copy_bytes(uint8 *dst, const uint8 *src, unsigned size) {
-	while (size--)
-		*dst++ = *src++;
 }
 
 STATIC bool fixed_string_changed(const uint8 *before, const uint8 *after,
@@ -228,9 +225,9 @@ void MAIN graph_header_update(void *obj) {
 	uint8 old_right[9];
 	uint8 old_status[4];
 
-	copy_bytes(old_left, base + 0x90, sizeof(old_left));
-	copy_bytes(old_right, base + 0xa5, sizeof(old_right));
-	copy_bytes(old_status, base + 0x8c, sizeof(old_status));
+	memcpy_unrolled(old_left, base + 0x90, sizeof(old_left));
+	memcpy_unrolled(old_right, base + 0xa5, sizeof(old_right));
+	memcpy_unrolled(old_status, base + 0x8c, sizeof(old_status));
 
 	uint32 saved_hwin = *hwin;
 	*hwin = 0;
@@ -252,8 +249,8 @@ void MAIN graph_numbers_update(void *obj, int left_var, int right_var) {
 	uint8 old_left[5];
 	uint8 old_right[5];
 
-	copy_bytes(old_left, base + 0x10, sizeof(old_left));
-	copy_bytes(old_right, base + 0x15, sizeof(old_right));
+	memcpy_unrolled(old_left, base + 0x10, sizeof(old_left));
+	memcpy_unrolled(old_right, base + 0x15, sizeof(old_right));
 
 	uint32 saved_hwin = *hwin;
 	*hwin = 0;

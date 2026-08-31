@@ -15,7 +15,15 @@ NSTUB(0x0807B5E5, GUI_SetColor)
 NSTUB(0x0807B809, LCD_FillRect)
 NSTUB(0x0807BB0F, LCD_SetClipRectMax)
 NSTUB(0x0807B661, LCD_DrawPixel)
+
+// Formatting / memory
 NSTUB(0x0806D499, snprintf)
+NSTUB(0x0806852D, memcpy_unrolled)
+NSTUB(0x0806CF0D, strlen_fast)
+NSTUB(0x08075603, format_hex_u16)
+NSTUB(0x0807562B, format_fixed_width_hex)
+
+// GUI internals
 NSTUB(0x08072D49, GUI_SetFont)
 NSTUB(0x0806B243, GUI_SetFont_default)
 NSTUB(0x08072D89, GUI_SetTextMode)

@@ -55,7 +55,9 @@ STATIC float custom_asv_sens_multiplier(void) {
 // Only using ^4 shape, because going to ^8 and above is very jarring and results in bad premature cycling
 STATIC float reshape_vauto_ps(float ps1, float mult) {
   // ^2 - 1.330, ^6 - 1.707, ^8 - 1.770
-  float ps4 = 1.0f - pow(1.0f - ps1, 4);  // ~1.594x the AUC
+  float inverse = 1.0f - ps1;
+  float inverse_squared = inverse * inverse;
+  float ps4 = 1.0f - inverse_squared * inverse_squared;  // ~1.594x the AUC
   ps4 = ps4 * 0.25f + ps1 * 0.75f; // 25%=1.1485x, 50%=~1.297x the AUC
   const float auc = 1.1485;
   if (mult <= 1.0) { 

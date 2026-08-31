@@ -21,15 +21,6 @@ float lerp(float from, float to, float coeff) {
    return from + (to - from) * coeff;
 }
 
-float pow(float base, int exp){
-  if (exp == 0) { return 1; }
-  if (exp % 2 == 0) {
-    return pow(base, exp/2) * pow(base, exp/2);
-  } else {
-    return base * pow(base, exp/2) * pow(base, exp/2);
-  }
-}
-
 // Based on this SO answer: https://stackoverflow.com/a/49991852
 float sqrtf(float n) {
   float guess = 1.0f;

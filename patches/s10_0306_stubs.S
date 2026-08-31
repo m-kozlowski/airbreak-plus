@@ -14,7 +14,15 @@
 // GUI / LCD
 NSTUB(0x0807B5E5, GUI_SetColor)
 NSTUB(0x0807B809, LCD_FillRect)
+
+// Formatting / memory
 NSTUB(0x0806D499, snprintf)
+NSTUB(0x0806852D, memcpy_unrolled)
+NSTUB(0x0806CF0D, strlen_fast)
+NSTUB(0x08075603, format_hex_u16)
+NSTUB(0x0807562B, format_fixed_width_hex)
+
+// GUI internals
 NSTUB_VAR(0x680000A0, gui_context)
 NSTUB(0x0806D38F, gui_invalidate_window)
 NSTUB(0x0806A2E3, gui_method_fc104_setup_and_invalidate)
