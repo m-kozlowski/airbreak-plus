@@ -42,11 +42,6 @@ STATIC bool graph_enabled(void) {
 	return variable_get_by_id(graph_enable_var_id) != 0;
 }
 
-STATIC float rescale(float value, float start, float end, float graph_height) {
-	return remap01(value, start, end) * graph_height;
-}
-
-
 STATIC void LCD_FillRect2(int x1, int y1, int x2, int y2) {
 	int temp = 0;
 	if (y1 > y2) { temp = y2; y2 = y1; y1 = temp; }
@@ -133,12 +128,8 @@ STATIC int graph_draw_current_column(bool only_if_new) {
 	#define HEIGHT_PRES 40
 	#define HEIGHT_FLOW 40
 
-	const float p_min = 0.0f;
-	const float p_max = 20.0f;
-	
-	int pressure = rescale(p_actual, p_min, p_max, HEIGHT_PRES);
-	int command = rescale(p_command, p_min, p_max, HEIGHT_PRES);
-	int error = -p_error * ( HEIGHT_PRES / (p_max-p_min) * 3.0f); // Error 
+	int command = p_command * 2.0f;
+	int error = -p_error * 6.0f;
 
 	GUI_SetColor(0x000000);
 	LCD_FillRect(pos_x, top - 1, pos_x + 11, bottom + 1);
@@ -153,7 +144,7 @@ STATIC int graph_draw_current_column(bool only_if_new) {
 	#if HEIGHT_PRES > 0
 		GUI_SetColor(0x202020);
 		for(int i=1; i<=4; i++) { // draw 0, 5, 10, 15, 20 very faintly
-			LCD_FillRect_Alt(pos_x, g_bottom - rescale(i*5, p_min, p_max, HEIGHT_PRES), 2, 1);
+			LCD_FillRect_Alt(pos_x, g_bottom - i*10, 2, 1);
 		}
 		// draw amplified pressure error with respect to the commanded pressure
 		GUI_SetColor(0x000080);
