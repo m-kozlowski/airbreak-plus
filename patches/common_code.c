@@ -66,7 +66,7 @@ void update_history(history_t *hist) {
   
   hist->last_time = now; // Keep it updated so we don't reset the struct
   hist->tick += 1;
-  const int i = hist->tick % HISTORY_LENGTH;
+  const int i = hist->tick & (HISTORY_LENGTH - 1);
   hist->flow[i] = *flow_compensated;
   hist->cmd_ipap[i] = *cmd_ipap;
 }
@@ -78,17 +78,22 @@ history_t *get_history() {
 float get_delta_flow(history_t *hist, int bin_size) {
   const int t = hist->tick;
   if (t < 2*bin_size) { return 0.0f; }
-  float avgf[3] = {0.0f, 0.0f, 0.0f}; // I don't think it overflows, but just in case it does, let's have padding.
-  for (int i=0; i<2*bin_size; i++) {
-    avgf[i/bin_size] += hist->flow[(t-i) % HISTORY_LENGTH];
+  float recent = 0.0f;
+  float previous = 0.0f;
+  for (int i=0; i<bin_size; i++) {
+    recent += hist->flow[(t-i) & (HISTORY_LENGTH - 1)];
   }
-  return (avgf[0] - avgf[1]) / (float)(bin_size*bin_size);
+  for (int i=bin_size; i<2*bin_size; i++) {
+    previous += hist->flow[(t-i) & (HISTORY_LENGTH - 1)];
+  }
+  return (recent - previous) / (float)(bin_size*bin_size);
 }
 
 
 bool is_cmd_ipap_constant(history_t *hist) {
   const int t = hist->tick;
-  const int t1 = t % HISTORY_LENGTH, t2 = (t-4) % HISTORY_LENGTH;
+  const int t1 = t & (HISTORY_LENGTH - 1);
+  const int t2 = (t-4) & (HISTORY_LENGTH - 1);
   return abs(hist->cmd_ipap[t1] - hist->cmd_ipap[t2]) <= 0.041f;
 }
 
