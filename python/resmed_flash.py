@@ -315,17 +315,36 @@ def query_bls(ser, timeout=0.3):
     """Query bootloader status. Returns 0=CDX, 1=bootloader, 2=bootloader(invalid fw), None=no response."""
     return query_boot_var(ser, 'BLS', timeout)
 
-def wait_for_application(ser, status_var, timeout=15.0):
+def wait_for_application(ser, status_var, timeout=15.0,
+                         clean_status_grace=5.0, quiet_time=3.0):
     deadline = time.time() + timeout
     last_bls = None
+    last_status = None
+    extended = False
+
+    # Successful bootloader commands restart its UART activity timeout. Leave
+    # the line idle long enough for the normal application boot path to run.
+    time.sleep(quiet_time)
     while time.time() < deadline:
         bls = query_bls(ser, timeout=0.3)
         if bls == 0:
             return True, bls, None
         if bls is not None:
             last_bls = bls
+            last_status = query_boot_var(ser, status_var, timeout=0.5)
+            if last_status not in (None, 0) or bls >= 2:
+                return False, last_bls, last_status
+            if last_status == 0 and not extended:
+                deadline += clean_status_grace
+                extended = True
+                print(f"[*] Bootloader reports {status_var}=0000; "
+                      f"allowing {clean_status_grace:.0f}s more for startup...")
+            time.sleep(quiet_time)
+            continue
         time.sleep(0.2)
-    return False, last_bls, query_boot_var(ser, status_var, timeout=0.5)
+    if last_status is None:
+        last_status = query_boot_var(ser, status_var, timeout=0.5)
+    return False, last_bls, last_status
 
 def bid_from_image(image_data):
     """Extract BID from BLX region of a full image (version string near end of BLX)."""
