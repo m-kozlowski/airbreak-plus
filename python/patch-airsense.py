@@ -820,6 +820,9 @@ class ASFirmwarePatches(CompiledPayloadMixin):
     CUSTOM_MENU_FLAG_G4_NUMERIC = 1
     CUSTOM_MENU_FLAG_HEADING = 2
     CUSTOM_MENU_FLAG_PAGE = 4
+    CUSTOM_MENU_FLAG_SHOW_UNITS = 8
+    CUSTOM_MENU_MODE_BITS = 0x00000fff
+    CUSTOM_MENU_MODE_KEEP_VISIBILITY = 0x80000000
     CUSTOM_MENU_PAGE_CONTAINER_BASE = 0x80
     STR_ID_MONITORING = 0x0008
     CUSTOM_MENU_SECTIONS = {
@@ -1208,16 +1211,21 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self.custom_menu_page_count += 1
         self.custom_menu_entries.append((parent, self.CUSTOM_MENU_FLAG_PAGE, int(title_str_id), 0xffffffff))
 
-    def custom_menu_add(self, container_name, var, mode_mask=0xffffffff):
+    def custom_menu_add(self, container_name, var, mode_mask=None, flags=0):
         """Register one variable in a clinical section or custom page."""
         container = self._custom_menu_container_id(container_name)
+
+        if mode_mask is None:
+            mode_mask = self.CUSTOM_MENU_MODE_BITS
 
         vid = self.asf.resolve_var_id(var)
         table_num = self.asf.find_var_table_number(var)
         if table_num == 4:
-            flags = self.CUSTOM_MENU_FLAG_G4_NUMERIC
+            flags |= self.CUSTOM_MENU_FLAG_G4_NUMERIC
         elif table_num == 8:
-            flags = 0
+            if flags & self.CUSTOM_MENU_FLAG_SHOW_UNITS:
+                raise ValueError(
+                    "custom_menu_add: SHOW_UNITS requires a globals[4] variable")
         else:
             raise ValueError(
                 "custom_menu_add: %s is globals[%d], only g[4]/g[8] menu settings are supported" %
@@ -1646,7 +1654,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             2, 0, 0x00000003, self.asf.str_id_off_on_base, 0)
 
         graph_vid = self.asf.resolve_var_id(graph_var)
-        self.custom_menu_add('options', graph_var, 0xffffffff)
+        self.custom_menu_add('options', graph_var, self.CUSTOM_MENU_MODE_BITS)
 
         enable_addr = self._write_payload_u16('graph', 'graph_enable_var_id', graph_vid)
 

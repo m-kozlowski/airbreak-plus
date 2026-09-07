@@ -105,7 +105,9 @@ static void *custom_menu_create_item(const custom_menu_entry_t *entry)
 		void *storage = malloc(0x1c);
 		if (!storage)
 			return 0;
-		return menu_create_numeric_var(storage, entry->item_id, 0);
+		return menu_create_numeric_var(
+			storage, entry->item_id,
+			(entry->flags & CUSTOM_MENU_FLAG_SHOW_UNITS) != 0);
 	}
 
 	return menu_create_text_or_float(entry->item_id, 0);
@@ -280,9 +282,12 @@ void custom_menu_apply_mode_visibility(void)
 			return;
 		if (entry->flags & (CUSTOM_MENU_FLAG_HEADING | CUSTOM_MENU_FLAG_PAGE))
 			continue;
+		if (entry->mode_mask & CUSTOM_MENU_MODE_KEEP_VISIBILITY)
+			continue;
 		int visible = 0;
 		if ((unsigned)mode < 32)
-			visible = (entry->mode_mask & (1u << (unsigned)mode)) != 0;
+			visible = (entry->mode_mask & CUSTOM_MENU_MODE_BITS &
+				   (1u << (unsigned)mode)) != 0;
 		custom_menu_set_visible(entry->item_id, visible);
 	}
 }

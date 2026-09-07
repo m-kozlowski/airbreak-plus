@@ -294,7 +294,7 @@ static int write_custom_settings_entry(unsigned int index, char *response,
         length = snprintf(
             response, response_size,
             "V4 %02X %08X %s %04X %04X %02X %02X:%s %s",
-            category, entry->mode_mask, name,
+            category, entry->mode_mask & CUSTOM_MENU_MODE_BITS, name,
             *(const u16 *)(descriptor + G4_SCALE_OFFSET),
             *(const u16 *)(descriptor + G4_STEP_OFFSET),
             descriptor[G4_DECIMALS_OFFSET], units_length, units,
@@ -303,7 +303,7 @@ static int write_custom_settings_entry(unsigned int index, char *response,
     } else {
         length = snprintf(
             response, response_size, "V8 %02X %08X %s %s",
-            category, entry->mode_mask, name,
+            category, entry->mode_mask & CUSTOM_MENU_MODE_BITS, name,
             localized_string(*(const u16 *)(descriptor +
                                              DESCRIPTOR_NAME_STR_OFFSET)));
     }
