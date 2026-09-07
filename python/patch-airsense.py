@@ -850,6 +850,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
     def __init__(self, asf):
         self.asf = asf
         self.applied_payloads = set()
+        self.enabled_custom_settings_features = set()
         self.mop_callback_handlers = {}
         self._init_compiled_payloads()
         self.custom_patch_settings_init()
@@ -1626,6 +1627,42 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self._custom_detail("ASV Sens var_id=0x%04X at 0x%08X" % (sens_vid, sens_addr))
         self._custom_detail("trigger/cycle toggle var_id=0x%04X at 0x%08X" % (tc_vid, tc_addr))
 
+    def custom_patch_settings_ivaps(self):
+        """Restore firmware-backed iVAPS controls."""
+        # PHT and PHI share callback 13 with IHU. It converts the stored height
+        # and selects which native height variable is visible after IHU changes.
+        for var, flags_off in (
+                ('PHT', self.asf.G4_FLAGS),
+                ('PHI', self.asf.G4_FLAGS),
+                ('IHU', self.asf.G8_FLAGS)):
+            rec = self.asf.find_var(var)
+            flags = self.asf.read_u16(rec + flags_off)
+            self.asf.write_u16(rec + flags_off, flags | 1)
+
+        # These values are maintained by the stock iVAPS calculation
+        for var in ('ZMV', 'ZTV', 'ZVK'):
+            rec = self.asf.find_var(var)
+            flags = self.asf.read_u16(rec + self.asf.G4_FLAGS)
+            self.asf.write_u16(
+                rec + self.asf.G4_FLAGS, (flags | 0x0001) & ~0x0004)
+
+        ivaps_mask = self.mop_bitmask('iVAPS')
+        self.custom_menu_add(
+            'therapy', 'PHI',
+            ivaps_mask | self.CUSTOM_MENU_MODE_KEEP_VISIBILITY,
+            self.CUSTOM_MENU_FLAG_SHOW_UNITS)
+        for var in ('ZMV', 'ZTV', 'ZVK'):
+            self.custom_menu_add(
+                'therapy', var, ivaps_mask,
+                self.CUSTOM_MENU_FLAG_SHOW_UNITS)
+        self.custom_menu_add(
+            'configuration', 'IHU', self.CUSTOM_MENU_MODE_BITS)
+
+        self._custom_detail(
+            "iVAPS height: PHT/PHI active, PHI added with firmware-managed visibility")
+        self._custom_detail("iVAPS height units: IHU active in Configuration")
+        self._custom_detail("iVAPS calculated values: ZMV/ZTV/ZVK active and read-only")
+
     def custom_patch_settings_squarewave(self):
         """Expose the squarewave runtime switch and pass its var_id to the payload."""
         square_var = self.custom_claim_g8_var('RPF', 'squarewave_enable')
@@ -1744,14 +1781,15 @@ class ASFirmwarePatches(CompiledPayloadMixin):
     def custom_patch_settings_collect_features(self):
         """Return active custom-settings feature functions."""
         feature_patches = (
+            ('ivaps', self.custom_patch_settings_ivaps),
             ('wrapper_limit_max_pdiff', self.custom_patch_settings_myasv),
             ('asv_task_wrapper', self.custom_patch_settings_asv_task_wrapper),
             ('graph', self.custom_patch_settings_graph),
             ('squarewave', self.custom_patch_settings_squarewave),
             ('backlight_adapt', self.custom_patch_settings_backlight),
         )
-        return [feature for payload, feature in feature_patches
-                if payload in self.applied_payloads]
+        active = self.applied_payloads | self.enabled_custom_settings_features
+        return [feature for source, feature in feature_patches if source in active]
 
     def custom_patch_settings(self):
         """Orchestrate reclaim, feature registration, registry emit, and hook injection."""
@@ -2193,6 +2231,11 @@ class ASFirmwarePatches(CompiledPayloadMixin):
                 self.asf.write_u8(addr, flags | 1)
                 count += 1
         return PatchOutcome.ok("%d/%d menu ACT flags set" % (count, len(vars)))
+
+    def enable_ivaps_settings(self):
+        """Request the firmware-backed iVAPS controls from custom settings."""
+        self.enabled_custom_settings_features.add('ivaps')
+        return PatchOutcome.ok()
 
     def patch_defaults(self):
         defaults = (
@@ -2680,6 +2723,8 @@ PATCH_PHASES = (
                   True, 'unlock_option_masks'),
         PatchSpec('patch-gui-config', 'Enable all editable options in the settings menu.',
                   True, 'gui_config'),
+        PatchSpec('patch-ivaps-settings', 'Restore iVAPS clinical settings.',
+                  True, 'enable_ivaps_settings'),
         PatchSpec('patch-asv-ps-range', 'Unlock ASV/ASVAuto pressure constraints.',
                   True, 'asv_unlock_ps_range'),
     )),
@@ -2725,7 +2770,7 @@ PATCH_PHASES = (
     )),
 
     ('Custom settings integration', (
-        PatchSpec('patch-custom-settings', 'Expose settings for active injected features.',
+        PatchSpec('patch-custom-settings', 'Add persistent controls to the clinical menu.',
                   True, 'custom_patch_settings'),
     )),
 
@@ -2753,6 +2798,7 @@ PATCH_PHASES = (
 
 
 PATCH_DEPENDENCIES = {
+    'patch-ivaps-settings': ('patch-custom-settings',),
     'patch-fw-graph': ('patch-fw-common-code',),
     'patch-fw-vauto-wrapper': ('patch-fw-common-code',),
     'patch-fw-squarewave': ('patch-fw-common-code', 'patch-fw-vauto-wrapper'),

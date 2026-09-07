@@ -61,6 +61,7 @@ All patches below are **enabled by default** unless noted.
 | Unlock all modes | Enables all built-in therapy modes and their respiratory-event reporting | `--patch-extra-modes` |
 | Unlock options | Enables all built-in tube and ramp choices, including the 3m tube and Auto ramp | `--patch-unlock-options` |
 | Unlock settings | Makes the clinical settings used by unlocked modes available and editable | `--patch-gui-config` |
+| iVAPS settings | Restores height controls and calculated MV, Vt, and Vt/kg IBW values | `--patch-ivaps-settings` |
 | Unlock pressure range | Expands standard pressure settings to 1.0-30.0 cmH2O | `--patch-unlock-uilimits` |
 | Unlock ASV PS range | Expands ASV/ASVAuto pressure support to 0-25 cmH2O, allows Max PS below Min PS + 5, and raises fixed ASV EPAP to the device pressure limit | `--patch-asv-ps-range` |
 
@@ -84,7 +85,7 @@ All patches below are **enabled by default** unless noted.
 | Bypass PSU check | Disables power supply ID check at startup | `--patch-bypass-psuid` |
 | Color palette | Applies custom color scheme | `--patch-custom-palette` |
 | [Backlight adaptation](features/backlight.md) | Continuously adjusts LCD and button brightness to ambient light | `--patch-fw-backlight` |
-| [Custom settings](../custom_settings.md) | Exposes menu settings for active compiled payloads | `--patch-custom-settings` |
+| [Custom settings](../custom_settings.md) | Exposes menu settings for active compiled payloads and optional features | `--patch-custom-settings` |
 
 
 ### Therapy modifications

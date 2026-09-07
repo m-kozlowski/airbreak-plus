@@ -10,11 +10,17 @@ and SX567-0402.
 
 ## Assignments
 
-Only settings requested by active payloads are assigned. `Storage` names the
-globals[16] persistence group used by the patched image.
+Settings are assigned when their corresponding patch or payload is active.
+`Storage` names the globals[16] persistence group used by the patched image.
 
 | Feature | Setting | UART | Table | Storage |
 |---------|---------|------|-------|---------|
+| iVAPS | Height (cm) | PHT | g[4] | QXJ |
+| iVAPS | Height (inches) | PHI | g[4] | QXJ |
+| iVAPS | Height Units | IHU | g[8] | SGL |
+| iVAPS | MV | ZMV | g[4] | - |
+| iVAPS | Vt | ZTV | g[4] | - |
+| iVAPS | Vt/kg IBW | ZVK | g[4] | - |
 | [Custom VAuto](guide/features/custom_vauto.md) | Custom VAuto | RPO | g[8] | CSG |
 | [Custom VAuto](guide/features/custom_vauto.md) | ASV Max | RCM | g[4] | CSG |
 | [Custom VAuto](guide/features/custom_vauto.md) | ASV Sens | RXM | g[8] | CSG |
@@ -29,15 +35,16 @@ globals[16] persistence group used by the patched image.
 | [Backlight adaptation](guide/features/backlight.md) | Buttons / Low | LBL | g[4] | CSG |
 | [Backlight adaptation](guide/features/backlight.md) | Buttons / High | LBH | g[4] | CSG |
 
+
 ## Application sequence
 
-The patcher performs these operations when at least one active payload requests
-custom settings:
+The patcher performs these operations when at least one active patch or payload
+requests custom settings:
 
 1. disable stock Reminder processing and remove its menu row and page
 2. rename the Reminder persistence group from `RGL` to `CSG`
 3. reclaim selected Reminder variables and string IDs
-4. let each active feature claim and redefine its variables
+4. let each active feature activate or redefine its variables
 5. extend the CSG member list with any additional persistent firmware variables
 6. emit the custom menu registry into reclaimed CDX space
 7. inject the clinical menu hooks
@@ -144,8 +151,10 @@ typedef struct {
 | flags bit 0 | construct a g[4] numeric item; clear for g[8] enum items |
 | flags bit 1 | construct a static heading; `item_id` is a string ID |
 | flags bit 2 | construct a page link; `item_id` is the page title string ID |
+| flags bit 3 | append the g[4] variable units to its displayed value |
 | item_id | variable ID, heading string ID, or page title string ID |
-| mode_mask | one bit per MOP option |
+| mode_mask bits 0..11 | one bit per MOP option |
+| mode_mask bit 31 | preserve visibility managed by stock firmware callbacks |
 
 An entry with container `0xFF` or item ID `0xFFFF` terminates the registry.
 Duplicate variable IDs are rejected before registry emission.
@@ -177,14 +186,16 @@ format.
 Clinical menu pages are constructed once. The MOP callback dispatcher calls the
 stock MOP callback first, followed by the custom visibility handler. For every
 variable entry, the handler tests the current MOP bit in `mode_mask` and updates
-the variable handler's runtime VIS flag. Existing menu refresh code then shows
-or hides the variable item. Static headings and page links are always visible.
+the variable handler's runtime VIS flag. Entries with bit 31 set retain the
+visibility selected by stock firmware callbacks. Existing menu refresh code
+then shows or hides the variable item. Static headings and page links are
+always visible.
 
 ## Adding a feature
 
 A feature setup function should:
 
-1. run only when its payload is active
+1. run only when its corresponding patch or payload is active
 2. claim exact g[4] or g[8] variables
 3. allocate localized label strings
 4. redefine complete variable descriptors
