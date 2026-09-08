@@ -147,15 +147,10 @@ class AirMiniSppTransport:
                 credentials = {}
             master_pair_key = credentials.get("masterPairKey")
             if master_pair_key:
-                try:
-                    refreshed = self.reconnect(master_pair_key)
-                    credentials.update(refreshed)
-                    credentials["family"] = "mini"
-                    save_credentials(self._address, credentials)
-                except Exception as exc:
-                    self._session_key = None
-                    self._authenticated = False
-                    log.warning("AirMini session restore failed: %s", exc)
+                refreshed = self.reconnect(master_pair_key)
+                credentials.update(refreshed)
+                credentials["family"] = "mini"
+                save_credentials(self._address, credentials)
             else:
                 log.info("AirMini has no stored FIG pairing; run "
                          "`devices pair mini-spp:%s`", self._address)
@@ -450,11 +445,14 @@ class AirMiniSppTransport:
             )
         confirmation_result = confirmation.get("result")
         if (not isinstance(confirmation_result, dict)
-                or confirmation_result.get("response") is not True):
+                or confirmation_result.get(
+                    "confirmation", confirmation_result.get("response")
+                ) is not True):
             raise TransportError("AirMini rejected session integrity proof")
 
         self._session_key = derive_session_key(pair_key, nonce_bytes)
         self._authenticated = True
+        log.info("AirMini encrypted session restored")
         self._start_keepalive()
         return {"masterPairKey": master_pair_key}
 

@@ -390,11 +390,14 @@ class As11Connection:
             )
             confirmation = confirmed.get("result")
             if (not isinstance(confirmation, dict)
-                    or confirmation.get("response") is not True):
+                    or confirmation.get(
+                        "confirmation", confirmation.get("response")
+                    ) is not True):
                 raise RuntimeError("AirMini rejected session integrity proof")
 
             session_key = derive_session_key(pair_key, nonce)
             self.set_session_key(session_key.hex())
+            log.info("AirMini encrypted session restored")
             return {"masterPairKey": master_pair_key}
 
         if not client_id:
@@ -707,6 +710,8 @@ class BleTransport:
                     save_credentials(self._address, creds)
                     self._authenticated = True
                 except Exception as exc:
+                    if self._family == "mini":
+                        raise
                     log.warning("reconnect failed: %s", exc)
             else:
                 log.info("no stored credentials for %s; run `devices pair` first "
