@@ -6,7 +6,7 @@ transport from -d/--device:
 
     -d ble:<mac|alias>          BLE (via bleak + SRP pairing)
     -d mini-spp:<mac|alias>     AirMini Bluetooth Classic / RFCOMM
-    -d mini-ble:<mac|alias>     experimental AirMini FIG over BLE GATT
+    -d mini-ble:<mac|alias>     AirMini FIG over BLE GATT
     -d can:<target>             CAN target (slcan, socketcan, or waveshare)
     -d tcp:<host>[:<port>]      AirCANnect TCP bridge (default port 39011)
 
@@ -1176,11 +1176,11 @@ def cmd_devices(args: argparse.Namespace) -> int:
             )
             with transport:
                 new = transport.pair(passkey)
-            print(f"Paired with {address}. clientId={new.get('clientId', '')}")
+            print(f"Paired with {address}.")
             return 0
 
         import asyncio
-        from as11_ble import As11Connection
+        from as11_ble import AIRMINI_SERVICE_UUID, As11Connection
 
         family = target_device_family(transport_kind)
         rpc_profile = (AIRMINI_RPC_PROFILE
@@ -1193,7 +1193,13 @@ def cmd_devices(args: argparse.Namespace) -> int:
         )
 
         async def _pair():
-            conn = As11Connection(debug=args.debug, rpc_profile=rpc_profile)
+            connection_args = {
+                "debug": args.debug,
+                "rpc_profile": rpc_profile,
+            }
+            if family == "mini":
+                connection_args["service_uuid"] = AIRMINI_SERVICE_UUID
+            conn = As11Connection(**connection_args)
             try:
                 await conn.connect(addr)
                 creds = load_credentials(addr)
@@ -1201,7 +1207,9 @@ def cmd_devices(args: argparse.Namespace) -> int:
                 new["family"] = family
                 creds.update(new)
                 save_credentials(addr, creds)
-                print(f"Paired with {addr}. clientId={new.get('clientId', '')}")
+                client_id = new.get("clientId")
+                suffix = f" clientId={client_id}" if client_id else ""
+                print(f"Paired with {addr}.{suffix}")
             finally:
                 await conn.disconnect()
         asyncio.run(_pair())
@@ -1622,7 +1630,7 @@ def build_parser() -> argparse.ArgumentParser:
     dev_sub.add_parser("list", help="list paired devices (default)")
 
     dev_pair = dev_sub.add_parser(
-        "pair", help="pair with AS11 BLE, Mini SPP, or experimental Mini BLE"
+        "pair", help="pair with AS11 BLE, Mini SPP, or Mini BLE"
     )
     dev_pair.add_argument(
         "target",

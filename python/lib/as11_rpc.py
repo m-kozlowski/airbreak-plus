@@ -36,17 +36,17 @@ AS11_RPC_VERSIONS: dict[str, str] = {
 }
 
 # AirMini shares most command contracts with AirSense 11, but the versions of
-# these methods differ in the AirMini firmware.  Its SDK-facing methods and
-# unknown extension calls use JSON-RPC 2.0.
+# these methods differ in the AirMini firmware.  Unknown extension calls keep
+# the SDK-facing JSON-RPC 2.0 fallback.
 AIRMINI_RPC_VERSIONS: dict[str, str] = {
     **AS11_RPC_VERSIONS,
     "SetDateTime": "1.0",
     "EnterMaskFit": "1.0",
-    "GetPairKey": "2.0",
-    "GetSessionKey": "2.0",
-    "GetLoggedData": "2.0",
-    "GetHistory": "2.0",
-    "BtDisconnect": "2.0",
+    "GetPairKey": "1.0",
+    "GetSessionKey": "1.0",
+    "GetLoggedData": "1.0",
+    "GetHistory": "1.0",
+    "BtDisconnect": "1.0",
 }
 
 RPC_VERSION_PROFILES: dict[str, dict[str, str]] = {

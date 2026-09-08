@@ -1,9 +1,9 @@
 """Shared ResMed FIG framing, encryption, and SRP session primitives.
 
-The AirSense 11 BLE and AirMini Bluetooth Classic transports carry the same
-FIG frames and use the same SRP/AES session construction.  This module has no
-Bluetooth dependency, which keeps the wire protocol reusable and testable
-without a radio or ``bleak``.
+The AirSense 11 and AirMini transports carry the same FIG frames and AES
+payloads.  Their SRP exchange has the same construction but uses a different
+group.  This module has no Bluetooth dependency, which keeps the wire protocol
+reusable and testable without a radio or ``bleak``.
 """
 
 from __future__ import annotations
@@ -43,6 +43,17 @@ _SRP_N = int(
 )
 _SRP_G = 2
 _SRP_PAD_LEN = 256
+
+# AirMini's native FIG client (libfiglib) uses the RFC 5054 1024-bit group.
+# In particular, its public keys are exactly 128 bytes / 256 hex characters.
+_AIRMINI_SRP_N = int(
+    "EEAF0AB9ADB38DD69C33F80AFA8FC5E86072618775FF3C0B9EA2314C9C256576"
+    "D674DF7496EA81D3383B4813D692C6E0E0D5D8E250B98BE48E495C1D6089DAD1"
+    "5DC7D7B46154D6B6CE8EF4AD69B15D4982559B297BCF1885C529F566660E57EC"
+    "68EDBC3C05726CC02FD4CBF4976EAA9AFD5138FE8376435B9FC61D2FC0EB06E3",
+    16,
+)
+_AIRMINI_SRP_PAD_LEN = 128
 
 
 def _srp_pad(value: int) -> bytes:
@@ -113,11 +124,16 @@ def aes_decrypt(data: bytes, key: bytes, *, length_prefix: bool = True) -> bytes
 class SRPClient:
     """Client side of the ResMed SRP-6a first-pairing exchange."""
 
-    def __init__(self, passkey: str, *, private_value: int | None = None):
+    def __init__(self, passkey: str, *, private_value: int | None = None,
+                 modulus: int = _SRP_N, generator: int = _SRP_G,
+                 pad_len: int = _SRP_PAD_LEN):
         self.passkey = passkey
+        self._modulus = modulus
+        self._generator = generator
+        self._pad_len = pad_len
         self.a = (private_value if private_value is not None
                   else int.from_bytes(os.urandom(32), "big"))
-        self.A = pow(_SRP_G, self.a, _SRP_N)
+        self.A = pow(self._generator, self.a, self._modulus)
         self.S: int | None = None
         self.K: bytes | None = None
         self.M1: bytes | None = None
@@ -125,37 +141,47 @@ class SRPClient:
 
     @property
     def public_key_hex(self) -> str:
-        return _srp_pad(self.A).hex().upper()
+        return self._pad(self.A).hex().upper()
+
+    def _pad(self, value: int) -> bytes:
+        return value.to_bytes(self._pad_len, "big")
 
     def process(self, server_pk_hex: str, salt_hex: str) -> None:
         server_key = int(server_pk_hex, 16)
-        if server_key % _SRP_N == 0:
+        if server_key % self._modulus == 0:
             raise ValueError("invalid server public key (B mod N == 0)")
 
         multiplier = int.from_bytes(
-            sha256_concat(_srp_pad(_SRP_N), _srp_pad(_SRP_G)), "big"
+            sha256_concat(
+                self._pad(self._modulus), self._pad(self._generator)
+            ),
+            "big",
         )
         salt = bytes.fromhex(salt_hex)
         private_key = int.from_bytes(
             sha256_concat(salt, sha256_concat(self.passkey.encode("ascii"))), "big"
         )
         scrambling = int.from_bytes(
-            sha256_concat(_srp_pad(self.A), _srp_pad(server_key)), "big"
+            sha256_concat(self._pad(self.A), self._pad(server_key)), "big"
         )
         if scrambling == 0:
             raise ValueError("invalid SRP scrambling parameter (u == 0)")
 
-        base = server_key - multiplier * pow(_SRP_G, private_key, _SRP_N)
-        self.S = pow(base, self.a + scrambling * private_key, _SRP_N)
-        self.K = sha256_concat(_srp_pad(self.S))
+        base = (server_key - multiplier * pow(
+            self._generator, private_key, self._modulus
+        )) % self._modulus
+        self.S = pow(
+            base, self.a + scrambling * private_key, self._modulus
+        )
+        self.K = sha256_concat(self._pad(self.S))
 
-        h_n = sha256_concat(_srp_pad(_SRP_N))
-        h_g = sha256_concat(_srp_pad(_SRP_G))
+        h_n = sha256_concat(self._pad(self._modulus))
+        h_g = sha256_concat(self._pad(self._generator))
         h_xor = bytes(left ^ right for left, right in zip(h_n, h_g))
         self.M1 = sha256_concat(
-            h_xor, salt, _srp_pad(self.A), _srp_pad(server_key), self.K
+            h_xor, salt, self._pad(self.A), self._pad(server_key), self.K
         )
-        self.M2 = sha256_concat(_srp_pad(self.A), self.M1, self.K)
+        self.M2 = sha256_concat(self._pad(self.A), self.M1, self.K)
 
     def _require_processed(self) -> None:
         if self.K is None or self.M1 is None or self.M2 is None:
@@ -179,6 +205,19 @@ class SRPClient:
         self._require_processed()
         if server_proof_hex.upper() != self.M2.hex().upper():
             raise ValueError("server proof mismatch")
+
+
+class AirMiniSRPClient(SRPClient):
+    """SRP client matching the 1024-bit group used by AirMini libfiglib."""
+
+    def __init__(self, passkey: str, *, private_value: int | None = None):
+        super().__init__(
+            passkey,
+            private_value=private_value,
+            modulus=_AIRMINI_SRP_N,
+            generator=_SRP_G,
+            pad_len=_AIRMINI_SRP_PAD_LEN,
+        )
 
 
 class FigCodec:
@@ -244,5 +283,5 @@ __all__ = [
     "FIG_SYNC", "FIG_SYNC_BYTES", "FIG_HEADER_LEN",
     "FIG_VCID_RPC", "FIG_VCID_RX", "FIG_VCID_RPC_ENC", "FIG_VCID_RX_ENC",
     "H", "sha256_concat", "derive_session_key", "session_integrity_response",
-    "aes_encrypt", "aes_decrypt", "SRPClient", "FigCodec",
+    "aes_encrypt", "aes_decrypt", "SRPClient", "AirMiniSRPClient", "FigCodec",
 ]

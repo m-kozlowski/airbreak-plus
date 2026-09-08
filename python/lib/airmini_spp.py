@@ -22,8 +22,8 @@ from resmed_fig import (
     FIG_VCID_RPC,
     FIG_VCID_RPC_ENC,
     FIG_VCID_RX_ENC,
+    AirMiniSRPClient,
     FigCodec,
-    SRPClient,
     aes_decrypt,
     aes_encrypt,
     derive_session_key,
@@ -145,11 +145,13 @@ class AirMiniSppTransport:
                            if self._restore_session else {})
             if credentials and credential_family(credentials) != "mini":
                 credentials = {}
-            client_id = credentials.get("clientId")
             master_pair_key = credentials.get("masterPairKey")
-            if client_id and master_pair_key:
+            if master_pair_key:
                 try:
-                    self.reconnect(client_id, master_pair_key)
+                    refreshed = self.reconnect(master_pair_key)
+                    credentials.update(refreshed)
+                    credentials["family"] = "mini"
+                    save_credentials(self._address, credentials)
                 except Exception as exc:
                     self._session_key = None
                     self._authenticated = False
@@ -360,10 +362,10 @@ class AirMiniSppTransport:
         )
 
     def pair(self, passkey: str) -> dict:
-        """Perform the low-level FIG SRP exchange and persist reusable keys."""
+        """Perform AirMini's low-level FIG SRP exchange."""
         if not re.fullmatch(r"\d{4}", passkey):
             raise ValueError("AirMini FIG passkey must contain exactly four digits")
-        srp = SRPClient(passkey)
+        srp = AirMiniSRPClient(passkey)
         response = self._send_rpc(
             "StartKeyExchange",
             {"clientPk": srp.public_key_hex},
@@ -388,40 +390,35 @@ class AirMiniSppTransport:
             raise_rpc_error=False,
         )
         if "error" in confirmation:
-            raise RuntimeError(f"ConfirmKeyExchange failed: {confirmation['error']}")
+            raise RuntimeError(
+                f"ConfirmKeyExchange failed: {confirmation['error']}"
+            )
         result = confirmation.get("result", {})
-        client_id = result.get("clientId")
         nonce = result.get("nonce")
         server_proof = result.get("serverConfirmation")
-        if not client_id or not nonce or not server_proof:
+        if not nonce or not server_proof:
             raise TransportError(
-                "ConfirmKeyExchange response lacks clientId/nonce/serverConfirmation"
+                "ConfirmKeyExchange response lacks nonce/serverConfirmation"
             )
         srp.verify_server(server_proof)
         self._session_key = bytes.fromhex(srp.derive_session_key(nonce))
         self._authenticated = True
 
-        credentials = {
-            "clientId": client_id,
-            "masterPairKey": srp.session_key_hex,
-            "family": "mini",
-        }
+        credentials = {"masterPairKey": srp.session_key_hex}
+        credentials["family"] = "mini"
         save_credentials(self._address, credentials)
         self._start_keepalive()
         return credentials
 
-    def reconnect(self, client_id: str, master_pair_key: str) -> dict:
+    def reconnect(self, master_pair_key: str) -> dict:
         """Restore an encrypted FIG session from saved AirMini credentials."""
-        try:
-            pair_key = bytes.fromhex(master_pair_key)
-        except ValueError as exc:
-            raise TransportError("stored AirMini masterPairKey is not hex") from exc
-        if len(pair_key) != 32:
-            raise TransportError("stored AirMini masterPairKey must be 32 bytes")
+        pair_key = self._decode_key(
+            master_pair_key, "stored AirMini masterPairKey"
+        )
 
         response = self._send_rpc(
             "RequestSession",
-            {"clientId": client_id},
+            None,
             timeout=10.0,
             encrypted=False,
             raise_rpc_error=False,
@@ -448,17 +445,30 @@ class AirMiniSppTransport:
             raise_rpc_error=False,
         )
         if "error" in confirmation:
-            raise RuntimeError(f"CheckSessionIntegrity failed: {confirmation['error']}")
+            raise RuntimeError(
+                f"CheckSessionIntegrity failed: {confirmation['error']}"
+            )
         confirmation_result = confirmation.get("result")
-        if isinstance(confirmation_result, dict):
-            accepted = confirmation_result.get("confirmation", True)
-            if accepted is False:
-                raise TransportError("AirMini rejected session integrity proof")
+        if (not isinstance(confirmation_result, dict)
+                or confirmation_result.get("response") is not True):
+            raise TransportError("AirMini rejected session integrity proof")
 
         self._session_key = derive_session_key(pair_key, nonce_bytes)
         self._authenticated = True
         self._start_keepalive()
-        return {"clientId": client_id, "nonce": nonce}
+        return {"masterPairKey": master_pair_key}
+
+    @staticmethod
+    def _decode_key(value: object, label: str) -> bytes:
+        if not isinstance(value, str):
+            raise TransportError(f"{label} is missing")
+        try:
+            key = bytes.fromhex(value)
+        except ValueError as exc:
+            raise TransportError(f"{label} is not hex") from exc
+        if len(key) != 32:
+            raise TransportError(f"{label} must be 32 bytes")
+        return key
 
     def _start_keepalive(self) -> None:
         if self._keepalive_thread is not None and self._keepalive_thread.is_alive():
