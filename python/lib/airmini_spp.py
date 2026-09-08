@@ -151,7 +151,7 @@ class AirMiniSppTransport:
                 credentials.update(refreshed)
                 credentials["family"] = "mini"
                 save_credentials(self._address, credentials)
-            else:
+            elif self._restore_session:
                 log.info("AirMini has no stored FIG pairing; run "
                          "`devices pair mini-spp:%s`", self._address)
         except OSError as exc:
@@ -172,6 +172,21 @@ class AirMiniSppTransport:
 
     def close(self) -> None:
         self._stop_keepalive.set()
+        if (self._socket is not None and self._authenticated
+                and self._reader_error is None):
+            try:
+                # Tell the Bluetooth module this is an intentional shutdown.
+                # Closing RFCOMM without this can make it treat the lost link
+                # as transient and immediately try to reconnect to the host.
+                self._send_rpc(
+                    "BtDisconnect",
+                    encrypted=True,
+                    post_send_delay=0.5,
+                    wait_for_response=False,
+                )
+            except Exception as exc:
+                # The command is allowed to close RFCOMM before replying.
+                log.debug("graceful AirMini disconnect failed: %s", exc)
         self._stop_reader.set()
         sock, self._socket = self._socket, None
         with self._response_condition:
@@ -283,7 +298,8 @@ class AirMiniSppTransport:
     def _send_rpc(self, method: str, params: object | None = None, *,
                   timeout: float = DEFAULT_TIMEOUT, encrypted: bool = False,
                   raise_rpc_error: bool = True,
-                  post_send_delay: float = 0.0) -> dict:
+                  post_send_delay: float = 0.0,
+                  wait_for_response: bool = True) -> dict:
         sock = self._socket
         if sock is None:
             raise TransportError("AirMini SPP transport is not connected")
@@ -319,6 +335,8 @@ class AirMiniSppTransport:
                 raise TransportError(f"AirMini RFCOMM send failed: {exc}") from exc
         if post_send_delay:
             time.sleep(post_send_delay)
+        if not wait_for_response:
+            return {}
 
         deadline = time.monotonic() + timeout
         with self._response_condition:
