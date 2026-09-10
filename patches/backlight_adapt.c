@@ -152,10 +152,8 @@ static int __attribute__((noinline, section(".text.x.apply_step"))) run_pending_
         active |= PENDING_BTN;
     }
 
-    // Stock active-step normalizes phase 3 back to 1 after the per-channel
-    // transition finishes. Keep that piece without touching its idle timer.
-    if (ctx->phase == 3)
-        ctx->phase = 1;
+    // Keep the GUI-selected phase: phase 3 selects the short post-therapy
+    // timeout. Advancing channel transitions must not replace it with phase 1.
 
     if (active) {
         ctx->pending[0] = 0;
