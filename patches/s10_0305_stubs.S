@@ -61,6 +61,9 @@ NSTUB_VAR(0x20000BE0, magic_ptr)
 
 // Backlight adaptation
 NSTUB(0x0807A2A8, backlight_state_machine)
+NSTUB(0x0807A116, backlight_output_timeout_update)
+NSTUB(0x0807A0A8, backlight_outputs_apply_state)
+NSTUB(0x0806CFD6, millisecond_timer_init)
 
 // LCD driver
 NSTUB(0x08080EB7, lcd_write_cmd)

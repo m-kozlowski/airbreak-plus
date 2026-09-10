@@ -103,6 +103,10 @@ environment variables.
 With custom settings, `Monitoring` in clinical Options enables or disables the
 flow and pressure graph. Without custom settings, the graph remains enabled.
 
+Optionally enable `--patch-graph-keep-screen-on Y` (or
+`PATCH_GRAPH_KEEP_SCREEN_ON=1`) to keep the screen awake during therapy while
+Monitoring is On. This option requires the graph patch and is off by default.
+
 Example with custom VAuto:
 ```
 export PATCH_CODE=1

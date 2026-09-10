@@ -17,6 +17,9 @@ typedef void (*graph_header_update_t)(void *obj);
 typedef void (*graph_numbers_update_t)(void *obj, int left_var, int right_var);
 
 extern int variable_get_by_id(int var_id);
+extern void backlight_output_timeout_update(void *ctx);
+extern void backlight_outputs_apply_state(void *ctx);
+extern void millisecond_timer_init(void *timer, unsigned elapsed);
 extern const unsigned short graph_enable_var_id;
 extern const uint32 graph_draw_original;
 extern const uint32 graph_update_original;
@@ -40,6 +43,24 @@ STATIC bool graph_enabled(void) {
 	if (graph_enable_var_id == 0xffffu)
 		return true;
 	return variable_get_by_id(graph_enable_var_id) != 0;
+}
+
+/* Installed only by the optional keep-screen-on patch. Refresh the idle timer
+ * without reapplying brightness; use the stock wake path only after dim/off.
+ * The following ambient-light and brightness updates still run normally.
+ */
+void MAIN graph_backlight_timeout(void *ctx) {
+	uint8 *state = (uint8 *)ctx;
+	if (*therapy_mode != MODE_OFF && graph_enabled()) {
+		if (*state != 0) {
+			/* Automatic wake must retain the GUI-selected timeout policy. */
+			uint8 phase = state[1];
+			backlight_outputs_apply_state(ctx);
+			state[1] = phase;
+		} else
+			millisecond_timer_init(state + 4, 0);
+	}
+	backlight_output_timeout_update(ctx);
 }
 
 STATIC void LCD_FillRect2(int x1, int y1, int x2, int y2) {

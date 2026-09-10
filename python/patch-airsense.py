@@ -2489,6 +2489,25 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         hw2 = 0xD000 | (J1 << 13) | (J2 << 11) | imm11
         return struct.pack('<HH', hw1, hw2)
 
+    def patch_graph_keep_screen_on(self):
+        """Keep the screen awake during therapy while Monitoring is enabled."""
+        sites = {
+            '0302': 0x798a8,
+            '0305': 0x7a020,
+            '0306': 0x7a01c,
+            '0401': 0x7a01c,
+            '0402': 0x7a01c,
+        }
+        site = sites.get(self._payload_version_key())
+        if site is None or 'graph' not in self.applied_payloads:
+            return PatchOutcome.skip("graph payload not installed")
+        elf_path = self._require_versioned_artifact('graph', 'elf')
+        target = self._elf_symbol_addr(elf_path, 'graph_backlight_timeout')
+        detail = self._patch_thumb_bl_checked(
+            site, bytes.fromhex('00F079F8'), target,
+            'patch_graph_keep_screen_on: backlight timeout call')
+        return PatchOutcome.ok(None, detail)
+
     def patch_backlight_adapt(self):
         """improved backlight response to ambient light"""
         ver = self._payload_version_key()
@@ -2758,6 +2777,9 @@ PATCH_PHASES = (
                   False, 'patch_common_code'),
         PatchSpec('patch-fw-graph', 'Add the therapy pressure graph.',
                   False, 'patch_graph'),
+        PatchSpec('patch-graph-keep-screen-on',
+                  'Keep the screen awake during therapy while Monitoring is enabled.',
+                  False, 'patch_graph_keep_screen_on'),
         PatchSpec('patch-fw-squarewave', 'Add squarewave pressure shaping.',
                   False, 'patch_squarewave'),
         PatchSpec('patch-fw-asv-wrapper', 'Add ASV backup-rate runtime control.',
@@ -2800,6 +2822,7 @@ PATCH_PHASES = (
 PATCH_DEPENDENCIES = {
     'patch-ivaps-settings': ('patch-custom-settings',),
     'patch-fw-graph': ('patch-fw-common-code',),
+    'patch-graph-keep-screen-on': ('patch-fw-graph',),
     'patch-fw-vauto-wrapper': ('patch-fw-common-code',),
     'patch-fw-squarewave': ('patch-fw-common-code', 'patch-fw-vauto-wrapper'),
 }

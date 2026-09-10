@@ -75,6 +75,9 @@ fi
 if (( graph )); then
     args+=(--patch-fw-graph Y)
 fi
+if [[ ${PATCH_GRAPH_KEEP_SCREEN_ON:-0} == 1 ]]; then
+    args+=(--patch-graph-keep-screen-on Y)
+fi
 if (( squarewave )); then
     args+=(--patch-fw-squarewave Y)
 fi
