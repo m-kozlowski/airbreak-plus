@@ -283,7 +283,8 @@ static int write_custom_settings_entry(unsigned int index, char *response,
         return write_error(response, response_size, 0x6033);
 
     variable_lookup_handler(handler, entry->item_id, 0);
-    descriptor = (const u8 *)handler[3];
+    /* variable_handler_init stores runtime state at +0x0c, descriptor at +0x10. */
+    descriptor = (const u8 *)handler[4];
     variable_handler_get_uart_name(handler, name);
     if (entry->flags & CUSTOM_MENU_FLAG_G4_NUMERIC) {
         units = localized_string(*(const u16 *)(descriptor +
