@@ -23,9 +23,9 @@ var_id	uart	edf_signal	resmed_name	notes
 0x0015	EXW			
 0x0016	EXR			
 0x0017	CRX			
-0x0018	ZRD			
+0x0018	ZRD			UART command line staged by the SD Settings.ecp and routed-UART command service
 0x0019	ZRG			
-0x001A	ZXT			
+0x001A	ZXT			Service command text, up to 80 characters; supports harness overrides and staged RTC date/time updates; changes notify ZXX
 0x001B	ZMT			
 0x001C	ZME			
 0x001D	ZPM			
@@ -174,7 +174,7 @@ var_id	uart	edf_signal	resmed_name	notes
 0x00AC	CET		CSR_EVENT_TIME	CSR Event Time
 0x00AD	NOC		NUM_OCCURENCES	Occurrence Count
 0x00AE	ZSE		SAVED_SYSTEM_ERROR	Saved System Error
-0x00AF	ZEW			
+0x00AF	ZEW			ZRL saved-system-error stream backend state/cursor
 0x00B0	ZRE			
 0x00B1	LRP		AVG_LOW_RES_THERAPY_PRESSURE	Avg Low-Res Therapy Pressure
 0x00B2	LRE		AVG_LOW_RES_EPR_PRESSURE	Avg Low-Res EPR Pressure
@@ -194,26 +194,26 @@ var_id	uart	edf_signal	resmed_name	notes
 0x00C0	BFL			Blower flow runtime value; /500 L/s
 0x00C1	FID			CAL 0002 32-bit flow-sensor product identifier; set to 0 when the sensor ID read reports an error
 0x00C2	FLG			Flow Gain
-0x00C3	FLW			
+0x00C3	FLW			Uncalibrated flow-channel value; calibrated counterpart is ZFL
 0x00C4	FLZ		FLOW_ZERO	Flow Zero
 0x00C5	BPR			Blower pressure runtime value; /50 cmH2O
 0x00C6	CPR		CAL_PRESSURE	Calibration Pressure Setpoint
 0x00C7	PRS			Raw pressure sensor value
 0x00C8	PSH		HI_PRS_SCALE	Pressure Gain
 0x00C9	PZH		HI_PRSS_ZERO	Pressure Zero
-0x00CA	NOS			
-0x00CB	NSE			
-0x00CC	SNB			
-0x00CD	SNZ			
+0x00CA	NOS			Filtered analog snore-path signal before SNZ zero and SNB background correction; sourced from ADC1_IN14 on PC4
+0x00CB	NSE			Background-corrected and normalized snore-path signal; raw / 100 feeds the snore-index calculation
+0x00CC	SNB			Snore-path background calibration in BGL; raw / 44 scales the nominal background, default 44
+0x00CD	SNZ			Snore-path zero offset in BGL; subtracted before background correction, default 0
 0x00CE	PVD			
 0x00CF	PVR			
 0x00D0	RIR			
 0x00D1	VIR			
-0x00D2	CCP			
-0x00D3	CCS			
+0x00D2	CCP			Persistent 8-bit BGL field (0..255)
+0x00D3	CCS			Persistent 8-bit BGL field (0..255)
 0x00D4	MDA			
 0x00D5	CUR			
-0x00D6	FAT			
+0x00D6	FAT			Abort-error value recorded by the ABR EEPROM stream
 0x00D7	FPW			
 0x00D8	KPD			CAL 0006 latched front-panel button event bitmap; 0002=Home, 0004=Start/Stop, 0008=dial press, 0010/0020=additional profile-1 inputs; reset when the service stops
 0x00D9	KPT			CAL 0006 current front-panel button state bitmap; 0001=Start/Stop, 0004=Home, 0008=dial press, 0010/0020=additional profile-1 inputs
@@ -262,31 +262,31 @@ var_id	uart	edf_signal	resmed_name	notes
 0x0104	CSE			
 0x0105	CST			
 0x0106	CSS			
-0x0107	HAH			
-0x0108	HAT			
-0x0109	HMP			
+0x0107	HAH			Ambient relative humidity from STM8 sensor, used by the humidifier model; raw / 1000 = RH fraction (raw / 10 = percent RH)
+0x0108	HAT			Ambient temperature from STM8 sensor, used by the humidifier model; raw / 10 = deg C
+0x0109	HMP			Available climate-heater power budget; raw / 25 gives the combined humidifier and heated-tube duty budget in percent
 0x010A	HSC			
-0x010B	HTR			
-0x010C	HUR			
-0x010D	ZEC			
-0x010E	HET			
-0x010F	HFL			
-0x0110	ZFL			
+0x010B	HTR			Heated-tube status bits from STM8 command 07/00; monitored for peripheral fault conditions
+0x010C	HUR			Humidifier status bits from STM8 command 06/00; monitored for peripheral fault conditions; bit 7 updates HUC
+0x010D	ZEC			TXC climate-control error stream backend state/cursor
+0x010E	HET			TXH heated-tube error stream backend state/cursor
+0x010F	HFL			Calibrated flow from a separate internal flow channel; raw / 500 = L/s
+0x0110	ZFL			Calibrated flow from the source exposed as FLW; raw / 500 = L/s
 0x0111	RFA			
 0x0112	AGT			
 0x0113	XMP			
 0x0114	AHC			
 0x0115	AIC			
-0x0116	APT			
+0x0116	APT			Apnea-event change trigger; updates ANV from current time, DUR, and AET
 0x0117	HYC			
 0x0118	UAC			
 0x0119	BSP		PRESS_SUPP	
-0x011A	HPR			
+0x011A	HPR			Calibrated pressure from a separate internal pressure channel; raw / 50 = cmH2O
 0x011B	LPR			
 0x011C	PSP		PRES_SUPP	PS [cmH2O] (0.0 .. 25.0 step 0.2)
 0x011D	BPF			
 0x011E	LPF			
-0x011F	ZMP			
+0x011F	ZMP			Calibrated pressure from the source exposed as PRS; raw / 50 = cmH2O
 0x0120	BPA			
 0x0121	CAC			
 0x0122	OAC			
@@ -294,10 +294,10 @@ var_id	uart	edf_signal	resmed_name	notes
 0x0124	NBF			
 0x0125	CGT			
 0x0126	RGT			RGL reminder persistence-group tracker
-0x0127	TEE		TE_ERROR_COUNT	
+0x0127	TEE		TE_ERROR_COUNT	TRR transient-error stream backend state/cursor
 0x0128	AMT			
-0x0129	ZEH			
-0x012A	ZET			
+0x0129	ZEH			TXW transducer-error stream backend state/cursor
+0x012A	ZET			TXE transducer-error stream backend state/cursor
 0x012B	RCR		REC_SPT_CL_RATIO	Spont Cyc [%] (0 .. 100 step 1)
 0x012C	RTR		REC_SPT_TR_RATIO	Spont Trig [%] (0 .. 100 step 1)
 0x012D	SBC			
@@ -307,7 +307,7 @@ var_id	uart	edf_signal	resmed_name	notes
 0x0131	TCT			
 0x0132	DGT			
 0x0133	IGT			
-0x0134	ZVT			
+0x0134	ZVT			DLL stream backend state/cursor for DLA records
 0x0135	SSD			Date (0 .. 24836 step 1)
 0x0136	DTT			
 0x0137	DUF			Days 4hrs+ (0 .. 2048 step 1)
@@ -350,7 +350,7 @@ var_id	uart	edf_signal	resmed_name	notes
 0x015C	ARS			
 0x015D	ZFP			
 0x015E	TIT			
-0x015F	ANT			
+0x015F	ANT			Change notification for ANV apnea-event records; linked by the NPA signal group
 0x0160	DDC			
 0x0161	D00		DEBUG_VALUE_SLOT_00	
 0x0162	D01		DEBUG_VALUE_SLOT_01	
@@ -365,7 +365,7 @@ var_id	uart	edf_signal	resmed_name	notes
 0x016B	ALL			
 0x016C	BGT			BGL board/identity/calibration persistence-group tracker
 0x016D	NGT			NGL backlight persistence-group tracker
-0x016E	UGT			
+0x016E	UGT			UGL EEPROM group change tracker; receives TUD updates
 0x016F	BTM		BREATH_TIME	
 0x0170	CBP			
 0x0171	GIT			
@@ -389,7 +389,7 @@ var_id	uart	edf_signal	resmed_name	notes
 0x0183	L18			
 0x0184	L19			
 0x0185	L20			
-0x0186	MGT			
+0x0186	MGT			MGL EEPROM group change tracker
 0x0187	PDS			
 0x0188	PDT			
 0x0189	PDD			
@@ -407,9 +407,9 @@ var_id	uart	edf_signal	resmed_name	notes
 0x0195	STW			
 0x0196	TET			
 0x0197	ZDT			
-0x0198	ZEU			
-0x0199	ZTU			
-0x019A	ZEV			
+0x0198	ZEU			ERR application-error stream backend state/cursor
+0x0199	ZTU			ELI stream backend state/cursor for ELV records
+0x019A	ZEV			ABR abort-error stream backend state/cursor
 0x019B	ZJA			
 0x019C	ZLT			
 0x019D	ZMN			
@@ -427,7 +427,7 @@ var_id	uart	edf_signal	resmed_name	notes
 0x01A9	ZTM			
 0x01AA	ZTS			
 0x01AB	RDP			
-0x01AC	ZXX			
+0x01AC	ZXX			Service-text change token; updated with system tick when ZXT is committed and watched by the command dispatcher
 0x01AD	ZUT			
 0x01AE	ZUD			
 0x01AF	ZUR			
@@ -597,9 +597,9 @@ var_id	uart	edf_signal	resmed_name	notes
 0x0253	CDS			CAL 0010 SD read/write test result: 0001=pass, 0002=failure or idle; test file is mmc:0:\TestReading.bin
 0x0254	SDC			
 0x0255	SCS			
-0x0256	TUD			
+0x0256	TUD			Used-hours display toggle stored in UGL; callback 28 controls PHM and HOU visibility
 0x0257	MQD			Mask Fit
-0x0258	ZRH			
+0x0258	ZRH			Climate-control status derived from the newest SESSION/STR record; 1 when SYC is zero, otherwise 0
 0x0259	KEY			
 0x025A	UTY			
 0x025B	CTY			
@@ -689,10 +689,10 @@ var_id	uart	edf_signal	resmed_name	notes
 0x02AF	MAM			
 0x02B0	DLA			
 0x02B1	ZYS			
-0x02B2	ANV			
-0x02B3	PCC			
-0x02B4	HPI			
-0x02B5	HUI			
+0x02B2	ANV			NPA apnea-event record: seconds of day (u32), duration in deciseconds (u16), event type (u16)
+0x02B3	PCC			Five u16 climate-control parameters received through the humidifier interface; setup consumes elements 0, 1, 3, and 4
+0x02B4	HPI			Three-element binary parameter block received through the heated-tube interface
+0x02B5	HUI			Three-element binary parameter block received through the humidifier interface and consumed by climate control
 0x02B6	DAC		DATE_DEC	Date
 0x02B7	TIC		TIME_DEC	Time
 0x02B8	OXH			Oximetry summary/header
