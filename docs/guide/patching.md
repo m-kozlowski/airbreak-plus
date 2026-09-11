@@ -86,6 +86,7 @@ All patches below are **enabled by default** unless noted.
 | Color palette | Applies custom color scheme | `--patch-custom-palette` |
 | [Backlight adaptation](features/backlight.md) | Continuously adjusts LCD and button brightness to ambient light | `--patch-fw-backlight` |
 | [Custom settings](../custom_settings.md) | Exposes menu settings for active compiled payloads and optional features | `--patch-custom-settings` |
+| Target humidity (opt-in) | Sets the climate model's target RH for Auto and Manual to 0-100%, including fractions. Higher targets increase condensation risk | `--patch-target-rh PERCENT` |
 
 
 ### Therapy modifications

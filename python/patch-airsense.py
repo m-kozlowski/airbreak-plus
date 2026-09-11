@@ -2237,6 +2237,27 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self.enabled_custom_settings_features.add('ivaps')
         return PatchOutcome.ok()
 
+    def patch_target_rh(self, percent):
+        """Set the climate model's target RH for Auto and manual humidity levels."""
+        getters = {
+            'SX567-0302': 0xd221c,
+            'SX567-0305': 0xd2a0c,
+            'SX567-0306': 0xd2920,
+            'SX567-0401': 0xd2b80,
+            'SX567-0402': 0xd2df8,
+        }
+        getter = getters.get(self.asf.cdx_ver)
+        if getter is None:
+            return PatchOutcome.skip('unsupported CDX version %s' % self.asf.cdx_ver)
+
+        # vldr s0,[pc,#0x1fc]; bx lr
+        if self.asf.read_bytes(getter, 6) != bytes.fromhex('9f ed 7f 0a 70 47'):
+            raise ValueError('unexpected target RH getter bytes at 0x%X' % getter)
+        self._replace_bytes_checked(
+            getter + 0x200, struct.pack('<f', 0.85),
+            struct.pack('<f', percent / 100), 'target RH', accept_existing=True)
+        return PatchOutcome.ok('Climate model target RH: %g%% (Auto and Manual)' % percent)
+
     def patch_defaults(self):
         defaults = (
             ('LAN', 0),  # English
@@ -2687,6 +2708,16 @@ def str2bool(v):
     raise argparse.ArgumentTypeError('Boolean value expected.')
 
 
+def percentage(v):
+    try:
+        value = float(v)
+    except ValueError:
+        raise argparse.ArgumentTypeError('Percentage from 0 to 100 expected.') from None
+    if not 0 <= value <= 100:
+        raise argparse.ArgumentTypeError('Percentage from 0 to 100 expected.')
+    return value
+
+
 @dataclass(frozen=True)
 class PatchOutcome:
     status: str = 'OK'
@@ -2724,9 +2755,10 @@ class TeeStream:
 class PatchSpec:
     option: str
     description: str
-    default: bool
+    default: object
     method: str
     deprecated: str = None
+    value_type: object = None
 
 
 # Patch order is part of the implementation. Payloads must be present before
@@ -2761,6 +2793,9 @@ PATCH_PHASES = (
                   True, 'patch_defaults'),
         PatchSpec('patch-fw-backlight', 'Improve backlight adaptation to ambient light.',
                   True, 'patch_backlight_adapt'),
+        PatchSpec('patch-target-rh',
+                  'Set climate model target RH in percent for Auto and Manual (stock: 85%).',
+                  None, 'patch_target_rh', value_type=percentage),
         PatchSpec('patch-custom-palette', 'Patch the custom color palette.',
                   True, 'custom_palette'),
         PatchSpec('patch-past-date', 'Allow setting past date in the menu and over UART.',
@@ -2834,7 +2869,8 @@ def iter_patch_specs():
 
 
 def patch_option_selected(args, option):
-    return getattr(args, option.replace('-', '_'))
+    value = getattr(args, option.replace('-', '_'))
+    return value is not None and value is not False
 
 
 def validate_patch_dependencies(parser, args):
@@ -2865,10 +2901,11 @@ def build_argument_parser():
         state = 'enabled' if patch.default else 'disabled'
         parser.add_argument(
             '--' + patch.option,
-            type=str2bool,
+            type=patch.value_type or str2bool,
             default=patch.default,
-            metavar='BOOL',
-            help='%s (default: %s)' % (patch.description, state))
+            metavar='PERCENT' if patch.value_type else 'BOOL',
+            help=(patch.description.replace('%', '%%') if patch.value_type else
+                  '%s (default: %s)' % (patch.description, state)))
 
     parser.add_argument('--overwrite', action='store_true',
                         help='Overwrite output file if it already exists.')
@@ -2897,7 +2934,8 @@ def print_patch_details(output, outcome, stream=None, include_summary=True):
         print('  ' + outcome.summary, file=stream)
 
 
-def apply_reported_patch(option, method, args, detail_log=None, deprecated=None):
+def apply_reported_patch(option, method, args, detail_log=None, deprecated=None,
+                         method_args=()):
     if deprecated and not args.force_deprecated:
         print('PATCH: %s [SKIP]' % option)
         print('  ' + deprecated)
@@ -2906,7 +2944,7 @@ def apply_reported_patch(option, method, args, detail_log=None, deprecated=None)
     output = io.StringIO()
     try:
         with redirect_stdout(output):
-            outcome = method()
+            outcome = method(*method_args)
         if not isinstance(outcome, PatchOutcome):
             raise TypeError("%s returned %s instead of PatchOutcome" %
                             (option, type(outcome).__name__))
@@ -2947,8 +2985,10 @@ def apply_patch_phases(patches, args, detail_log=None):
 
         print('\n=== ' + phase_name)
         for patch in selected:
+            method_args = ((getattr(args, patch.option.replace('-', '_')),)
+                           if patch.value_type else ())
             apply_reported_patch(patch.option, getattr(patches, patch.method), args,
-                                 detail_log, patch.deprecated)
+                                 detail_log, patch.deprecated, method_args)
 
 
 def run_patcher(args, detail_log=None):

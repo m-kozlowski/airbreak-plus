@@ -69,6 +69,10 @@ fi
 
 args=()
 
+if [[ ${PATCH_TARGET_RH+x} ]]; then
+    args+=(--patch-target-rh "$PATCH_TARGET_RH")
+fi
+
 if (( common_code )); then
     args+=(--patch-fw-common-code Y)
 fi
