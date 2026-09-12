@@ -20,12 +20,10 @@ import hashlib
 import json
 import logging
 import os
-import re
 import struct
 import sys
 import threading
 import time
-from pathlib import Path
 
 try:
     from bleak import BleakClient, BleakScanner
@@ -37,6 +35,11 @@ from cryptography.hazmat.primitives import hashes, hmac
 
 # lib/ is on sys.path; import the shared Transport surface.
 from as11_rpc import RPC_VERSIONS, TransportError
+from as11_credentials import (
+    CRED_FILE, MAC_RE, UUID_RE,
+    load_all_credentials, save_all_credentials,
+    load_credentials, save_credentials, resolve_addr,
+)
 
 
 # GATT UUIDs + FIG constants.
@@ -53,8 +56,6 @@ FIG_HEADER_LEN = 12
 FIG_VCID_RPC       = 0x0393  # plaintext, key exchange only
 FIG_VCID_RPC_ENC   = 0x0397  # encrypted TX
 FIG_VCID_RX_ENC    = 0x0396  # encrypted RX
-
-CRED_FILE = Path.home() / ".as11_ble.json"
 
 log = logging.getLogger("as11.ble")
 
@@ -261,9 +262,11 @@ class As11Connection:
 
     def set_session_key(self, key_hex):
         """AES-256 session key from SHA256 output."""
-        self._session_key = bytes.fromhex(key_hex[:64])
-        log.info("session key set (%d bytes): %s...",
-                 len(self._session_key), key_hex[:16])
+        key = bytes.fromhex(key_hex)
+        if len(key) != 32:
+            raise ValueError(f"FIG AES key must be 32 bytes, got {len(key)}")
+        self._session_key = key
+        log.info("session key set (%d bytes)", len(key))
 
     def _aes_encrypt(self, plaintext, length_prefix=True):
         """AES-CBC(key, random IV). Wire: [IV][cipher([u16 len][payload][zero pad])]."""
@@ -280,29 +283,30 @@ class As11Connection:
         return iv + ct
 
     def _aes_decrypt(self, data):
+        if len(data) < 32 or (len(data) - 16) % 16:
+            raise ValueError("invalid FIG AES payload length")
         iv = data[:16]
         ct = data[16:]
         cipher = Cipher(algorithms.AES(self._session_key), modes.CBC(iv))
         dec = cipher.decryptor()
         plaintext = dec.update(ct) + dec.finalize()
-        if len(plaintext) >= 2:
-            payload_len = struct.unpack_from('<H', plaintext, 0)[0]
-            return plaintext[2:2 + payload_len]
-        return plaintext.rstrip(b'\x00')
+        payload_len = struct.unpack_from('<H', plaintext, 0)[0]
+        if payload_len > len(plaintext) - 2:
+            raise ValueError("FIG AES plaintext length exceeds decrypted payload")
+        return plaintext[2:2 + payload_len]
 
     @staticmethod
-    async def scan(timeout=10.0):
-        """Returns [(address, name, rssi), ...]."""
-        devices = await BleakScanner.discover(
-            timeout=timeout,
-            service_uuids=[SERVICE_UUID],
-            return_adv=True,
-        )
+    async def scan(timeout=10.0, include_all=False):
+        """Return (address, name, RSSI, advertised service UUIDs) entries."""
+        scan_args = {"timeout": timeout, "return_adv": True}
+        if not include_all:
+            scan_args["service_uuids"] = [SERVICE_UUID]
+        devices = await BleakScanner.discover(**scan_args)
         results = []
         for addr, (dev, adv) in devices.items():
             name = dev.name or adv.local_name or ""
-            if name.startswith(DEVICE_NAME_PREFIX):
-                results.append((dev.address, name, adv.rssi))
+            if include_all or name.startswith(DEVICE_NAME_PREFIX):
+                results.append((dev.address, name, adv.rssi, tuple(adv.service_uuids or ())))
         return results
 
     async def connect(self, address: str):
@@ -619,54 +623,6 @@ class As11Connection:
             "nonce": result2.get("nonce", ""),
             "serverConfirmation": server_confirmation,
         }
-
-
-# Credentials + address resolution.
-
-MAC_RE  = re.compile(r'^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$')
-UUID_RE = re.compile(r'^[0-9A-Fa-f]{8}-([0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12}$')
-
-
-def load_all_credentials() -> dict:
-    if not CRED_FILE.exists():
-        return {}
-    return json.loads(CRED_FILE.read_text())
-
-
-def save_all_credentials(all_creds: dict):
-    CRED_FILE.write_text(json.dumps(all_creds, indent=2))
-
-
-def save_credentials(address: str, creds: dict):
-    all_creds = load_all_credentials()
-    existing = all_creds.get(address, {})
-    existing.update(creds)
-    all_creds[address] = existing
-    save_all_credentials(all_creds)
-    log.info("credentials saved to %s", CRED_FILE)
-
-
-def load_credentials(address: str) -> dict:
-    return load_all_credentials().get(address, {})
-
-
-def resolve_addr(arg: str = None) -> str:
-    """MAC/UUID -> as-is (MAC uppercased). Alias -> looked up from credentials.
-    None falls back to $AS11_ADDR."""
-    if arg is None:
-        arg = os.environ.get("AS11_ADDR")
-    if not arg:
-        raise SystemExit("no address: pass --addr or set AS11_ADDR")
-
-    if MAC_RE.match(arg):
-        return arg.upper()
-    if UUID_RE.match(arg):
-        return arg
-
-    for addr, data in load_all_credentials().items():
-        if data.get("alias") == arg:
-            return addr
-    raise SystemExit(f"no MAC/UUID/alias matched: {arg!r}")
 
 
 class BleTransport:

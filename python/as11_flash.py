@@ -79,6 +79,7 @@ except ModuleNotFoundError as exc:  # pragma: no cover
 from as11_rpc import (  # noqa: E402
     Transport, TransportError, FramingError, build_request,
 )
+from as11_credentials import load_all_credentials  # noqa: E402
 from lib.as11_patch_versions import (  # noqa: E402
     AS11_OTA_COMPATIBILITY_FINGERPRINT_PRESETS,
 )
@@ -197,7 +198,6 @@ BLOCK_ALIASES: dict[str, str] = {
 # Only CONF/APPL/APCX/FGBL targets need them. FGCB ignores these fields.
 COMPATIBILITY_FINGERPRINT_PRESETS = AS11_OTA_COMPATIBILITY_FINGERPRINT_PRESETS
 
-BLE_CRED_FILE = Path.home() / ".as11_ble.json"
 
 
 
@@ -518,18 +518,6 @@ def normalize_key_hex(text: str, *, source: str) -> bytes:
     return raw
 
 
-def load_ble_credentials_for_keys() -> dict:
-    if not BLE_CRED_FILE.exists():
-        return {}
-    try:
-        data = json.loads(BLE_CRED_FILE.read_text())
-    except json.JSONDecodeError as exc:
-        raise SystemExit(f"{BLE_CRED_FILE}: invalid JSON: {exc}") from exc
-    if not isinstance(data, dict):
-        raise SystemExit(f"{BLE_CRED_FILE}: expected object at top level")
-    return data
-
-
 def find_credential_target(creds: dict, target: str) -> tuple[str, dict] | None:
     target_upper = target.upper()
     for addr, data in creds.items():
@@ -552,7 +540,7 @@ def stored_ota_key_for_device(args) -> tuple[str, str] | None:
     if not target:
         return None
 
-    found = find_credential_target(load_ble_credentials_for_keys(), target)
+    found = find_credential_target(load_all_credentials(), target)
     if found is None:
         return None
     addr, data = found

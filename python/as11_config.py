@@ -1032,24 +1032,29 @@ def cmd_known(args: argparse.Namespace) -> int:
 
 
 def cmd_devices(args: argparse.Namespace) -> int:
-    """BLE device management. Uses lib/as11_ble directly."""
+    """BLE device management and offline credential storage."""
     import asyncio
-    from as11_ble import (
-        As11Connection, load_all_credentials, save_all_credentials,
+    from as11_credentials import (
+        load_all_credentials, save_all_credentials,
         save_credentials, load_credentials, resolve_addr,
     )
 
     action = getattr(args, "devices_action", None) or "list"
 
     if action == "scan":
+        from as11_ble import As11Connection
+
         async def _scan():
-            print(f"Scanning for AS11 devices ({args.timeout:.0f}s)...")
-            devices = await As11Connection.scan(timeout=args.timeout)
+            scope = "all BLE advertisements" if args.all else "AS11 devices"
+            print(f"Scanning for {scope} ({args.timeout:.0f}s)...")
+            devices = await As11Connection.scan(timeout=args.timeout, include_all=args.all)
             if not devices:
                 print("No devices found.")
                 return
-            for addr, name, rssi in sorted(devices, key=lambda x: -x[2]):
+            for addr, name, rssi, services in sorted(devices, key=lambda x: -x[2]):
                 print(f"  {addr:<20}  rssi={rssi:>4}  {name}")
+                if services:
+                    print(f"    services: {','.join(services)}")
         asyncio.run(_scan())
         return 0
 
@@ -1068,6 +1073,8 @@ def cmd_devices(args: argparse.Namespace) -> int:
         return 0
 
     if action == "pair":
+        from as11_ble import As11Connection
+
         addr = resolve_addr(args.target)
         async def _pair():
             conn = As11Connection(debug=args.debug)
@@ -1460,6 +1467,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     dev_scan = dev_sub.add_parser("scan", help="scan for AS11 BLE devices")
     dev_scan.add_argument("--timeout", type=float, default=10.0)
+    dev_scan.add_argument("--all", action="store_true",
+                          help="show every BLE advertisement and its service UUIDs")
 
     dev_sub.add_parser("list", help="list paired devices (default)")
 
