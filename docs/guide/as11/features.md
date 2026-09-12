@@ -59,12 +59,17 @@ compatible tools. They can make selected commands available over connections
 where the stock firmware blocks them. By default, this includes `SetDateTime`
 and `ApplyUpgrade` over paired Bluetooth, allowing the date and time to be set
 and firmware to be updated without extracting the device OTA key. Commands can
-also be blocked; for example, firmware updates arriving through the cellular
-module can be disabled.
+also be blocked on selected direct-control connections.
 
 Selected device settings can also be made available for remote reading or
 writing. By default, this includes Warmup, which preheats the humidifier before
 therapy.
+
+An optional cloud-update patch prevents flow-generator updates received from
+the cellular service from being installed. By default, it records the update
+details without downloading the file. It can instead download and retain the
+file for inspection without installing it. Modem and alarm-module updates are
+unaffected.
 
 ## Time Zone
 
@@ -86,9 +91,10 @@ Signal layouts are documented in the
 
 ## Variant Reporting
 
-The compiled VID-spoof payload updates `VariantIdentifier` when the selected
-therapy mode is committed. This keeps EDF identity and cloud reporting aligned
-with supported AirSense or AirCurve mode families where a mapping is known.
+The compiled VID-spoof payload updates the reported software variant when the
+selected therapy mode is committed. This keeps EDF identity and cloud reporting
+aligned with supported AirSense or AirCurve mode families where a mapping is
+known.
 
 The payload must be built for the address expected by the patcher. If the
 binary is missing, stale, or its destination is occupied, the patcher reports

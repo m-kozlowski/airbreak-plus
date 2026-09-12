@@ -235,8 +235,8 @@ KNOWN_RPC_PERMISSION_VCIDS = (
     0x0394,  # BLE encrypted small RPC lane, 632-byte buffer; paired with host 0x0395
     0x0396,  # BLE encrypted large RPC lane, 7682-byte buffer; paired with host 0x0397
     0x0398,  # no endpoint-catalog transport row found
-    0x0780,  # Internal/cloud small RPC lane, 1024-byte buffer; paired with 0x0781
-    0x0788,  # Internal/cloud large RPC lane, 7650-byte buffer; paired with 0x0789
+    0x0780,  # Cellular application's internal NCP lane; paired with 0x0781
+    0x0788,  # Cellular application's internal JSON-RPC lane; paired with 0x0789
 )
 
 # RPC method names known from AS11 firmware dispatch tables. Used only to
@@ -326,6 +326,8 @@ AS11_CUSTOM_SETTINGS_PAYLOAD = "as11_custom_settings"
 AS11_HEADER_CLOCK_PAYLOAD = "as11_header_clock"
 
 AS11_AIRBREAK_INFO_PAYLOAD = "as11_airbreak_info"
+
+AS11_CELLULAR_DOWNLOAD_PAYLOAD = "as11_cellular_download"
 
 
 class S11Firmware(object):
@@ -581,6 +583,29 @@ class S11Firmware(object):
         )
         self.write_u16(off, first)
         self.write_u16(off + 2, second)
+
+    def thumb2_bw_bytes(self, off, target):
+        """Encode an unconditional Thumb-2 B.W from an image offset."""
+        source = self.off_to_addr(off)
+        immediate = (target & ~1) - (source + 4)
+        if immediate & 1 or not -(1 << 24) <= immediate < (1 << 24):
+            raise ValueError(
+                "Thumb-2 B.W from 0x%08X cannot reach 0x%08X" %
+                (source, target)
+            )
+
+        encoded = immediate & ((1 << 25) - 1)
+        sign = (encoded >> 24) & 1
+        i1 = (encoded >> 23) & 1
+        i2 = (encoded >> 22) & 1
+        j1 = ((~i1) & 1) ^ sign
+        j2 = ((~i2) & 1) ^ sign
+        first = 0xF000 | (sign << 10) | ((encoded >> 12) & 0x03FF)
+        second = (
+            0x9000 | (j1 << 13) | (j2 << 11) |
+            ((encoded >> 1) & 0x07FF)
+        )
+        return struct.pack("<HH", first, second)
 
     def patch(self, patchdata, addr=None, dataseq=None, verbose=True, checkempty=False):
         patchdata = bytes(patchdata)
@@ -948,7 +973,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         "text_value": "custom_menu_text_value_factory",
     }
 
-    def __init__(self, asf, rpc_method_permissions=None, rpc_dataitem_permissions=None):
+    def __init__(self, asf, rpc_method_permissions=None, rpc_dataitem_permissions=None, cloud_firmware_change_mode="metadata"):
         self.asf = asf
         self._init_compiled_payloads()
         self.mop_callback_handlers = []
@@ -969,6 +994,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         self.disabled_stock_features = set()
         self.rpc_method_permission_rules = DEFAULT_RPC_METHOD_PERMISSIONS if rpc_method_permissions is None else rpc_method_permissions
         self.rpc_dataitem_permission_rules = DEFAULT_RPC_DATAITEM_PERMISSIONS if rpc_dataitem_permissions is None else rpc_dataitem_permissions
+        self.cloud_firmware_change_mode = cloud_firmware_change_mode
 
     def _payload_version_key(self, region=None):
         region = "APPL" if region is None else region
@@ -1030,6 +1056,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             storage[role], _ = self._inject_payload(name, data, region="FGBL")
         for hook, role in (("selector_hook", "gate"),
                            ("dispatch_hook_storage", "extension")):
+            # bl stock handler -> bl injected service handler
             self.asf.write_thumb2_bl_target(
                 self.asf.ptr_to_off(version_data[hook]), storage[role]
             )
@@ -1358,6 +1385,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
 
         return {
             "removed_rows": (layout["row_index"],),
+            # bl reminder scheduler -> nop; nop
             "patches": ((scheduler_off, b"\x00\xBF\x00\xBF"),),
         }
 
@@ -1609,6 +1637,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
                     ),
                     verbose=False,
                 )
+            # bl GuiScroller_ctor -> bl custom-settings scroller wrapper
             self.asf.write_thumb2_bl_target(
                 menu_symbols["call_off"], menu_symbols["wrapper"]
             )
@@ -2165,6 +2194,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
 
         n_code = 0
         if self.asf.u8(mul_off) == 5:
+            # movs r0, #5 -> movs r0, #0
             self.asf.write_u8(mul_off, 0)
             n_code = 1
 
@@ -2251,6 +2281,96 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         if changed:
             return PatchOutcome.ok("enabled: %s" % ", ".join(changed))
         return PatchOutcome.ok("already enabled")
+
+    def cloud_firmware_change(self):
+        """Retain a cloud FirmwareChange without applying it."""
+        version = self._patch_version_data("cloud_firmware_change")
+
+        if self.cloud_firmware_change_mode == "metadata":
+            site = version["suppress_download"]
+            # cbnz r0, accepted_flow_generator -> nop
+            # FirmwareChange parsing still stores UPGRD_TYPE=FG and the full
+            # download metadata, but the file-fetcher rejects that type.
+            summary = "metadata stored; download disabled"
+        else:
+            site = version["suppress_apply"]
+            # movs r2, #3 (ApplyUpgrade) -> movs r2, #2 (CheckUpgradeFile)
+            # The downloaded file is checked again, then the stock success
+            # path completes without applying it.
+            summary = "download enabled; apply disabled"
+
+        changed = self.asf.patch_exact(
+            site["address"], site["before"], site["after"]
+        )
+        return PatchOutcome.ok(summary if changed else "already configured")
+
+    def cellular_download(self):
+        """Expose native cellular HTTP downloads through AirbreakDownload."""
+        version = self._patch_version_data("cellular_download")
+        data, ver = self._load_versioned_bin(
+            AS11_CELLULAR_DOWNLOAD_PAYLOAD, required=True
+        )
+        elf_path = self._versioned_artifact_path(
+            AS11_CELLULAR_DOWNLOAD_PAYLOAD, "elf", ver
+        )
+
+        rpc_object = self._elf_symbol_addr(
+            elf_path, "cellular_download_rpc_object"
+        )
+        task_slot_param = self._elf_symbol_addr(
+            elf_path, "cellular_download_task_pointer_slot"
+        )
+        can_start = self._elf_symbol_addr(
+            elf_path, "gfile_fetcher_control_can_start"
+        )
+        can_start_wrapper = self._elf_symbol_addr(
+            elf_path, "cellular_download_can_start"
+        )
+        set_state = self._elf_symbol_addr(
+            elf_path, "upgrade_command_executor_set_state"
+        )
+        set_state_wrapper = self._elf_symbol_addr(
+            elf_path, "cellular_download_set_state"
+        )
+
+        can_start_slot = version["can_start_vtable_slot"]
+        set_state_off = self.asf.ptr_to_off(set_state)
+        set_state_branch = self.asf.thumb2_bw_bytes(
+            set_state_off, set_state_wrapper
+        )
+
+        if self.asf.u32(self.asf.ptr_to_off(can_start_slot)) != (can_start | 1):
+            raise ValueError("cellular download: can-start vtable slot does not match")
+        if bytes(self.asf.fw[set_state_off:set_state_off + 4]) != bytes.fromhex(
+                version["set_state_prologue"]):
+            raise ValueError("cellular download: state-machine hook does not match")
+
+        outcome = self.rpc_object_register(rpc_object, "AirbreakDownload")
+        if outcome.status != "OK":
+            return outcome
+
+        flash, _off = self._inject_payload(
+            AS11_CELLULAR_DOWNLOAD_PAYLOAD, data
+        )
+        self.asf.write_u32(
+            task_slot_param - self.asf.FLASH_BASE,
+            version["task_pointer_slot"],
+        )
+        self.asf.write_u32(
+            self.asf.ptr_to_off(can_start_slot), can_start_wrapper | 1
+        )
+        # push/mov stock prologue -> B.W state transition gate
+        self.asf.patch_exact(
+            set_state,
+            version["set_state_prologue"],
+            set_state_branch,
+        )
+
+        print(
+            "  AirbreakDownload: build/%s_%s.bin (%dB) at 0x%08X" %
+            (AS11_CELLULAR_DOWNLOAD_PAYLOAD, ver, len(data), flash)
+        )
+        return PatchOutcome.ok("Get/Set AirbreakDownload")
 
     def rpc_permission_record_flags_are_bits(self, off, stride):
         if off + stride > len(self.asf.fw) or stride < 2:
@@ -2528,9 +2648,12 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         self.asf.write_u16(text_ids_off + 2, anchors["empty_text_id"])
         if menu_draw_call is not None:
             self.asf.write_u16(text_ids_off + 4, anchors["menu_text_id"])
+        # bl stock title draw -> bl clock-aware title draw
         self.asf.write_thumb2_bl_target(draw_call, draw_wrapper)
         if menu_draw_call is not None:
+            # bl stock menu-label draw -> bl clock-setting label draw
             self.asf.write_thumb2_bl_target(menu_draw_call, menu_draw_wrapper)
+        # bl stock root constructor -> bl clock timer constructor wrapper
         self.asf.write_thumb2_bl_target(ctor_call, ctor_wrapper)
         self.asf.write_u32(timer_slot, timer_callback | 1)
 
@@ -2726,6 +2849,18 @@ PATCH_LIST = [
         "function": "rpc_permissions",
     },
     {
+        "arg": "patch-cloud-firmware-change",
+        "desc": "Retain cloud flow-generator firmware changes without applying them.",
+        "default": False,
+        "function": "cloud_firmware_change",
+    },
+    {
+        "arg": "patch-cellular-download",
+        "desc": "Download an HTTP resource to upgrade storage through the cellular modem.",
+        "default": False,
+        "function": "cellular_download",
+    },
+    {
         "arg": "patch-timezone-write",
         "desc": "Allow time-zone changes after summary history exists.",
         "default": True,
@@ -2733,7 +2868,7 @@ PATCH_LIST = [
     },
     {
         "arg": "patch-vid-spoof",
-        "desc": "Install runtime MOP-based VariantIdentifier spoofing.",
+        "desc": "Install runtime MOP-based software variant spoofing.",
         "default": True,
         "function": "vid_spoof",
     },
@@ -2812,6 +2947,14 @@ def build_arg_parser():
         help=("Set METHOD:VCID or DATAITEM:RPC|RPW permission; repeatable. "
               "Overrides the built-in rule for the same pair."),
     )
+    parser.add_argument(
+        "--cloud-firmware-change-mode",
+        choices=("metadata", "stage"),
+        default="metadata",
+        help=("Behavior of patch-cloud-firmware-change: retain download "
+              "metadata only, or stage and verify the file without applying it. "
+              "Default: metadata."),
+    )
     return parser
 
 
@@ -2874,6 +3017,7 @@ def run_patcher(args, detail_log=None):
         asf,
         rpc_method_permissions=rpc_method_permissions,
         rpc_dataitem_permissions=rpc_dataitem_permissions,
+        cloud_firmware_change_mode=args.cloud_firmware_change_mode,
     )
 
     print("\n=== Patches")

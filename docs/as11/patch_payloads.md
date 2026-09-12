@@ -60,11 +60,11 @@ Example generated 8.5.0 layout:
 payload                         runtime      size  runtime_end  storage      storage_end
 as11_mop_callback_dispatcher    0x081DBAD0   72    0x081DBB18   0x081DBAD0   0x081DBB18
 as11_rpc_dispatcher             0x081DBB18   308   0x081DBC4C   0x081DBB18   0x081DBC4C
-as11_vid_spoof                  0x081DBC4C   51    0x081DBC7F   0x081DBC4C   0x081DBC7F
-as11_header_clock               0x081DBC80   296   0x081DBDA8   0x081DBC80   0x081DBDA8
-as11_airbreak_info              0x081DBDA8   2216  0x081DC650   0x081DBDA8   0x081DC650
-as11_asv_backup_rate            0x081DC650   102   0x081DC6B6   0x081DC650   0x081DC6B6
-as11_custom_settings            0x081DC6B8   1136  0x081DCB28   0x081DC6B8   0x081DCB28
+as11_vid_spoof                  0x081DBC4C   395   0x081DBDD7   0x081DBC4C   0x081DBDD7
+as11_header_clock               0x081DBDD8   446   0x081DBF96   0x081DBDD8   0x081DBF96
+as11_airbreak_info              0x081DBF98   2216  0x081DC840   0x081DBF98   0x081DC840
+as11_asv_backup_rate            0x081DC840   102   0x081DC8A6   0x081DC840   0x081DC8A6
+as11_custom_settings            0x081DC8A8   1184  0x081DCD48   0x081DC8A8   0x081DCD48
 ```
 
 Build all Air11 payloads and inspect a layout with:
@@ -169,7 +169,7 @@ table reserves space for eight objects. It extends the objects accepted by
 | `as11_airbreak_info` | read-only [AirbreakInfo](patch_airbreak_info.md) RPC object |
 | `as11_mop_callback_dispatcher` | owns the shared enum-writeback vtable slot and calls registered MOP handlers |
 | `as11_rpc_dispatcher` | adapts registered Airbreak objects to the stock `Get` and `Set` formatter paths |
-| `as11_vid_spoof` | MOP handler; reads `MOP` and writes `VID` through native DataItem functions |
+| `as11_vid_spoof` | MOP handler; publishes `VID` and its `FGT`, `GCD`, `CID`, and `PVI` derivatives |
 | `as11_header_clock` | replaces the dashboard and therapy-screen title labels, reuses the root-widget timer for minute updates, and optionally binds a Configuration control through custom settings |
 | `as11_asv_backup_rate` | wraps the ASV feature update callback through its own vtable slot |
 | `as11_custom_settings` | appends persistent controls to selected clinical menu sections and updates their runtime visibility after MOP changes |
