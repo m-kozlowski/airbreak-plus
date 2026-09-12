@@ -242,5 +242,6 @@ class CompiledPayloadMixin(object):
             )
 
         off = storage - self.asf.FLASH_BASE
-        self.asf.patch(data, off, checkempty=True, verbose=False)
+        if bytes(self.asf.fw[off:off + len(data)]) != data:
+            self.asf.patch(data, off, checkempty=True, verbose=False)
         return storage, off
