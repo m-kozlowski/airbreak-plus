@@ -28,10 +28,9 @@ This builds compiled patches and produces following images:
 | Output | Content |
 |--------|---------|
 | `build/stm32-patched.bin` | unlocked stock-ish |
-| `build/stm32-graph.bin` | graph overlay injected |
-| `build/stm32-asv-plus.bin` | Custom ASV algo in VAuto slot, backup-rate suppression, squarewave |
-| `build/stm32-asv-plus_no-squarewave.bin` | same as stm32-asv-plus minus squarewave |
-| `build/stm32-asv-plus_with-backup.bin` | same as stm32-asv-plus minus backup-rate suppression |
+| `build/stm32-plus.bin` | graph, Custom VAuto, ASV backup-rate control, Square Wave |
+
+The additional features in `plus` have runtime controls in the clinical menu.
 
 The console shows compact patch status by default. A verbose transcript of the
 latest build is written to `make.log`; use `make V=1` to also show it on the
@@ -113,7 +112,7 @@ Example with custom VAuto:
 export PATCH_CODE=1
 export PATCH_ASV_TASK_WRAPPER=1
 export PATCH_VAUTO_WRAPPER=1
-./patch-airsense stm32.bin build/stm32-asv-plus.bin
+./patch-airsense stm32.bin build/stm32-custom.bin
 ```
 
 ### Miscellaneous
@@ -127,11 +126,11 @@ export PATCH_VAUTO_WRAPPER=1
 ## Selecting patches
 
 Use `y` to enable a patch or `n` to disable it. For example, to disable the
-graph when building the graph image:
+graph even when `PATCH_CODE=1` selects it:
 
 ```bash
 PATCH_CODE=1 python3 python/patch-airsense.py \
-    stm32.bin build/stm32-graph.bin PATCH \
+    stm32.bin build/stm32-custom.bin PATCH \
     --patch-fw-graph n
 ```
 

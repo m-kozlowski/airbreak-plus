@@ -57,10 +57,7 @@ PAYLOAD_TARGETS := $(PAYLOAD_STAMPS) $(PAYLOAD_LAYOUT_TSVS) $(BLX_DUMP_BIN)
 
 BUILD_VARIANTS = \
 	$(BUILD)/stm32-patched.bin \
-	$(BUILD)/stm32-graph.bin \
-	$(BUILD)/stm32-asv-plus.bin \
-	$(BUILD)/stm32-asv-plus_no-squarewave.bin \
-	$(BUILD)/stm32-asv-plus_with-backup.bin
+	$(BUILD)/stm32-plus.bin
 
 # Rebuild firmware when the patcher or its helpers change
 S10_PATCHER_DEPS := \
@@ -103,25 +100,10 @@ $(BUILD)/stm32-patched.bin: $(S10_PATCHER_DEPS) $(PAYLOAD_STAMPS) $(PAYLOAD_LAYO
 	$(announce_image)
 	./patch-airsense stm32.bin $@ $(PATCHER_OUTPUT_ARGS)
 
-# graph overlay injected
-$(BUILD)/stm32-graph.bin: $(S10_PATCHER_DEPS) $(PAYLOAD_STAMPS) $(PAYLOAD_LAYOUT_TSVS) $(BLX_DUMP_BIN)
-	$(announce_image)
-	PATCH_CODE=1 ./patch-airsense stm32.bin $@ $(PATCHER_OUTPUT_ARGS)
-
-# Custom ASV algorithm in VAuto slot + ASV backup-rate suppression + squarewave mode
-$(BUILD)/stm32-asv-plus.bin: $(S10_PATCHER_DEPS) $(PAYLOAD_STAMPS) $(PAYLOAD_LAYOUT_TSVS) $(BLX_DUMP_BIN)
+# Graph, Custom VAuto, ASV backup-rate control and Square Wave
+$(BUILD)/stm32-plus.bin: $(S10_PATCHER_DEPS) $(PAYLOAD_STAMPS) $(PAYLOAD_LAYOUT_TSVS) $(BLX_DUMP_BIN)
 	$(announce_image)
 	PATCH_CODE=1 PATCH_ASV_TASK_WRAPPER=1 PATCH_VAUTO_WRAPPER=1 PATCH_S=1 ./patch-airsense stm32.bin $@ $(PATCHER_OUTPUT_ARGS)
-
-# Custom ASV in VAuto slot + backup-rate suppression, no squarewave
-$(BUILD)/stm32-asv-plus_no-squarewave.bin: $(S10_PATCHER_DEPS) $(PAYLOAD_STAMPS) $(PAYLOAD_LAYOUT_TSVS) $(BLX_DUMP_BIN)
-	$(announce_image)
-	PATCH_CODE=1 PATCH_ASV_TASK_WRAPPER=1 PATCH_VAUTO_WRAPPER=1 ./patch-airsense stm32.bin $@ $(PATCHER_OUTPUT_ARGS)
-
-# Custom ASV in VAuto slot + squarewave, stock ASV backup-rate preserved
-$(BUILD)/stm32-asv-plus_with-backup.bin: $(S10_PATCHER_DEPS) $(PAYLOAD_STAMPS) $(PAYLOAD_LAYOUT_TSVS) $(BLX_DUMP_BIN)
-	$(announce_image)
-	PATCH_CODE=1 PATCH_VAUTO_WRAPPER=1 PATCH_S=1 ./patch-airsense stm32.bin $@ $(PATCHER_OUTPUT_ARGS)
 
 binaries: $(PAYLOAD_TARGETS)
 

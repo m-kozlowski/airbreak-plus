@@ -1,6 +1,6 @@
 # Custom VAuto
 
-The `stm32-asv-plus` builds can replace the stock VAuto within-breath
+The `stm32-plus.bin` build can replace the stock VAuto within-breath
 pressure-support behavior with Custom VAuto.
 
 The therapy mode remains VAuto. Stock VAuto continues to control EPAP, and the

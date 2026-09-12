@@ -35,8 +35,5 @@ The S EasyBreathe runtime path does not use the Square Wave handler.
 
 ## Build availability
 
-| Build | Behavior |
-|-------|----------|
-| `build/stm32-asv-plus.bin` | Square Wave control available |
-| `build/stm32-asv-plus_no-squarewave.bin` | Payload absent |
-| `build/stm32-asv-plus_with-backup.bin` | Square Wave control available |
+`build/stm32-plus.bin` includes the Square Wave control. Set it to Off to
+use the stock pressure-shaping handler.

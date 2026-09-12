@@ -18,11 +18,8 @@ Firmware variable assignment and persistence are listed in the
 
 ## Build availability
 
-| Build | Behavior |
-|-------|----------|
-| `build/stm32-asv-plus.bin` | Backup Rate control available |
-| `build/stm32-asv-plus_no-squarewave.bin` | Backup Rate control available |
-| `build/stm32-asv-plus_with-backup.bin` | Wrapper absent; stock behavior is always preserved |
+`build/stm32-plus.bin` includes the Backup Rate control. Set it to On to
+preserve the stock backup response.
 
 When the wrapper is present without `custom_settings`, its fallback is Off and
 the stock timed backup response remains suppressed.
