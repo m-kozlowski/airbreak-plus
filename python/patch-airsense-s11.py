@@ -327,6 +327,8 @@ AS11_HEADER_CLOCK_PAYLOAD = "as11_header_clock"
 
 AS11_AIRBREAK_INFO_PAYLOAD = "as11_airbreak_info"
 
+AS11_CELLULAR_DOWNLOAD_PAYLOAD = "as11_cellular_download"
+
 
 class S11Firmware(object):
 
@@ -581,6 +583,29 @@ class S11Firmware(object):
         )
         self.write_u16(off, first)
         self.write_u16(off + 2, second)
+
+    def thumb2_bw_bytes(self, off, target):
+        """Encode an unconditional Thumb-2 B.W from an image offset."""
+        source = self.off_to_addr(off)
+        immediate = (target & ~1) - (source + 4)
+        if immediate & 1 or not -(1 << 24) <= immediate < (1 << 24):
+            raise ValueError(
+                "Thumb-2 B.W from 0x%08X cannot reach 0x%08X" %
+                (source, target)
+            )
+
+        encoded = immediate & ((1 << 25) - 1)
+        sign = (encoded >> 24) & 1
+        i1 = (encoded >> 23) & 1
+        i2 = (encoded >> 22) & 1
+        j1 = ((~i1) & 1) ^ sign
+        j2 = ((~i2) & 1) ^ sign
+        first = 0xF000 | (sign << 10) | ((encoded >> 12) & 0x03FF)
+        second = (
+            0x9000 | (j1 << 13) | (j2 << 11) |
+            ((encoded >> 1) & 0x07FF)
+        )
+        return struct.pack("<HH", first, second)
 
     def patch(self, patchdata, addr=None, dataseq=None, verbose=True, checkempty=False):
         patchdata = bytes(patchdata)
@@ -2279,6 +2304,74 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         )
         return PatchOutcome.ok(summary if changed else "already configured")
 
+    def cellular_download(self):
+        """Expose native cellular HTTP downloads through AirbreakDownload."""
+        version = self._patch_version_data("cellular_download")
+        data, ver = self._load_versioned_bin(
+            AS11_CELLULAR_DOWNLOAD_PAYLOAD, required=True
+        )
+        elf_path = self._versioned_artifact_path(
+            AS11_CELLULAR_DOWNLOAD_PAYLOAD, "elf", ver
+        )
+
+        rpc_object = self._elf_symbol_addr(
+            elf_path, "cellular_download_rpc_object"
+        )
+        task_slot_param = self._elf_symbol_addr(
+            elf_path, "cellular_download_task_pointer_slot"
+        )
+        can_start = self._elf_symbol_addr(
+            elf_path, "gfile_fetcher_control_can_start"
+        )
+        can_start_wrapper = self._elf_symbol_addr(
+            elf_path, "cellular_download_can_start"
+        )
+        set_state = self._elf_symbol_addr(
+            elf_path, "upgrade_command_executor_set_state"
+        )
+        set_state_wrapper = self._elf_symbol_addr(
+            elf_path, "cellular_download_set_state"
+        )
+
+        can_start_slot = version["can_start_vtable_slot"]
+        set_state_off = self.asf.ptr_to_off(set_state)
+        set_state_branch = self.asf.thumb2_bw_bytes(
+            set_state_off, set_state_wrapper
+        )
+
+        if self.asf.u32(self.asf.ptr_to_off(can_start_slot)) != (can_start | 1):
+            raise ValueError("cellular download: can-start vtable slot does not match")
+        if bytes(self.asf.fw[set_state_off:set_state_off + 4]) != bytes.fromhex(
+                version["set_state_prologue"]):
+            raise ValueError("cellular download: state-machine hook does not match")
+
+        outcome = self.rpc_object_register(rpc_object, "AirbreakDownload")
+        if outcome.status != "OK":
+            return outcome
+
+        flash, _off = self._inject_payload(
+            AS11_CELLULAR_DOWNLOAD_PAYLOAD, data
+        )
+        self.asf.write_u32(
+            task_slot_param - self.asf.FLASH_BASE,
+            version["task_pointer_slot"],
+        )
+        self.asf.write_u32(
+            self.asf.ptr_to_off(can_start_slot), can_start_wrapper | 1
+        )
+        # push/mov stock prologue -> B.W state transition gate
+        self.asf.patch_exact(
+            set_state,
+            version["set_state_prologue"],
+            set_state_branch,
+        )
+
+        print(
+            "  AirbreakDownload: build/%s_%s.bin (%dB) at 0x%08X" %
+            (AS11_CELLULAR_DOWNLOAD_PAYLOAD, ver, len(data), flash)
+        )
+        return PatchOutcome.ok("Get/Set AirbreakDownload")
+
     def rpc_permission_record_flags_are_bits(self, off, stride):
         if off + stride > len(self.asf.fw) or stride < 2:
             return False
@@ -2760,6 +2853,12 @@ PATCH_LIST = [
         "desc": "Retain cloud flow-generator firmware changes without applying them.",
         "default": False,
         "function": "cloud_firmware_change",
+    },
+    {
+        "arg": "patch-cellular-download",
+        "desc": "Download an HTTP resource to upgrade storage through the cellular modem.",
+        "default": False,
+        "function": "cellular_download",
     },
     {
         "arg": "patch-timezone-write",

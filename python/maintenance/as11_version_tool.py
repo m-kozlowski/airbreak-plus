@@ -123,10 +123,18 @@ class CloudFirmwareChangeCandidates:
     sites: dict[str, AddressResult]
 
 
+@dataclass(frozen=True)
+class CellularDownloadCandidates:
+    task_pointer_slot: AddressResult
+    can_start_vtable_slot: AddressResult
+    set_state_prologue: str | None
+
+
 @dataclass
 class PortCandidates:
     stubs: dict[str, AddressResult]
     cloud_firmware_change: CloudFirmwareChangeCandidates
+    cellular_download: CellularDownloadCandidates | None
     rpc_dispatcher: RpcDispatcherCandidates
     mop: MopCandidates
     timezone_write: TimezoneWriteCandidates
@@ -608,6 +616,77 @@ def unique_pointer(data: bytes, value: int) -> tuple[int | None, tuple[int, ...]
         matches.append(FLASH_BASE + pos)
         pos += 1
     return (matches[0] if len(matches) == 1 else None, tuple(matches))
+
+
+def resolve_cellular_download_candidates(
+        target_data: bytes,
+        matcher: AddressMatcher,
+        reference: dict,
+        stubs: dict[str, AddressResult]) -> CellularDownloadCandidates:
+    """Resolve the native FileFetcher hooks and runtime task pointer slot."""
+    task_entry_offset = 0xFC
+    reference_task_base = reference["task_pointer_slot"] - task_entry_offset
+    source_literal, source_literals = unique_pointer(
+        matcher.source, reference_task_base
+    )
+    if source_literal is None:
+        task_slot = AddressResult(
+            reference["task_pointer_slot"], None, "missing",
+            "reference task-registry base has %d literal references" %
+            len(source_literals),
+        )
+    else:
+        literal = matcher.site(source_literal)
+        def task_slot_at(address: int) -> int:
+            off = address - FLASH_BASE
+            return struct.unpack_from("<I", target_data, off)[0] + task_entry_offset
+
+        alternatives = tuple(task_slot_at(item) for item in literal.alternatives)
+        if literal.address is None:
+            task_slot = AddressResult(
+                reference["task_pointer_slot"], None, literal.quality,
+                "task-registry base literal: %s" % literal.evidence,
+                alternatives,
+            )
+        else:
+            task_slot = AddressResult(
+                reference["task_pointer_slot"],
+                task_slot_at(literal.address),
+                literal.quality,
+                "transferred cellular task-registry base plus FileFetcher entry offset",
+                alternatives,
+            )
+
+    def vtable_slot(name: str, source_slot: int) -> AddressResult:
+        function = stubs.get(name)
+        if function is None or function.address is None:
+            return AddressResult(
+                source_slot, None, "missing",
+                "%s was not transferred" % name,
+            )
+        slot, refs = unique_pointer(target_data, function.address | 1)
+        quality = function.quality if slot is not None else "missing"
+        return AddressResult(
+            source_slot,
+            slot,
+            quality,
+            "unique vtable pointer to transferred %s" % name,
+            refs if slot is None else (),
+        )
+
+    set_state = stubs.get("upgrade_command_executor_set_state")
+    set_state_prologue = (
+        image_bytes_at(target_data, set_state.address, 4)
+        if set_state is not None and set_state.address is not None else None
+    )
+    return CellularDownloadCandidates(
+        task_pointer_slot=task_slot,
+        can_start_vtable_slot=vtable_slot(
+            "gfile_fetcher_control_can_start",
+            reference["can_start_vtable_slot"],
+        ),
+        set_state_prologue=set_state_prologue,
+    )
 
 
 def thumb2_bl_calls_to(data: bytes, target: int) -> tuple[int, ...]:
@@ -1458,6 +1537,12 @@ def resolve_port_candidates(
     cloud_firmware_change = resolve_cloud_firmware_change_candidates(
         target_fw.data, matcher, reference["cloud_firmware_change"]
     )
+    cellular_download = (
+        resolve_cellular_download_candidates(
+            target_fw.data, matcher, reference["cellular_download"], stubs
+        )
+        if "cellular_download" in reference else None
+    )
     rpc_dispatcher = resolve_rpc_dispatcher_candidates(
         target_fw.data, reference["rpc_dispatcher"], stubs
     )
@@ -1483,8 +1568,8 @@ def resolve_port_candidates(
         reference_release,
     )
     return PortCandidates(
-        stubs, cloud_firmware_change, rpc_dispatcher, mop, timezone_write, header_clock,
-        custom_settings, asv, ota_compatibility
+        stubs, cloud_firmware_change, cellular_download, rpc_dispatcher, mop,
+        timezone_write, header_clock, custom_settings, asv, ota_compatibility
     )
 
 
@@ -1660,6 +1745,44 @@ def self_check_candidates(
                         "bytes at the resolved cloud-upgrade site",
                     ),
                 ))
+
+    cellular_expected = expected_version.get("cellular_download")
+    if cellular_expected is not None:
+        cellular = candidates.cellular_download
+        if cellular is None:
+            for name in (
+                    "task_pointer_slot", "can_start_vtable_slot",
+                    "set_state_prologue"):
+                checks.append(compare_candidate(
+                    "cellular_download.%s" % name,
+                    cellular_expected[name],
+                    CandidateValue(
+                        None, "missing",
+                        "reference APPX has no cellular-download metadata",
+                    ),
+                ))
+        else:
+            for name in ("task_pointer_slot", "can_start_vtable_slot"):
+                result = getattr(cellular, name)
+                checks.append(compare_candidate(
+                    "cellular_download.%s" % name,
+                    cellular_expected[name],
+                    CandidateValue(
+                        result.address, result.quality, result.evidence
+                    ),
+                ))
+            set_state = candidates.stubs.get(
+                "upgrade_command_executor_set_state"
+            )
+            checks.append(compare_candidate(
+                "cellular_download.set_state_prologue",
+                cellular_expected["set_state_prologue"],
+                CandidateValue(
+                    cellular.set_state_prologue,
+                    set_state.quality if set_state is not None else "missing",
+                    "first four bytes of transferred state setter",
+                ),
+            ))
 
     rpc_dispatcher_expected = expected_version.get("rpc_dispatcher")
     if rpc_dispatcher_expected is not None:
@@ -1945,6 +2068,7 @@ def prepare(args) -> int:
     )
     stub_results = candidates.stubs
     cloud_firmware_change = candidates.cloud_firmware_change
+    cellular_download = candidates.cellular_download
     rpc_enum_symbols = candidates.custom_settings.rpc_enum_symbols
     rpc_enum_symbol_count = candidates.custom_settings.rpc_enum_symbol_count
     rpc_dispatcher_init_entry = candidates.rpc_dispatcher.init_entry
@@ -1973,6 +2097,13 @@ def prepare(args) -> int:
         ("mop", "writeback", mop_writeback),
         ("ota", "compatibility_fingerprints", ota_compatibility.table),
     ]
+    if cellular_download is not None:
+        address_rows.extend((
+            ("cellular_download", "task_pointer_slot",
+             cellular_download.task_pointer_slot),
+            ("cellular_download", "can_start_vtable_slot",
+             cellular_download.can_start_vtable_slot),
+        ))
     address_rows.extend(
         ("timezone_write", name, result)
         for name, result in timezone_write_sites.items()
@@ -2099,11 +2230,28 @@ def prepare(args) -> int:
         ))
     cloud_snippet_lines.append("    },")
 
+    cellular_snippet_lines = []
+    if cellular_download is not None:
+        cellular_snippet_lines = [
+            "    \"cellular_download\": {",
+            "        \"task_pointer_slot\": %s," % format_address(
+                cellular_download.task_pointer_slot.address
+            ),
+            "        \"can_start_vtable_slot\": %s," % format_address(
+                cellular_download.can_start_vtable_slot.address
+            ),
+            "        \"set_state_prologue\": %r," % (
+                cellular_download.set_state_prologue or "TODO"
+            ),
+            "    },",
+        ]
+
     snippets = [
         "# Candidate entry for AS11_PATCH_VERSIONS.",
         "# Verify against the target firmware before copying.",
         "",
         "%r: {" % target_id.appx_key,
+        *cellular_snippet_lines,
         *cloud_snippet_lines,
         "    \"rpc_dispatcher\": {",
         "        \"init_entry\": %s," % format_address(

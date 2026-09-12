@@ -46,6 +46,7 @@ PATCHES=(
     patch-custom-settings
     patch-rpc-permissions
     # patch-cloud-firmware-change
+    # patch-cellular-download
     patch-timezone-write
 )
 

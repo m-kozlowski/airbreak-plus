@@ -260,6 +260,11 @@ AS11_PATCH_VERSIONS = {
         },
     },
     "8_6_0": {
+        "cellular_download": {
+            "task_pointer_slot": 0x3000B070,
+            "can_start_vtable_slot": 0x081C62E4,
+            "set_state_prologue": "73b50446",
+        },
         "cloud_firmware_change": {
             "suppress_download": {
                 "address": 0x080BF266,

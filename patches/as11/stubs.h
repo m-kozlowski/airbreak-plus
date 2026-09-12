@@ -18,6 +18,11 @@ extern void rpc_profile_json_formatter_registry_ctor(void);
 extern void *rpc_profile_json_formatter_registration_ctor(void *registration);
 extern int json_encoder_write_raw_span(
     void *formatter, void *encoder, const void *span);
+
+/* Native cellular FileFetcher and flow-generator upgrade state machine. */
+extern int gfile_fetcher_control_can_start(void *control);
+extern void upgrade_command_executor_set_result(void *executor, unsigned int result);
+extern void upgrade_command_executor_set_state_after_hook(void);
 extern void GuiTextValueFormatter_ctor(void *formatter);
 extern void GuiTextValueFormatter_dtor(void *formatter);
 extern void *GuiMenuTextValueListItem_ctor(
