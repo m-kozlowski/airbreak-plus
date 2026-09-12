@@ -1,5 +1,7 @@
 AS11_FIRMWARE ?= as11.bin
 AS11_PATCHED ?= $(BUILD)/as11-patched.bin
+AIR11_PATCH_ARGS ?=
+export AIR11_PATCH_ARGS
 
 AS11_PATCHER_DEPS := \
 	patch-airsense-s11 \
@@ -239,7 +241,9 @@ as11-patched:
 	$(MAKE) --no-print-directory $(AS11_PATCHED)
 	@printf '\nFirmware image:\n  %s\n' '$(AS11_PATCHED)' | tee -a '$(MAKE_LOG)'
 
-$(AS11_PATCHED): $(AS11_FIRMWARE) $(AS11_PATCHER_DEPS) \
+$(AS11_PATCHED): $(AS11_PATCHER_DEPS) \
 		$(AS11_PAYLOAD_STAMPS) $(AS11_PAYLOAD_LAYOUT_TSVS) | $(BUILD)
 	$(announce_image)
-	./patch-airsense-s11 $< $@ $(PATCHER_OUTPUT_ARGS)
+	./patch-airsense-s11 '$(AS11_FIRMWARE)' '$@' $(PATCHER_OUTPUT_ARGS)
+
+$(eval $(call patch_config_rule,$(AS11_PATCHED),air11,$(AS11_FIRMWARE)))

@@ -1,0 +1,62 @@
+# Copy to patch-airsense-s11.config to use these options.
+# This .example file is not loaded automatically.
+# Use y/n for patch switches and 1/0 for RPC permissions.
+# Unspecified options keep their built-in defaults; CLI options take precedence.
+
+# Patch selection: built-in defaults.
+# --patch-airbreak-info y
+# --patch-fgbl-service y
+# --patch-unlock-features y
+# --patch-unlock-languages y
+# --patch-defaults y
+# --patch-rpc-json-profile-visibility y
+# --patch-edf-superset y
+# --patch-asv-ps-range y
+# --patch-therapy-screen y
+# --patch-vid-spoof y
+# --patch-header-clock y
+# --patch-asv-backup-rate y
+# --patch-custom-settings y
+# --patch-motor-nagscreen y
+# --patch-timezone-write y
+
+# Download an HTTP resource to upgrade storage through the cellular modem.
+# --patch-cellular-download n
+
+# Cellular firmware changes: built-in defaults; set the patch to y to enable.
+# Mode: metadata, or stage the downloaded file.
+# --patch-cloud-firmware-change n
+# --cloud-firmware-change-mode metadata
+
+# RPC permissions: built-in defaults shown below.
+# Applied when patch-rpc-permissions is enabled (enabled by default).
+# --patch-rpc-permissions y
+# --rpc-permission SetDateTime:0x0396:1
+# --rpc-permission ApplyUpgrade:0x0396:1
+# --rpc-permission ResetDevice:0x0396:1
+# --rpc-permission WUP:RPC:1
+# --rpc-permission WUP:RPW:1
+
+# Optional additional RPC permissions (not built-in overrides).
+# --rpc-permission GetLedStatus:0x0396:1
+# --rpc-permission SetNextPowerUpDateTime:0x0396:1
+# --rpc-permission StoreSecurityData:0x0396:1
+# --rpc-permission VerifySecurityData:0x0396:1
+# --rpc-permission ClearAutoConnectList:0x0396:1
+
+# Optional restrictions on direct RPC calls from the cellular application.
+# These do not block broker FirmwareChange commands; use
+# patch-cloud-firmware-change for that path.
+# --rpc-permission InitiateUpgrade:0x0780:0
+# --rpc-permission InitiateUpgrade:0x0788:0
+# --rpc-permission UpgradeDataBlock:0x0780:0
+# --rpc-permission UpgradeDataBlock:0x0788:0
+# --rpc-permission CheckUpgradeFile:0x0780:0
+# --rpc-permission CheckUpgradeFile:0x0788:0
+# --rpc-permission ApplyUpgrade:0x0780:0
+# --rpc-permission ApplyUpgrade:0x0788:0
+# --rpc-permission ApplyAuthenticatedUpgrade:0x0780:0
+# --rpc-permission ApplyAuthenticatedUpgrade:0x0788:0
+
+# Method and VCID reference: docs/as11/rpc_protocol.md
+# Configuration reference: docs/tools/patch_options.md

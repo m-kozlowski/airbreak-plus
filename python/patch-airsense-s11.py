@@ -32,6 +32,7 @@ from lib.as11_conf_discovery import (
 )
 from lib.as11_patch_versions import AS11_FGBL_PATCH_VERSIONS, AS11_PATCH_VERSIONS
 from lib.compiled_payload import CompiledPayloadMixin
+from lib.patch_config import parse_patch_args
 
 
 class PatchVersionUnavailable(ValueError):
@@ -3075,7 +3076,7 @@ def run_patcher(args, detail_log=None):
 
 def main(argv=None):
     parser = build_arg_parser()
-    args = parser.parse_args(argv)
+    args = parse_patch_args(parser, argv, "air11")
 
     if args.log_file is None:
         return run_patcher(args)

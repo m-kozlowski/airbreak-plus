@@ -25,6 +25,7 @@ import re
 import sys
 
 from lib.compiled_payload import CompiledPayloadMixin
+from lib.patch_config import parse_patch_args
 
 
 FIRMWARE_BUILD_ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
@@ -3031,7 +3032,7 @@ def run_patcher(args, detail_log=None):
 
 def main(argv=None):
     parser = build_argument_parser()
-    args = parser.parse_args(argv)
+    args = parse_patch_args(parser, argv, "air10")
 
     if args.OPERATION == 'PATCH':
         validate_patch_dependencies(parser, args)

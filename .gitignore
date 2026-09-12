@@ -12,3 +12,5 @@ patches/*private*
 __pycache__
 tmp/
 make.log
+/patch-airsense-s11.config
+/patch-airsense.config

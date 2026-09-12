@@ -1,0 +1,53 @@
+# Copy to patch-airsense.config to use these options.
+# This .example file is not loaded automatically.
+# Uncomment options to override built-in defaults; use y to enable, n to disable.
+# Legacy environment variables, AIR10_PATCH_ARGS and CLI options take precedence.
+
+# Patch selection: built-in defaults.
+# --patch-extra-modes y
+# --patch-unlock-uilimits y
+# --patch-unlock-options y
+# --patch-gui-config y
+# --patch-ivaps-settings y
+# --patch-asv-ps-range y
+# --patch-integrity-check y
+# --patch-bypass-psuid y
+# --patch-unlock-languages y
+# --patch-defaults y
+# --patch-fw-backlight y
+# --patch-custom-palette y
+# --patch-past-date y
+# --patch-custom-settings y
+# --patch-uart-stream-schema y
+# --patch-edf-merge y
+# --patch-fw-vidspoof y
+# --patch-therapy-screen y
+# --patch-motor-nagscreen y
+# --patch-blx-dump y
+
+# Optional payloads: built-in defaults shown below.
+# Therapy graph (PATCH_CODE=1): set common code and graph to y.
+# --patch-fw-common-code n
+# --patch-fw-graph n
+
+# Custom VAuto (PATCH_VAUTO_WRAPPER=1): set common code above and VAuto to y.
+# --patch-fw-vauto-wrapper n
+
+# Square Wave (PATCH_S=1): requires common code and Custom VAuto above.
+# --patch-fw-squarewave n
+
+# ASV backup-rate runtime control (PATCH_ASV_TASK_WRAPPER=1).
+# --patch-fw-asv-wrapper n
+
+# Keep the screen awake during graph monitoring; requires the graph above.
+# --patch-graph-keep-screen-on n
+
+# Replacement ILI9325/ILI9328 LCD (PATCH_S10_LCD=1).
+# --patch-fw-lcd n
+
+# Optional override example: climate target relative humidity, percent.
+# Unset by default; equivalent to PATCH_TARGET_RH=75.
+# --patch-target-rh 75
+
+# Configuration reference: docs/tools/patch_options.md
+# Feature reference: docs/guide/patching.md

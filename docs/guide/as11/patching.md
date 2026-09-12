@@ -106,15 +106,8 @@ See [Features](features.md) for additional behavior details.
 
 ## Selecting Patches
 
-Edit `PATCHES` near the top of `patch-airsense-s11` to choose the standard
-patches. The cloud firmware-change patch defaults to retaining only the update
-details; `CLOUD_FIRMWARE_CHANGE_MODE` can instead retain the downloaded file.
-RPC permissions use the `RPC_PERMISSIONS` array in the same file.
-Entries use `METHOD:VCID:BOOL` for method access or `DATAITEM:FLAG:BOOL` for
-the `RPC` and `RPW` DataItem flags. `DATAITEM` may be a long name, short tag,
-or numeric var ID.
-
-For a one-off image, invoke the Python patcher directly:
+Use `y` to enable a patch or `n` to disable it. For example, to enable only
+feature unlocks and expanded SD-card recording:
 
 ```bash
 python3 python/patch-airsense-s11.py \
@@ -124,11 +117,8 @@ python3 python/patch-airsense-s11.py \
     --patch-edf-superset y
 ```
 
-List all patch switches with:
-
-```bash
-python3 python/patch-airsense-s11.py -h
-```
+When building through Make, options can also be passed with `AIR11_PATCH_ARGS`.
+See [patch options](../../tools/patch_options.md) for examples and saved preferences.
 
 ## Bootloader Service
 
