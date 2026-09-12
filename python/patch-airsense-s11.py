@@ -2775,7 +2775,7 @@ class TeeStream:
 def add_patch_switch(parser, patch):
     parser.add_argument(
         "--" + patch["arg"],
-        metavar="Y/n",
+        metavar="Y/n" if patch["default"] else "y/N",
         default=None,
         type=str2bool,
         help=patch["desc"],
@@ -2793,7 +2793,7 @@ def build_arg_parser():
 
     parser.add_argument(
         "--all-patches",
-        metavar="Y/n",
+        metavar="y/n",
         default=None,
         type=str2bool,
         help="Default state for patch switches not explicitly set. Default: built-in patch defaults.",
