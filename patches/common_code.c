@@ -189,7 +189,9 @@ void update_tracking(tracking_t *tr, history_t *hist) {
     inplace(max, &tr->current.inh_maxflow, *flow_compensated);
 
     // If cycle would normally happen, start pre_cycle, for use when custom cycle is used
-    if (*flow_compensated < tr->current.inh_maxflow * sens_cycle) { tr->st_pre_cycle += 1; } // + (*flow_compensated<0.0f)
+    if (*flow_compensated < tr->current.inh_maxflow * sens_cycle) {
+      if (tr->st_pre_cycle < 255) { tr->st_pre_cycle += 1; }
+    }
     else { tr->st_pre_cycle = max(tr->st_pre_cycle - 1, 0); } // Don't just reset it
 
   } else { 

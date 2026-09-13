@@ -72,8 +72,8 @@ static const   int *pap_timer = &ivars[0];
 #define s_ipap fvars[0xe]
 #define s_epap fvars[0xf]
 #define s_ips (s_ipap - s_epap)
-#define s_rise_time_i ivars[0xD] // (80ms). 1, 18, 25, ... 106, 112. Seems to be in an unit of 80ms
-#define s_rise_time_f (s_rise_time_i * 0.008f) // (1s). Ranges from 0.08 to 0.896
+#define s_rise_time_i ivars[0xD] // (8ms ticks)
+#define s_rise_time_f (s_rise_time_i * 0.008f) // (s)
 // VAuto mode configuration
 #define vauto_max_ipap fvars[0x9]
 #define vauto_epap fvars[0xa]
@@ -118,7 +118,7 @@ static const   int *pap_timer = &ivars[0];
   __typeof__ (a) _a = (a); \
   __typeof__ (_min) __min = (_min); \
   __typeof__ (_max) __max = (_max); \
-  _a > __max ? __max : (_a < __min ? __min : a); \
+  _a > __max ? __max : (_a < __min ? __min : _a); \
 })
 
 #define clamp01(a) ({ clamp(a, 0.0f, 1.0f) })
@@ -225,7 +225,7 @@ typedef struct {
   bool st_just_started : 1; // Whether the inhale/exhale portion started this tick
   bool st_valid_breath : 1; // Was the last breath valid(e.g. not a super-short pseudo-inhale)?
   uint8 st_pre_trigger ;  // "early trigger", e.g. flow will cross trigger threshold in amount of time similar to blower response, eliminating delay
-  uint8 st_pre_cycle ;    // "early cycle", currently unused. Will use to separate "flow is very low", from "the actual exhale is starting" in squarewave
+  uint8 st_pre_cycle ;    // Low-flow counter used by Custom T/C and the squarewave PS ramp-down
 
   settings_proxy_t settings;
 

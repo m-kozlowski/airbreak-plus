@@ -33,7 +33,7 @@ void MAIN start(int param_1) {
   // It's updated in `wrapper_limit_max_pdiff` which always runs
   tracking_t *tr = get_tracking();
 
-  const float s_eps = 0.8f;                // (s)
+  const float s_eps = 0.8f;                // (cmH2O)
   const float s_rise_time = s_rise_time_f; // (s)
   const float s_fall_time = 0.8f;          // (s)
 
@@ -59,8 +59,11 @@ void MAIN start(int param_1) {
     *cmd_ps = s_ips * perc;
   } else { // Exhale
     const float t = tr->current.te;
-    float eps_mult = remap01c(tr->current.volume / tr->current.volume_max, 0.1f, 0.7f);
-    eps_mult = min(eps_mult, remap01c(t, EPS_FIXED_TIME, 0.4f));
+    // Without a positive peak volume, use the time-based relief alone.
+    float eps_mult = remap01c(t, EPS_FIXED_TIME, 0.4f);
+    if (tr->current.volume_max > 0.0f) {
+      eps_mult = min(remap01c(tr->current.volume / tr->current.volume_max, 0.1f, 0.7f), eps_mult);
+    }
 
     float ips_mult = remap01c(t, s_fall_time, 0.0f); ips_mult = ips_mult * ips_mult * 0.95f;
     
