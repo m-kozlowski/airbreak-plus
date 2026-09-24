@@ -2210,8 +2210,8 @@ class ASFirmwarePatches(CompiledPayloadMixin):
 
     def patch_edf_merge(self):
         """Merge universal EDF signal superset into CCX"""
-        if not self.asf.cdx_ver.startswith('SX567-') or self.asf.ccx_size != 0x3c000:
-            return PatchOutcome.skip("requires SX567 CCX layout")
+        if not self.asf.cdx_ver.startswith(('SX567-', 'SX584-')):
+            return PatchOutcome.skip("requires SX567 or SX584 CCX layout")
 
         try:
             from edf_ccx_merge import patch_edf_merge
@@ -2222,7 +2222,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
 
         buf = io.StringIO()
         with redirect_stdout(buf):
-            patch_edf_merge(self.asf, force=True)
+            patch_edf_merge(self.asf)
         summary = buf.getvalue().strip()
         if summary.startswith('EDF merge: '):
             summary = summary[len('EDF merge: '):]
