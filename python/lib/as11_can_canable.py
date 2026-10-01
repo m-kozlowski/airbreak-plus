@@ -403,7 +403,6 @@ class _CanableSlcan:
         # Close/reset without waiting: both Elmue 2.5 and legacy CANable
         # firmwares keep this command silent.
         self._command_no_feedback("C", settle=0.05)
-        time.sleep(0.05)
         self.reset_input_buffer()
 
         protocol, version = self._probe_version(timeout=1.0)
@@ -549,7 +548,7 @@ class CanCanableTransport:
                     port=cfg.port,
                     serial_baud=serial_baud,
                     timeout=0.05,
-                    open_delay=0.05,
+                    open_delay=0,
                     dtr=cfg.dtr,
                     rts=cfg.rts,
                     reset_buffers=cfg.reset_buffers,
@@ -557,7 +556,9 @@ class CanCanableTransport:
                 )
                 dev.configure(cfg.bitrate, cfg.mode)
 
-                time.sleep(0.1)
+                # Elmue confirms that the channel is open; legacy SLCAN is silent.
+                if dev.protocol != "elmue":
+                    time.sleep(0.1)
                 dev.reset_input_buffer()
                 self._dev = dev
                 self._rx_codec = CanDatagramCodec()
