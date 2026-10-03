@@ -415,14 +415,14 @@ The request is asynchronous and has no immediate success response. The result
 arrives in an `R` frame:
 
 ```
-R: G V #VAR DDDD C = VVVVNN[DATA]CCCC
+R: G V #VAR DDDD C = HHHHNN[DATA]CCCC
 ```
 
 | Field | Width | Description |
 |-------|-------|-------------|
-| `VVVV` | 4 | Numeric signal variable ID |
-| `NN` | 2 | Number of returned samples |
-| `DATA` | variable | Concatenated samples |
+| `HHHH` | 4 | Source header: `FFFF` for STR; first u16 of the stored block header for NPD/NPA |
+| `NN` | 2 | Number of returned samples, hexadecimal |
+| `DATA` | variable | Concatenated raw samples, hexadecimal |
 | `CCCC` | 4 | Next cursor, or `FFFF` when complete |
 
 | Source | Selector and cursor | Sample format |
@@ -433,6 +433,42 @@ R: G V #VAR DDDD C = VVVVNN[DATA]CCCC
 
 An unsupported signal returns `0x6009`, a busy worker returns `0x6001`, and an
 invalid selector or argument returns `0x6034`.
+
+### STR Records
+
+On SX567-0402, `SSD` identifies the therapy day of the last completed STR
+record write. Read it with `G S #SSD` and use its four-digit hexadecimal value
+as `DDDD`. Each query returns all samples of one field from that day's record.
+The cursor must be zero; the day is selected only by `DDDD`.
+
+Example response for an AHI raw value of 23:
+
+```text
+R: G V #AHI DDDD 0 = FFFF010017FFFF
+```
+
+| Fragment | Meaning |
+|----------|---------|
+| `FFFF` | STR header marker |
+| `01` | One sample |
+| `0017` | Raw value 23; with AHI scale 10, this is 2.3 events/hour |
+| `FFFF` | Read complete |
+
+STR replies always use `FFFF` for both the header and final cursor. A reply
+with zero samples has payload `FFFF00FFFF`. `ONT` and `OFT` each return the
+number of samples defined by the STR descriptor, normally ten (`NN=0A`).
+Their values are minutes from the noon starting the selected therapy day.
+
+A complete record requires one query per field in the firmware's STR
+descriptor. Replies include the sample count and raw values. Field labels,
+scaling, and units are described in the
+[STR descriptor](config_variables.md#g13----str-channel-descriptor) and the
+[signal definitions](edf_signals.md).
+
+On SX567-0402, `ZEN` advances after a completed STR record write and also
+during history initialization. Read it before and after collecting fields;
+if it changes, repeat the collection. Separate queries do not form an atomic
+snapshot. Continue checking `ZEN` for later completed writes while in standby.
 
 ## Oximetry L-Frame Input
 
