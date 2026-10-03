@@ -394,10 +394,10 @@ PBT		PERIODIC_BREATH_TXLINK	0x02B9	0x02BA	0x02F0	Live stream: periodic breath Tx
 PCB		PCB_ID	0x0002	0x0002	0x0002	PCB ID
 PCC			0x02B2	0x02B3	0x02E9	Five u16 climate-control parameters received through the humidifier interface; setup consumes elements 0, 1, 3, and 4
 PCD		PRODUCT_CODE	0x0003	0x0003	0x0003	Product Code
-PDD			0x0189	0x0189	0x019E	
+PDD			0x0189	0x0189	0x019E	Date saved with PDL at shutdown/restart (SX567-0402)
 PDL			0x02E6	0x02E7	0x031F	Persistent device-state variable list
 PDS			0x0187	0x0187	0x019C	
-PDT			0x0188	0x0188	0x019D	
+PDT			0x0188	0x0188	0x019D	Time saved with PDL at shutdown/restart [s since midnight] (SX567-0402)
 PE9	TgtEPAP.95	E_95_SESSION	0x0049	0x0049	0x004E	EPAP P95
 PEA	TgtEPAP.Max	E_MAX_SESSION	0x004A	0x004A	0x004F	EPAP Max
 PEM	TgtEPAP.50	E_MED_SESSION	0x004B	0x004B	0x0050	EPAP Median
@@ -460,7 +460,7 @@ RF5	Flow.5	RESP_FLOW_5TH	0x006F	0x006F	0x0074	Resp Flow P5
 RF9	Flow.95	RESP_FLOW_95TH	0x006E	0x006E	0x0073	Resp Flow P95
 RFA			0x0111	0x0111	0x0122	
 RFL	Flow.40ms	RESP_FLOW	0x006B	0x006B	0x0070	Resp Flow
-RFR			0x018E	0x018E	0x01A3	
+RFR			0x018E	0x018E	0x01A3	Previous restart-triggering error mask; copied from ZRE and persisted in PDL (SX567-0402)
 RGL			0x02D8	0x02D9	0x0311	Reminder settings storage group
 RGT			0x0126	0x0126	0x0137	RGL reminder persistence-group tracker
 RID		REGION_ID	0x0020	0x0020	0x0021	Region ID
@@ -564,8 +564,8 @@ STV	S.VA.StartPress	START_VAUTO_PRES	0x01D8	0x01D8	0x01F0	Start EPAP [cmH2O] (4.
 STW			0x0195	0x0195	0x01AA	
 SYC	Fault.Humidifier	CLIMATE_CONTROL_ERROR	0x01FF	0x01FF	0x021D	Climate Control Error
 SYH	Fault.HeatedTube	HEATED_TUBE_ERROR	0x0200	0x0200	0x021E	Heated Tube Error
-SYS	Fault.Device	SYSTEM_ERROR	0x0201	0x0201	0x021F	System Error
-SYT	Fault.Alarm	SYSTEM_ERROR_TWO	0x0202	0x0202	0x0220	System Error Two
+SYS	Fault.Device	SYSTEM_ERROR	0x0201	0x0201	0x021F	Latched system-error bitmask; bits 0..12 correspond to Error 001..013 (SX567-0402)
+SYT	Fault.Alarm	SYSTEM_ERROR_TWO	0x0202	0x0202	0x0220	Latched system-error bitmask; bits 0..9 correspond to Error 017..026 (SX567-0402)
 TBB			0x012F	0x012F	0x0140	Spontaneous cycle count; incremented for TCV=5; numerator of VCR
 TBC			0x0130	0x0130	0x0141	Non-spontaneous cycle count; incremented for TCV=6..8; VCR=100*TBB/(TBB+TBC)
 TBR	S.BL.TgtRR	TARGET_RESP_RATE			0x01F9	Lumis SX584-020x exclusive; Target Patient Rate [bpm] (8 .. 50 step 1)
@@ -707,7 +707,7 @@ ZLN			0x0150	0x0150
 ZLP			0x01F0	0x01F0	0x020E	PS [cmH2O] (0.0 .. 28.0 step 0.2)
 ZLR			0x0148	0x0148	0x015B	Target Pt Rate [bpm] (8.0 .. 30.0 step 1.0)
 ZLS			0x027A	0x027B	0x02A4	
-ZLT			0x019C	0x019C	0x01B1	
+ZLT			0x019C	0x019C	0x01B1	Time since saved PDT [s], with midnight wrap; used by the 60 s repeated-fault check (SX567-0402)
 ZLV			0x0149	0x0149	0x015C	Target Va [L/min] (1.0 .. 30.0 step 0.1)
 ZMA			0x014B	0x014B	0x015E	TgVa [L/min] (1.0 .. 30.0 step 0.1)
 ZMD			0x01BE	0x01BE	0x01D6	
@@ -738,7 +738,7 @@ ZPV			0x0289	0x028A	0x02BD
 ZRA			0x026E	0x026F	0x0298	
 ZRC			0x0155	0x0155	0x00A8	
 ZRD			0x0018	0x0018	0x0019	UART command line staged by the SD Settings.ecp and routed-UART command service
-ZRE			0x00B0	0x00B0	0x00BE	
+ZRE			0x00B0	0x00B0	0x00BE	Current restart-triggering error mask; low 16 bits map to SYS, high 16 bits to SYT (SX567-0402)
 ZRF			0x0299	0x029A	0x02CF	Command mailbox state: 0=request pending, 1=receiver publishing request, 2=ready for a new request
 ZRG			0x0019	0x0019	0x001A	
 ZRH			0x0257	0x0258	0x0281	Climate-control status derived from the newest SESSION/STR record; 1 when SYC is zero, otherwise 0
@@ -759,7 +759,7 @@ ZS4			0x01B9	0x01B9	0x01D0
 ZS5			0x01D1	0x01D1	0x01D1	
 ZSA			0x02A8	0x02A9	0x02DE	
 ZSD			0x0266	0x0267	0x0290	
-ZSE		SAVED_SYSTEM_ERROR	0x00AE	0x00AE	0x00BC	Saved System Error
+ZSE		SAVED_SYSTEM_ERROR	0x00AE	0x00AE	0x00BC	Saved error mask copied from ZRE; persisted in PDL and recorded in ZRL (SX567-0402)
 ZSR					0x026B	Lumis SX584-020x exclusive
 ZSS			0x01B5	0x01B5	0x01CC	
 ZSU			0x0151	0x0151	0x0162	
