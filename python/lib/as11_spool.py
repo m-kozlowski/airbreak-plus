@@ -480,6 +480,8 @@ DATA_DELIVERY_FIELDS: dict[int, str] = {
     24: "alarmEvents",
     25: "alarmDiagnosticEvents",
     26: "atmosphericPressure10min",
+    31: "HumidifierCurrentTenMinute",
+    32: "HumidifierTempTenMinute",
 }
 
 # SettingProfiles.ActiveProfiles uses the same exported therapy-mode codes as
@@ -1110,7 +1112,7 @@ def _rc03_read_rice(bits, m: int) -> int:
 def _rc03_scale(params: list[int]) -> float:
     if len(params) < 2:
         return 1.0
-    return 2.0 * (10.0 ** params[1])
+    return params[0] * (10.0 ** params[1])
 
 
 def rc03_decode_block(block: bytes, sample_count: int) -> dict:
@@ -1397,7 +1399,8 @@ def detect_spool_type(data: bytes) -> tuple[str | None, list[str]]:
     Returns (best_match, all_candidates). When the wire field is unique
     in the registry, best_match is the only candidate. When event spools
     share a wire field, their observed event codes are scored against the
-    firmware maps. A tie retains registry order. The full candidate list
+    firmware maps. Generic periodic spools use the inner content type.
+    An event-code tie retains registry order. The full candidate list
     is always returned.
     Returns (None, []) when the payload could not be parsed or no
     registered spool uses that wire field.
@@ -1411,6 +1414,22 @@ def detect_spool_type(data: bytes) -> tuple[str | None, list[str]]:
         return None, []
     if len(candidates) == 1:
         return candidates[0], candidates
+
+    if all(SPOOL_REGISTRY[name]["family"] == "generic_periodic"
+           for name in candidates):
+        # These collections share an envelope; its content type identifies
+        # the signal independently of the firmware-local spool selector.
+        try:
+            content_types = {
+                value for payload in _wrapped_records(data, field)
+                for subfield, wire, value in proto_decode(payload)
+                if subfield == 1 and wire == 0
+            }
+        except (ValueError, IndexError):
+            return None, candidates
+        matched = [name for name in candidates
+                   if content_types == {SPOOL_REGISTRY[name]["content_type"]}]
+        return (matched[0] if matched else None), candidates
 
     observed = []
     for record_data in spool_walk_events(data):
@@ -1894,6 +1913,68 @@ def _decode_periodic_compressed(spool_type: str, data: bytes) -> list[dict]:
     return records
 
 
+def _decoded_rc03_samples(block: bytes, sample_count: int) -> dict:
+    decoded = rc03_decode_block(block, sample_count)
+    return {
+        "sampleCount": sample_count,
+        "scale": decoded["scale"],
+        "rawValues": decoded["values"],
+        "values": decoded["physical"],
+        "compression": {
+            "format": "RC03",
+            "headerHex": decoded["header"].hex(),
+            "headerLength": decoded["header_len"],
+            "parameters": decoded["params"],
+            "rawParametersHex": decoded["raw_params"].hex(),
+            "riceM": decoded["m"],
+            "seed": decoded["seed"],
+            "bodyBytes": len(decoded["body"]),
+        },
+    }
+
+
+def _decode_generic_periodic(spool_type: str, data: bytes) -> list[dict]:
+    info = SPOOL_REGISTRY[spool_type]
+    records = []
+    for index, payload in enumerate(_wrapped_records(data, info["wire_field"])):
+        content_type = field2 = timestamp = block = None
+        unknown = []
+        for field, wire, value in proto_decode(payload):
+            if field == 1 and wire == 0:
+                content_type = int(value)
+            elif field == 2 and wire == 0:
+                field2 = int(value)
+            elif field == 3 and wire == 0:
+                timestamp = int(value)
+            elif field == 4 and wire == 2:
+                block = bytes(value)
+            else:
+                unknown.append(_decoded_wire_field(field, wire, value))
+        if content_type != info["content_type"] or field2 != 1:
+            raise SpoolDecodeError(
+                f"{spool_type} record {index}: unsupported content type/field 2 "
+                f"{content_type}/{field2}"
+            )
+        if timestamp is None or block is None:
+            raise SpoolDecodeError(f"{spool_type} record {index}: missing timestamp or sample block")
+        try:
+            # PTC/HTD use a 600 s block duration and a 600 s sample interval:
+            # one RC03 sample per record, with no interval/count on the wire.
+            record = _decoded_rc03_samples(block, 1)
+        except ValueError as exc:
+            raise SpoolDecodeError(f"{spool_type} record {index}: {exc}") from exc
+        record.update({
+            "record": index,
+            "contentType": content_type,
+            "field2": field2,
+            "intervalMs": 600000,
+            "unknownFields": unknown,
+        })
+        record.update(_timestamp_fields("startTime", timestamp))
+        records.append(record)
+    return records
+
+
 def _decode_rc03_spool(spool_type: str, data: bytes) -> list[dict]:
     expected_field = RC03_SPOOL_FIELDS[spool_type]
     records = []
@@ -1951,31 +2032,17 @@ def _decode_rc03_spool(spool_type: str, data: bytes) -> list[dict]:
             )
         sample_count = (end - start) // interval + 1
         try:
-            decoded = rc03_decode_block(block, sample_count)
+            record = _decoded_rc03_samples(block, sample_count)
         except ValueError as exc:
             raise SpoolDecodeError(
                 f"{spool_type} record {index}: {exc}"
             ) from exc
-        record = {
+        record.update({
             "record": index,
             "recordKind": record_kind,
             "intervalMs": interval,
-            "sampleCount": sample_count,
-            "scale": decoded["scale"],
-            "rawValues": decoded["values"],
-            "values": decoded["physical"],
-            "compression": {
-                "format": "RC03",
-                "headerHex": decoded["header"].hex(),
-                "headerLength": decoded["header_len"],
-                "parameters": decoded["params"],
-                "rawParametersHex": decoded["raw_params"].hex(),
-                "riceM": decoded["m"],
-                "seed": decoded["seed"],
-                "bodyBytes": len(decoded["body"]),
-            },
             "unknownFields": outer_unknown + payload_unknown,
-        }
+        })
         record.update(_timestamp_fields("startTime", start))
         record.update(_timestamp_fields("endTime", end))
         records.append(record)
@@ -2286,6 +2353,8 @@ def decode_spool(spool_type: str, data: bytes, *,
             records = _decode_metric_spool(spool_type, data)
         elif family == "rc03":
             records = _decode_rc03_spool(spool_type, data)
+        elif family == "generic_periodic":
+            records = _decode_generic_periodic(spool_type, data)
         elif family == "diag_vector":
             records = _decode_soundcheck_vector(data)
         elif family == "diag_blob":
@@ -2683,7 +2752,7 @@ def _render_decoded_table(decoded: dict, out, *, details: bool = False) -> None:
         _render_event_table(decoded, out, details=details)
     elif family == "summary":
         _render_summary_table(decoded, out)
-    elif family in {"periodic", "periodic_compressed", "rc03"}:
+    elif family in {"periodic", "periodic_compressed", "rc03", "generic_periodic"}:
         _render_signal_table(decoded, out)
     else:
         _render_table_tree("Records", decoded["records"], out)

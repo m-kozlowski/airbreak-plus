@@ -24,6 +24,7 @@ caveat are described in
   - [DiagnosticTenMinutePeriodic records](#diagnostictenminuteperiodic-records)
   - [Atmospheric pressure records](#atmospheric-pressure-records)
   - [RC03 archived-signal records](#rc03-archived-signal-records)
+  - [Humidifier ten-minute records](#humidifier-ten-minute-records)
   - [SoundcheckVector records](#soundcheckvector-records)
   - [Blob and audio records](#blob-and-audio-records)
 
@@ -43,15 +44,17 @@ caveat are described in
 | `periodic_compressed` | `DiagnosticTenMinutePeriodic`, `atmosphericPressure10min` | Headerless delta/Rice periodic signals. Diagnostic records can contain four signals; atmospheric records contain one. |
 | `metric` | `MachineMetrics`, `MemoryMetrics`, `CellularDataUsage` | Single-record metric snapshot. |
 | `rc03` | `RespiratoryFlow6p25Hz`, `MaskPressure6p25Hz`, `InspiratoryPressure0p5Hz`, `Leak0p5Hz` | Archived signal: protobuf wrapper around an RC03 compressed sample block. |
+| `generic_periodic` | `HumidifierCurrentTenMinute`, `HumidifierTempTenMinute` | Typed envelope containing a timestamp and an RC03 sample block. |
 | `diag_vector` | `SoundcheckVector` | Multi-record diagnostic vector. |
 | `diag_blob` | `AcousticSignatureV2` | Diagnostic byte payload. |
 | `audio` | `RecordedSound` | Audio recording, gated by `SoundDownloadAllowed`. |
 
 ### Full enumeration
 
-The firmware accepts these 33 spool selectors. `Outer field` is the field in
+`Outer field` is the field in
 the DataDelivery protobuf envelope; selectors for one event collection share
 the same field. `RecordedSound` is a raw payload without that envelope.
+The two humidifier ten-minute selectors are available from 8.7.0.
 
 | Spool type | Family | Outer field | Gate | Group |
 |------------|--------|------------:|------|-------|
@@ -81,6 +84,8 @@ the same field. `RecordedSound` is a raw payload without that envelope.
 | `CellularActivityEvents` | `event` | `12` | -- | cellular data |
 | `CellularDataUsage` | `metric` | `22` | -- | cellular data |
 | `atmosphericPressure10min` | `periodic_compressed` | `27` | -- | archived signals |
+| `HumidifierCurrentTenMinute` | `generic_periodic` | `30` | -- | archived signals |
+| `HumidifierTempTenMinute` | `generic_periodic` | `30` | -- | archived signals |
 | `RespiratoryFlow6p25Hz` | `rc03` | `18` | -- | archived signals |
 | `MaskPressure6p25Hz` | `rc03` | `19` | -- | archived signals |
 | `InspiratoryPressure0p5Hz` | `rc03` | `21` | -- | archived signals |
@@ -192,6 +197,7 @@ identified.
 | `11` | reserved | `24` | `alarmEvents` |
 | `12` | `CellularActivityEvents` | `25` | `alarmDiagnosticEvents` |
 | `13` | `GUIActivityEvents` | `26` | `atmosphericPressure10min` |
+| `31` | `HumidifierCurrentTenMinute` (8.7.0+) | `32` | `HumidifierTempTenMinute` (8.7.0+) |
 
 These are fields inside the configuration record, not the outer DataDelivery
 field numbers shown in the spool registry.
@@ -543,12 +549,42 @@ delta2[n] = sample[n] - 2 * sample[n - 1] + sample[n - 2]
 sample[n] = 2 * sample[n - 1] - sample[n - 2] + delta2[n]
 ```
 
-On decoded archived signal blocks, parameter 4 is the Rice modulus and
-parameter 1 gives the scale exponent:
+RC03 parameters are zero-indexed:
+
+| Parameter | Meaning |
+|----------:|---------|
+| `0` | scale coefficient |
+| `1` | decimal scale exponent |
+| `2` | minimum quantized sample |
+| `3` | maximum quantized sample |
+| `4` | Rice modulus |
+| `5` | precision |
 
 ```text
-value = raw * (2 * 10 ** param1)
+value = raw * (param0 * 10 ** param1)
 ```
+
+### Humidifier ten-minute records
+
+Available from 8.7.0, both spools use outer field `30` with this record:
+
+| Field | Meaning |
+|------:|---------|
+| `1` | content type: `3` for current, `4` for temperature |
+| `2` | constant `1`; further meaning unidentified |
+| `3` | sample timestamp, UTC milliseconds |
+| `4` | RC03 sample block, including its length-prefixed header |
+
+| Spool | Source | Decoded value |
+|-------|--------|---------------|
+| `HumidifierCurrentTenMinute` | `ACM`, mean of `HCL` | `raw`; current unit unidentified |
+| `HumidifierTempTenMinute` | `AHT`, mean of `HPT` | `raw / 10`, matching the HPT temperature scale |
+
+Each source is a block mean of 600 one-second samples. The collections store
+one sample per record at ten-minute intervals and retain 300 hours. The
+interval and sample count are not included in this envelope. Collection is
+enabled during therapy with `HumidifierSettingEnable` On; `DHC` and `CHT`
+separately control delivery of current and temperature data.
 
 ### SoundcheckVector records
 

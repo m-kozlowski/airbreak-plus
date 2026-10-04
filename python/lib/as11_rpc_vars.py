@@ -313,6 +313,7 @@ def expand_groups(group_names: list[str]) -> list[str]:
 #               the dispatcher to accept this spool. Optional.
 #   sources     internal selectors combined under this StartSpool type.
 #               Optional; used for discovery, not as additional spool names.
+#   content_type discriminator in field 1 of the generic periodic envelope.
 #
 # Insertion order is preserved and drives both SPOOL_TYPES and the
 # grouped display in SPOOL_GROUPS, so keep entries clustered by group.
@@ -486,6 +487,20 @@ SPOOL_REGISTRY: dict[str, dict] = {
         "format": "compressed periodic signal",
         "family": "periodic_compressed",
         "wire_field": 27,
+    },
+    "HumidifierCurrentTenMinute": {
+        "group": "archived signals",
+        "format": "generic periodic RC03 signal (from 8.7.0)",
+        "family": "generic_periodic",
+        "wire_field": 30,
+        "content_type": 3,
+    },
+    "HumidifierTempTenMinute": {
+        "group": "archived signals",
+        "format": "generic periodic RC03 signal (from 8.7.0)",
+        "family": "generic_periodic",
+        "wire_field": 30,
+        "content_type": 4,
     },
     "RespiratoryFlow6p25Hz": {
         "group": "archived signals",
