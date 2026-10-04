@@ -911,6 +911,34 @@ def resolve_header_clock_candidates(
                 old.alternatives,
             )
 
+    # Tiny owned-object wrappers share the same load; distinguish their callees
+    # and require a transferred caller before replacing the generic match.
+    old = stubs["gui_owned_object_invalidate"]
+    source_callee = thumb2_bw_target(matcher.source, old.source_address + 2)
+    if image_bytes_at(matcher.source, old.source_address, 2) == "4068" and source_callee is not None:
+        callee = matcher.function(source_callee)
+        if callee.address is not None and callee.quality == "strong":
+            wrappers = [
+                FLASH_BASE + off
+                for off in range(APPX_BASE, len(data) - 5, 2)
+                if data[off:off + 2] == b"\x40\x68"
+                and thumb2_bw_target(data, FLASH_BASE + off + 2) == callee.address
+            ]
+            if len(wrappers) == 1:
+                calls = set(thumb2_bl_calls_to(data, wrappers[0]))
+                for address in thumb2_bl_calls_to(matcher.source, old.source_address):
+                    site = matcher.site(address)
+                    if site.quality == "strong" and site.address in calls:
+                        stubs["gui_owned_object_invalidate"] = AddressResult(
+                            old.source_address,
+                            wrappers[0],
+                            "strong",
+                            "unique owned-object wrapper to transferred callee; "
+                            "transferred BL caller 0x%08X -> 0x%08X" % (address, site.address),
+                            tuple(value for value in old.alternatives if value != wrappers[0]),
+                        )
+                        break
+
     localized = stubs["GuiPaint_DrawLocalizedTextById"]
     raw_draw = stubs["GuiPaint_DrawStringInRect"]
     if localized.address is not None and raw_draw.address is not None:
@@ -2310,7 +2338,7 @@ def prepare(args) -> int:
         "#define NSTUB(addr, name) \\",
         "\t.global name; \\",
         "\t.type name, %function; \\",
-        "\tname = addr",
+        "\t.thumb_set name, addr",
         "",
         ".text",
         "",

@@ -7,7 +7,8 @@
 
 .text
 
-NSTUB(0x0806E7DE, DataItem_get_var_id_virtual)
+// Skip the native caller's r4 setup.
+NSTUB(0x0806E7E0, DataItem_get_var_id_virtual)
 NSTUB(0x080683F6, DataItem_read_bytes_by_id)
 NSTUB(0x08068118, DataItem_read_value_by_id)
 NSTUB(0x08067F8E, DataItem_write_raw_by_id)

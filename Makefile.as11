@@ -11,12 +11,13 @@ AS11_PATCHER_DEPS := \
 	python/lib/compiled_payload.py
 
 # Register APPL payloads by APPX version and FGBL payloads by BID.
-AS11_PAYLOAD_LAYOUT_VERSIONS := 8_0_1 8_3_0 8_4_0 8_5_0 8_6_0
+AS11_PAYLOAD_LAYOUT_VERSIONS := 8_0_1 8_3_0 8_4_0 8_5_0 8_6_0 8_7_0
 AS11_PAYLOADS_8_0_1 := as11_mop_callback_dispatcher as11_rpc_dispatcher as11_vid_spoof as11_header_clock as11_airbreak_info
 AS11_PAYLOADS_8_3_0 := $(AS11_PAYLOADS_8_0_1) as11_asv_backup_rate as11_custom_settings
 AS11_PAYLOADS_8_4_0 := $(AS11_PAYLOADS_8_3_0) as11_screen_keep_awake
 AS11_PAYLOADS_8_5_0 := $(AS11_PAYLOADS_8_4_0)
 AS11_PAYLOADS_8_6_0 := $(AS11_PAYLOADS_8_5_0) as11_cellular_download as11_ble_oxi_fallback
+AS11_PAYLOADS_8_7_0 := $(AS11_PAYLOADS_8_6_0)
 
 AS11_FGBL_PAYLOAD_VERSIONS := 1_1_0
 AS11_FGBL_PAYLOADS_1_1_0 := as11_fgbl_service_gate as11_fgbl_service_extension

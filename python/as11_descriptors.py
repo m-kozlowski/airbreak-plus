@@ -1885,7 +1885,7 @@ class AS11Firmware:
         overlap = event_fif_bits & collection_fif_bits
         if overlap:
             raise ValueError(
-                "globals[12]/globals[14] reuse FIF bits %s" %
+                "globals[12]/globals[14] reuse file initialization indexes %s" %
                 ", ".join(str(bit) for bit in sorted(overlap))
             )
         self.edf_str_records()
@@ -2451,9 +2451,10 @@ class AS11Firmware:
                 raise ValueError(
                     "globals[12] event %s has invalid file allocation" % code
                 )
-            if file_init_flag_bit >= 32 or file_init_flag_bit in file_init_bits:
+            # This index spans FIF and, from 8.7, FIE rather than one u32.
+            if file_init_flag_bit in file_init_bits:
                 raise ValueError(
-                    "globals[12] event %s has invalid/duplicate FIF bit %d" %
+                    "globals[12] event %s has duplicate file initialization index %d" %
                     (code, file_init_flag_bit)
                 )
             file_init_bits.add(file_init_flag_bit)
@@ -2734,11 +2735,10 @@ class AS11Firmware:
                     "globals[14] collection %s has invalid reset class %d" %
                     (row["tag"], reset_request_class)
                 )
-            if (file_init_flag_bit >= 32 or
-                    file_init_flag_bit in file_init_bits):
+            if file_init_flag_bit in file_init_bits:
                 raise ValueError(
-                    "globals[14] collection %s has invalid/duplicate FIF "
-                    "bit %d" % (row["tag"], file_init_flag_bit)
+                    "globals[14] collection %s has duplicate file initialization "
+                    "index %d" % (row["tag"], file_init_flag_bit)
                 )
             file_init_bits.add(file_init_flag_bit)
             gate_index = self.u16(off + 0x22)

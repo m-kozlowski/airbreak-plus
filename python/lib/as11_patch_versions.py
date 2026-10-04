@@ -18,6 +18,10 @@ AS11_OTA_COMPATIBILITY_FINGERPRINT_PRESETS = {
         "conf_appl_compatibility_fingerprint": 0xBECBC5BC,
         "fgbl_appl_compatibility_fingerprint": 0xBEB37EE2,
     },
+    "18.8.7.0": {
+        "conf_appl_compatibility_fingerprint": 0x1B460250,
+        "fgbl_appl_compatibility_fingerprint": 0xBEB37EE2,
+    },
 }
 
 
@@ -382,6 +386,101 @@ AS11_PATCH_VERSIONS = {
                 "before": "84f86800",
                 "after": "c4f86800",
             },
+        },
+    },
+    "8_7_0": {
+        "cellular_download": {
+            "task_pointer_slot": 0x3000AF38,
+            "can_start_vtable_slot": 0x081C9794,
+            "set_state_prologue": "73b50446",
+        },
+        "ble_oxi_fallback": {
+            "ble_oxi_gatt_client_on_stack_event": 0x081B184C,
+            "ble_oxi_gatt_client_queue_connect": 0x081B1858,
+            "ble_oxi_gatt_client_request_disconnect": 0x081B185C,
+            "thunk_ble_oxi_gatt_client_queue_connect": 0x081B1878,
+            "this_adjustor_ble_oxi_gatt_client_request_disconnect": 0x081B187C,
+        },
+        "cloud_firmware_change": {
+            "suppress_download": {
+                "address": 0x080C0476,
+                "before": "80b9",
+                "after": "00bf",
+            },
+            "suppress_apply": {
+                "address": 0x080E3140,
+                "before": "0322",
+                "after": "0222",
+            },
+        },
+        "rpc_dispatcher": {
+            "init_entry": 0x08194100,
+        },
+        "mop_callback_dispatcher": {
+            "writeback": 0x08071E3C,
+            "vtable_slot": 0x081A926C,
+        },
+        "timezone_write": {
+            "metadata_gate": {
+                "address": 0x081B05B0,
+                "before": "e10f",
+                "after": "0121",
+            },
+            "data_rule_gate": {
+                "address": 0x08160272,
+                "before": "16ead47f",
+                "after": "002e00bf",
+            },
+            "menu_warning_action": {
+                "address": 0x0805E8B6,
+                "before": "05f034f9",
+                "after": "00bf00bf",
+            },
+        },
+        "screen_keep_awake": {
+            "touch_report_vtable_slot": 0x081AF890,
+            "process_touch_events_call": 0x0809378C,
+            "fade_transition_call": 0x080B1760,
+            "runtime_state_init": {
+                "address": 0x080B118C,
+                "before": "84f86800",
+                "after": "c4f86800",
+            },
+        },
+        "header_clock": {
+            "draw_call": 0x080645C6,
+            "menu_draw_call": 0x08069C5E,
+            "root_ctor_call": 0x080A1434,
+            "timer_callback_slot": 0x081AE568,
+            "home_text_id": 0x0079,
+            "empty_text_id": 0x006B,
+            "menu_text_id": 0x0133,
+        },
+        "custom_settings": {
+            "gui_enum_count_pointer": 0x08077598,
+            "gui_enum_table_pointer": 0x0807759C,
+            "rpc_enum_symbols": 0x08109A2C,
+            "rpc_enum_symbol_count": 1051,
+            "menu": {
+                "scroller_call": 0x0805EACC,
+            },
+            "reclaim": {
+                "reminders": {
+                    "row_index": 0x81,
+                    "row_call": (0x0805E836, 0x0806A746),
+                    "row_label": (0x0805E832, "40f23311"),
+                    "row_store": (0x0805E83E, "cbf80402"),
+                    "scheduler_call": (0x08093874, 0x080A1AC4),
+                },
+            },
+        },
+        "asv_backup_rate": {
+            "vtable_slot": 0x081B222C,
+            "label_id": 0x00F3,
+        },
+        "therapy_screen_style": {
+            "label_id": 0x00B5,
+            "option_labels": (0x01FE, 0x009D, 0x0212),
         },
     },
 }

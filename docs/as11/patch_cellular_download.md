@@ -72,5 +72,5 @@ extraction commands are documented in
 
 ## Firmware support
 
-The patch supports application version 8.6.0 and requires the shared
+The patch supports application versions 8.6.0 and 8.7.0 and requires the shared
 [RPC dispatcher](patch_rpc_dispatcher.md).

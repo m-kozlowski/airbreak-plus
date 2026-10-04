@@ -1,0 +1,62 @@
+// Air11 APPX 8.7.0 native function addresses.
+
+#define NSTUB(addr, name) \
+	.global name; \
+	.type name, %function; \
+	.thumb_set name, addr
+
+.text
+
+// Skip the native caller's r4 setup.
+NSTUB(0x080725AC, DataItem_get_var_id_virtual)
+NSTUB(0x0806B5E4, DataItem_read_bytes_by_id)
+NSTUB(0x0806B2B8, DataItem_read_value_by_id)
+NSTUB(0x0806B35A, DataItem_set_visible_by_id)
+NSTUB(0x0806B16E, DataItem_write_raw_by_id)
+NSTUB(0x0806B67C, DataItem_write_text_notify_by_id)
+NSTUB(0x08138F72, memset)
+NSTUB(0x08194D8E, AsvFeature_update)
+NSTUB(0x08115A56, FeedbackInput_get_ref)
+NSTUB(0x08115A40, FeedbackOutput_get_ref)
+NSTUB(0x080640D0, heap_alloc)
+NSTUB(0x08149526, rpc_profile_json_formatter_registry_ctor)
+NSTUB(0x08149DE0, rpc_profile_json_formatter_registration_ctor)
+NSTUB(0x0814957C, json_encoder_write_raw_span)
+NSTUB(0x080C0432, gfile_fetcher_control_can_start)
+NSTUB(0x080D5954, upgrade_command_executor_set_state)
+NSTUB(0x080D5958, upgrade_command_executor_set_state_after_hook)
+NSTUB(0x080D5990, upgrade_command_executor_set_result)
+NSTUB(0x08069B86, GuiTextValueFormatter_ctor)
+NSTUB(0x08069CDC, GuiTextValueFormatter_dtor)
+NSTUB(0x08069B94, GuiMenuTextValueListItem_ctor)
+NSTUB(0x08069CE8, gui_menu_data_value_callback_ctor_empty)
+NSTUB(0x08069E70, gui_menu_data_value_callback_dtor)
+NSTUB(0x08069D00, GuiMenuDataValueListItem_ctor)
+NSTUB(0x080687A4, GuiScroller_ctor)
+NSTUB(0x080726DC, GuiPaint_DrawLocalizedTextById)
+NSTUB(0x08072698, GuiPaint_DrawStringInRect)
+NSTUB(0x08063974, gui_localized_text_font_slot_for_id)
+NSTUB(0x0807A6E2, datetime_current_local_milliseconds_of_day)
+NSTUB(0x080646D0, user_interface_root_widget_ctor)
+NSTUB(0x080647BC, user_interface_root_widget_status_blink_timer_callback_adjustor)
+NSTUB(0x080700B0, thunk_gui_timer_handle_reschedule_with_optional_delay)
+NSTUB(0x08063F98, gui_owned_object_invalidate)
+NSTUB(0x08083CCA, touch_screen_controller_process_report)
+NSTUB(0x08083E6E, touch_screen_controller_discard_all_reports)
+NSTUB(0x0808E0D2, ring_buffer_free_count)
+NSTUB(0x0808E130, ring_buffer_front_ptr)
+NSTUB(0x0808E06C, ring_buffer_write_elements)
+NSTUB(0x080934C6, user_interface_process_touch_events)
+NSTUB(0x080A238C, led_status_controller_singleton)
+NSTUB(0x080B1506, led_timeout_channel_slot_by_index)
+NSTUB(0x080B1228, led_channel_schedule_transition)
+NSTUB(0x080B1732, led_timeout_fade_channels_off)
+NSTUB(0x080A58E6, ble_oxi_gatt_client_on_stack_event)
+NSTUB(0x080A5670, ble_stack_event_connection_id)
+NSTUB(0x080A586E, ble_oxi_gatt_client_queue_connect)
+NSTUB(0x080A585E, thunk_ble_oxi_gatt_client_queue_connect)
+NSTUB(0x080A5892, ble_oxi_gatt_client_request_disconnect)
+NSTUB(0x080A5890, this_adjustor_ble_oxi_gatt_client_request_disconnect)
+NSTUB(0x080A57CE, ble_oxi_gatt_client_reset_connection_state)
+NSTUB(0x080B27C6, callback_notifier_invoke)
+

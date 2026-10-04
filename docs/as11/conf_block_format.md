@@ -989,7 +989,7 @@ and producer gate.
 | +0x17 | 1 | logger_enabled | `1` enables draining, live notification, and persistence for this family |
 | +0x18 | 4 | file_record_bytes | physical `.EVN` block width, including the block length and CRC fields |
 | +0x1c | 4 | allocation_group_blocks | block-count rounding and extension quantum |
-| +0x20 | 2 | file_init_flag_bit | bit in `FIF` representing successful initialization of this file |
+| +0x20 | 2 | file_init_flag_bit | index of the flag representing successful initialization of this file |
 | +0x22 | 2 | gate_g5_index | optional g[5] descriptor index controlling producer admission; `0x7fff` means unconditional |
 
 ### Queue and live-event path
@@ -1095,9 +1095,13 @@ spool transfer granularity.
 
 During startup the file initialiser opens or creates each `.EVN`, verifies its
 size, scans valid CRC-protected blocks, and recovers the next circular write
-index. It then sets `file_init_flag_bit` in `FIF`. Resetting that file clears
+index. It then sets the flag selected by `file_init_flag_bit`. Resetting that file clears
 the bit. The logged-data service becomes ready only after the initialization
 bits for every g[12] row are set.
+
+The initialization flags are shared by g[12] and g[14]. Firmware through
+8.6.0 stores them in `FIF`. Firmware 8.7.0 maps indexes 0..30 to `FIF` and
+indexes 31..32 to bits 0..1 of `FIE`.
 
 `erase_class` selects which `EraseData` request resets the file. Class 0 files
 belong to `Logs`; class 1 files belong to `SleepData`. This classification
@@ -1195,7 +1199,7 @@ Each row defines one periodic collection stored in the circular NOR file
 | +0x20 | 1 | initializer_byte | common logged-data initializer value; `1` in the documented releases |
 | +0x21 | 1 | reset_request_class | `0` selects the log reset request; `1` selects the periodic-data reset request |
 | +0x22 | 2 | gate_g5_index | g[5] descriptor index used as the collection gate; `0x7fff` means no gate |
-| +0x24 | 2 | file_init_flag_bit | bit in `FIF` (`File Initialization Flags`) |
+| +0x24 | 2 | file_init_flag_bit | shared file-initialization flag index; see [Initialization and erase](#initialization-and-erase) |
 | +0x26 | 2 | reserved | zero |
 | +0x28 | 1 | signal_count | zero disables the collection |
 | +0x29 | 3 | reserved | zero |
@@ -1233,7 +1237,8 @@ fields. Firmware 14.8.3.0 and later use the 0x30-byte layout.
 |---------|------:|---------:|---------------------------------|
 | 11.8.0.1 | 2 | 0x28 | `CSF` = `DiagnosticTenMinutePeriodic`; `NRF` = `TherapyOneMinutePeriodic` |
 | 14.8.3.0 | 6 | 0x30 | above plus `TIP` = `InspiratoryPressure0p5Hz`, `MLK` = `Leak0p5Hz`, `MPD` = `MaskPressure6p25Hz`, `RFD` = `RespiratoryFlow6p25Hz` |
-| 15.8.4.0 and later | 7 | 0x30 | above plus `APD` = `atmosphericPressure10min` |
+| 15.8.4.0 through 17.8.6.0 | 7 | 0x30 | above plus `APD` = `atmosphericPressure10min` |
+| 18.8.7.0 | 9 | 0x30 | above plus `PTC` (source `ACM`) and `HTD` (source `AHT`), both sampled every ten minutes |
 
 The number of g[14] collection rows is compiled into the APPX loops that
 construct, register, and reset the collection pipelines. Each row separately
@@ -1241,8 +1246,8 @@ stores its own `signal_count` at `+0x28`.
 
 The pointed var-id lists name the source DataItems. `gate_g5_index` is relative
 to the first g[5] var ID:
-`CSF` resolves to `QNC`, the therapy collections resolve to `ZLE`, and `APD`
-has no gate.
+`CSF` resolves to `QNC`, the therapy collections resolve to `ZLE`, `PTC` and
+`HTD` resolve to `HLE`, and `APD` has no gate.
 
 A collection samples when its signal count is nonzero, its optional gate is
 nonzero, and at least one source DataItem is available. The collector snapshots
