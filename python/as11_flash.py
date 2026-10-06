@@ -1067,7 +1067,7 @@ def _service_storage(kind: str):
     return TARGET_BKPS, "BKPS", 0, BKPSRAM_SIZE, 0, 1
 
 
-def _service_range(kind: str, selection: list[str]):
+def _service_range(kind: str, selection: list[str], *, read: bool = False):
     (target, target_name, target_start, target_size,
      erase_size, program_size) = _service_storage(kind)
 
@@ -1079,6 +1079,15 @@ def _service_range(kind: str, selection: list[str]):
         offset = region.flash_start
         length = region.size
         target_name = region.code
+    elif read and kind == "nor" and len(selection) == 1:
+        from as11_nor import VOLUME_NAMES, VOLUME_RANGES, volume_index
+
+        try:
+            index = volume_index(selection[0])
+        except KeyError as exc:
+            raise SystemExit(str(exc)) from exc
+        offset, length = VOLUME_RANGES[index]
+        target_name = f"SPIN/{VOLUME_NAMES[index]}"
     elif len(selection) == 2:
         try:
             offset = _service_u32(selection[0])
@@ -1088,6 +1097,7 @@ def _service_range(kind: str, selection: list[str]):
     else:
         expected = (
             "[REGION | OFFSET LENGTH]" if kind == "flash"
+            else "[VOLUME | OFFSET LENGTH]" if read and kind == "nor"
             else "[OFFSET LENGTH]"
         )
         raise SystemExit(f"expected {expected}")
@@ -1528,7 +1538,7 @@ def cmd_service(args) -> int:
         if args.service_cmd in ("read-flash", "read-nor", "read-bkpsram"):
             (target, target_name, offset, length, _target_start, _target_size,
              _erase_size, _program_size) = _service_range(
-                args.service_cmd.removeprefix("read-"), args.selection
+                args.service_cmd.removeprefix("read-"), args.selection, read=True
             )
             _service_read_to_file(
                 client, target, target_name, offset, length,
@@ -2303,7 +2313,7 @@ def main(argv=None) -> int:
 
     for command, selection_help in (
             ("read-flash", "optional REGION or absolute OFFSET LENGTH"),
-            ("read-nor", "optional physical OFFSET LENGTH"),
+            ("read-nor", "optional VOLUME (settings, datalog, upgrade, nor:N) or physical OFFSET LENGTH"),
             ("read-bkpsram", "optional OFFSET LENGTH")):
         p_s_read = service_sub.add_parser(
             command, help="read storage to a raw file"

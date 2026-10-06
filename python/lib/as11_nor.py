@@ -38,6 +38,17 @@ STEEHL_SECURITY_DATA_OFFSET = 0x180
 STEEHL_SECURITY_DATA_SIZE = 0x80
 
 VOLUME_NAMES = ("settings", "datalog", "upgrade")
+# Physical start and length, in the same order as VOLUME_NAMES.
+VOLUME_RANGES = ((0x010000, 0x060000), (0x070000, 0xA10000), (0xA80000, 0x580000))
+
+
+def volume_index(identifier: str | int) -> int:
+    value = str(identifier).strip().lower().removeprefix("nor:")
+    if value in VOLUME_NAMES:
+        return VOLUME_NAMES.index(value)
+    if value.isdigit() and int(value) < len(VOLUME_NAMES):
+        return int(value)
+    raise KeyError(f"unknown NOR volume: {identifier}")
 
 
 class NorFormatError(ValueError):
@@ -415,13 +426,15 @@ class NorVolume:
 
 
 class As11NorImage:
-    """A complete 16 MiB Air11 external NOR dump."""
+    """A complete Air11 external NOR dump or one physical volume."""
 
     def __init__(self, data: bytes, source: Optional[Path] = None):
-        if len(data) != NOR_SIZE:
+        self.volume_index = next((i for i, (_, size) in enumerate(VOLUME_RANGES) if len(data) == size), None)
+        if len(data) != NOR_SIZE and self.volume_index is None:
             raise NorFormatError(
-                f"expected a {NOR_SIZE}-byte NOR image, got {len(data)} bytes"
+                f"expected a {NOR_SIZE}-byte NOR image or a complete physical volume, got {len(data)} bytes"
             )
+        self.raw_regions = RAW_REGIONS if self.volume_index is None else ()
         self.data = data
         self.source = source
         self.sha256 = hashlib.sha256(data).hexdigest()
@@ -456,8 +469,8 @@ class As11NorImage:
 
     def _discover_volumes(self) -> list[NorVolume]:
         volumes = []
-        cursor = RAW_REGION_SIZE
-        index = 0
+        cursor = RAW_REGION_SIZE if self.volume_index is None else 0
+        index = self.volume_index if self.volume_index is not None else 0
         while cursor < len(self.data):
             # Native formatting permits one headerless block per device. If it
             # happens to be the first block, the next block still identifies
@@ -472,9 +485,9 @@ class As11NorImage:
                     f"no uC/FS NOR header at 0x{cursor:06x}"
                 )
             end = cursor + header.block_count * ERASE_BLOCK_SIZE
-            if end > len(self.data):
+            if end > len(self.data) or (self.volume_index is not None and end != len(self.data)):
                 raise NorFormatError(
-                    f"volume at 0x{cursor:06x} extends past end of image"
+                    f"volume at 0x{cursor:06x} has geometry incompatible with image size"
                 )
             name = (
                 VOLUME_NAMES[index]
@@ -495,26 +508,15 @@ class As11NorImage:
         return volumes
 
     def volume(self, identifier: str | int) -> NorVolume:
-        if isinstance(identifier, int):
-            index = identifier
-        else:
-            value = identifier.strip().lower()
-            if value.startswith("nor:"):
-                value = value[4:]
-            if value.isdigit():
-                index = int(value)
-            else:
-                for volume in self.volumes:
-                    if value in (volume.name, volume.name.replace("-", "")):
-                        return volume
-                raise KeyError(f"unknown NOR volume: {identifier}")
-        if not 0 <= index < len(self.volumes):
-            raise KeyError(f"unknown NOR volume: {identifier}")
-        return self.volumes[index]
+        index = volume_index(identifier)
+        for volume in self.volumes:
+            if volume.index == index:
+                return volume
+        raise KeyError(f"NOR volume not present in this dump: {identifier}")
 
     def region(self, identifier: str) -> RawRegion:
         value = identifier.strip().lower()
-        for region in RAW_REGIONS:
+        for region in self.raw_regions:
             if value == region.name or value in region.aliases:
                 return region
         raise KeyError(f"unknown raw region: {identifier}")
@@ -523,8 +525,9 @@ class As11NorImage:
         region = self.region(identifier)
         return self.data[region.offset:region.offset + region.size]
 
-    @staticmethod
-    def named_key(identifier: str) -> NamedKey:
+    def named_key(self, identifier: str) -> NamedKey:
+        if not self.raw_regions:
+            raise NorFormatError("keys are not present in a volume-only dump")
         value = identifier.strip().casefold()
         for key in NAMED_KEYS:
             if value == key.name.casefold():

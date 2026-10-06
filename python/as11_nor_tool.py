@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Inspect and extract complete Air11 external SPI NOR dumps."""
+"""Inspect and extract Air11 external SPI NOR or physical-volume dumps."""
 
 from __future__ import annotations
 
@@ -14,7 +14,6 @@ from lib.as11_nor import (
     As11NorImage,
     NAMED_KEYS,
     NorFormatError,
-    RAW_REGIONS,
 )
 
 try:
@@ -82,7 +81,7 @@ def _fat_dict(volume):
 
 def _info_dict(image):
     raw_regions = []
-    for region in RAW_REGIONS:
+    for region in image.raw_regions:
         data = image.read_region(region.name)
         raw_regions.append({
             "name": region.name,
@@ -192,7 +191,7 @@ def cmd_info(image, args):
 
 def cmd_region_list(image, args):
     regions = []
-    for region in RAW_REGIONS:
+    for region in image.raw_regions:
         data = image.read_region(region.name)
         regions.append({
             "name": region.name,
@@ -612,9 +611,9 @@ def cmd_fat_putdir(image, args):
 
 def build_parser():
     parser = argparse.ArgumentParser(
-        description="Inspect and edit a complete Air11 external NOR dump"
+        description="Inspect and edit an Air11 external NOR or physical-volume dump"
     )
-    parser.add_argument("image", help="16 MiB raw NOR dump")
+    parser.add_argument("image", help="16 MiB raw NOR dump or one complete physical volume")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("info", help="Show NOR, FTL, and FAT geometry")

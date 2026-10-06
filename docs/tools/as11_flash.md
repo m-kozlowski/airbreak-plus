@@ -368,7 +368,7 @@ as11_flash.py -d can:/dev/ttyACM0 service flash --conf conf.bin --appl appl.bin
 
 ```text
 service read-flash FILE [REGION | OFFSET LENGTH] [OPTIONS]
-service read-nor FILE [OFFSET LENGTH] [OPTIONS]
+service read-nor FILE [VOLUME | OFFSET LENGTH] [OPTIONS]
 service read-bkpsram FILE [OFFSET LENGTH] [OPTIONS]
 ```
 
@@ -379,17 +379,23 @@ output file `FILE`; the default range is the complete target.
 range: flash uses absolute addresses from `0x08000000`; NOR and backup SRAM
 use zero-based offsets. Backup-SRAM offset zero corresponds to `0x38800000`.
 
+`VOLUME` selects `settings`, `datalog`, or `upgrade` (also `nor:0`, `nor:1`,
+or `nor:2`). The file contains only that physical volume, starting at file
+offset zero. Volume sizes and NOR offsets are listed in the
+[NOR layout](as11_nor_tool.md#layout).
+
 Flash reads accept the named regions `FGBL`, `CONF`, `APPL`, `APCX`, and
 `FGCB`, together with their normal `as11_flash.py` aliases. The output file is
 opened directly; a failed transfer leaves the bytes received before the
 failure in that file.
 
-Complete NOR dumps can be inspected and extracted with
+Complete NOR and single-volume dumps can be inspected and extracted with
 [`as11_nor_tool.py`](as11_nor_tool.md).
 
 ```sh
 as11_flash.py -d can:/dev/ttyACM0 service read-flash part.bin 0x08040000 0x20000
 as11_flash.py -d tcp:aircannect service read-nor nor.bin
+as11_flash.py -d can:/dev/ttyACM0 service read-nor settings.bin settings
 ```
 
 ### Write storage

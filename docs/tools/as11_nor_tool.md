@@ -38,7 +38,11 @@ volumes as mountable FAT images.
 
 ## Arguments
 
-`IMAGE`: complete 16 MiB physical NOR dump.
+`IMAGE`: complete 16 MiB physical NOR dump or one physical-volume dump from
+[`as11_flash.py service read-nor`](as11_flash.md#read-storage). Single-volume
+dumps are identified by size: settings 384 KiB, datalog 10,304 KiB, upgrade
+5,632 KiB. Use the same volume names in commands; offsets are relative to the
+input file. Keys and raw security/manufacturing regions require a full dump.
 
 ## Options
 
