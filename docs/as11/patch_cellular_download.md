@@ -53,7 +53,15 @@ The result has this form:
 `bytesStored` is the native persistent transfer counter. `size` is zero while
 the response length is not yet known and contains the complete downloaded size
 after `state` becomes `complete`. A download interrupted by a transport failure
-or restart remains resumable through the native HTTP range-fetch path.
+retains its URL and stored bytes. Repeat `Set` with the same URL to resume;
+setting a different URL starts a new file. While `state` is `error`, the
+optional `retryable` boolean distinguishes transport failures suitable for
+automatic retry from HTTP and storage failures.
+
+Resuming sends `Range: bytes=<bytesStored>-` and appends the response at that
+offset. The native HTTP client accepts `2xx`, including `200`; it does not
+validate `Content-Range`. The server must honor the requested offset, and the
+resource at the URL must remain unchanged between attempts.
 
 ## Extract the file
 

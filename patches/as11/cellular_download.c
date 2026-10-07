@@ -36,9 +36,22 @@ typedef struct {
     gfile_fetcher_control_t *control;
 } gfile_fetcher_task_t;
 
+/* Native ModemFota layout shared by APPX 8.6/8.7. */
+typedef struct {
+    const void *vtable;
+    const void **http_vtable;
+    void *logger;
+    void *config;
+    native_object_t *http_client;
+    void *file_receiver;
+    unsigned int bytes_received;
+} modem_fota_t;
+
 typedef struct {
     unsigned char reserved[0x0Cu];
     void *config;
+    unsigned char storage[0x28u];
+    modem_fota_t fota;
 } upgrade_command_executor_t;
 
 typedef struct {
@@ -68,6 +81,9 @@ static const char marker_queued[] = "airbreak:queued";
 static const char marker_active[] = "airbreak:active";
 static const char marker_complete[] = "airbreak:complete";
 static const char marker_error[] = "airbreak:error";
+/* UPGRD_STATE accepts at most three characters. */
+static const char marker_retryable[] = "abR";
+static const char marker_starting[] = "abS";
 
 static void config_set(void *config, const char *key, const char *value)
 {
@@ -183,6 +199,76 @@ static int strings_equal(const char *left, const char *right)
         ++right;
     }
     return *left == *right;
+}
+
+/* ModemFota's secondary vtable receives HTTP callbacks at object + 4.
+ * Keep native response handling; observe status and failures for retryability.
+ * The per-instance table and request state share one lifetime allocation.
+ */
+typedef struct {
+    const void *vtable[6];
+    const void **stock;
+    modem_fota_t *fota;
+    unsigned int enabled;
+    unsigned int status;
+} download_http_t;
+
+typedef void (*http_event_t)(void *);
+typedef void (*http_status_t)(void *, unsigned int);
+
+static void download_http_failed(void *self, unsigned int status)
+{
+    download_http_t *http = (download_http_t *)((native_object_t *)self)->vtable;
+
+    /* Native completion codes: timeout, closed socket, connect, socket error.
+     * HTTP errors must not become transport retries.
+     */
+    if (http->enabled &&
+            (http->status == 0u || (http->status >= 200u && http->status < 300u)) &&
+            (status == 1u || status == 4u || status == 5u || status == 6u))
+        config_set(http->fota->config, key_state, marker_retryable);
+    ((http_status_t)http->stock[5])(self, status);
+}
+
+static void download_http_status(void *self, unsigned int status)
+{
+    download_http_t *http = (download_http_t *)((native_object_t *)self)->vtable;
+    http->status = status;
+    ((http_status_t)http->stock[3])(self, status);
+}
+
+static int prepare_download_http(modem_fota_t *fota, unsigned int enabled)
+{
+    download_http_t *http;
+    unsigned int fresh = 0;
+
+    if (fota->http_vtable[5] == (const void *)download_http_failed) {
+        http = (download_http_t *)fota->http_vtable;
+    } else {
+        if (!enabled)
+            return 1;
+        http = heap_alloc(sizeof(*http));
+        if (http == 0)
+            return 0;
+        http->stock = fota->http_vtable;
+        http->fota = fota;
+        for (unsigned int i = 0; i < 6u; ++i)
+            http->vtable[i] = http->stock[i];
+        http->vtable[3] = download_http_status;
+        http->vtable[5] = download_http_failed;
+        fota->http_vtable = http->vtable;
+        fresh = 1;
+    }
+    http->enabled = enabled;
+    /* GetBlock is entered again after each storage write. A queued Set marks
+     * the new request so these repeated transitions preserve its HTTP status.
+     */
+    if (fresh || (enabled && config_equals(fota->config, key_state, marker_starting))) {
+        http->status = 0u;
+        if (enabled)
+            config_set(fota->config, key_state, "");
+    }
+    return 1;
 }
 
 static int parse_http_url(download_request_t *request)
@@ -334,6 +420,10 @@ static int cellular_download_write_value(void *context, void *encoder)
     end = append_uint(end, bytes_stored);
     end = append_text(end, ",\"size\":");
     end = append_uint(end, size);
+    if (state == DOWNLOAD_ERROR) {
+        end = append_text(end, ",\"retryable\":");
+        end = append_text(end, config_equals(control->config, key_state, marker_retryable) ? "true" : "false");
+    }
     *end++ = '}';
 
     span.begin = (const unsigned char *)json;
@@ -361,21 +451,29 @@ static int cellular_download_apply_value(
     download_request_t request;
     char port[11];
     char size[11];
+    enum download_state state;
+    unsigned int resume;
     char host_separator;
 
-    if (control == 0 || !config_equals(control->config, key_path, "") ||
-            !parse_request(value, &request))
+    if (control == 0 || !parse_request(value, &request))
+        return 0;
+    state = current_state(control->config);
+    if (state == DOWNLOAD_QUEUED || state == DOWNLOAD_ACTIVE || state == DOWNLOAD_EXTERNAL)
         return 0;
 
     uint_to_text(port, request.port);
     uint_to_text(size, MAX_UPGRADE_PAYLOAD_SIZE);
-
-    /* Queue only after every native FileFetcher input has been committed. */
-    config_set(control->config, key_path, request.url + request.path_start);
+    resume = state == DOWNLOAD_ERROR &&
+             config_equals(control->config, key_port, port) &&
+             config_equals(control->config, key_path, request.url + request.path_start);
     host_separator = request.url[request.host_end];
     request.url[request.host_end] = '\0';
+    resume = resume && config_equals(control->config, key_host, request.url + 7u);
+
+    /* Queue only after every native FileFetcher input has been committed. */
     config_set(control->config, key_host, request.url + 7u);
     request.url[request.host_end] = host_separator;
+    config_set(control->config, key_path, request.url + request.path_start);
     config_set(control->config, key_port, port);
     config_set(control->config, key_protocol, "http");
     config_set(control->config, key_type, "FG");
@@ -384,9 +482,10 @@ static int cellular_download_apply_value(
      */
     config_set(control->config, key_size, size);
     config_set(control->config, key_hash, "");
-    config_set(control->config, key_bytes_stored, "0");
+    if (!resume)
+        config_set(control->config, key_bytes_stored, "0");
     config_set(control->config, key_start_time, "");
-    config_set(control->config, key_state, "");
+    config_set(control->config, key_state, marker_starting);
     config_set(control->config, key_status, marker_queued);
     return 1;
 }
@@ -409,6 +508,8 @@ int cellular_download_can_start(gfile_fetcher_control_t *control)
 {
     enum download_state state = current_state(control->config);
 
+    if (state == DOWNLOAD_ERROR)
+        return 0;
     if (state != DOWNLOAD_QUEUED && state != DOWNLOAD_ACTIVE)
         return gfile_fetcher_control_can_start(control);
 
@@ -439,10 +540,16 @@ static void __attribute__((naked)) stock_set_state(
 
 void cellular_download_set_state(void *executor, unsigned int state)
 {
-    void *config = ((upgrade_command_executor_t *)executor)->config;
+    upgrade_command_executor_t *object = executor;
+    void *config = object->config;
     enum download_state local_state = current_state(config);
     char size[11];
 
+    if (state == 1u && !prepare_download_http(&object->fota, local_state == DOWNLOAD_ACTIVE)) {
+        native_object_t *client = object->fota.http_client;
+        ((http_event_t)client->vtable[4])(client);
+        state = 5u;
+    }
     if (local_state >= DOWNLOAD_QUEUED && local_state <= DOWNLOAD_ERROR) {
         /* Replace CheckFile or Error with a local Done transition. Result 5
          * completes Done without posting to a cloud status URI.
@@ -457,7 +564,7 @@ void cellular_download_set_state(void *executor, unsigned int state)
             state = 6u;
         } else if (state == 5u) {
             config_set(config, key_status, marker_error);
-            finish_local_request(config);
+            /* Retain URL and the committed storage offset for a repeated Set. */
             upgrade_command_executor_set_result(executor, 5u);
             state = 6u;
         }
