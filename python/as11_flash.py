@@ -15,6 +15,7 @@ Offline subcommands (no device needed):
     targets    list base firmware input combinations and inferred targets
     build      assemble a .abc container from firmware bytes
     info       inspect a .abc container
+    extract    extract firmware blocks or individual segments from .abc
 
 Device-touching subcommands:
     upload     push and verify a pre-built .abc; apply only when requested
@@ -83,6 +84,7 @@ from resmed_credentials import load_all_credentials  # noqa: E402
 from lib.as11_patch_versions import (  # noqa: E402
     AS11_OTA_COMPATIBILITY_FINGERPRINT_PRESETS,
 )
+from lib.firmware_io import paths_alias, write_output  # noqa: E402
 
 
 log = logging.getLogger("as11.flash")
@@ -802,7 +804,6 @@ def inspect_container(data: bytes) -> dict:
         "magic_ok":   magic == MAGIC,
         "format":     fmt,
         "component":  component,
-        "sha256":     hashlib.sha256(data).hexdigest().upper(),
     }
 
     if fmt != FORMAT_0005:
@@ -811,8 +812,10 @@ def inspect_container(data: bytes) -> dict:
     if len(data) < PAYLOAD_OFFSET_0005:
         raise ValueError(f"0005 container too short: {len(data)} bytes")
     descriptor = data[PRIMARY_SIZE:PAYLOAD_OFFSET_0005]
-    rest       = data[PAYLOAD_OFFSET_0005:]
     exp_payload_len = get_u32(descriptor, 0x40)
+    container_size = PAYLOAD_OFFSET_0005 + exp_payload_len
+    # NOR file allocation can extend beyond the container's declared end.
+    rest = data[PAYLOAD_OFFSET_0005:container_size]
     exp_payload_crc = get_u32(descriptor, 0x44)
     exp_desc_crc    = get_u32(descriptor, 0x4C)
     act_payload_crc = crc32_final(rest)
@@ -822,12 +825,14 @@ def inspect_container(data: bytes) -> dict:
         "payload_offset":     PAYLOAD_OFFSET_0005,
         "payload_size":       len(rest),
         "rest_size":          len(rest),
+        "container_size":     container_size,
+        "trailing_size":      max(0, len(data) - container_size),
         "code":               descriptor[0x04:0x08].decode("ascii", "replace"),
         "marker":             get_u32(descriptor, 0x00),
         "conf_appl_compatibility_fingerprint": get_u32(descriptor, 0x08),
         "fgbl_appl_compatibility_fingerprint": get_u32(descriptor, 0x0C),
         "fg_security_fingerprint": get_u32(descriptor, 0x10),
-        "payload_len_ok":     len(rest) == exp_payload_len,
+        "payload_len_ok":     len(data) == container_size,
         "expected_payload_len": exp_payload_len,
         "payload_crc":        act_payload_crc,
         "expected_payload_crc": exp_payload_crc,
@@ -866,6 +871,11 @@ def print_info(info: dict, path: str | None = None) -> None:
     print(f"Format:        {info['format']!r}")
     print(f"Component:     {info['component']!r}")
     print(f"Payload size:  {info.get('payload_size', '?')}")
+    print(f"Declared size: {info['container_size']} bytes")
+    if info['trailing_size']:
+        print(f"Trailing data: {info['trailing_size']} bytes outside the container")
+    elif info['file_size'] < info['container_size']:
+        print(f"Missing data:  {info['container_size'] - info['file_size']} bytes")
     if info["format"] == FORMAT_0005:
         print(f"Code:          {info['code']}  marker={info['marker']}")
         print("Compatibility: "
@@ -879,7 +889,7 @@ def print_info(info: dict, path: str | None = None) -> None:
         print(f"Segments:      table={info['segment_table_size']} B {table_tag}; "
               f"data={info.get('segment_data_size')} B {data_tag}")
         for seg in info.get("segments", []):
-            print(f"  [{seg['index']:02d}] len=0x{seg['length']:08X} "
+            print(f"  [{seg['index']:02d}] file=0x{seg['data_offset']:08X} len=0x{seg['length']:08X} "
                   f"dest=0x{seg['flash_start']:08X}..0x{seg['flash_end']:08X}")
         print(f"Rest CRC:      0x{info['payload_crc']:08X}  "
               f"({'ok' if info['payload_crc_ok'] else 'MISMATCH, desc says 0x'+format(info['expected_payload_crc'],'08X')})")
@@ -893,7 +903,6 @@ def print_info(info: dict, path: str | None = None) -> None:
         for (name, stored, computed, ok) in hw:
             tag = "ok" if ok else "MISMATCH"
             print(f"  {name}: stored=0x{stored:04X} computed=0x{computed:04X} {tag}")
-    print(f"SHA256(file):  {info['sha256']}")
 
 
 
@@ -1781,6 +1790,85 @@ def cmd_info(args) -> int:
     return 0
 
 
+def extract_firmware(data: bytes, info: dict, block: TargetRegion, base: bytes | None = None) -> bytes:
+    """Place OTA segments at their flash addresses, with erased gaps in the target."""
+    target = target_for_container(info)
+    if info['component'] != DEFAULT_COMPONENT_0005 or target is None:
+        raise ValueError('firmware extraction requires a known PacificFG target; use --segment for raw data')
+    if base is not None and len(base) != FULL_FLASH_SIZE:
+        raise ValueError('--base must be a complete 2 MiB internal-flash image')
+    image = bytearray(base) if base is not None else bytearray(b'\xff' * FULL_FLASH_SIZE)
+    # Base bytes belong only to blocks absent from this update. Keeping old
+    # bytes in sparse OTA gaps would produce a different target image.
+    start = target.full_image_offset
+    image[start:start + target.size] = b'\xff' * target.size
+    for seg in info['segments']:
+        if not target.flash_start <= seg['flash_start'] <= seg['flash_end'] <= target.flash_end:
+            raise ValueError(f"segment {seg['index']} is outside {target.code}")
+        # A segment can span CONF and APPL. Only bytes inside the requested
+        # block are needed, even when the rest of that segment is missing.
+        first = max(seg['flash_start'], block.flash_start)
+        last = min(seg['flash_end'], block.flash_end)
+        if first >= last:
+            continue
+        start = first - FLASH_BASE
+        offset = seg['data_offset'] + first - seg['flash_start']
+        length = last - first
+        if offset + length > min(len(data), info['container_size']):
+            raise ValueError(f"cannot extract {block.code}: missing data in segment {seg['index']}")
+        image[start:start + length] = data[offset:offset + length]
+    start = block.full_image_offset
+    return bytes(image[start:start + block.size])
+
+
+def cmd_extract(args) -> int:
+    data, info = read_container(args.file)
+    if not info['magic_ok'] or not info['segment_table_ok']:
+        raise SystemExit('cannot extract: invalid or truncated container/segment table')
+    if info['segment_table_size'] + info['segment_data_expected_size'] != info['expected_payload_len']:
+        raise SystemExit('cannot extract: segment lengths do not match declared payload size')
+    if any(paths_alias(args.output, path) for path in (args.file, args.base) if path):
+        raise SystemExit('output must differ from the input container and base image')
+    for name in ('descriptor', 'payload'):
+        if name == 'payload' and info['file_size'] < info['container_size']:
+            print('Warning: incomplete container; payload CRC cannot be verified.', file=sys.stderr)
+            continue
+        if not info[name + '_crc_ok']:
+            print(f'Warning: {name} CRC mismatch; extracting unchanged bytes.', file=sys.stderr)
+
+    if args.segment is not None:
+        if args.base:
+            raise SystemExit('--base applies to firmware reconstruction, not --segment')
+        if not 0 <= args.segment < info['segment_count']:
+            raise SystemExit(f"segment index must be 0..{info['segment_count'] - 1}")
+        seg = info['segments'][args.segment]
+        if seg['data_offset'] + seg['length'] > min(len(data), info['container_size']):
+            raise SystemExit(f'cannot extract segment {args.segment}: missing data')
+        payload = data[seg['data_offset']:seg['data_offset'] + seg['length']]
+        label = f"segment {args.segment}, destination 0x{seg['flash_start']:08X}"
+    else:
+        block = resolve_block(args.block or 'full')
+        base = Path(args.base).read_bytes() if args.base else None
+        try:
+            payload = extract_firmware(data, info, block, base)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+        label = f'{block.code}, 0x{block.flash_start:08X}..0x{block.flash_end:08X}'
+        print('OTA gaps: filled with 0xFF')
+        print(f"Outside {info['code']}: " + (f'kept from {args.base}' if args.base else 'filled with 0xFF'))
+        target = target_for_container(info)
+        for name, stored, computed, ok in verify_payload_crcs(payload, block):
+            if base is None and not (target.flash_start <= TARGETS[name].flash_start < target.flash_end):
+                print(f'  {name}: absent from OTA, filled with 0xFF')
+                continue
+            print(f"  {name} CRC: {'ok' if ok else 'MISMATCH'} (stored 0x{stored:04X}, computed 0x{computed:04X})")
+    write_output(args.output, payload, overwrite=args.overwrite)
+    print(f'Wrote {args.output} ({len(payload)} bytes; {label})')
+    if info['trailing_size']:
+        print(f"Excluded {info['trailing_size']} trailing bytes outside the container")
+    return 0
+
+
 def read_container(path: str) -> tuple[bytes, dict]:
     try:
         data = Path(path).read_bytes()
@@ -2221,6 +2309,17 @@ def main(argv=None) -> int:
     _add_debug_arg(p_i)
     p_i.add_argument("file", help=".abc file to inspect")
     p_i.set_defaults(func=cmd_info)
+
+    # extract
+    p_e = sub.add_parser('extract', help='extract firmware or a raw segment from .abc')
+    p_e.add_argument('file', help='.abc file to extract')
+    p_e.add_argument('-o', '--output', required=True, help='output binary path')
+    selection = p_e.add_mutually_exclusive_group()
+    selection.add_argument('--block', help='output block: full (default), CONF, APPL, APCX or FGBL')
+    selection.add_argument('--segment', type=int, help='extract one raw segment by its zero-based index')
+    p_e.add_argument('--base', help='complete firmware image supplying blocks outside the OTA target')
+    p_e.add_argument('--overwrite', action='store_true', help='replace an existing output file')
+    p_e.set_defaults(func=cmd_extract)
 
     # upload
     p_u = sub.add_parser("upload",

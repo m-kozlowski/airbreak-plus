@@ -16,6 +16,7 @@
   - [upload](#upload)
   - [build](#build)
   - [info](#info)
+  - [extract](#extract)
   - [apply](#apply)
   - [targets](#targets)
 - [Firmware inputs](#firmware-inputs)
@@ -40,6 +41,7 @@
 ```text
 as11_flash.py build INPUT_OPTIONS -o ABC [OPTIONS]
 as11_flash.py info ABC
+as11_flash.py extract ABC -o BIN [--block NAME | --segment INDEX] [--base BIN] [--overwrite]
 as11_flash.py targets
 as11_flash.py -d DEVICE flash INPUT_OPTIONS [OPTIONS]
 as11_flash.py -d DEVICE upload ABC [OPTIONS]
@@ -50,7 +52,7 @@ as11_flash.py -d DEVICE service COMMAND [ARGUMENTS] [OPTIONS]
 
 ## Description
 
-Builds and inspects OTA containers, checks firmware CRCs, uploads images,
+Builds, inspects and extracts OTA containers, checks firmware CRCs, uploads images,
 verifies staging, and applies upgrades. Selects and combines firmware regions
 from complete images or separate blocks.
 
@@ -63,7 +65,7 @@ SRAM through the bootloader service extension.
 |----------|---------|
 | `DEVICE` | Transport target; see the device options below |
 | `INPUT_OPTIONS` | Firmware source options listed under [Firmware inputs](#firmware-inputs) |
-| `ABC` | Host path to an OTA container; output for `build`, input for `info`, `upload`, and `apply` |
+| `ABC` | Host path to an OTA container; output for `build`, input for `info`, `extract`, `upload`, and `apply` |
 | `HEX64` | SHA-256 container hash as 64 hexadecimal digits |
 
 ## Options
@@ -178,8 +180,46 @@ info ABC
 
 Inspect an existing `.abc` container.
 
+Displays target, compatibility fingerprints, segment file offsets and flash
+destinations, and CRC results. Bytes after the declared container end are
+reported separately and excluded from payload CRC and segment decoding.
+
 ```sh
 as11_flash.py info patched.abc
+```
+
+### extract
+
+```text
+extract ABC -o BIN [--block NAME | --segment INDEX] [--base BIN] [--overwrite]
+```
+
+Extract a `0005` container offline. By default, reconstruct a 2 MiB internal-flash
+image, placing each segment at its destination address and filling gaps with
+`0xFF`. CRCs are reported but not repaired; a CRC mismatch produces a warning.
+A partial container can supply a complete block or segment when all bytes needed
+for that selection are present. Missing bytes inside the selection are an error;
+they are not filled with `0xFF`. The whole-payload CRC cannot be verified for a
+partial container; extracted blocks still have their own CRCs checked.
+
+| Option | Meaning |
+|--------|---------|
+| `-o`, `--output BIN` | Required output path |
+| `--block NAME` | Output `full` (default), `CONF`, `APPL`, `APCX`, or `FGBL`; accepts the same aliases as `build --block` |
+| `--segment INDEX` | Extract one segment verbatim, using its zero-based index from `info` |
+| `--base BIN` | Complete 2 MiB image supplying blocks outside the OTA target |
+| `--overwrite` | Replace an existing output; input files are never overwritten |
+
+For an APCX update, `--base` supplies FGBL. Gaps inside CONF and APPL remain
+`0xFF`, not bytes from the base image. Without a base, a reconstructed full image
+has an empty bootloader and is not a complete device backup. Select `--block apcx`
+to extract only the updated range. Trailing bytes beyond the declared container
+end are excluded from extraction.
+
+```sh
+as11_flash.py extract downloaded.abc --base original.bin -o firmware.bin
+as11_flash.py extract downloaded.abc --block conf -o conf.bin
+as11_flash.py extract downloaded.abc --segment 0 -o segment0.bin
 ```
 
 ### apply
