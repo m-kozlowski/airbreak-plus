@@ -86,12 +86,12 @@ def as11_boot_id(data):
     return None
 
 
-def as11_layout_for_image(data):
+def as11_layout_for_image(data, fallback_boot_id=None):
     if len(data) != AS11_FULL_IMAGE_SIZE:
         raise ImageError(
             f"expected a {AS11_FULL_IMAGE_SIZE}-byte Air11 full image, "
             f"got {len(data)} bytes")
-    boot_id = as11_boot_id(data)
+    boot_id = as11_boot_id(data) or fallback_boot_id
     layout = AS11_LAYOUTS.get(boot_id)
     if not layout:
         raise ImageError(f"unsupported Air11 bootloader ID {boot_id!r}")
@@ -196,7 +196,9 @@ def load_as11_block_source(path, name, target_boot_id, target_layout):
     standalone = len(data) != AS11_FULL_IMAGE_SIZE
 
     if not standalone:
-        source_boot_id, source_layout = as11_layout_for_image(data)
+        # OTA-extracted images can supply CONF/APPL without containing FGBL.
+        fallback_boot_id = target_boot_id if name != "FGBL" else None
+        source_boot_id, source_layout = as11_layout_for_image(data, fallback_boot_id)
         if source_boot_id != target_boot_id:
             raise ImageError(
                 f"{path}: {source_boot_id} image cannot supply {name} for "
@@ -448,7 +450,8 @@ def cmd_replace(args):
         if not any(as11_replacements.values()):
             raise ImageError(
                 "Air11 replace requires at least one of --fgbl, --conf, or --appl")
-        boot_id, layout = as11_layout_for_image(base_data)
+        donor_boot_id = as11_boot_id(read_file(args.fgbl)) if args.fgbl else None
+        boot_id, layout = as11_layout_for_image(base_data, donor_boot_id)
         paths = {name: args.image for name in AS11_BLOCK_NAMES}
         for name, path in as11_replacements.items():
             if path:
