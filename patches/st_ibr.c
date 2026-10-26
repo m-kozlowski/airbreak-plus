@@ -7,7 +7,7 @@ extern const u16 st_ibr_enable_var_id;
 extern int variable_get_by_id(int var_id);
 extern void therapy_variable_get(int **ref, int index);
 
-/* The last two bytes are unused stock padding in both supported CDX versions.
+/* The last two bytes are unused stock padding in the supported SX567 versions.
  * Keep the worker's size and all existing field offsets unchanged.
  */
 struct breath_worker {

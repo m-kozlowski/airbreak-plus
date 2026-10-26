@@ -11,6 +11,18 @@
 
 .text
 
+// Stock ST breath timing and worker lifecycle
+NSTUB(0x080A78D1, breath_progress_worker_reset)
+NSTUB(0x080A78FD, breath_progress_worker_update_mode)
+NSTUB(0x080A79A7, breath_progress_worker_disable)
+NSTUB(0x080A79AD, breath_progress_worker_update)
+
+// Stock bilevel and iVAPS pressure waveforms
+NSTUB(0x0809FED9, therapy_variable_get)
+NSTUB(0x080AFC09, bilevel_pressure_waveform_expiration_ramp)
+NSTUB(0x080AB8B1, ivaps_pressure_waveform_expiration_ramp)
+NSTUB_VAR(0x2000E798, therapy_waveform_profile)
+
 // GUI / LCD
 NSTUB(0x0807AE71, GUI_SetColor)
 NSTUB(0x0807B095, LCD_FillRect)

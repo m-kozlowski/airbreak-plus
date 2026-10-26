@@ -1908,6 +1908,9 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         sites = {
             'SX584-0204': ((0x8992c, 0x89bd2), (0x97c58, 0x97c68, 0x97d82)),
             'SX584-0205': ((0x89c0c, 0x89eb2), (0x97f38, 0x97f48, 0x98062)),
+            'SX567-0302': ((0xafaba, 0xafdb0), (0xab624, 0xab634, 0xab800)),
+            'SX567-0305': ((0xb02aa, 0xb05a0), (0xabe14, 0xabe24, 0xabff0)),
+            'SX567-0306': ((0xb01c2, 0xb04b8), (0xabd2c, 0xabd3c, 0xabf08)),
             'SX567-0401': ((0xb0422, 0xb0718), (0xabf8c, 0xabf9c, 0xac168)),
             'SX567-0402': ((0xb0652, 0xb0948), (0xac1bc, 0xac1cc, 0xac398)),
         }.get(self.asf.cdx_ver)
@@ -1937,6 +1940,9 @@ class ASFirmwarePatches(CompiledPayloadMixin):
     def patch_st_ibr(self):
         """Wrap the ST worker and initialize its two-byte adaptive timing state."""
         sites = {
+            'SX567-0302': (0xf84b4, 0xa7d9e),
+            'SX567-0305': (0xf8bfc, 0xa858e),
+            'SX567-0306': (0xf8c00, 0xa84a6),
             'SX567-0401': (0xf8e60, 0xa8706),
             'SX567-0402': (0xf90d8, 0xa8936),
         }.get(self.asf.cdx_ver)
