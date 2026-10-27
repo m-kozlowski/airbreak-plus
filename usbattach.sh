@@ -22,7 +22,7 @@ for line in "${devices[@]}"; do
         [[ -z "$name_filter" || $name =~ $name_filter ]] || continue
 
         # attach only previously shared devices
-        if [[ "$state" == "Shared" ]] ; then
+        if [[ "$state" == "Shared" || "$state" == "Allowed" ]]; then
             printf 'Attaching %s [%s] %s\n' "$busid" "$vidpid" "$name"
             attached_before=$(usb_count "$vidpid")
             if ! usbipd.exe usbipd attach --wsl --busid "$busid"; then
