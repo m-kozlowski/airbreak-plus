@@ -2408,6 +2408,88 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         return PatchOutcome.ok(None, "Palette table: 0x%08X" % (self.asf.FLASH_BASE + base))
 
 
+    def patch_expand_heap(self):
+        """Move the static-destructor registry to CCM and extend the external heap."""
+        sites = {
+            'SX567-0302': {
+                'registry_start': 0x68700,
+                'registry_end': 0x68704,
+                'heap_start': 0x72208,
+                'heap_end': 0x7220c,
+                'ccm_free_start': 0x1000e4ac,
+                'ccm_free_end': 0x10010000,
+                'external_ram_end': 0x68040000,
+            },
+            'SX567-0305': {
+                'registry_start': 0x68e24,
+                'registry_end': 0x68e28,
+                'heap_start': 0x72938,
+                'heap_end': 0x7293c,
+                'ccm_free_start': 0x1000e4ac,
+                'ccm_free_end': 0x10010000,
+                'external_ram_end': 0x68040000,
+            },
+            'SX567-0306': {
+                'registry_start': 0x68e28,
+                'registry_end': 0x68e2c,
+                'heap_start': 0x72934,
+                'heap_end': 0x72938,
+                'ccm_free_start': 0x1000e4ac,
+                'ccm_free_end': 0x10010000,
+                'external_ram_end': 0x68040000,
+            },
+            'SX567-0401': {
+                'registry_start': 0x68e28,
+                'registry_end': 0x68e2c,
+                'heap_start': 0x72934,
+                'heap_end': 0x72938,
+                'ccm_free_start': 0x1000e4ac,
+                'ccm_free_end': 0x10010000,
+                'external_ram_end': 0x68040000,
+            },
+            'SX567-0402': {
+                'registry_start': 0x68e28,
+                'registry_end': 0x68e2c,
+                'heap_start': 0x72934,
+                'heap_end': 0x72938,
+                'ccm_free_start': 0x1000e4ac,
+                'ccm_free_end': 0x10010000,
+                'external_ram_end': 0x68040000,
+            },
+        }.get(self.asf.cdx_ver)
+        if sites is None:
+            return PatchOutcome.skip("unsupported CDX version %s" % self.asf.cdx_ver)
+
+        registry_start = self.asf.read_u32(sites['registry_start'])
+        registry_end = self.asf.read_u32(sites['registry_end'])
+        heap_start = self.asf.read_u32(sites['heap_start'])
+        heap_end = self.asf.read_u32(sites['heap_end'])
+        registry_size = registry_end - registry_start
+        new_registry_start = sites['ccm_free_start']
+        new_registry_end = new_registry_start + registry_size
+        new_heap_end = sites['external_ram_end']
+
+        # Each entry is three u32 words. Preserve the table's full capacity,
+        # using only CCM space whose other consumers have been audited.
+        if (registry_size <= 0 or registry_size % 12 or
+                new_registry_end > sites['ccm_free_end']):
+            raise ValueError("destructor registry does not fit the approved CCM range")
+        if (not heap_start < heap_end <= new_heap_end or
+                not (registry_start == new_registry_start or
+                     (registry_start == heap_end and registry_end <= new_heap_end))):
+            raise ValueError("unexpected heap/destructor registry layout")
+
+        # The cursor stays in zero-initialized storage; registration fully
+        # writes each used entry. The old external storage becomes heap space.
+        self.asf.write_u32(sites['registry_start'], new_registry_start)
+        self.asf.write_u32(sites['registry_end'], new_registry_end)
+        self.asf.write_u32(sites['heap_end'], new_heap_end)
+        return PatchOutcome.ok(
+            "Heap: %d -> %d bytes (+%d)" %
+            (heap_end - heap_start, new_heap_end - heap_start, new_heap_end - heap_end),
+            "Destructor registry: 0x%08X..0x%08X (%d entries)" %
+            (new_registry_start, new_registry_end - 1, registry_size // 12))
+
     def patch_past_date(self):
         """Allow setting past date in menu and UART"""
         # date direction check: cmp r0,r5 -> cmp r0,r0
@@ -2606,6 +2688,8 @@ PATCH_PHASES = (
     )),
 
     ('Miscellaneous', (
+        PatchSpec('patch-expand-heap', 'Expand runtime heap by about 13.5 KiB on SX567 firmware.',
+                  True, 'patch_expand_heap'),
         PatchSpec('patch-blx-dump', 'Add bootloader support for firmware dumps over UART.',
                   True, 'patch_blx_dump'),
         PatchSpec('patch-fw-lcd', 'Add the universal ILI9325/ILI9328 LCD driver.',
