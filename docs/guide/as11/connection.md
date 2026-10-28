@@ -1,8 +1,10 @@
 # Air11 Connection
 
-The first Air11 installation normally uses SWD. If a complete, unmodified
-firmware image is already available for local patching, CAN can be used without
-opening the device.
+The first Air11 installation normally uses SWD (a wired connection to the
+device's processor, using an ST-Link programmer and a TC2050 cable on the open
+board). If a complete, unmodified firmware image is already available for local
+patching, CAN (the device's wired data link, reached with a USB-CAN adapter) can
+be used without opening the device.
 
 ## SWD
 

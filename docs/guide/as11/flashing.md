@@ -1,7 +1,7 @@
 # Air11 Flashing
 
-The patched image can be installed over SWD or CAN. BLE is useful for later
-updates after its pairing and OTA-key requirements have been prepared.
+The patched image can be installed over SWD or CAN. Bluetooth (BLE) is useful
+for later updates after its pairing and OTA-key requirements have been prepared.
 
 ## SWD
 
@@ -45,8 +45,9 @@ reference, including partial images and advanced apply modes, is in
 
 ## BLE
 
-Stock authenticated BLE updates require the device-specific OTA key retrieved
-over SWD. After pairing the device, store the key with its alias:
+Stock authenticated BLE updates require the device-specific OTA key, retrieved
+over SWD or from a [CAN NOR backup](service_dump.md#optional-back-up-the-nor-chip-and-ota-key).
+After pairing the device, store the key with its alias:
 
 ```bash
 python3 python/as11_config.py devices ota-key bedroom --key-file ota-key.hex

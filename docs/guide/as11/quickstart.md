@@ -6,10 +6,12 @@ End-to-end guide for unlocking ResMed AirSense 11 and AirCurve 11 devices.
 
 ### Path A: dump firmware from the device
 
-This path makes a complete backup before patching. A direct SWD dump also keeps
-SWD available for recovery. If an unmodified Air11 image is available as a
-reference, the [bootloader CAN service](service_dump.md) can instead dump the
-firmware without opening the device.
+This path makes a complete backup before patching. It connects over SWD (a wired
+link to the device's processor, using an ST-Link programmer and a TC2050 cable
+on the open board), which also stays available afterward for recovery. If an
+unmodified Air11 image is available as a reference, the
+[bootloader CAN service](service_dump.md) can instead dump the firmware over
+CAN, without opening the device.
 
 SWD hardware:
 
@@ -31,7 +33,8 @@ See [Disassembly](disassembly.md) for access to the programming footprint and
 
 If a complete, unmodified Air11 firmware image is already available, the device
 does not need to be opened. Prepare and patch that image locally, then flash the
-generated result over CAN.
+result over CAN (the device's wired data link, reached with a USB-CAN adapter
+without opening the case).
 
 Hardware:
 
@@ -112,13 +115,20 @@ This creates `as11.bin`. Keep an unchanged copy as the device backup.
 
 The same SWD session can also be used to
 [retrieve the device-specific OTA key](../../as11/ota_protocol.md#retrieving-the-local-ota-key)
-or check and correct the hardware RTC with `rtc::now`, `rtc::sync`, and
-`rtc::set_time`.
+or check and correct the device's hardware clock (RTC) with `rtc::now`,
+`rtc::sync`, and `rtc::set_time`.
 
 **CAN (no SWD):** If you want to keep the device
 closed and have an unmodified Air11 image to use as a reference, follow
 [CAN firmware dump](service_dump.md). Use the resulting `device-original.bin`
 as `as11.bin`.
+
+While the device is in service mode, also
+[back up its NOR chip and extract the OTA key](service_dump.md#optional-back-up-the-nor-chip-and-ota-key).
+The NOR is a small memory chip, separate from the firmware, holding data unique
+to your device (identity, factory calibration, the OTA key) that cannot be
+regenerated. This is the only convenient chance to capture it without SWD, and
+[later authenticated BLE updates](#later-ble-updates) need the key.
 
 ### Path B: use an existing unmodified image
 
@@ -183,11 +193,16 @@ If the application still runs, the backup can also be restored over CAN. See
 
 ## Later BLE Updates
 
-Stock authenticated BLE updates require the device-specific OTA key. It can be
-retrieved during the initial SWD session; see
-[Retrieving the local OTA key](../../as11/ota_protocol.md#retrieving-the-local-ota-key).
-The standard patch also permits plain BLE apply for later updates. See
-[Flashing](flashing.md#ble).
+Installing official ResMed updates over Bluetooth (BLE) requires the
+device-specific OTA key. Retrieve it once, depending on the path taken above:
+
+- **SWD:** during the initial SWD session; see
+  [Retrieving the local OTA key](../../as11/ota_protocol.md#retrieving-the-local-ota-key).
+- **CAN:** from the [device's NOR chip](service_dump.md#optional-back-up-the-nor-chip-and-ota-key),
+  read in service mode.
+
+The key is optional: the standard patch also permits plain Bluetooth apply for
+later updates. See [Flashing](flashing.md#ble).
 
 ## Detailed Guide
 
@@ -196,7 +211,7 @@ The standard patch also permits plain BLE apply for later updates. See
 | [Disassembly](disassembly.md) | Opening the enclosure and reaching the SWD footprint |
 | [Connection](connection.md) | SWD wiring and optional CAN hardware |
 | [OpenOCD](openocd.md) | Firmware dump, optional OTA key, and RTC sync |
-| [CAN firmware dump](service_dump.md) | Optional closed-case dump using the bootloader service |
+| [CAN firmware dump](service_dump.md) | Closed-case firmware dump, NOR memory-chip backup, and OTA key over the bootloader service |
 | [Features](features.md) | Standard patch behavior and current limits |
 | [Patching](patching.md) | Build targets and patch selection |
 | [Flashing](flashing.md) | SWD, CAN, and BLE installation and restoring the original image |

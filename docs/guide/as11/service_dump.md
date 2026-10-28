@@ -116,16 +116,36 @@ application firmware dumped from the device.
 See the [`resmed_image.py` reference](../../tools/resmed_image.md) for other
 file operations.
 
-## Optional: dump the physical NOR
+## Optional: back up the NOR chip and OTA key
 
-The service can also read the complete 16 MiB physical SPI NOR:
+Beside the main firmware, the device has a second memory chip: a 16 MiB NOR
+flash. It stores data unique to this unit, including its identity, factory
+calibration, settings and recordings, and the device-specific OTA key. None of
+it can be regenerated, so it is worth backing up while the service is reachable.
+
+Read the complete NOR:
 
 ```
 python3 python/as11_flash.py \
     -d can:/dev/ttyACM0 service read-nor device-nor.bin
 ```
 
-The SPI NOR contains unit-specific data, including device identity, calibration, and settings.
+The OTA key inside that backup is what authenticated Bluetooth updates need, and
+this is the only way to capture it without an SWD session. Extract it:
+
+```
+python3 python/as11_nor_tool.py device-nor.bin key-get OTA -o ota-key.hex
+```
+
+Store it against a Bluetooth device alias for later updates:
+
+```
+python3 python/as11_config.py devices ota-key <alias> --key-file ota-key.hex
+```
+
+See [Retrieving the local OTA key](../../as11/ota_protocol.md#retrieving-the-local-ota-key)
+for key handling and [`as11_nor_tool.py`](../../tools/as11_nor_tool.md) for other
+NOR contents.
 
 ## Leave service mode
 
