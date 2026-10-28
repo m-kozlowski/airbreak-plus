@@ -2075,6 +2075,130 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             'patch_graph_keep_screen_on: backlight timeout call')
         return PatchOutcome.ok(None, detail)
 
+    def patch_font_repack(self):
+        """Share identical glyph bitmaps and free the tails of their CDX areas."""
+        font_crcs = {
+            '0302': 0x066B,
+            '0305': 0xFE0B,
+            '0306': 0x0E79,
+            '0401': 0xA30F,
+            '0402': 0x681A,
+        }
+        if not self._supports_compiled_payloads():
+            return PatchOutcome.skip("unsupported CDX version %s" % self.asf.cdx_ver)
+
+        ver = self._payload_version_key()
+        base = self.asf.FLASH_BASE
+        original = bytes(self.asf.fw)
+        elf_path = self._require_versioned_artifact('language_fonts', 'elf')
+        roots = sorted(self._elf_symbol_addr(elf_path, name) - base for name in (
+            'font_text_chinese', 'font_text_japanese', 'font_16',
+            'font_large_cjk', 'font_large_standard'))
+
+        def read(off, size):
+            if off < self.asf.cdx_off or size <= 0 or off + size > len(original) - 2:
+                raise ValueError("font_repack: invalid font data range at 0x%08X" % (base + off))
+            return original[off:off + size]
+
+        fonts = []
+        for root in roots:
+            font = read(root, 36)
+            height = font[0x18]
+            node = struct.unpack_from('<I', font, 0x1c)[0]
+            glyphs, nodes = [], set()
+            while node:
+                off = node - base
+                if off in nodes:
+                    raise ValueError("font_repack: cyclic character range list")
+                nodes.add(off)
+                first, last, table, node = struct.unpack('<HHII', read(off, 12))
+                if first > last:
+                    raise ValueError("font_repack: invalid character range")
+                table -= base
+                read(table, (last - first + 1) * 8)
+                for record in range(table, table + (last - first + 1) * 8, 8):
+                    width, advance, stride, padding, bitmap = struct.unpack('<BBBBI', read(record, 8))
+                    length = height * stride
+                    bitmap -= base
+                    read(bitmap, length)
+                    glyphs.append((record, bitmap, length))
+            if not glyphs:
+                raise ValueError("font_repack: empty font")
+
+            spans = sorted({(bitmap, length) for _, bitmap, length in glyphs})
+            begin = spans[0][0]
+            end = (spans[-1][0] + spans[-1][1] + 3) & ~3
+            cursor = begin
+            for bitmap, length in spans:
+                if not 0 <= bitmap - cursor <= 3 or any(original[cursor:bitmap]):
+                    raise ValueError("font_repack: unexpected bitmap layout")
+                cursor = bitmap + length
+            if any(original[cursor:end]) or end > root:
+                raise ValueError("font_repack: unexpected bitmap boundary")
+            # Only bitmap bytes are compacted. Glyph records, range nodes and
+            # the font root must remain outside that area and at their old addresses.
+            metadata = [(off, 12) for off in nodes] + [(off, 8) for off, _, _ in glyphs]
+            if any(off < end or off + size > root for off, size in metadata):
+                raise ValueError("font_repack: unexpected font table layout")
+            if fonts and begin < fonts[-1]['root'] + 36:
+                raise ValueError("font_repack: overlapping fonts")
+            fonts.append(dict(root=root, begin=begin, end=end, spans=spans,
+                              glyphs=glyphs, nodes=nodes))
+
+        # Check the complete original font blocks, including their tables.
+        font_data = b''.join(original[font['begin']:font['root'] + 36] for font in fonts)
+        if self.asf.crcfunc(font_data) != font_crcs[ver]:
+            raise ValueError("font_repack: font data does not match stock SX567-%s" % ver)
+
+        updated = bytearray(original)
+        canonical, reclaimed = {}, []
+        for font in fonts:
+            begin, end = font['begin'], font['end']
+            updated[begin:end] = b'\xff' * (end - begin)
+            cursor = begin
+            relocation = {}
+            for bitmap, length in font['spans']:
+                content = original[bitmap:bitmap + length]
+                if content not in canonical:
+                    canonical[content] = cursor
+                    updated[cursor:cursor + length] = content
+                    cursor = (cursor + length + 3) & ~3
+                relocation[bitmap] = canonical[content]
+            for record, bitmap, _ in font['glyphs']:
+                struct.pack_into('<I', updated, record + 4, base + relocation[bitmap])
+            if cursor < end:
+                reclaimed.append((cursor, end))
+
+        for font in fonts:
+            for record, bitmap, length in font['glyphs']:
+                target = struct.unpack_from('<I', updated, record + 4)[0] - base
+                if (updated[record:record + 4] != original[record:record + 4] or
+                        updated[target:target + length] != original[bitmap:bitmap + length]):
+                    raise ValueError("font_repack: glyph changed at 0x%08X" % (base + record))
+            for off, size in [(font['root'], 36)] + [(off, 12) for off in font['nodes']]:
+                if updated[off:off + size] != original[off:off + size]:
+                    raise ValueError("font_repack: font structure changed at 0x%08X" % (base + off))
+
+        # The build allocates from the registry before seeing an input image.
+        # Verify every cave overlapping font storage before making it available.
+        registry = os.path.join(self._payload_repo_dir(), 'patches', 's10_code_caves.tsv')
+        with open(registry, encoding='ascii') as source:
+            for line in source:
+                fields = line.split()
+                if not fields or fields[0] != ver or fields[1] != 'cdx':
+                    continue
+                start, end = int(fields[2], 0) - base, int(fields[3], 0) - base
+                if any(start < font['root'] + 36 and end > font['begin'] for font in fonts):
+                    if not any(start >= low and end <= high for low, high in reclaimed):
+                        raise ValueError("font_repack: code cave 0x%08X..0x%08X was not freed" %
+                                         (base + start, base + end))
+
+        self.asf.fw[:] = updated
+        return PatchOutcome.ok(
+            "Recovered %d bytes from font bitmaps" % sum(end - start for start, end in reclaimed),
+            *("0x%08X..0x%08X: %d bytes" % (base + start, base + end, end - start)
+              for start, end in reclaimed))
+
     def patch_font_ua(self):
         """Add Ukrainian letters to the standard text font without changing LAN."""
         if not self._supports_compiled_payloads():
@@ -2604,6 +2728,11 @@ class PatchSpec:
 # custom settings patch their ABI slots; all MOP handlers must be registered
 # before finalization installs the shared dispatcher; CRCs are always last.
 PATCH_PHASES = (
+    ('Firmware preparation', (
+        PatchSpec('patch-font-repack', 'Reclaim flash space by sharing identical font bitmaps.',
+                  True, 'patch_font_repack'),
+    )),
+
     ('Therapy unlocks', (
         PatchSpec('patch-extra-modes', 'Add all modes.',
                   True, 'extra_modes'),

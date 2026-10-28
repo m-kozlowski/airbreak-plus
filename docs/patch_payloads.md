@@ -28,14 +28,17 @@ cdx_version  region  storage_start  storage_end  image_base  runtime_base  prior
 ```
 
 The format supports multiple sorted ranges per version. Ranges must start on a
-4-byte boundary and must not overlap. The current registry contains one range
-per supported version. `image_base` and `runtime_base` describe how stored
-payload bytes map into the execution address space. They are equal for the
-current CDX regions, so storage and runtime addresses are identical.
+4-byte boundary and must not overlap. `image_base` and `runtime_base` describe
+how stored payload bytes map into the execution address space. They are equal
+for the current CDX regions, so storage and runtime addresses are identical.
 
 `priority` is a non-negative integer; lower values are preferred. Keep rows
 sorted by storage address, regardless of priority. Equal priorities are tried
 in address order.
+
+Reclaimed ranges must be freed by their preparation patch before payload
+injection. Disabling that patch does not change the build's layout; injection
+fails if a selected payload needs a range that is still occupied.
 
 ## Build pipeline
 
