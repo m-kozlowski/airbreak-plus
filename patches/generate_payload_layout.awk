@@ -1,7 +1,7 @@
 # Allocate measured payloads into the known code caves for one firmware key.
 #
 # Code-cave rows:
-#   version region storage_start storage_end image_base runtime_base
+#   version region storage_start storage_end image_base runtime_base priority
 #
 # Payload-size rows:
 #   payload size region
@@ -45,13 +45,15 @@ FNR == NR {
 	if ($0 ~ /^[[:space:]]*(#|$)/ || $1 != version)
 		next
 
-	if (NF != 6)
+	if (NF != 7)
 		fail("invalid cave row: " $0)
 	region = $2
 	start = hex_value($3)
 	end = hex_value($4)
 	image_base = hex_value($5)
 	runtime_base = hex_value($6)
+	if ($7 !~ /^[0-9]+$/)
+		fail("invalid cave priority: " $7)
 	if (region !~ /^[a-zA-Z_][a-zA-Z0-9_]*$/)
 		fail("invalid cave region: " region)
 	if (start % 4 != 0 || end <= start)
@@ -68,6 +70,7 @@ FNR == NR {
 	cave_next[cave_count] = start
 	cave_image_base[cave_count] = image_base
 	cave_runtime_base[cave_count] = runtime_base
+	cave_priority[cave_count] = $7 + 0
 	next
 }
 
@@ -91,20 +94,22 @@ $0 ~ /^[[:space:]]*(#|$)/ {
 	if (seen[payload]++)
 		fail("duplicate payload: " payload)
 
-	placed = 0
+	selected = 0
 	for (i = 1; i <= cave_count; i++) {
 		if (cave_region[i] != region)
 			continue
 		address = align4(cave_next[i])
 		storage_end = address + size
-		if (storage_end <= cave_end[i]) {
-			cave_next[i] = storage_end
-			placed = 1
-			break
-		}
+		if (storage_end <= cave_end[i] &&
+			(!selected || cave_priority[i] < cave_priority[selected]))
+			selected = i
 	}
-	if (!placed)
+	if (!selected)
 		fail(payload " (" size " bytes) does not fit in " version "/" region " code caves")
+	i = selected
+	address = align4(cave_next[i])
+	storage_end = address + size
+	cave_next[i] = storage_end
 
 	# Mapped regions can store a payload in flash while linking it for the
 	# address at which the native firmware copies and executes it.

@@ -23,8 +23,8 @@ without being enabled in a particular output image.
 `patches/s10_code_caves.tsv` lists available half-open ranges:
 
 ```text
-cdx_version  region  storage_start  storage_end  image_base  runtime_base
-0402         cdx     0x080FCF98     0x080FFFFE   0x08000000  0x08000000
+cdx_version  region  storage_start  storage_end  image_base  runtime_base  priority
+0402         cdx     0x080FCF98     0x080FFFFE   0x08000000  0x08000000    0
 ```
 
 The format supports multiple sorted ranges per version. Ranges must start on a
@@ -33,6 +33,10 @@ per supported version. `image_base` and `runtime_base` describe how stored
 payload bytes map into the execution address space. They are equal for the
 current CDX regions, so storage and runtime addresses are identical.
 
+`priority` is a non-negative integer; lower values are preferred. Keep rows
+sorted by storage address, regardless of priority. Equal priorities are tried
+in address order.
+
 ## Build pipeline
 
 The payload layout is generated in two link passes:
@@ -40,16 +44,17 @@ The payload layout is generated in two link passes:
 1. compile versioned source with `CDX_VER_<version>`
 2. probe-link each payload at `0x08000000`
 3. convert each probe ELF to a binary and record its measured size
-4. allocate payloads with first fit, from the lowest address of the first cave
+4. allocate payloads by cave priority, then address
 5. align each allocation to 4 bytes
 6. write `build/payload_layout_<version>.tsv`
 7. link final ELFs at their assigned addresses
 8. convert final ELFs to the binaries consumed by the patchers
 
 The allocator processes payloads in the order emitted by
-`payload_sizes_<version>.tsv`. It advances upward through each cave and moves to
-the next cave when the current payload does not fit. Allocation fails if no cave
-has enough remaining space.
+`payload_sizes_<version>.tsv`. Each payload uses the preferred cave with enough
+remaining space, advancing upward within that cave. Later payloads can still
+use space left in a preferred cave after a larger payload fell back to another.
+Allocation fails if no cave has enough remaining space.
 
 Example generated layout:
 

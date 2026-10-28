@@ -1,10 +1,10 @@
-# version      region  storage_start  storage_end  image_base  runtime_base
-SX577-0200     blx     0x08003DE0     0x08003F80   0x08000300  0x20000000
-SX585-0200     blx     0x08003E78     0x08003F80   0x08000300  0x20000000
-0204           cdx     0x080E40EC     0x080FFFFE   0x08000000  0x08000000
-0205           cdx     0x080E434C     0x080FFFFE   0x08000000  0x08000000
-0302           cdx     0x080FCF98     0x080FFFFE   0x08000000  0x08000000
-0305           cdx     0x080FCF98     0x080FFFFE   0x08000000  0x08000000
-0306           cdx     0x080FCF98     0x080FFFFE   0x08000000  0x08000000
-0401           cdx     0x080FCF98     0x080FFFFE   0x08000000  0x08000000
-0402           cdx     0x080FCF98     0x080FFFFE   0x08000000  0x08000000
+# version      region  storage_start  storage_end  image_base  runtime_base  priority
+SX577-0200     blx     0x08003DE0     0x08003F80   0x08000300  0x20000000    0
+SX585-0200     blx     0x08003E78     0x08003F80   0x08000300  0x20000000    0
+0204           cdx     0x080E40EC     0x080FFFFE   0x08000000  0x08000000    0
+0205           cdx     0x080E434C     0x080FFFFE   0x08000000  0x08000000    0
+0302           cdx     0x080FCF98     0x080FFFFE   0x08000000  0x08000000    0
+0305           cdx     0x080FCF98     0x080FFFFE   0x08000000  0x08000000    0
+0306           cdx     0x080FCF98     0x080FFFFE   0x08000000  0x08000000    0
+0401           cdx     0x080FCF98     0x080FFFFE   0x08000000  0x08000000    0
+0402           cdx     0x080FCF98     0x080FFFFE   0x08000000  0x08000000    0

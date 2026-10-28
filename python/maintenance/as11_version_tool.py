@@ -1894,7 +1894,7 @@ def parse_code_caves() -> dict[str, tuple[int, int]]:
         line = line.partition("#")[0].strip()
         if not line:
             continue
-        version, region, start, end, _image_base, _runtime_base = line.split()
+        version, region, start, end, _image_base, _runtime_base, _priority = line.split()
         if region != "appl":
             continue
         caves[version] = (int(start, 0), int(end, 0))
@@ -2844,7 +2844,7 @@ def prepare(args) -> int:
         "#include \"vars_%s.h\"" % target_id.appx_key,
         "",
         "patches/as11_code_caves.tsv:",
-        "%s\tappl\t0x%08X\t0x%08X\t0x%08X\t0x%08X" %
+        "%s\tappl\t0x%08X\t0x%08X\t0x%08X\t0x%08X\t0" %
         (target_id.appx_key, cave_start, cave_end, FLASH_BASE, FLASH_BASE),
         "",
         "python/lib/as11_patch_versions.py "
