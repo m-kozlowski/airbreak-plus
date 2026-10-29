@@ -204,6 +204,30 @@ visibility selected by stock firmware callbacks. Existing menu refresh code
 then shows or hides the variable item. Static headings and page links are
 always visible.
 
+`custom_menu_add_condition(var, source, mode_mask=None, *, nonzero=True)` adds a
+visibility condition to a registered variable. The source must be a g[4] or
+g[8] variable. `nonzero=True` requires a nonzero raw value; `False` requires
+zero. The mask selects the MOP modes in which this condition applies, defaulting
+to all modes. Outside that mask the condition has no effect. All applicable
+conditions must hold in addition to the menu entry's mode mask.
+
+Conditions use a separate sentinel-terminated table:
+
+| Offset | Type | Meaning |
+|--------|------|---------|
+| +0x00 | u16 | target variable ID; `0xFFFF` ends the table |
+| +0x02 | u16 | source variable ID |
+| +0x04 | u16 | applicable MOP bits 0..11 |
+| +0x06 | u16 | required source state: 0 for zero, 1 for nonzero |
+
+Targets must have framework-managed visibility; entries marked
+`CUSTOM_MENU_MODE_KEEP_VISIBILITY` cannot have these conditions. The patcher
+attaches the visibility handler to source callbacks, preserving existing
+callbacks through the [callback registry](patch_payloads.md#variable-callbacks).
+Menu construction also evaluates conditions from the loaded settings. Updating
+VIS preserves the setting's value and its entry in UART discovery; the UART
+menu registry does not export the condition table.
+
 ## Adding a feature
 
 A feature setup function should:

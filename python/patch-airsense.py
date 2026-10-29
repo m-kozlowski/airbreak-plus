@@ -152,6 +152,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self.enabled_custom_settings_features = set()
         self.mop_callback_handlers = {}
         self.variable_callbacks = {}
+        self.variable_callback_handlers = {}
         self._init_compiled_payloads()
         self.custom_patch_settings_init()
 
@@ -241,6 +242,8 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self.custom_reclaimed_string_candidates = {}
         self.custom_menu_entries = []
         self.custom_menu_registered = set()
+        self.custom_menu_conditions = []
+        self.custom_menu_conditions_addr = None
         self.custom_menu_pages = {}
         self.custom_menu_page_count = 0
         self.custom_menu_clinical_page_id = None
@@ -543,6 +546,19 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         container = self._custom_menu_container_id(container_name)
         self.custom_menu_entries.append((container, self.CUSTOM_MENU_FLAG_HEADING, int(str_id), 0xffffffff))
 
+    def custom_menu_add_condition(self, var, source, mode_mask=None, *, nonzero=True):
+        """Require source to be zero/nonzero for var to appear in the selected modes."""
+        if mode_mask is None:
+            mode_mask = self.CUSTOM_MENU_MODE_BITS
+        mode_mask = int(mode_mask)
+        if mode_mask & ~self.CUSTOM_MENU_MODE_BITS:
+            raise ValueError("custom_menu_add_condition: mask must contain only MOP bits")
+        vid = self.asf.resolve_var_id(var)
+        source_id = self.asf.resolve_var_id(source)
+        if self.asf.find_var_table_number(source_id) not in (4, 8):
+            raise ValueError("custom_menu_add_condition: %s must be a g[4]/g[8] source" % source)
+        self.custom_menu_conditions.append((vid, source_id, mode_mask, int(bool(nonzero))))
+
     def mop_bitmask(self, *modes):
         """Build a g[24]/MOP visibility mask from MOP names or numeric indexes."""
         mask = 0
@@ -575,6 +591,22 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             off += 8
         self.asf.fill_range(off, 8, 0xff)
 
+    def custom_emit_visibility_conditions(self):
+        """Store rules separately from the menu/UART registry, after feature registration."""
+        if not self.custom_menu_conditions:
+            return
+        entries = {vid: mask for _, flags, vid, mask in self.custom_menu_entries
+                   if not flags & (self.CUSTOM_MENU_FLAG_HEADING | self.CUSTOM_MENU_FLAG_PAGE)}
+        for vid, _, _, _ in self.custom_menu_conditions:
+            if vid not in entries or entries[vid] & self.CUSTOM_MENU_MODE_KEEP_VISIBILITY:
+                raise ValueError(
+                    "custom menu conditions: var_id 0x%04X must have framework-managed visibility" % vid)
+        size = (len(self.custom_menu_conditions) + 1) * 8
+        off = self._custom_settings_reserve_tail(size, 4)
+        self.custom_menu_conditions_addr = off
+        data = b''.join(struct.pack('<4H', *rule) for rule in self.custom_menu_conditions)
+        self.asf.patch(data + b'\xff' * 8, off, checkempty=True)
+
     def variable_callback_register(self, payload, symbol):
         """Assign a new descriptor callback ID to a payload function."""
         layout = self.VARIABLE_CALLBACK_TABLES.get(self.asf.cdx_ver)
@@ -590,16 +622,67 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             self.variable_callbacks[handler] = callback_id
         return self.variable_callbacks[handler]
 
+    def variable_callback_add(self, var, payload, symbol):
+        """Append a no-argument handler after var's current callback, preserving its owners."""
+        table_num = self.asf.find_var_table_number(var)
+        if table_num not in (4, 8):
+            raise ValueError("variable_callback_add: %s must be a g[4]/g[8] variable" % var)
+        callback_off = self.asf.G4_CALLBACK if table_num == 4 else self.asf.G8_CALLBACK
+        off = self.asf.find_var(var) + callback_off
+        callback_id = self.asf.read_u8(off)
+        if not callback_id:
+            callback_id = self.variable_callback_register(payload, symbol)
+            self.asf.write_u8(off, callback_id)
+        else:
+            elf_path = self._require_versioned_artifact(payload, 'elf')
+            handler = self._elf_symbol_addr(elf_path, symbol) | 1
+            self.variable_callback_handlers.setdefault(callback_id, {}).setdefault(handler, None)
+        return callback_id
+
     def patch_variable_callbacks(self):
-        """Append registered callbacks and redirect firmware to the expanded table."""
-        if not self.variable_callbacks:
+        """Emit callback chains and redirect firmware to the completed callback table."""
+        if not self.variable_callbacks and not self.variable_callback_handlers:
             return PatchOutcome.skip("no additional variable callbacks registered")
         table, stock_count = self.VARIABLE_CALLBACK_TABLES[self.asf.cdx_ver]
 
         # Run after stock-slot hooks, including the MOP dispatcher, so the copy
         # retains their pointers. Allocate once after all registrations are known.
-        data = self.asf.read_bytes(table, stock_count * 4)
-        data += struct.pack('<%dI' % len(self.variable_callbacks), *self.variable_callbacks)
+        callbacks = list(struct.unpack('<%dI' % stock_count,
+                                      self.asf.read_bytes(table, stock_count * 4)))
+        callbacks.extend(self.variable_callbacks)
+        chains = {}
+        for callback_id, handlers in self.variable_callback_handlers.items():
+            original = callbacks[callback_id]
+            appended = [handler for handler in handlers if handler != original]
+            if appended:
+                chains[callback_id] = [original] + appended + [0]
+        if not self.variable_callbacks and not chains:
+            return PatchOutcome.skip("no additional variable callbacks registered")
+
+        details = []
+        if chains:
+            name = 'variable_callback_dispatcher'
+            payload, _, elf_path = self._load_versioned_payload(name)
+            flash, _ = self._inject_payload(name, payload)
+            self.applied_payloads.add(name)
+            details.append(self._payload_detail(name, len(payload), flash))
+            thunk_addr = self._elf_symbol_addr(elf_path, 'variable_callback_thunk')
+            thunk_size = self._elf_symbol_size(elf_path, 'variable_callback_thunk')
+            list_slot = self._elf_symbol_addr(elf_path, 'variable_callback_thunk_handlers') - thunk_addr
+            template = self.asf.read_bytes(thunk_addr - self.asf.FLASH_BASE, thunk_size)
+            for callback_id, handlers in chains.items():
+                # A local adapter supplies immutable chain context. No RAM slot
+                # is shared between callbacks, including nested invocations.
+                off = self.asf.find_ccx_ff_range_backwards(thunk_size + len(handlers) * 4, alignment=4)
+                adapter = bytearray(template)
+                struct.pack_into('<I', adapter, list_slot, self.asf.FLASH_BASE + off + thunk_size)
+                self.asf.patch(adapter + struct.pack('<%dI' % len(handlers), *handlers),
+                               off, checkempty=True)
+                callbacks[callback_id] = (self.asf.FLASH_BASE + off) | 1
+                details.append("Variable callback[%d]: %d appended handlers at 0x%08X" %
+                               (callback_id, len(handlers) - 2, callbacks[callback_id] & ~1))
+
+        data = struct.pack('<%dI' % len(callbacks), *callbacks)
         off = self.asf.find_ccx_ff_range_backwards(len(data), alignment=4)
         self.asf.patch(data, off, checkempty=True)
         address = self.asf.FLASH_BASE + off
@@ -611,8 +694,9 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             table - 12, b'\x0f\xf2\x08\x01\x51\xf8\x20\x00\x70\x47\x00\x00',
             b'\x01\x49\x51\xf8\x20\x00\x70\x47' + struct.pack('<I', address),
             'variable callback lookup')
-        return PatchOutcome.ok(None, "Variable callbacks: %d -> %d, table at 0x%08X" %
-                               (stock_count, stock_count + len(self.variable_callbacks), address))
+        details.append("Variable callbacks: %d -> %d, table at 0x%08X" %
+                       (stock_count, len(callbacks), address))
+        return PatchOutcome.ok(None, *details)
 
     def mop_callback_register_handler(self, handler, name):
         """Register one feature handler to run after the stock MOP callback."""
@@ -883,6 +967,20 @@ class ASFirmwarePatches(CompiledPayloadMixin):
 
         self.asf.write_u32(registry_addr - self.asf.FLASH_BASE, registry_flash)
         self.asf.write_u8(group_index_addr - self.asf.FLASH_BASE, group_index)
+        if self.custom_menu_conditions_addr is not None:
+            conditions_slot = self._elf_symbol_addr(elf_path, 'custom_menu_conditions_addr')
+            self.asf.write_u32(conditions_slot - self.asf.FLASH_BASE,
+                               self.asf.FLASH_BASE + self.custom_menu_conditions_addr)
+            mop_callback = self.asf.read_u8(self.asf.find_var('MOP') + self.asf.G8_CALLBACK)
+            for source in dict.fromkeys(rule[1] for rule in self.custom_menu_conditions):
+                # MOP and other owners of its callback already run this handler
+                # through the MOP dispatcher; do not append a second invocation.
+                table_num = self.asf.find_var_table_number(source)
+                callback_off = self.asf.G4_CALLBACK if table_num == 4 else self.asf.G8_CALLBACK
+                callback = self.asf.read_u8(self.asf.find_var(source) + callback_off)
+                if not callback or callback != mop_callback:
+                    self.variable_callback_add(source, 'custom_menu_hooks',
+                                               'custom_menu_apply_mode_visibility')
 
         page_limit_site = sites['page_limit_site']
         if self.asf.read_u8(page_limit_site + 1) != 0x2f:
@@ -928,15 +1026,15 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             error_size_hook, 'CSG recovery')
         self._custom_detail(detail)
 
-        if self.custom_menu_page_count:
-            total_page_count = stock_page_count + self.custom_menu_page_count
-            if total_page_count > 0xff:
-                raise ValueError("custom_patch_settings: page count exceeds ZML range")
-
+        if self.custom_menu_page_count or self.custom_menu_conditions:
             detail = self._patch_thumb_bl_checked(
                 sites['page_create_site'], sites['page_create_expected'],
                 page_wrapper, 'menu page constructor')
             self._custom_detail(detail)
+        if self.custom_menu_page_count:
+            total_page_count = stock_page_count + self.custom_menu_page_count
+            if total_page_count > 0xff:
+                raise ValueError("custom_patch_settings: page count exceeds ZML range")
             if 'page_slot_site' in sites:
                 # Lumis shares a slot-address helper whose callers load [r0,#0x3c].
                 # Keep that calling convention while redirecting it to the new table.
@@ -1330,6 +1428,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             feature()
 
         self.custom_emit_storage_members()
+        self.custom_emit_visibility_conditions()
         self.custom_emit_registry()
         self.custom_patch_menu_hooks()
         return PatchOutcome.ok(None, *self.custom_settings_details)

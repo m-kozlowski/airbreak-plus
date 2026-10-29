@@ -9,6 +9,14 @@ typedef struct {
 	unsigned int mode_mask;
 } custom_menu_entry_t;
 
+/* All conditions applicable to an item and the current MOP must hold. */
+typedef struct {
+	unsigned short item_id;
+	unsigned short source_id;
+	unsigned short mode_mask;
+	unsigned short nonzero;
+} custom_menu_condition_t;
+
 #define CUSTOM_MENU_FLAG_G4_NUMERIC 0x01
 #define CUSTOM_MENU_FLAG_HEADING    0x02
 #define CUSTOM_MENU_FLAG_PAGE       0x04

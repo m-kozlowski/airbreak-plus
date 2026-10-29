@@ -145,10 +145,23 @@ registration of the same function returns the same ID. New IDs follow the stock
 entries and must fit the descriptor's one-byte callback field; ID zero means
 no callback.
 
+`variable_callback_add(var, payload, symbol)` appends a handler after a g[4] or
+g[8] variable's existing callback. With callback ID zero, it registers and
+assigns a new callback. Otherwise it preserves the ID and chains the existing
+function followed by appended handlers in registration order. Registrations
+are deduplicated by callback ID and function pointer, so variables sharing an
+ID also share the appended handlers.
+
 Finalization copies the current stock table into CCX, appends registered
-functions, and redirects the firmware lookup to the expanded table. This runs
-after the MOP dispatcher is installed, preserving its replacement pointer. With
-no registrations, the stock table and lookup remain unchanged.
+functions, installs requested callback chains, and redirects the firmware
+lookup to the resulting table. This runs after the MOP dispatcher is installed,
+preserving its replacement pointer. With no registrations, the stock table and
+lookup remain unchanged.
+
+Chains use the standalone `variable_callback_dispatcher` payload. Each chained
+entry points to a local adapter with its own immutable, zero-terminated handler
+list. The dispatcher keeps its cursor in a callee-saved register,
+allowing callbacks to invoke other chains without overwriting shared state.
 
 Callbacks take no arguments and run under the variable-system recursive lock.
 They also run when firmware initializes variables at startup, not only after

@@ -32,9 +32,9 @@ ifneq ($(V),1)
 endif
 
 PAYLOAD_LAYOUT_VERSIONS := 0204 0205 0302 0305 0306 0401 0402
-PAYLOADS_0204 := target_rh mop_callback_dispatcher custom_menu_hooks uart_stream_schema backlight_adapt header_clock s10_lcd_ili9325 asv_task_wrapper fall_time
+PAYLOADS_0204 := target_rh mop_callback_dispatcher variable_callback_dispatcher custom_menu_hooks uart_stream_schema backlight_adapt header_clock s10_lcd_ili9325 asv_task_wrapper fall_time
 PAYLOADS_0205 := $(PAYLOADS_0204)
-PAYLOADS_0302 := mop_callback_dispatcher vid_spoof graph squarewave asv_task_wrapper \
+PAYLOADS_0302 := mop_callback_dispatcher variable_callback_dispatcher vid_spoof graph squarewave asv_task_wrapper \
 	common_code backlight_adapt wrapper_limit_max_pdiff s10_lcd_ili9325 custom_menu_hooks \
 	uart_stream_schema language_fonts target_rh header_clock fall_time st_ibr autoepap
 PAYLOADS_0305 := $(PAYLOADS_0302)
@@ -48,7 +48,7 @@ payload_bins = $(foreach v,$(call payload_versions,$(1)),$(BUILD)/$(1)_$(v).bin)
 PAYLOAD_NAMES := $(sort $(foreach v,$(PAYLOAD_LAYOUT_VERSIONS),$(PAYLOADS_$(v))))
 PAYLOAD_STAMPS := $(foreach p,$(PAYLOAD_NAMES),$(BUILD)/payload_$(p).stamp)
 S10_CODE_VERSIONS := $(call payload_versions,common_code)
-S10_STANDALONE_PAYLOADS := asv_task_wrapper backlight_adapt language_fonts uart_stream_schema vid_spoof target_rh header_clock fall_time st_ibr autoepap
+S10_STANDALONE_PAYLOADS := asv_task_wrapper backlight_adapt language_fonts uart_stream_schema vid_spoof target_rh header_clock fall_time st_ibr autoepap variable_callback_dispatcher
 PAYLOAD_LAYOUT_TSVS := $(foreach v,$(PAYLOAD_LAYOUT_VERSIONS),$(BUILD)/payload_layout_$(v).tsv)
 
 BLX_PAYLOAD_VERSIONS := SX577-0200 SX585-0200
@@ -254,6 +254,8 @@ $(BUILD)/custom_menu_hooks_$(1).elf: $(BUILD)/custom_menu_hooks_entry_$(1).o $(B
 endef
 
 $(foreach v,$(call payload_versions,custom_menu_hooks),$(eval $(call S10_CUSTOM_MENU_HOOKS_template,$(v))))
+
+$(foreach v,$(call payload_versions,custom_menu_hooks),$(BUILD)/custom_menu_hooks_$(v).o): $(SRC)/custom_menu_registry.h
 
 define S10_STANDALONE_PAYLOAD_template
 $(BUILD)/$(1)_$(2).o: $(wildcard $(SRC)/$(1)/*.c)

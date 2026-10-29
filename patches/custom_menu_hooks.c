@@ -33,10 +33,20 @@ extern void memcpy_unrolled(void *destination, const void *source,
 			    unsigned size);
 
 extern const u32 custom_menu_registry_addr;
+extern const u32 custom_menu_conditions_addr;
 extern const u8 custom_settings_group_index;
 extern const u8 custom_menu_stock_page_count;
 extern const u8 custom_menu_clinical_page_id;
 extern const u16 custom_menu_back_str_id;
+
+void custom_menu_apply_mode_visibility(void);
+
+static const custom_menu_condition_t *custom_menu_conditions(void)
+{
+	if (!custom_menu_conditions_addr || custom_menu_conditions_addr == 0xffffffffu)
+		return 0;
+	return (const custom_menu_condition_t *)custom_menu_conditions_addr;
+}
 
 static const custom_menu_entry_t *custom_menu_registry(void)
 {
@@ -187,6 +197,9 @@ static void *custom_menu_create_page(const custom_menu_entry_t *page,
 void custom_menu_create_pages(void *menu, void *context)
 {
 	gui_create_menus(menu, context);
+	/* Set initial visibility from loaded settings, before the first UI refresh. */
+	if (custom_menu_conditions())
+		custom_menu_apply_mode_visibility();
 
 	const custom_menu_entry_t *entry = custom_menu_registry();
 	unsigned page_count = 0;
@@ -268,6 +281,20 @@ static void custom_menu_set_visible(u16 var_id, int visible)
 	variable_handler_release(ctx);
 }
 
+static int custom_menu_conditions_match(u16 var_id, u32 mode_bit)
+{
+	const custom_menu_condition_t *condition = custom_menu_conditions();
+	if (!condition)
+		return 1;
+	for (; condition->item_id != 0xffff; condition++) {
+		if (condition->item_id != var_id || !(condition->mode_mask & mode_bit))
+			continue;
+		if ((variable_get_by_id(condition->source_id) != 0) != condition->nonzero)
+			return 0;
+	}
+	return 1;
+}
+
 void custom_menu_apply_mode_visibility(void)
 {
 	const custom_menu_entry_t *entry = custom_menu_registry();
@@ -275,6 +302,7 @@ void custom_menu_apply_mode_visibility(void)
 		return;
 
 	int mode = variable_get_by_id(VAR_ID_MOP);
+	u32 mode_bit = (unsigned)mode < 32 ? 1u << (unsigned)mode : 0;
 
 	for (unsigned guard = 0; guard < CUSTOM_MENU_REGISTRY_LIMIT;
 	     guard++, entry++) {
@@ -284,10 +312,9 @@ void custom_menu_apply_mode_visibility(void)
 			continue;
 		if (entry->mode_mask & CUSTOM_MENU_MODE_KEEP_VISIBILITY)
 			continue;
-		int visible = 0;
-		if ((unsigned)mode < 32)
-			visible = (entry->mode_mask & CUSTOM_MENU_MODE_BITS &
-				   (1u << (unsigned)mode)) != 0;
+		int visible = (entry->mode_mask & CUSTOM_MENU_MODE_BITS & mode_bit) != 0;
+		if (visible)
+			visible = custom_menu_conditions_match(entry->item_id, mode_bit);
 		custom_menu_set_visible(entry->item_id, visible);
 	}
 }

@@ -76,6 +76,14 @@ custom_settings_group_index:
 custom_menu_registry_addr:
 	.word 0xffffffff
 
+/* Optional sentinel-terminated visibility conditions, separate from the menu
+ * registry used by UART discovery. Left erased when no feature adds rules.
+ */
+.global custom_menu_conditions_addr
+.type custom_menu_conditions_addr, %object
+custom_menu_conditions_addr:
+	.word 0xffffffff
+
 /* Stock page-table metadata recovered by the patcher from the verified menu
  * controller and Reminders page constructor before those sites are changed.
  */
