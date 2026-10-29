@@ -118,6 +118,9 @@ same variable cannot be claimed twice, and a request for a variable outside the
 reclaimed pool stops patching. Exact claims keep the patched UART API stable
 across feature combinations.
 
+Feature callbacks use the [shared variable callback registry](patch_payloads.md#variable-callbacks).
+Its returned callback IDs can be assigned when redefining variable descriptors.
+
 ## Localized strings
 
 Feature labels are indexed by ResMed language ID. The patcher updates only the

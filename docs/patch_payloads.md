@@ -137,6 +137,23 @@ Firmware-stable var IDs belong in `s10_vars`. Firmware-stable function entry
 points belong in versioned stubs. Neither should be passed through a new ABI
 slot.
 
+## Variable callbacks
+
+`variable_callback_register(payload, symbol)` registers a function from an
+injected payload and returns a callback ID for variable descriptors. Repeated
+registration of the same function returns the same ID. New IDs follow the stock
+entries and must fit the descriptor's one-byte callback field; ID zero means
+no callback.
+
+Finalization copies the current stock table into CCX, appends registered
+functions, and redirects the firmware lookup to the expanded table. This runs
+after the MOP dispatcher is installed, preserving its replacement pointer. With
+no registrations, the stock table and lookup remain unchanged.
+
+Callbacks take no arguments and run under the variable-system recursive lock.
+They also run when firmware initializes variables at startup, not only after
+a setting is edited.
+
 ## MOP callback dispatcher
 
 MOP-dependent payloads share one standalone dispatcher instead of replacing the

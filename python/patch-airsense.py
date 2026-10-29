@@ -97,14 +97,15 @@ class ASFirmwarePatches(CompiledPayloadMixin):
     """This class contains the actual patching scripts for specific items"""
 
     PAYLOAD_VERSIONS = frozenset(('0302', '0305', '0306', '0401', '0402'))
-    MOP_CALLBACK_TABLES = {
-        'SX584-0204': 0x50888,
-        'SX584-0205': 0x50888,
-        'SX567-0302': 0x757e0,
-        'SX567-0305': 0x75f4c,
-        'SX567-0306': 0x75f48,
-        'SX567-0401': 0x75f48,
-        'SX567-0402': 0x75f48,
+    # Table offset and stock entry count, including the unused callback ID zero.
+    VARIABLE_CALLBACK_TABLES = {
+        'SX584-0204': (0x50888, 38),
+        'SX584-0205': (0x50888, 38),
+        'SX567-0302': (0x757e0, 30),
+        'SX567-0305': (0x75f4c, 30),
+        'SX567-0306': (0x75f48, 30),
+        'SX567-0401': (0x75f48, 30),
+        'SX567-0402': (0x75f48, 30),
     }
     UART_STREAM_SCHEMA_HOOKS = {
         'SX584-0204': (0xe2f24, 0x080bced1),
@@ -150,6 +151,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self.applied_payloads = set()
         self.enabled_custom_settings_features = set()
         self.mop_callback_handlers = {}
+        self.variable_callbacks = {}
         self._init_compiled_payloads()
         self.custom_patch_settings_init()
 
@@ -573,6 +575,45 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             off += 8
         self.asf.fill_range(off, 8, 0xff)
 
+    def variable_callback_register(self, payload, symbol):
+        """Assign a new descriptor callback ID to a payload function."""
+        layout = self.VARIABLE_CALLBACK_TABLES.get(self.asf.cdx_ver)
+        if layout is None:
+            raise ValueError("variable callbacks: unsupported CDX version %s" % self.asf.cdx_ver)
+        _, stock_count = layout
+        elf_path = self._require_versioned_artifact(payload, 'elf')
+        handler = self._elf_symbol_addr(elf_path, symbol) | 1
+        if handler not in self.variable_callbacks:
+            callback_id = stock_count + len(self.variable_callbacks)
+            if callback_id > 0xff:
+                raise ValueError("variable callbacks: descriptor callback IDs exhausted")
+            self.variable_callbacks[handler] = callback_id
+        return self.variable_callbacks[handler]
+
+    def patch_variable_callbacks(self):
+        """Append registered callbacks and redirect firmware to the expanded table."""
+        if not self.variable_callbacks:
+            return PatchOutcome.skip("no additional variable callbacks registered")
+        table, stock_count = self.VARIABLE_CALLBACK_TABLES[self.asf.cdx_ver]
+
+        # Run after stock-slot hooks, including the MOP dispatcher, so the copy
+        # retains their pointers. Allocate once after all registrations are known.
+        data = self.asf.read_bytes(table, stock_count * 4)
+        data += struct.pack('<%dI' % len(self.variable_callbacks), *self.variable_callbacks)
+        off = self.asf.find_ccx_ff_range_backwards(len(data), alignment=4)
+        self.asf.patch(data, off, checkempty=True)
+        address = self.asf.FLASH_BASE + off
+
+        # The getter and its padding occupy the 12 bytes immediately before
+        # the stock table. Replace ADR with LDR literal, retaining indexed lookup:
+        # ldr r1,[pc,#4]; ldr.w r0,[r1,r0,lsl #2]; bx lr; .word table_address.
+        self._replace_bytes_checked(
+            table - 12, b'\x0f\xf2\x08\x01\x51\xf8\x20\x00\x70\x47\x00\x00',
+            b'\x01\x49\x51\xf8\x20\x00\x70\x47' + struct.pack('<I', address),
+            'variable callback lookup')
+        return PatchOutcome.ok(None, "Variable callbacks: %d -> %d, table at 0x%08X" %
+                               (stock_count, stock_count + len(self.variable_callbacks), address))
+
     def mop_callback_register_handler(self, handler, name):
         """Register one feature handler to run after the stock MOP callback."""
         handler = int(handler) | 1
@@ -592,9 +633,10 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             raise ValueError("mop_callback_dispatcher: too many handlers (%d)" %
                              len(self.mop_callback_handlers))
 
-        callback_table = self.MOP_CALLBACK_TABLES.get(self.asf.cdx_ver)
-        if callback_table is None:
+        layout = self.VARIABLE_CALLBACK_TABLES.get(self.asf.cdx_ver)
+        if layout is None:
             raise ValueError("mop_callback_dispatcher: unsupported CDX version %s" % self.asf.cdx_ver)
+        callback_table, _ = layout
 
         data, _, elf_path = self._load_versioned_payload('mop_callback_dispatcher')
         start = self._elf_symbol_addr(elf_path, 'start')
@@ -2747,7 +2789,8 @@ class PatchSpec:
 
 # Patch order is part of the implementation. Payloads must be present before
 # custom settings patch their ABI slots; all MOP handlers must be registered
-# before finalization installs the shared dispatcher; CRCs are always last.
+# before finalization installs the shared dispatcher and expands the variable
+# callback table; CRCs are always last.
 PATCH_PHASES = (
     ('Firmware preparation', (
         PatchSpec('patch-font-repack', 'Reclaim flash space by sharing identical font bitmaps.',
@@ -3001,6 +3044,9 @@ def run_patcher(args, detail_log=None):
     apply_reported_patch(
         'patch-mop-callback-dispatcher',
         patches.patch_mop_callback_dispatcher,
+        args, detail_log)
+    apply_reported_patch(
+        'patch-variable-callbacks', patches.patch_variable_callbacks,
         args, detail_log)
 
     asf.patch_firmware_sid(build_identity)
