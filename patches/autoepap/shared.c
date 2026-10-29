@@ -177,7 +177,7 @@ void autoepap_timing_update(Timing *worker) {
     ivaps_breath_timing_worker_update(worker);
 }
 
-/* Original worker frame at 0x080AABB4: min/median/max at 3/1/5 and 4/2/9. */
+/* Stock timing worker frame: min/median/max at 3/1/5 and 4/2/9. */
 int autoepap_timing_tail(const float *frame) {
     Autoepap *s = autoepap_find();
     if (!s) return 0;

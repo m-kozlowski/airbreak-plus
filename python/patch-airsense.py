@@ -2076,55 +2076,97 @@ class ASFirmwarePatches(CompiledPayloadMixin):
 
     def patch_autoepap(self):
         """Add the iVAPS pressure controller and adapt shared flow workers."""
+        # Offsets follow the call, interior-branch and vtable hooks below.
         sites = {
+            'SX567-0302': (
+                0xa060c, 0xab466, 0xab610, 0xab72a, 0xab7e8, 0xa15c8,
+                0xbed54, 0xbf0cc, 0xa3d22, 0xa40fa, 0xa41ee,
+                0xa1964, 0xa2e10, 0xa53f4, 0xa9f70, 0xaa01c,
+                0xf3ff4, 0xf8cd0, 0xf8ca4, 0xf8cac, 0xf8848, 0xf884c,
+                0xf8850, 0xf8a48, 0xf928c, 0xf9294,
+            ),
+            'SX567-0305': (
+                0xa0d90, 0xabc56, 0xabe00, 0xabf1a, 0xabfd8, 0xa1d4c,
+                0xbf544, 0xbf8bc, 0xa451a, 0xa48f2, 0xa49e6,
+                0xa20e8, 0xa3608, 0xa5bec, 0xaa760, 0xaa80c,
+                0xf4708, 0xf9418, 0xf93ec, 0xf93f4, 0xf8f90, 0xf8f94,
+                0xf8f98, 0xf9190, 0xf99d4, 0xf99dc,
+            ),
+            'SX567-0306': (
+                0xa0d14, 0xabb6e, 0xabd18, 0xabe32, 0xabef0, 0xa1cd0,
+                0xbf45c, 0xbf7d4, 0xa442a, 0xa4802, 0xa48f6,
+                0xa206c, 0xa3518, 0xa5afc, 0xaa678, 0xaa724,
+                0xf470c, 0xf941c, 0xf93f0, 0xf93f8, 0xf8f94, 0xf8f98,
+                0xf8f9c, 0xf9194, 0xf99d8, 0xf99e0,
+            ),
+            'SX567-0401': (
+                0xa0f74, 0xabdce, 0xabf78, 0xac092, 0xac150, 0xa1f30,
+                0xbf6bc, 0xbfa34, 0xa468a, 0xa4a62, 0xa4b56,
+                0xa22cc, 0xa3778, 0xa5d5c, 0xaa8d8, 0xaa984,
+                0xf496c, 0xf967c, 0xf9650, 0xf9658, 0xf91f4, 0xf91f8,
+                0xf91fc, 0xf93f4, 0xf9c38, 0xf9c40,
+            ),
             'SX567-0402': (
-                # Call sites: registration, waveform EPAP caches and flow refs.
-                (0xa11a4, '03f0fcf9', 'start', 'bl'),
-                (0xabffe, 'f4f72cfd', 'autoepap_epap_ref_hook', 'bl'),
-                (0xac1a8, 'f4f757fc', 'autoepap_epap_ref_hook', 'bl'),
-                (0xac2c2, 'f4f7cafb', 'autoepap_epap_ref_hook', 'bl'),
-                (0xac380, 'f4f76bfb', 'autoepap_epap_ref_hook', 'bl'),
-                (0xa2160, 'fef77bfc', 'autoepap_leak_ref_hook', 'bl'),
-                (0xbf8ec, 'e1f7c0f8', 'autoepap_landmark_ref_hook', 'bl'),
-                (0xbfc64, 'e0f704ff', 'autoepap_landmark_ref_hook', 'bl'),
-                (0xa48ba, 'fcf7cef8', 'autoepap_ibr_ref_hook', 'bl'),
-                (0xa4c92, 'fbf7e2fe', 'autoepap_ibr_ref_hook', 'bl'),
-                (0xa4d86, 'fbf768fe', 'autoepap_ibr_ref_hook', 'bl'),
-                # Interior branches return through versioned resume stubs.
-                (0xa24fc, 'b4ee410a', 'autoepap_leak_boundary_hook', 'b'),
-                (0xa39a8, 'b0ee081a', 'autoepap_normalization_hook', 'b'),
-                (0xa5f8c, '0221bee7', 'autoepap_phase_reset_hook', 'b'),
-                (0xaab08, '062904d0', 'autoepap_timing_gate_hook', 'b'),
-                (0xaabb4, '9ded010a', 'autoepap_timing_tail_hook', 'b'),
-                # Component/worker vtable entries retain their stock callees.
-                (0xf4be4, '8d330e08', 'autoepap_settings_hook', 'pointer'),
-                (0xf98f4, 'a5c00a08', 'autoepap_waveform_hook', 'pointer'),
-                (0xf98c8, '455d0a08', 'autoepap_phase_mode', 'pointer'),
-                (0xf98d0, '5d5e0a08', 'autoepap_phase_update', 'pointer'),
-                (0xf946c, '79420a08', 'autoepap_ventilation_mode', 'pointer'),
-                (0xf9470, '910d0a08', 'autoepap_ventilation_stop', 'pointer'),
-                (0xf9474, 'f1430a08', 'autoepap_ventilation_update', 'pointer'),
-                (0xf966c, 'b5740a08', 'autoepap_transition', 'pointer'),
-                (0xf9eb0, '39a70a08', 'autoepap_timing_mode', 'pointer'),
-                (0xf9eb8, '6daa0a08', 'autoepap_timing_update', 'pointer'),
+                0xa11a4, 0xabffe, 0xac1a8, 0xac2c2, 0xac380, 0xa2160,
+                0xbf8ec, 0xbfc64, 0xa48ba, 0xa4c92, 0xa4d86,
+                0xa24fc, 0xa39a8, 0xa5f8c, 0xaab08, 0xaabb4,
+                0xf4be4, 0xf98f4, 0xf98c8, 0xf98d0, 0xf946c, 0xf9470,
+                0xf9474, 0xf966c, 0xf9eb0, 0xf9eb8,
             ),
         }.get(self.asf.cdx_ver)
         if sites is None:
             return PatchOutcome.skip("unsupported CDX version %s" % self.asf.cdx_ver)
 
+        hooks = (
+            # Registration, waveform EPAP caches and flow references.
+            ('ivaps_ventilation_estimator_register', 'start', 'bl'),
+            ('therapy_variable_get_float', 'autoepap_epap_ref_hook', 'bl'),
+            ('therapy_variable_get_float', 'autoepap_epap_ref_hook', 'bl'),
+            ('therapy_variable_get_float', 'autoepap_epap_ref_hook', 'bl'),
+            ('therapy_variable_get_float', 'autoepap_epap_ref_hook', 'bl'),
+            ('therapy_variable_get_float', 'autoepap_leak_ref_hook', 'bl'),
+            ('therapy_variable_get', 'autoepap_landmark_ref_hook', 'bl'),
+            ('therapy_variable_get', 'autoepap_landmark_ref_hook', 'bl'),
+            ('therapy_variable_get_float', 'autoepap_ibr_ref_hook', 'bl'),
+            ('therapy_variable_get_float', 'autoepap_ibr_ref_hook', 'bl'),
+            ('therapy_variable_get_float', 'autoepap_ibr_ref_hook', 'bl'),
+            # Interior branches resume through the versioned stubs.
+            ('b4ee410a', 'autoepap_leak_boundary_hook', 'b'),
+            ('b0ee081a', 'autoepap_normalization_hook', 'b'),
+            ('0221bee7', 'autoepap_phase_reset_hook', 'b'),
+            ('062904d0', 'autoepap_timing_gate_hook', 'b'),
+            ('9ded010a', 'autoepap_timing_tail_hook', 'b'),
+            # Component/worker vtable entries.
+            ('ivaps_settings_update', 'autoepap_settings_hook', 'pointer'),
+            ('therapy_mode67_pressure_waveform_worker_update', 'autoepap_waveform_hook', 'pointer'),
+            ('breath_phase_adaptation_mode_update', 'autoepap_phase_mode', 'pointer'),
+            ('breath_phase_adaptation_update', 'autoepap_phase_update', 'pointer'),
+            ('ivaps_ventilation_estimator_mode_update', 'autoepap_ventilation_mode', 'pointer'),
+            ('therapy_worker_shutdown_noop', 'autoepap_ventilation_stop', 'pointer'),
+            ('ivaps_ventilation_estimator_update', 'autoepap_ventilation_update', 'pointer'),
+            ('breath_transition_detector_update', 'autoepap_transition', 'pointer'),
+            ('ivaps_breath_timing_worker_mode_update', 'autoepap_timing_mode', 'pointer'),
+            ('ivaps_breath_timing_worker_update', 'autoepap_timing_update', 'pointer'),
+        )
         data, _, elf_path = self._load_versioned_payload('autoepap')
         flash, _ = self._inject_payload('autoepap', data)
         details = [self._payload_detail('autoepap', len(data), flash)]
-        for site, expected, symbol, kind in sites:
+        for site, (stock, symbol, kind) in zip(sites, hooks):
             target = self._elf_symbol_addr(elf_path, symbol)
             if kind == 'pointer':
+                original = self._elf_symbol_addr(elf_path, stock) | 1
+                expected = struct.pack('<I', original)
                 replacement = struct.pack('<I', target | 1)
+            elif kind == 'bl':
+                original = self._elf_symbol_addr(elf_path, stock) & ~1
+                expected = self._encode_thumb_bl(site, original)
+                replacement = self._encode_thumb_bl(site, target)
             else:
+                expected = bytes.fromhex(stock)
                 replacement = bytearray(self._encode_thumb_bl(site, target))
-                if kind == 'b':
-                    replacement[3] &= ~0x40  # BL -> B.W; preserve LR.
+                replacement[3] &= ~0x40  # BL -> B.W; preserve LR.
                 replacement = bytes(replacement)
-            self._replace_bytes_checked(site, bytes.fromhex(expected), replacement, symbol)
+            self._replace_bytes_checked(site, expected, replacement, symbol)
             details.append(self._hook_detail(symbol, self.asf.FLASH_BASE + site, target))
         self.applied_payloads.add('autoepap')
         return PatchOutcome.ok(None, *details)

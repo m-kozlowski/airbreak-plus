@@ -36,11 +36,11 @@ PAYLOADS_0204 := target_rh mop_callback_dispatcher custom_menu_hooks uart_stream
 PAYLOADS_0205 := $(PAYLOADS_0204)
 PAYLOADS_0302 := mop_callback_dispatcher vid_spoof graph squarewave asv_task_wrapper \
 	common_code backlight_adapt wrapper_limit_max_pdiff s10_lcd_ili9325 custom_menu_hooks \
-	uart_stream_schema language_fonts target_rh header_clock fall_time st_ibr
+	uart_stream_schema language_fonts target_rh header_clock fall_time st_ibr autoepap
 PAYLOADS_0305 := $(PAYLOADS_0302)
 PAYLOADS_0306 := $(PAYLOADS_0302)
 PAYLOADS_0401 := $(PAYLOADS_0302)
-PAYLOADS_0402 := $(PAYLOADS_0401) autoepap
+PAYLOADS_0402 := $(PAYLOADS_0401)
 
 payload_versions = $(foreach v,$(PAYLOAD_LAYOUT_VERSIONS),$(if $(filter $(1),$(PAYLOADS_$(v))),$(v)))
 payload_bins = $(foreach v,$(call payload_versions,$(1)),$(BUILD)/$(1)_$(v).bin)
