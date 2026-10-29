@@ -183,6 +183,51 @@ contains:
 The stock callback therefore updates normal mode state before custom handlers
 run. Current registered users are VID spoof and custom menu visibility.
 
+## Button hooks
+
+`button_hook_add(event, payload, symbol, hold_ms=None, consume=False)` registers
+a handler from an already injected payload. Finalization emits the registry and
+installs the standalone `button_hooks` payload only when handlers are registered.
+
+| Event | Trigger |
+|-------|---------|
+| `start_stop`, `home`, `encoder` | Stock button event |
+| `start_stop_hold` | Stock long Start/Stop event |
+| `clinical_menu` | Stock Home+encoder combination; observation only |
+| `aux_8`, `aux_9` | Stock events 8 and 9 on front-panel profiles providing them |
+| `home_hold`, `encoder_hold` | Release after a debounced standalone hold |
+
+`hold_ms` applies to `home_hold` and `encoder_hold`, defaulting to 3000 ms.
+Pressing another button cancels that hold until all buttons are released.
+Input reset discards pending gestures and ignores buttons held across the reset.
+Rotary movement and UART-injected key events retain their stock paths.
+
+Handlers use the signature declared in `patches/button_hooks.h`:
+
+```c
+int handler(unsigned event, unsigned held_ms);
+```
+
+They run in registration order in the GUI input task, with interrupts restored,
+and should return promptly. `held_ms` contains the measured duration for the two
+release-triggered holds and zero for stock events. A nonzero return reports that
+the action was handled. With `consume=True`, this suppresses the stock event or
+the hold's accompanying click; other registered observers still run. A zero
+return preserves stock behavior. Each event permits one consuming handler.
+Home+encoder always remains available to firmware.
+
+For example, a feature can register its release-triggered handler with:
+
+```python
+self.button_hook_add('encoder_hold', payload, 'on_encoder_hold',
+                     hold_ms=3000, consume=True)
+```
+
+The controller retains stock sampling, debounce and event storage. Additional
+hold detection runs alongside its periodic update; feature handlers are called
+only by the GUI reader, not calibration readers. Like stock input, pending
+events are a mailbox, not a queue of every press between GUI polls.
+
 ## Payload families
 
 | Family | Build behavior |

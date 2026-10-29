@@ -11,6 +11,9 @@
 
 .text
 
+// Front-panel input singleton
+NSTUB(0x08055EEB, front_panel_input_init)
+
 // Stock bilevel and iVAPS pressure waveforms
 NSTUB(0x08077829, therapy_variable_get)
 NSTUB(0x08089A4D, bilevel_pressure_waveform_expiration_ramp)

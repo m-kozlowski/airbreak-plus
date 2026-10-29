@@ -116,6 +116,27 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         'SX567-0401': (0xfbd8c, 0x080d9de1),
         'SX567-0402': (0xfc034, 0x080da059),
     }
+    # Singleton constructor call and the GUI-only take-pending-event call.
+    BUTTON_HOOK_SITES = {
+        'SX584-0204': (0x56218, 0xd061c),
+        'SX584-0205': (0x56218, 0xd08fc),
+        'SX567-0302': (0x82124, 0xea0b0),
+        'SX567-0305': (0x828ac, 0xea8ac),
+        'SX567-0306': (0x8282c, 0xea7c8),
+        'SX567-0401': (0x8282c, 0xeaa28),
+        'SX567-0402': (0x8282c, 0xeaca0),
+    }
+    BUTTON_EVENTS = {
+        'start_stop': 1,
+        'start_stop_hold': 2,
+        'home': 3,
+        'encoder': 4,
+        'clinical_menu': 7,
+        'aux_8': 8,
+        'aux_9': 9,
+        'home_hold': 0x13,
+        'encoder_hold': 0x14,
+    }
     CUSTOM_MENU_FLAG_G4_NUMERIC = 1
     CUSTOM_MENU_FLAG_HEADING = 2
     CUSTOM_MENU_FLAG_PAGE = 4
@@ -153,6 +174,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self.mop_callback_handlers = {}
         self.variable_callbacks = {}
         self.variable_callback_handlers = {}
+        self.button_handlers = {}
         self._init_compiled_payloads()
         self.custom_patch_settings_init()
 
@@ -697,6 +719,69 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         details.append("Variable callbacks: %d -> %d, table at 0x%08X" %
                        (stock_count, len(callbacks), address))
         return PatchOutcome.ok(None, *details)
+
+    def button_hook_add(self, event, payload, symbol, *, hold_ms=None, consume=False):
+        """Bind a physical button event to a payload handler; holds fire on release."""
+        if self.asf.cdx_ver not in self.BUTTON_HOOK_SITES:
+            raise ValueError("button hooks: unsupported CDX version %s" % self.asf.cdx_ver)
+        event_name = event
+        event = self.BUTTON_EVENTS.get(event)
+        if event is None:
+            raise ValueError("button hooks: unknown event %s" % event_name)
+        if event in (0x13, 0x14):
+            hold_ms = 3000 if hold_ms is None else int(hold_ms)
+            if not 1 <= hold_ms <= 0xffffffff:
+                raise ValueError("button hooks: hold_ms must be a positive u32")
+        else:
+            if hold_ms is not None:
+                raise ValueError("button hooks: hold_ms applies only to home_hold/encoder_hold")
+            hold_ms = 0
+        if event == 7 and consume:
+            raise ValueError("button hooks: Home+encoder must remain available to firmware")
+        if payload not in self.applied_payloads:
+            raise ValueError("button hooks: payload %s was not applied" % payload)
+        elf_path = self._require_versioned_artifact(payload, 'elf')
+        handler = self._elf_symbol_addr(elf_path, symbol) | 1
+        if (event, handler) in self.button_handlers:
+            raise ValueError("button hooks: duplicate handler for %s" % event_name)
+        if consume and any(code == event and flags for (code, _), (flags, _) in
+                           self.button_handlers.items()):
+            raise ValueError("button hooks: %s already has a consuming handler" % event_name)
+        self.button_handlers[event, handler] = (int(bool(consume)), hold_ms)
+
+    def patch_button_hooks(self):
+        """Emit the completed registry and install shared panel/GUI input hooks."""
+        if not self.button_handlers:
+            return PatchOutcome.skip("no button handlers registered")
+        init_site, take_site = self.BUTTON_HOOK_SITES[self.asf.cdx_ver]
+        name = 'button_hooks'
+        data, _, elf_path = self._load_versioned_payload(name)
+        start = self._elf_symbol_addr(elf_path, 'start')
+        original = self._elf_symbol_addr(elf_path, 'front_panel_input_init')
+        take = self._elf_symbol_addr(elf_path, 'button_hooks_take_event')
+        registry_slot = self._elf_symbol_addr(elf_path, 'button_hook_registry')
+
+        # Feature payloads are already installed. Registry pointers therefore
+        # refer to their final linked functions, with no feature-specific ABI.
+        registry = b''.join(struct.pack('<IHHI', handler, event, consume, hold_ms)
+                            for (event, handler), (consume, hold_ms) in self.button_handlers.items())
+        registry += bytes(12)
+        off = self.asf.find_ccx_ff_range_backwards(len(registry), alignment=4)
+        self.asf.patch(registry, off, checkempty=True)
+        flash, _ = self._inject_payload(name, data)
+        self.asf.write_u32(registry_slot - self.asf.FLASH_BASE, self.asf.FLASH_BASE + off)
+        init_detail = self._patch_thumb_bl_checked(
+            init_site, self._encode_thumb_bl(init_site, original), start,
+            'button hooks: front-panel constructor')
+        take_detail = self._patch_thumb_bl_checked(
+            take_site, bytes.fromhex('92699047'), take,
+            'button hooks: GUI event read')
+        self.applied_payloads.add(name)
+        return PatchOutcome.ok(
+            None, self._payload_detail(name, len(data), flash),
+            "Button hooks: %d handlers at 0x%08X" %
+            (len(self.button_handlers), self.asf.FLASH_BASE + off),
+            init_detail, take_detail)
 
     def mop_callback_register_handler(self, handler, name):
         """Register one feature handler to run after the stock MOP callback."""
@@ -3305,6 +3390,9 @@ def run_patcher(args, detail_log=None):
         args, detail_log)
     apply_reported_patch(
         'patch-variable-callbacks', patches.patch_variable_callbacks,
+        args, detail_log)
+    apply_reported_patch(
+        'patch-button-hooks', patches.patch_button_hooks,
         args, detail_log)
 
     asf.patch_firmware_sid(build_identity)

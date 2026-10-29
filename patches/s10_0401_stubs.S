@@ -10,6 +10,9 @@
 	name = addr
 .text
 
+// Front-panel input singleton
+NSTUB(0x080824FF, front_panel_input_init)
+
 // Stock ST breath timing and worker lifecycle
 NSTUB(0x080A8239, breath_progress_worker_reset)
 NSTUB(0x080A8265, breath_progress_worker_update_mode)

@@ -11,6 +11,9 @@
 
 .text
 
+// Front-panel input singleton
+NSTUB(0x0808257F, front_panel_input_init)
+
 // Stock ST breath timing and worker lifecycle
 NSTUB(0x080A80C1, breath_progress_worker_reset)
 NSTUB(0x080A80ED, breath_progress_worker_update_mode)
