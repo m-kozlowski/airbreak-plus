@@ -10,7 +10,7 @@ AIR10_FIRMWARE ?= stm32.bin
 export AIR10_PATCH_ARGS
 
 AIR10_LEGACY_ENV := PATCH_CODE PATCH_VAUTO_WRAPPER PATCH_S PATCH_ASV_TASK_WRAPPER \
-	PATCH_FALL_TIME PATCH_ST_IBR PATCH_S10_LCD PATCH_GRAPH_KEEP_SCREEN_ON PATCH_TARGET_RH FORCE_DEPRECATED
+	PATCH_FALL_TIME PATCH_ST_IBR PATCH_AUTOEPAP PATCH_S10_LCD PATCH_GRAPH_KEEP_SCREEN_ON PATCH_TARGET_RH FORCE_DEPRECATED
 $(foreach name,$(AIR10_LEGACY_ENV),$(if $(filter undefined,$(origin $(name))),,$(eval export $(name))))
 
 PATCHER_OUTPUT_ARGS := --log-file '$(abspath $(MAKE_LOG))'
@@ -40,7 +40,7 @@ PAYLOADS_0302 := mop_callback_dispatcher vid_spoof graph squarewave asv_task_wra
 PAYLOADS_0305 := $(PAYLOADS_0302)
 PAYLOADS_0306 := $(PAYLOADS_0302)
 PAYLOADS_0401 := $(PAYLOADS_0302)
-PAYLOADS_0402 := $(PAYLOADS_0401)
+PAYLOADS_0402 := $(PAYLOADS_0401) autoepap
 
 payload_versions = $(foreach v,$(PAYLOAD_LAYOUT_VERSIONS),$(if $(filter $(1),$(PAYLOADS_$(v))),$(v)))
 payload_bins = $(foreach v,$(call payload_versions,$(1)),$(BUILD)/$(1)_$(v).bin)
@@ -48,7 +48,7 @@ payload_bins = $(foreach v,$(call payload_versions,$(1)),$(BUILD)/$(1)_$(v).bin)
 PAYLOAD_NAMES := $(sort $(foreach v,$(PAYLOAD_LAYOUT_VERSIONS),$(PAYLOADS_$(v))))
 PAYLOAD_STAMPS := $(foreach p,$(PAYLOAD_NAMES),$(BUILD)/payload_$(p).stamp)
 S10_CODE_VERSIONS := $(call payload_versions,common_code)
-S10_STANDALONE_PAYLOADS := asv_task_wrapper backlight_adapt language_fonts uart_stream_schema vid_spoof target_rh header_clock fall_time st_ibr
+S10_STANDALONE_PAYLOADS := asv_task_wrapper backlight_adapt language_fonts uart_stream_schema vid_spoof target_rh header_clock fall_time st_ibr autoepap
 PAYLOAD_LAYOUT_TSVS := $(foreach v,$(PAYLOAD_LAYOUT_VERSIONS),$(BUILD)/payload_layout_$(v).tsv)
 
 BLX_PAYLOAD_VERSIONS := SX577-0200 SX585-0200
@@ -102,10 +102,10 @@ $(BUILD)/stm32-patched.bin: $(S10_PATCHER_DEPS) $(PAYLOAD_STAMPS) $(PAYLOAD_LAYO
 	$(announce_image)
 	./patch-airsense '$(AIR10_FIRMWARE)' $@ $(PATCHER_OUTPUT_ARGS)
 
-# Graph, Custom VAuto, ASV backup-rate control, Square Wave, Fall Time and ST iBR
+# Graph and optional therapy payloads, with their custom settings
 $(BUILD)/stm32-plus.bin: $(S10_PATCHER_DEPS) $(PAYLOAD_STAMPS) $(PAYLOAD_LAYOUT_TSVS) $(BLX_DUMP_BIN)
 	$(announce_image)
-	PATCH_CODE=1 PATCH_ASV_TASK_WRAPPER=1 PATCH_VAUTO_WRAPPER=1 PATCH_S=1 PATCH_FALL_TIME=1 PATCH_ST_IBR=1 ./patch-airsense '$(AIR10_FIRMWARE)' $@ $(PATCHER_OUTPUT_ARGS)
+	PATCH_CODE=1 PATCH_ASV_TASK_WRAPPER=1 PATCH_VAUTO_WRAPPER=1 PATCH_S=1 PATCH_FALL_TIME=1 PATCH_ST_IBR=1 PATCH_AUTOEPAP=1 ./patch-airsense '$(AIR10_FIRMWARE)' $@ $(PATCHER_OUTPUT_ARGS)
 
 binaries: $(PAYLOAD_TARGETS)
 
@@ -256,6 +256,8 @@ endef
 $(foreach v,$(call payload_versions,custom_menu_hooks),$(eval $(call S10_CUSTOM_MENU_HOOKS_template,$(v))))
 
 define S10_STANDALONE_PAYLOAD_template
+$(BUILD)/$(1)_$(2).o: $(wildcard $(SRC)/$(1)/*.c)
+
 $(BUILD)/$(1)_$(2).probe.elf: $(BUILD)/$(1)_$(2).o $(if $(wildcard $(SRC)/$(1)_abi.S),$(BUILD)/$(1)_abi_$(2).o) $(BUILD)/s10_$(2)_stubs.o | $(BUILD)
 	$$(LD) --nostdlib --no-dynamic-linker \
 		--Ttext $(PROBE_LINK_ADDR) --entry start --sort-section=name \

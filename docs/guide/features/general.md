@@ -73,6 +73,25 @@ With custom settings, clinical **Therapy** contains:
 
 Without custom settings, ST retains its stock fixed backup rate.
 
+## iVAPS AutoEPAP
+
+This optional patch adds Lumis-style automatic EPAP adjustment to iVAPS.
+It raises EPAP in response to inspiratory flow shape and sustained
+reductions in flow, then gradually lowers it when those responses subside.
+The existing iVAPS controller continues to adjust pressure support toward
+Target Va.
+
+With custom settings, clinical **Therapy** contains:
+
+| Setting | UART | Values | Default |
+|---------|------|--------|---------|
+| AutoEPAP | RSA | Off, On | Off |
+| Min EPAP | RDF | iVAPS EPAP range, step 0.2 cmH2O | 5.0 cmH2O |
+| Max EPAP | RDM | iVAPS EPAP range, step 0.2 cmH2O | 15.0 cmH2O |
+
+With AutoEPAP On, Min/Max EPAP replace the fixed EPAP setting in the menu.
+If Fall Time is installed, flow-shape analysis uses its selected duration.
+
 ## Target Humidity
 
 This patch lets users adjust humidification above or below the stock

@@ -18,6 +18,7 @@ AIR10_LEGACY_OPTIONS = {
     "PATCH_ASV_TASK_WRAPPER": ("--patch-fw-asv-wrapper", "y"),
     "PATCH_FALL_TIME": ("--patch-fall-time", "y"),
     "PATCH_ST_IBR": ("--patch-st-ibr", "y"),
+    "PATCH_AUTOEPAP": ("--patch-autoepap", "y"),
     "PATCH_S10_LCD": ("--patch-fw-lcd", "y"),
     "PATCH_GRAPH_KEEP_SCREEN_ON": ("--patch-graph-keep-screen-on", "y"),
     "FORCE_DEPRECATED": ("--force-deprecated",),

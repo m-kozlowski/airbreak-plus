@@ -31,6 +31,9 @@ Settings are assigned when their corresponding patch or payload is active.
 | [Square Wave](guide/features/squarewave.md) | Square Wave | RPF | g[8] | CSG |
 | [Fall Time](guide/features/general.md#fall-time) | Fall Time | RCW | g[4] | CSG |
 | [ST iBR](guide/features/general.md#st-ibr) | iBR | RXW | g[8] | CSG |
+| [iVAPS AutoEPAP](guide/features/general.md#ivaps-autoepap) | AutoEPAP | RSA | g[8] | CSG |
+| [iVAPS AutoEPAP](guide/features/general.md#ivaps-autoepap) | Min EPAP | RDF | g[4] | CSG |
+| [iVAPS AutoEPAP](guide/features/general.md#ivaps-autoepap) | Max EPAP | RDM | g[4] | CSG |
 | [Backlight adaptation](guide/features/backlight.md) | Ambient Low | ATH | g[4] | NGL |
 | [Backlight adaptation](guide/features/backlight.md) | Ambient High | RCF | g[4] | CSG |
 | [Backlight adaptation](guide/features/backlight.md) | LCD / Low | LLL | g[4] | CSG |

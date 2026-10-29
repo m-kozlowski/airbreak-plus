@@ -10,7 +10,8 @@ extern void bilevel_pressure_waveform_expiration_ramp(void *ctx);
 extern float ivaps_pressure_waveform_expiration_ramp(void *ctx, float support);
 extern const volatile int therapy_waveform_profile;
 
-static int *fall_time_override(int ivaps, int *original)
+/* Also used by AutoEPAP's flow fit, which trims by the actual fall duration. */
+int fall_time_effective_ticks(int ivaps, int original_ticks)
 {
     int ticks = 0;
     if (fall_time_duration_var_id != 0xffffu) {
@@ -28,7 +29,13 @@ static int *fall_time_override(int ivaps, int *original)
         }
     }
 
-    if (ticks <= 0) {
+    return ticks > 0 ? ticks : original_ticks;
+}
+
+static int *fall_time_override(int ivaps, int *original)
+{
+    int ticks = fall_time_effective_ticks(ivaps, 0);
+    if (!ticks) {
         return 0;
     }
 

@@ -1133,6 +1133,45 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         addr = self._write_payload_u16('st_ibr', 'st_ibr_enable_var_id', vid)
         self._custom_detail('ST iBR: %s var_id=0x%04X at 0x%08X' % (var, vid, addr))
 
+    def custom_patch_settings_autoepap(self):
+        """Expose iVAPS AutoEPAP and its paired pressure bounds."""
+        enable = self.custom_claim_g8_var('RSA', 'autoepap_enable')
+        lower = self.custom_claim_g4_var('RDF', 'autoepap_min_epap')
+        upper = self.custom_claim_g4_var('RDM', 'autoepap_max_epap')
+        label = self.redefine_fw_string(-1, {0: 'AutoEPAP'}, 'autoepap_label')
+        dep = self.asf.find_var_table_index(4, 'RGT')
+
+        callback_id = self.variable_callback_register('autoepap', 'autoepap_setting_changed')
+
+        self.redefine_g8_var(enable, 0x0007, callback_id, dep, label, 0,
+                             2, 0, 0x00000003, self.asf.str_id_off_on_base, 0)
+        self.custom_storage_add(enable)
+        self.custom_menu_add('therapy', enable, self.mop_bitmask('iVAPS'))
+
+        # Use the existing localized Min/Max EPAP labels and pressure format.
+        # RDF/RDM already belong to the reclaimed settings storage group.
+        pressure = self.asf.find_var('EPI')
+        minimum = self.asf.read_u32(pressure + self.asf.G4_MIN)
+        maximum = self.asf.read_u32(pressure + self.asf.G4_MAX)
+        units = self.asf.read_u16(pressure + self.asf.G4_UNITS_STR)
+        for var, name_source, default in ((lower, 'EAI', 250), (upper, 'EAX', 750)):
+            name = self.asf.read_u16(self.asf.find_var(name_source) + self.asf.G4_NAME_STR)
+            self.redefine_g4_var(var, 0x0007, callback_id, dep, name,
+                                 default, maximum, minimum, 1, 50, 10, units)
+            self.custom_menu_add('therapy', var,
+                                 self.mop_bitmask('iVAPS') | self.CUSTOM_MENU_MODE_KEEP_VISIBILITY)
+
+        for var, symbol in ((enable, 'autoepap_enable_id'),
+                            (lower, 'autoepap_lower_id'), (upper, 'autoepap_upper_id')):
+            vid = self.asf.resolve_var_id(var)
+            addr = self._write_payload_u16('autoepap', symbol, vid)
+            self._custom_detail('AutoEPAP: %s var_id=0x%04X at 0x%08X' % (var, vid, addr))
+
+        elf_path = self._require_versioned_artifact('autoepap', 'elf')
+        handler = self._elf_symbol_addr(elf_path, 'autoepap_apply_mode_visibility')
+        handler = self.mop_callback_register_handler(handler, 'autoepap_visibility')
+        self._custom_detail(self._mop_handler_detail('autoepap_visibility', handler))
+
     def custom_patch_settings_graph(self):
         """Expose the graph/stock-gauge switch in clinical Options."""
         graph_var = self.custom_claim_g8_var('RXH', 'graph_enable')
@@ -1267,6 +1306,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             ('squarewave', self.custom_patch_settings_squarewave),
             ('fall_time', self.custom_patch_settings_fall_time),
             ('st_ibr', self.custom_patch_settings_st_ibr),
+            ('autoepap', self.custom_patch_settings_autoepap),
             ('backlight_adapt', self.custom_patch_settings_backlight),
             ('target_rh', self.custom_patch_settings_target_rh),
             ('header_clock', self.custom_patch_settings_header_clock),
@@ -2033,6 +2073,72 @@ class ASFirmwarePatches(CompiledPayloadMixin):
                                     'ST iBR initialization', accept_existing=True)
         self.applied_payloads.add('st_ibr')
         return PatchOutcome.ok(None, *details)
+
+    def patch_autoepap(self):
+        """Add the iVAPS pressure controller and adapt shared flow workers."""
+        sites = {
+            'SX567-0402': (
+                # Call sites: registration, waveform EPAP caches and flow refs.
+                (0xa11a4, '03f0fcf9', 'start', 'bl'),
+                (0xabffe, 'f4f72cfd', 'autoepap_epap_ref_hook', 'bl'),
+                (0xac1a8, 'f4f757fc', 'autoepap_epap_ref_hook', 'bl'),
+                (0xac2c2, 'f4f7cafb', 'autoepap_epap_ref_hook', 'bl'),
+                (0xac380, 'f4f76bfb', 'autoepap_epap_ref_hook', 'bl'),
+                (0xa2160, 'fef77bfc', 'autoepap_leak_ref_hook', 'bl'),
+                (0xbf8ec, 'e1f7c0f8', 'autoepap_landmark_ref_hook', 'bl'),
+                (0xbfc64, 'e0f704ff', 'autoepap_landmark_ref_hook', 'bl'),
+                (0xa48ba, 'fcf7cef8', 'autoepap_ibr_ref_hook', 'bl'),
+                (0xa4c92, 'fbf7e2fe', 'autoepap_ibr_ref_hook', 'bl'),
+                (0xa4d86, 'fbf768fe', 'autoepap_ibr_ref_hook', 'bl'),
+                # Interior branches return through versioned resume stubs.
+                (0xa24fc, 'b4ee410a', 'autoepap_leak_boundary_hook', 'b'),
+                (0xa39a8, 'b0ee081a', 'autoepap_normalization_hook', 'b'),
+                (0xa5f8c, '0221bee7', 'autoepap_phase_reset_hook', 'b'),
+                (0xaab08, '062904d0', 'autoepap_timing_gate_hook', 'b'),
+                (0xaabb4, '9ded010a', 'autoepap_timing_tail_hook', 'b'),
+                # Component/worker vtable entries retain their stock callees.
+                (0xf4be4, '8d330e08', 'autoepap_settings_hook', 'pointer'),
+                (0xf98f4, 'a5c00a08', 'autoepap_waveform_hook', 'pointer'),
+                (0xf98c8, '455d0a08', 'autoepap_phase_mode', 'pointer'),
+                (0xf98d0, '5d5e0a08', 'autoepap_phase_update', 'pointer'),
+                (0xf946c, '79420a08', 'autoepap_ventilation_mode', 'pointer'),
+                (0xf9470, '910d0a08', 'autoepap_ventilation_stop', 'pointer'),
+                (0xf9474, 'f1430a08', 'autoepap_ventilation_update', 'pointer'),
+                (0xf966c, 'b5740a08', 'autoepap_transition', 'pointer'),
+                (0xf9eb0, '39a70a08', 'autoepap_timing_mode', 'pointer'),
+                (0xf9eb8, '6daa0a08', 'autoepap_timing_update', 'pointer'),
+            ),
+        }.get(self.asf.cdx_ver)
+        if sites is None:
+            return PatchOutcome.skip("unsupported CDX version %s" % self.asf.cdx_ver)
+
+        data, _, elf_path = self._load_versioned_payload('autoepap')
+        flash, _ = self._inject_payload('autoepap', data)
+        details = [self._payload_detail('autoepap', len(data), flash)]
+        for site, expected, symbol, kind in sites:
+            target = self._elf_symbol_addr(elf_path, symbol)
+            if kind == 'pointer':
+                replacement = struct.pack('<I', target | 1)
+            else:
+                replacement = bytearray(self._encode_thumb_bl(site, target))
+                if kind == 'b':
+                    replacement[3] &= ~0x40  # BL -> B.W; preserve LR.
+                replacement = bytes(replacement)
+            self._replace_bytes_checked(site, bytes.fromhex(expected), replacement, symbol)
+            details.append(self._hook_detail(symbol, self.asf.FLASH_BASE + site, target))
+        self.applied_payloads.add('autoepap')
+        return PatchOutcome.ok(None, *details)
+
+    def connect_autoepap_fall_time(self):
+        """Bind the optional duration provider after both payloads are installed."""
+        if not {'autoepap', 'fall_time'} <= self.applied_payloads:
+            return PatchOutcome.skip('AutoEPAP and Fall Time are not both active')
+        _, _, auto_elf = self._load_versioned_payload('autoepap')
+        _, _, fall_elf = self._load_versioned_payload('fall_time')
+        slot = self._elf_symbol_addr(auto_elf, 'autoepap_effective_fall')
+        target = self._elf_symbol_addr(fall_elf, 'fall_time_effective_ticks') | 1
+        self.asf.write_u32(slot - self.asf.FLASH_BASE, target)
+        return PatchOutcome.ok(None, self._hook_detail('AutoEPAP Fall Time', slot, target))
 
     def patch_asv_task_wrapper(self):
         """Add runtime-controllable ASV backup-rate suppression."""
@@ -2858,6 +2964,8 @@ PATCH_PHASES = (
                   False, 'patch_fall_time'),
         PatchSpec('patch-st-ibr', 'Add adaptive backup-rate control in ST.',
                   False, 'patch_st_ibr'),
+        PatchSpec('patch-autoepap', 'Add adaptive EPAP control in iVAPS.',
+                  False, 'patch_autoepap'),
         PatchSpec('patch-fw-asv-wrapper', 'Add ASV backup-rate runtime control.',
                   False, 'patch_asv_task_wrapper'),
         PatchSpec('patch-fw-vauto-wrapper', 'Add custom VAuto pressure shaping.',
@@ -2892,6 +3000,7 @@ PATCH_PHASES = (
 
 
 PATCH_DEPENDENCIES = {
+    'patch-autoepap': ('patch-font-repack', 'patch-expand-heap'),
     'patch-ivaps-settings': ('patch-custom-settings',),
     'patch-fw-graph': ('patch-fw-common-code',),
     'patch-graph-keep-screen-on': ('patch-fw-graph',),
@@ -3041,6 +3150,9 @@ def run_patcher(args, detail_log=None):
     apply_patch_phases(patches, args, detail_log)
 
     print('\n=== Finalization')
+    if 'autoepap' in patches.applied_payloads:
+        apply_reported_patch('autoepap-fall-time', patches.connect_autoepap_fall_time,
+                             args, detail_log)
     apply_reported_patch(
         'patch-mop-callback-dispatcher',
         patches.patch_mop_callback_dispatcher,
