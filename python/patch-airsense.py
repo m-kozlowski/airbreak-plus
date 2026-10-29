@@ -420,7 +420,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
 
     def custom_reclaim_g8_var(self, name):
         """Scrub a g[8] enum descriptor and add it to the reclaimed pool."""
-        # Reminder callback 19 toggles the runtime state of the paired
+        # The Reminder callback toggles the runtime state of the paired
         # recurrence/date g[4] variables, so reclaimed enums lose it.
         self._custom_reclaim_var(
             name, 8, self.asf.G8_CALLBACK,
@@ -1297,6 +1297,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         """
         sites_by_version = {
             'SX584-0204': {
+                'numeric_handler_limit': (0x458a0, b'\x40\xf2\xf1\x11', b'\x40\xf2\xf5\x11'),
                 'reminders_tick': 0xd2042,
                 'reminder_list_create': 0xd210c,
                 'reminder_state_update': 0x50988,
@@ -1309,6 +1310,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
                 'reclaimed_string_ids': (0x004E, 0x00C6, 0x00C7, 0x00C8, 0x00C9, 0x00CA, 0x00CB, 0x00AD),
             },
             'SX584-0205': {
+                'numeric_handler_limit': (0x458a0, b'\x40\xf2\xf1\x11', b'\x40\xf2\xf5\x11'),
                 'reminders_tick': 0xd2322,
                 'reminder_list_create': 0xd23ec,
                 'reminder_state_update': 0x50988,
@@ -1321,6 +1323,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
                 'reclaimed_string_ids': (0x004E, 0x00C6, 0x00C7, 0x00C8, 0x00C9, 0x00CA, 0x00CB, 0x00AD),
             },
             'SX567-0302': {
+                'numeric_handler_limit': (0x6c0d2, b'\xb4\xf5\xea\x7f', b'\xb4\xf5\xec\x7f'),
                 'reminders_tick': 0xebace,
                 'reminder_list_create': 0xebb98,
                 'reminder_state_update': 0x758b2,
@@ -1333,6 +1336,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
                 'reclaimed_string_ids': (0x0048, 0x00B9, 0x00BA, 0x00BB, 0x00BC, 0x00BD, 0x00BE, 0x00A1),
             },
             'SX567-0305': {
+                'numeric_handler_limit': (0x6c802, b'\xb4\xf5\xea\x7f', b'\xb4\xf5\xec\x7f'),
                 'reminders_tick': 0xec2ca,
                 'reminder_list_create': 0xec394,
                 'reminder_state_update': 0x7601e,
@@ -1345,6 +1349,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
                 'reclaimed_string_ids': (0x0048, 0x00B7, 0x00B8, 0x00B9, 0x00BA, 0x00BB, 0x00BC, 0x009F),
             },
             'SX567-0306': {
+                'numeric_handler_limit': (0x6c806, b'\xb4\xf5\xea\x7f', b'\xb4\xf5\xec\x7f'),
                 'reminders_tick': 0xec1e6,
                 'reminder_list_create': 0xec2b0,
                 'reminder_state_update': 0x7601a,
@@ -1357,6 +1362,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
                 'reclaimed_string_ids': (0x0048, 0x00B7, 0x00B8, 0x00B9, 0x00BA, 0x00BB, 0x00BC, 0x009F),
             },
             'SX567-0401': {
+                'numeric_handler_limit': (0x6c806, b'\xb4\xf5\xea\x7f', b'\xb4\xf5\xec\x7f'),
                 'reminders_tick': 0xec446,
                 'reminder_list_create': 0xec510,
                 'reminder_state_update': 0x7601a,
@@ -1369,6 +1375,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
                 'reclaimed_string_ids': (0x0048, 0x00B7, 0x00B8, 0x00B9, 0x00BA, 0x00BB, 0x00BC, 0x009F),
             },
             'SX567-0402': {
+                'numeric_handler_limit': (0x6c806, b'\xb4\xf5\xea\x7f', b'\xb4\xf5\xec\x7f'),
                 'reminders_tick': 0xec6be,
                 'reminder_list_create': 0xec788,
                 'reminder_state_update': 0x7601a,
@@ -1446,8 +1453,22 @@ class ASFirmwarePatches(CompiledPayloadMixin):
 
         for var in ('RPO', 'RPH', 'RPF', 'RPW', 'RXM', 'RXH', 'RXF', 'RXW', 'RSA'):
             self.custom_reclaim_g8_var(var)
+
+        # Extend numeric handlers with mutable bounds over RDF/RDM/RDH/RDW.
+        # Their bounds storage already exists; only the calendar-specific
+        # parsing and formatting must go. UDT remains the first date variable.
+        # SX567: cmp r4,#0x1d4 -> #0x1d8; SX584: movw r1,#0x1f1 -> #0x1f5.
+        numeric_limit, expected, replacement = sites['numeric_handler_limit']
+        self._replace_bytes_checked(
+            numeric_limit, expected, replacement,
+            'reclaimed reminder date handlers', accept_existing=True)
         for var in ('RDF', 'RDM', 'RDH', 'RDW', 'RCF', 'RCM', 'RCH', 'RCW'):
             self.custom_reclaim_g4_var(var)
+
+        # RXF/RXM/RXH/RXW lost their callbacks during reclaim. Detach RDT,
+        # the last stock owner of the disabled Reminder updater.
+        rdt_callback = self.asf.find_var('RDT') + self.asf.G4_CALLBACK
+        self.asf.write_u8(rdt_callback, 0)
 
         self._custom_detail("disabled stock Reminders menu item at 0x%08X" %
                             (self.asf.FLASH_BASE + reminder_menu_item))
