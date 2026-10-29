@@ -1126,6 +1126,9 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self.custom_menu_add('therapy', max_var, self.mop_bitmask('VAuto'))
         self.custom_menu_add('therapy', sens_var, self.mop_bitmask('VAuto'))
         self.custom_menu_add('therapy', tc_var, self.mop_bitmask('S', 'ST', 'T', 'VAuto', 'PAC'))
+        for var in (max_var, sens_var, tc_var):
+            self.custom_menu_add_condition(var, myasv_var, self.mop_bitmask('VAuto'))
+        self.custom_menu_add_condition(tc_var, 'EBE', self.mop_bitmask('S'), nonzero=False)
 
         # Patch the prebuilt wrapper's ABI slots instead of coupling its source to
         # custom-menu internals or firmware-version-specific numeric IDs.
@@ -1195,6 +1198,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
 
         square_vid = self.asf.resolve_var_id(square_var)
         self.custom_menu_add('therapy', square_var, self.mop_bitmask('S', 'ST', 'T', 'PAC'))
+        self.custom_menu_add_condition(square_var, 'EBE', self.mop_bitmask('S'), nonzero=False)
 
         enable_addr = self._write_payload_u16('squarewave', 'squarewave_enable_var_id', square_vid)
 
@@ -1213,6 +1217,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
                              100, 900, 100, 0, 1, 50, units)
         modes = self.mop_bitmask('S', 'ST', 'T', 'PAC', 'iVAPS')
         self.custom_menu_add('therapy', time_var, modes, self.CUSTOM_MENU_FLAG_SHOW_UNITS)
+        self.custom_menu_add_condition(time_var, 'EBE', self.mop_bitmask('S'), nonzero=False)
 
         vid = self.asf.resolve_var_id(time_var)
         addr = self._write_payload_u16('fall_time', 'fall_time_duration_var_id', vid)
