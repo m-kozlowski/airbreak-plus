@@ -1,4 +1,4 @@
-"""Air 10 SD error logs: fixed-width records in bounded circular files."""
+"""Air 10 error records from SD log files and stored UART streams."""
 
 import binascii
 import struct
@@ -25,8 +25,48 @@ LOG_LAYOUTS = {
 ERROR_BITS = {
     # 080710FA maps SYS bits to Error 001..016, SYT bits to Error 017 onward.
     # These name set conditions; the LCD displays only the first active one.
-    'SYS': {1 << bit: f'System error {bit + 1:03}' for bit in range(16)},
-    'SYT': {1 << bit: f'System error {bit + 17:03}' for bit in range(10)},
+    'SYS': {
+        # SX567-0402: 080F0314 maps motor fault codes to ZRE; 080EA366
+        # restores ZRE's low/high halves into SYS/SYT. Motor codes 1..7
+        # include driver fault inputs (080836EE), not a unique root cause.
+        0x0001: 'System error 001: Motor driver fault',
+        0x0002: 'System error 002: Motor driver fault',
+        0x0004: 'System error 003: Motor driver fault',
+        0x0008: 'System error 004: Motor driver fault',
+        0x0010: 'System error 005: Motor driver fault',
+        0x0020: 'System error 006: Motor driver or commutation fault',  # 08082D04
+        0x0040: 'System error 007: Motor driver or startup feedback fault',  # 08083394
+        0x0080: 'System error 008: Motor speed too low for drive command',  # 08082D04
+        0x0100: 'System error 009: Motor drive feedback limit exceeded',  # 0808291C, 08082D04
+        0x0200: 'System error 010: Flow reading below valid range',  # 080EA5A8 -> 080EA5DE
+        0x0400: 'System error 011: High flow reading at low motor speed',  # 080EA640 -> 080EA69C
+        0x0800: 'System error 012: Repeated flow sensor communication failures',  # 080EA6B0 -> 080EA6D6
+        0x1000: 'System error 013: Low, steady flow with negative blower pressure',  # 080E61E6 -> 080E62E4
+        # SYS allows only bits 0..12 in SX567-0302/0305/0306/0401/0402
+        # and SX584-0204/0205. Preserve the UI numbering for other bits,
+        # without inventing conditions for those unassigned positions.
+        0x2000: 'System error 014',
+        0x4000: 'System error 015',
+        0x8000: 'System error 016',
+    },
+    'SYT': {
+        # 080CF1A6: nonempty settings file failed reading, size or CRC checks.
+        # BGL/NGL use bit 1; other groups use bit 0. This does not establish
+        # EEPROM hardware failure: changing a group's layout can also cause it.
+        0x001: 'System error 017: EEPROM settings file read or validation failed',
+        0x002: 'System error 018: EEPROM BGL/NGL file read or validation failed',
+        0x004: 'System error 019: Motor protection tripped without driver fault code',  # 080836EE -> 080F0314
+        0x008: 'System error 020: Repeated flow sensor CRC errors',  # 080EA6E8 -> 080EA70C
+        # SX584-0204 alarm-board paths; these are not additional SYS bits.
+        0x010: 'System error 021: Main/alarm-board pressure readings disagree',  # 080C6200 -> 080C626C
+        0x020: 'System error 022: Alarm board communication timeout (20 s)',  # 080ACC20 -> 080AC44E
+        0x040: 'System error 023: Alarm board state mismatch',  # 080ACAEC -> 080AC44E
+        0x080: 'System error 024: Alarm board command failed after retry',  # 080ACAEC, 080ACB4C
+        # 080AC66C translates received AST flags. Their internal causes
+        # cannot be inferred from the CDX handler alone.
+        0x100: 'System error 025: Alarm board reported fault (AST 0x0400)',
+        0x200: 'System error 026: Alarm board reported fault (AST 0x0200)',
+    },
     'SYC': {
         0x01: 'Heater temperature limit exceeded',
         0x02: 'Heater electrical self-test failed',
@@ -69,8 +109,9 @@ ERROR_CODES = {
         0x2825: 'Log copy to SD incomplete',  # 080C7B20 -> 080C7436
         0x2835: 'Timed-task/IRQ CPU load limit reached',  # 0808B45E
         0x283C: 'EDF file operation failed',  # 080D126C, file state 2
-        0x284C: 'Startup: unrecognized saved restart state',  # 0808C7D8
-        0x284E: 'Startup: backup register 9 not clear',  # 0808C876
+        0x284C: 'Startup: unrecognized restart state (BKP10R outside 0x00..0x0E; value not logged)',  # 0808C7D8
+        0x284D: 'Startup: previous shutdown incomplete (BKP12R low16=0xFFFF)',  # 0808C876
+        0x284E: 'Startup: saved SD-write marker (BKP9R low16!=0; value not logged)',  # 0808C876
         0x284F: 'Non-numeric time string',  # 08070E84
         0x2855: 'Low-pressure/disconnected-tube alarm',  # 080E5A90
         0x28A7: 'Peripheral response opcode mismatch',  # 080D2892
@@ -103,13 +144,18 @@ ERROR_CODES = {
         0x29AE: 'SD backup completion timed out (30 s)',  # 080C8558
         0x29B0: 'SD data CRC error during write',  # 0808E6CC
         # 0808C7D8 translates saved BKP10R states, not new faults at log time.
-        0x29B6: 'Startup: saved fatal-error state',
-        0x29B7: 'Startup: saved restart state 8',
-        0x29BA: 'Startup: saved HardFault',
-        0x29BB: 'Startup: saved MemManage fault',
-        0x29BC: 'Startup: saved BusFault',
-        0x29BD: 'Startup: saved UsageFault',
-        0x29BE: 'Startup: previous initialization incomplete',
+        0x29B3: 'Startup: saved immediate restart request (BKP10R=0x03)',
+        0x29B4: 'Startup: EEPROM proxy transmit timeout (BKP10R=0x04)',
+        0x29B5: 'Startup: SD proxy transmit timeout (BKP10R=0x05)',
+        0x29B6: 'Startup: saved fatal-error state (BKP10R=0x06; detail in BKP13R/FAT)',
+        0x29B7: 'Startup: stop condition during task phase initialization (BKP10R=0x08)',
+        0x29B8: 'Startup: stop condition during task member initialization (BKP10R=0x09)',
+        0x29B9: 'Startup: saved NMI (BKP10R=0x0A; PC in BKP11R/ELV)',
+        0x29BA: 'Startup: saved HardFault (BKP10R=0x0B; PC in BKP11R/ELV)',
+        0x29BB: 'Startup: saved MemManage fault (BKP10R=0x0C; PC in BKP11R/ELV)',
+        0x29BC: 'Startup: saved BusFault (BKP10R=0x0D; PC in BKP11R/ELV)',
+        0x29BD: 'Startup: saved UsageFault (BKP10R=0x0E; PC in BKP11R/ELV)',
+        0x29BE: 'Startup: previous initialization incomplete (BKP10R=0x07)',
         0x29C3: 'Chinese and Japanese font groups enabled together',  # 0806B158
     },
     'DLA': {
@@ -177,10 +223,15 @@ def describe_error(source, value):
     """Decode bitmasks and scalar event codes without conflating the two."""
     if source == 'ELV':
         # 0808C7D8 copies BKP11R to ELV for saved exception states 10..14.
-        return 'No saved exception PC' if value == 0x7FFFFFFF else 'Saved exception PC'
+        description = 'No saved exception PC' if value == 0x7FFFFFFF else 'Saved exception PC'
+        return f'{description} (BKP11R=0x{value:08X})'
     codes = ERROR_CODES.get(source)
     if codes is not None:
-        return codes.get(value, 'Undecoded value')
+        description = codes.get(value, 'Undecoded value')
+        # Startup imports only this range from BKP13R into FAT (0808C1BA).
+        if source == 'FAT' and 1 <= value <= 0x52:
+            return f'{description} (BKP13R low16=0x{value:04X})'
+        return description
     bits = ERROR_BITS.get(source)
     if bits is None:
         return 'Undecoded value'
@@ -219,6 +270,63 @@ def find_error_logs(path):
     if not files:
         raise ValueError(f'{path}: no Air 10 error logs found')
     return files
+
+
+def error_log_record(tag, day, minute, noc, value, **location):
+    """Normalize SD and UART records without confusing the K-frame day with UDT."""
+    source, value_bytes, _ = LOG_LAYOUTS[tag]
+    if minute >= 1440:
+        raise ValueError(f'{tag}: invalid minute-of-day {minute}')
+    record_date = date(1970, 1, 1) + timedelta(days=day)
+    return {
+        'tag': tag,
+        'source': source,
+        **location,
+        'day': day,
+        'minute': minute,
+        'timestamp': f'{record_date.isoformat()} {minute // 60:02d}:{minute % 60:02d}',
+        'noc': noc,
+        'value': value,
+        'raw': f'0x{value:0{value_bytes * 2}X}',
+        'description': describe_error(source, value),
+    }
+
+
+def error_log_warnings(label, records):
+    backwards = sum(a['timestamp'] > b['timestamp'] for a, b in zip(records, records[1:]))
+    if backwards:
+        return [f'{label}: timestamps move backwards at {backwards} record transitions; '
+                'use --order record to retain write order']
+    return []
+
+
+def parse_error_log_payload(payload, tag):
+    """Decode one K payload as a record, inter-record marker, or final count."""
+    text = payload.decode('ascii').upper()
+    if text[:3] != tag or any(ch not in '0123456789ABCDEF' for ch in text[3:]):
+        raise ValueError(f'{tag}: invalid stored-log payload {text!r}')
+    if text == tag + '00000FFFF00000':
+        return 'end', 0
+    # SX567-0402 080C2C64 emits a literal zero followed by a four-digit count.
+    if text.startswith(tag + '99999FFFF0') and len(text) == 17:
+        return 'end', int(text[13:17], 16)
+    if text.startswith(tag + 'FFFFF') and len(text) == 17 and text[12:] == '00001':
+        return 'marker', None
+
+    _, value_bytes, _ = LOG_LAYOUTS[tag]
+    # 080C281C serializes UDT/UTT/NOC as 4/3/4 hex digits, then the source
+    # value. The preceding 5/4/5 fields belong to the transfer, not the record.
+    # UART widths need not fill whole bytes: SYT uses three hex digits,
+    # although its SD representation occupies two bytes.
+    if not 28 < len(text) <= 28 + value_bytes * 2:
+        raise ValueError(f'{tag}: unexpected stored-record length {len(text)}')
+    sequence, therapy_day, offset = int(text[3:8], 16), int(text[8:12], 16), int(text[12:17], 16)
+    if offset != 0:
+        raise ValueError(f'{tag}: unexpected record offset {offset}')
+    record = error_log_record(tag, int(text[17:21], 16), int(text[21:24], 16),
+                              int(text[24:28], 16), int(text[28:], 16),
+                              sequence=sequence, therapy_day=therapy_day)
+    return 'record', record
 
 
 def read_error_log(path):
@@ -263,25 +371,7 @@ def read_error_log(path):
         if minute >= 1440:
             raise ValueError(f'{path}: slot {slot} has invalid minute-of-day {minute}')
         value = int.from_bytes(data[offset + 6:offset + record_size], 'little')
-        record_date = date(1970, 1, 1) + timedelta(days=day)
-        records.append({
-            'tag': tag,
-            'source': source,
-            'slot': slot,
-            'day': day,
-            'minute': minute,
-            'timestamp': f'{record_date.isoformat()} {minute // 60:02d}:{minute % 60:02d}',
-            'noc': noc,
-            'value': value,
-            'raw': f'0x{value:0{value_bytes * 2}X}',
-            'description': describe_error(source, value),
-        })
-
-    backwards = sum(a['timestamp'] > b['timestamp'] for a, b in zip(records, records[1:]))
-    warnings = []
-    if backwards:
-        warnings.append(f'{path}: timestamps move backwards at {backwards} record transitions; '
-                        'use --order record to retain write order')
+        records.append(error_log_record(tag, day, minute, noc, value, slot=slot))
 
     return {
         'path': str(path),
@@ -295,7 +385,7 @@ def read_error_log(path):
             'crc': stored_crc,
         },
         'records': records,
-        'warnings': warnings,
+        'warnings': error_log_warnings(path, records),
     }
 
 

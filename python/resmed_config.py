@@ -13,9 +13,11 @@ import time
 import sys
 import json
 import zlib
+from contextlib import redirect_stdout
 from pathlib import Path
 
-from lib.as10_error_logs import LOG_LAYOUTS, find_error_logs, read_error_log, summarize_error_logs
+from lib.as10_error_logs import (LOG_LAYOUTS, error_log_warnings, find_error_logs,
+                                parse_error_log_payload, read_error_log, summarize_error_logs)
 
 
 GROUPS = {
@@ -764,7 +766,7 @@ def build_frame(frame_type: str, payload: bytes) -> bytes:
 def build_q_frame(cmd: str) -> bytes:
     return build_frame('Q', cmd.encode())
 
-def extract_responses(data: bytes):
+def extract_responses(data: bytes, validate_crc=False):
     """Parse complete UART frames and return (responses, incomplete_tail)."""
     responses = []
     i = 0
@@ -778,8 +780,15 @@ def extract_responses(data: bytes):
                     if i + 5 > len(data):
                         return responses, data[i:]
                     length = int(data[i+2:i+5], 16)
+                    if length < 9:
+                        i += 1
+                        continue
                     if i + length > len(data):
                         return responses, data[i:]
+                    if validate_crc:
+                        expected = f'{crc16_ccitt(data[i:i+length-4]):04X}'.encode()
+                        if data[i+length-4:i+length].upper() != expected:
+                            raise RuntimeError(f'{ft} frame CRC mismatch')
                     raw_payload = data[i+5:i+length-4]
                     payload = raw_payload.replace(b'UU', b'U')
                     responses.append({'type': ft, 'payload': payload})
@@ -798,12 +807,13 @@ def parse_responses(data: bytes) -> list:
 class FrameReader:
     """Incrementally decode UART frames from a persistent serial connection."""
 
-    def __init__(self):
+    def __init__(self, validate_crc=False):
         self.buffer = b''
+        self.validate_crc = validate_crc
 
     def feed(self, data):
         self.buffer += data
-        responses, self.buffer = extract_responses(self.buffer)
+        responses, self.buffer = extract_responses(self.buffer, self.validate_crc)
         return responses
 
 def response_matches_command(response, command):
@@ -2014,27 +2024,90 @@ def connect(ser, baud_arg):
     return True
 
 
-def cmd_errors(sd_path, as_json=False, tags=None, summary=False, order='time'):
-    """Read SD error history without opening a device connection."""
+def read_uart_error_log(ser, tag, timeout=5.0):
+    """Read a complete stored stream; UART silence is not an end marker."""
+    command = f'G F &{tag}'
+    records = []
+    reader = FrameReader(validate_crc=True)
+    old_timeout = ser.timeout
+    complete = False
+    try:
+        ser.reset_input_buffer()
+        frame = build_q_frame(command)
+        if ser.write(frame) != len(frame):
+            raise RuntimeError('could not send stored-log request')
+        ser.flush()
+        deadline = time.monotonic() + timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError(f'timed out before end marker ({len(records)} records received)')
+            ser.timeout = min(0.1, remaining)
+            for response in reader.feed(ser.read(4096)):
+                if response_matches_command(response, command):
+                    if response['type'] == 'E':
+                        raise RuntimeError(response['payload'].decode('ascii', errors='replace'))
+                    continue
+                if response['type'] != 'K' or not response['payload'].startswith(tag.encode()):
+                    continue
+                kind, value = parse_error_log_payload(response['payload'], tag)
+                deadline = time.monotonic() + timeout
+                if kind == 'end':
+                    if value != len(records):
+                        raise RuntimeError(f'end marker reports {value} records, received {len(records)}')
+                    complete = True
+                    return {'tag': tag, 'source': LOG_LAYOUTS[tag][0], 'transport': 'uart',
+                            'capacity': LOG_LAYOUTS[tag][2], 'records': records,
+                            'warnings': error_log_warnings(tag, records)}
+                if kind == 'record':
+                    records.append(value)
+                    if len(records) > LOG_LAYOUTS[tag][2]:
+                        raise RuntimeError('received more records than the log capacity')
+                # Both data and inter-record K frames wait for immediate UO.
+                # It releases the firmware's ZRO gate; the final marker closes
+                # the reader itself and needs no acknowledgement.
+                if ser.write(b'UO') != 2:
+                    raise RuntimeError('could not acknowledge stored-log frame')
+                ser.flush()
+    finally:
+        ser.timeout = old_timeout
+        if not complete:
+            # Close only the stored-stream reader, including on Ctrl-C. Do not
+            # leave firmware transmitting after a failed host-side decode.
+            try:
+                send_cmd(ser, command + ' 0000', timeout=0.5, quiet=True)
+            except (OSError, RuntimeError):
+                pass
+
+
+def cmd_errors(sd_path=None, as_json=False, tags=None, summary=False, order='time', ser=None, timeout=5.0):
+    """Read SD or UART history and render the same decoded records."""
     logs = []
     errors = []
-    try:
-        paths = find_error_logs(sd_path)
-    except (OSError, ValueError) as e:
-        paths = []
-        errors.append(str(e))
-
-    if tags and paths:
-        missing = set(tags) - {path.stem.upper() for path in paths}
-        if missing:
-            errors.append('Requested logs not found: ' + ', '.join(sorted(missing)))
-        paths = [path for path in paths if path.stem.upper() in tags]
-
-    for path in paths:
+    if sd_path is not None:
         try:
-            logs.append(read_error_log(path))
+            paths = find_error_logs(sd_path)
         except (OSError, ValueError) as e:
+            paths = []
             errors.append(str(e))
+
+        if tags and paths:
+            missing = set(tags) - {path.stem.upper() for path in paths}
+            if missing:
+                errors.append('Requested logs not found: ' + ', '.join(sorted(missing)))
+            paths = [path for path in paths if path.stem.upper() in tags]
+
+        for path in paths:
+            try:
+                logs.append(read_error_log(path))
+            except (OSError, ValueError) as e:
+                errors.append(str(e))
+    else:
+        for tag in dict.fromkeys(tags or sorted(LOG_LAYOUTS)):
+            try:
+                logs.append(read_uart_error_log(ser, tag, timeout))
+            except (OSError, RuntimeError, ValueError) as e:
+                errors.append(f'{tag}: {e}')
 
     if as_json:
         result = {'logs': logs, 'errors': errors}
@@ -2051,7 +2124,8 @@ def cmd_errors(sd_path, as_json=False, tags=None, summary=False, order='time'):
             records = [record for log in logs for record in log['records']]
             if order == 'time':
                 records.sort(key=lambda record: record['timestamp'])
-            print(f"Read {len(records)} records from {len(logs)} log files")
+            origin = 'log files' if sd_path is not None else 'EEPROM logs'
+            print(f"Read {len(records)} records from {len(logs)} {origin}")
             if records and summary:
                 print(f"{'Log':3}  {'Var':3}  {'Value':10}  {'Records':>7}  {'First':16}  {'Last':16}  Description")
                 for group in summarize_error_logs(logs):
@@ -2085,7 +2159,7 @@ Commands:
   caps                          Query variable limits from device
   custom-settings               Show Airbreak custom menu metadata
   calibration eeprom            Run stock-firmware EEPROM/SD maintenance
-  errors --sd PATH              Read Air 10 error logs from an SD card (offline)
+  errors [--sd PATH]             Read Air 10 error logs from the device or an SD card
 
 Groups: """ + ', '.join(sorted(GROUPS.keys())) + """
 
@@ -2175,15 +2249,17 @@ Examples:
     p_caps = sub.add_parser('caps', help='Query variable values and limits from device')
     p_caps.add_argument('targets', nargs='*', help='Variable names, group names, or "all" (default: all)')
 
-    p_errors = sub.add_parser('errors', help='Read Air 10 error logs from an SD card (offline)')
-    p_errors.add_argument('--sd', required=True, type=Path, metavar='PATH',
+    p_errors = sub.add_parser('errors', help='Read Air 10 error logs from the device or an SD card')
+    p_errors.add_argument('--sd', type=Path, metavar='PATH',
                           help='SD-card root, SETTINGS directory, or one TAG.log file')
-    p_errors.add_argument('--json', action='store_true', help='Print records and file metadata as JSON')
+    p_errors.add_argument('--json', action='store_true', help='Print records and log metadata as JSON')
     p_errors.add_argument('--logs', nargs='+', type=str.upper, choices=sorted(LOG_LAYOUTS), metavar='TAG',
                           help='Only read selected logs, for example ERR TRR TXC')
     p_errors.add_argument('--summary', action='store_true', help='Group records by code with counts and date ranges')
     p_errors.add_argument('--order', choices=['time', 'record'], default='time',
                           help='Sort by timestamp or retain write order within each log (default: time)')
+    p_errors.add_argument('--timeout', type=float, default=5.0, metavar='SECONDS',
+                          help='Maximum wait between stored-log responses over UART (default: 5)')
 
     sub.add_parser('custom-settings',
                    help='Show Airbreak custom variable metadata')
@@ -2216,7 +2292,7 @@ Examples:
     if args.command == 'known':
         return cmd_known(args.action, args.pattern)
 
-    if args.command == 'errors':
+    if args.command == 'errors' and args.sd is not None:
         return cmd_errors(args.sd, args.json, args.logs, args.summary, args.order)
 
     if args.command == 'calibration' and args.calibration_command == 'eeprom':
@@ -2238,15 +2314,18 @@ Examples:
         print("[!] --port is required for this command")
         return 1
 
-    if args.command == 'stream':
-        if args.duration is not None and args.duration <= 0:
+    if args.command in ('stream', 'errors'):
+        if args.command == 'stream' and args.duration is not None and args.duration <= 0:
             print("[!] --duration must be greater than zero")
             return 1
+        if args.command == 'errors' and not 0 < args.timeout < float('inf'):
+            print("[!] --timeout must be a finite number greater than zero", file=sys.stderr)
+            return 1
         if args.port.startswith('ecp:'):
-            print("[!] stream requires a live device")
+            print(f"[!] {args.command} requires a live device", file=sys.stderr)
             return 1
         if args.port.startswith('tcp:') and args.tcp_mode == 'text':
-            print("[!] stream cannot use AirBridge text mode; use --tcp-mode transparent")
+            print(f"[!] {args.command} cannot use AirBridge text mode; use --tcp-mode transparent", file=sys.stderr)
             return 1
 
     if args.command == 'custom-settings' and args.port.startswith('ecp:'):
@@ -2261,12 +2340,15 @@ Examples:
             return 1
     elif args.port.startswith('tcp:'):
         from tcp_serial import open_tcp
-        ser = open_tcp(args.port, args.tcp_mode, timeout=1.0)
+        with redirect_stdout(sys.stderr if args.command == 'errors' and args.json else sys.stdout):
+            ser = open_tcp(args.port, args.tcp_mode, timeout=1.0)
     else:
         ser = serial.Serial(args.port, 57600, timeout=1.0)
 
     try:
-        if not connect(ser, args.baud):
+        with redirect_stdout(sys.stderr if args.command == 'errors' and args.json else sys.stdout):
+            connected = connect(ser, args.baud)
+        if not connected:
             return 1
 
         if args.command == 'info':
@@ -2287,6 +2369,10 @@ Examples:
 
         elif args.command == 'stream':
             return cmd_stream(ser, args.tags, raw=args.raw, duration=args.duration)
+
+        elif args.command == 'errors':
+            return cmd_errors(as_json=args.json, tags=args.logs, summary=args.summary,
+                              order=args.order, ser=ser, timeout=args.timeout)
 
         elif args.command == 'dump':
             data = cmd_dump(ser, args.groups, args.exclude_groups, args.exclude_vars)

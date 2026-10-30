@@ -44,7 +44,7 @@ Reads and writes variables as raw or scaled values, saves and restores
 configuration snapshots, decodes live streams, and queries variable limits and
 custom-setting metadata. Provides EEPROM backup, restore, and maintenance
 operations, offline variable lookup, SD-card settings-file editing, and Air 10
-SD error-log reading.
+error-log reading from EEPROM over UART or from an SD card.
 
 ## Options
 
@@ -245,20 +245,23 @@ resmed_config.py -p /dev/ttyACM0 custom-settings
 ### errors
 
 ```text
-errors --sd PATH [--logs TAG ...] [--summary] [--order time|record] [--json]
+errors [--sd PATH] [--logs TAG ...] [--summary] [--order time|record] [--json] [--timeout SECONDS]
 ```
 
-Read Air 10 fault and activity history from SD-card log files, without a
-device connection. `PATH` accepts the card root, its `SETTINGS` directory,
-or a single `.log` file.
+Read Air 10 fault and activity history from the device's EEPROM using `-p PORT`.
+For AirBridge, use `--tcp-mode transparent`.
+
+Use `--sd PATH` to read SD-card log files instead, without a device connection.
+`PATH` accepts the card root, its `SETTINGS` directory, or a single `.log` file.
 
 | Option | Meaning | Default |
 |--------|---------|---------|
-| `--sd PATH` | Log file or directory to read | Required |
+| `--sd PATH` | Read a log file or directory instead of the device | Off |
 | `--logs TAG ...` | Select logs by name, case-insensitive | All available logs |
 | `--summary` | Show one row per code, with record count and first/last timestamps | Off |
 | `--order time\|record` | Sort by date, or keep write order within each log | `time` |
-| `--json` | Write records, file metadata, warnings, and errors as JSON to stdout | Off |
+| `--json` | Write records, log metadata, warnings, and errors as JSON to stdout | Off |
+| `--timeout SECONDS` | Maximum wait between log responses over UART | `5` |
 
 `TAG` is the log filename without `.log`: use `ERR` for `ERR.log`, not
 `AER`. The `Var` column names the variable recorded in that log; for example,
@@ -276,7 +279,14 @@ or a single `.log` file.
 | `ZRL` | Saved system-error state |
 | `DLL` | Therapy and mask-on/off transitions, dial and button actions, menu navigation, SD-card insertion/removal, and humidifier state changes |
 
-Summarize faults without listing the activity log:
+Read selected logs from the device:
+
+```sh
+resmed_config.py -p /dev/ttyACM0 errors --logs ERR TRR TXC
+resmed_config.py -p tcp:airbridge --tcp-mode transparent errors --json > errors.json
+```
+
+Summarize faults from an SD card without listing the activity log:
 
 ```sh
 resmed_config.py errors --sd /media/RESMED --logs ABR ERR TXC TXH TXE TXW TRR --summary
@@ -294,11 +304,12 @@ sequence when the clock has been changed. Only retained history is available;
 the device overwrites the oldest records when a log fills. Summary counts
 refer to stored records, not a sum of `NOC`.
 
-JSON retains per-file write order regardless of `--order`. With `--summary`,
+JSON retains per-log write order regardless of `--order`. With `--summary`,
 it includes both individual records and grouped counts.
 
-Unreadable or invalid files and missing requested logs produce exit status
-`1`; other selected files are still read.
+Unreadable or invalid files, missing requested logs, and failed or incomplete
+UART transfers produce exit status `1`. Other selected logs are still read;
+incomplete logs are not included in the results.
 
 ### calibration eeprom
 
