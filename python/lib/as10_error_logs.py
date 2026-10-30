@@ -63,11 +63,17 @@ ERROR_CODES = {
     },
     'AER': {
         0x27FC: 'Numeric variable read before ready',  # 0806B348, vtable +84
+        # 080D2892: UART1 receive result other than success or pending.
+        # 0808686C includes inactive receiver and receive-budget exhaustion.
+        0x281E: 'Peripheral UART receive failed',
+        0x2825: 'Log copy to SD incomplete',  # 080C7B20 -> 080C7436
         0x2835: 'Timed-task/IRQ CPU load limit reached',  # 0808B45E
+        0x283C: 'EDF file operation failed',  # 080D126C, file state 2
         0x284C: 'Startup: unrecognized saved restart state',  # 0808C7D8
         0x284E: 'Startup: backup register 9 not clear',  # 0808C876
         0x284F: 'Non-numeric time string',  # 08070E84
         0x2855: 'Low-pressure/disconnected-tube alarm',  # 080E5A90
+        0x28A7: 'Peripheral response opcode mismatch',  # 080D2892
         0x28CB: 'EDF write smaller than one record',  # 080CC520
         0x28D1: 'EEPROM session file validation failed; recreating storage',  # 0809C150
         0x28D2: 'EEPROM session file read failed during validation',
@@ -90,6 +96,11 @@ ERROR_CODES = {
         0x2905: 'SD card selection failed before read',  # 0808DD32
         0x2928: 'SD identification file not ready for truncation',  # 080F6AE8
         0x2929: 'SD identification file truncation: unexpected writer state',
+        # 08094E4E selects by path and operation; the table at 20000000 is
+        # decompressed during startup. These entries agree in 0302..0402.
+        0x2952: 'SD DATALOG file open failed',
+        0x2969: 'SD SETTINGS log write failed',
+        0x29AE: 'SD backup completion timed out (30 s)',  # 080C8558
         0x29B0: 'SD data CRC error during write',  # 0808E6CC
         # 0808C7D8 translates saved BKP10R states, not new faults at log time.
         0x29B6: 'Startup: saved fatal-error state',
@@ -99,6 +110,7 @@ ERROR_CODES = {
         0x29BC: 'Startup: saved BusFault',
         0x29BD: 'Startup: saved UsageFault',
         0x29BE: 'Startup: previous initialization incomplete',
+        0x29C3: 'Chinese and Japanese font groups enabled together',  # 0806B158
     },
     'DLA': {
         # 0807A804: BPF raw thresholds with hysteresis, not an on/off command.
