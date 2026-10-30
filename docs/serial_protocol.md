@@ -26,7 +26,7 @@ CRC:
 
 | Type | Wire bytes | Purpose |
 |------|------------|---------|
-| `O` | `0x55 0x4F` | Abort an active stored-stream transfer and reset the parser |
+| `O` | `0x55 0x4F` | Acknowledge a stored-stream frame and reset the parser |
 | `P` | `0x55 0x50` | Parser reset |
 
 Immediate `O` is distinct from the full `O` frame used by the patched SX577/SX585
@@ -44,7 +44,7 @@ bootloader.
 | `L` | device -> host | full | Live stream report |
 | `f` | host -> bootloader | full | Firmware transfer frame |
 | `O` | host <-> patched SX577/SX585 bootloader | full | Firmware dump extension |
-| `O` | host -> device | immediate | Stored-stream abort and parser reset |
+| `O` | host -> device | immediate | Stored-stream acknowledgement and parser reset |
 | `P` | host -> device | immediate | Parser reset |
 | `P` | bootloader -> host | full | Flash erase progress |
 | `T` | -- | -- | Reserved; rejected with `0x6011` |
@@ -362,8 +362,12 @@ changes at noon: before noon it is the previous calendar date, and from noon it
 is the current date. Firmware seeks using the difference from the current
 therapy day, then compares the resolved date of each record.
 
-A new `G F` request closes the previous reader. Immediate `O` aborts an active
-transfer. The transfer timeout uses `ATO`.
+A new `G F` request closes the previous reader. After each data or inter-record
+`K` frame, the host must send immediate `O` (`UO`, without length or CRC) before
+the device sends the next frame. The final end marker needs no acknowledgement.
+While a transfer is active (`ZLB`), `O` sets `ZRO`; the reader consumes and clears
+that flag to continue. Missing acknowledgement closes the reader after `ATO`
+seconds. To cancel a transfer explicitly, use `G F &TAG 0000`.
 
 `STR.ssn`, `NPD`, and `NPA` signals are read with `G V`, not `G F`.
 
@@ -380,7 +384,7 @@ The spaces show field boundaries and are not transmitted.
 | Field | Width | Description |
 |-------|-------|-------------|
 | `NAME` | 3 | Stored stream identifier |
-| `SSSSS` | 5 | Sequence number, starting at `00000` |
+| `SSSSS` | 5 | Frame sequence, reset to `00000` after an inter-record marker |
 | `DDDD` | 4 | Record therapy-day index |
 | `OOOOO` | 5 | Record offset; `00000` for whole-record output |
 | `DATA` | variable | Fields serialized according to the g[19] descriptor |
@@ -390,13 +394,18 @@ The transfer uses these control payloads:
 ```
 NAMEFFFFFDDDD00001
 NAME00000FFFF00000
-NAME99999FFFFNNNN
+NAME99999FFFF0NNNN
 ```
 
-The first marks transfer start and carries the reader's day cursor. The second
+The first is emitted between records and carries the reader's day cursor. The second
 ends a transfer with no selected records. The third ends a nonempty transfer;
 `NNNN` is the selected record count. `FFFF` is a control marker in the final two
 forms, not a record date.
+
+For the g[19] error logs, `DATA` contains `UDT` (4 hex digits), `UTT` (3),
+`NOC` (4), and the source value at its descriptor's hexadecimal width
+(for example, `SYT` uses 3 digits). Use `UDT` and `UTT` for the
+record's calendar date and minute of day, not the transfer's `DDDD` field.
 
 ## Stored Signal Query
 
