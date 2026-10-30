@@ -13,16 +13,21 @@ enum button_event {
     BUTTON_ENCODER_HOLD = 0x14,
 };
 
+enum button_hook_flags {
+    BUTTON_HOOK_CONSUME = 1,
+    BUTTON_HOOK_AT_THRESHOLD = 2,
+};
+
 /* Called in the GUI input task. Return nonzero when the action was handled;
  * a consuming registration then suppresses the corresponding stock event.
- * held_ms is supplied for the two release-triggered HOLD events, zero otherwise.
+ * held_ms is supplied for the two HOLD events, zero otherwise.
  */
 typedef int (*button_handler_t)(unsigned event, unsigned held_ms);
 
 struct button_hook_entry {
     button_handler_t handler;
     unsigned short event;
-    unsigned short consume;
+    unsigned short flags;
     unsigned hold_ms;
 };
 

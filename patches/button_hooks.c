@@ -55,6 +55,11 @@ struct button_runtime {
     u8 debounced;
     u8 pending_event;
     volatile u8 updating;
+    unsigned reported_ms;
+    unsigned pending_from_ms;
+    unsigned gesture_id;
+    unsigned pending_id;
+    unsigned consumed_id;
 };
 
 extern struct panel *front_panel_input_init(struct panel *panel);
@@ -77,6 +82,9 @@ static void reset_gesture(struct button_runtime *state)
 {
     state->held_ms = state->pending_ms = 0;
     state->buttons = state->pending_event = state->debounced = 0;
+    state->reported_ms = state->pending_from_ms = 0;
+    state->pending_id = 0;
+    ++state->gesture_id;
     /* Ignore keys already held at boot or when the GUI resets its input. */
     state->cancelled = 1;
 }
@@ -114,16 +122,20 @@ static void update(struct panel *panel, unsigned elapsed_ms)
     if (panel->calibration) {
         reset_gesture(state);
     } else if (!pressed) {
-        if (!state->cancelled && state->debounced) {
+        if (state->debounced &&
+                (state->buttons == KEY_HOME || state->buttons == KEY_ENCODER)) {
             state->pending_event = state->buttons == KEY_HOME ?
                 BUTTON_HOME_HOLD : BUTTON_ENCODER_HOLD;
-            state->pending_ms = state->held_ms + elapsed_ms;
+            state->pending_ms = state->cancelled ? 0 : state->held_ms + elapsed_ms;
+            state->pending_from_ms = state->reported_ms;
+            state->pending_id = state->gesture_id;
         }
         state->buttons = state->debounced = state->cancelled = 0;
-        state->held_ms = 0;
+        state->held_ms = state->reported_ms = 0;
     } else {
         if (!state->buttons) {
             state->buttons = pressed;
+            ++state->gesture_id;
         } else {
             state->held_ms += elapsed_ms;
         }
@@ -156,21 +168,28 @@ struct panel *start(struct panel *panel)
     state->methods[PANEL_CONFIGURE] = (method_t)configure;
     state->methods[PANEL_CLEAR] = (method_t)clear_pending;
     state->updating = 0;
+    state->gesture_id = state->consumed_id = 0;
     reset_gesture(state);
     panel->methods = state->methods;
     return panel;
 }
 
-static int dispatch(unsigned event, unsigned held_ms)
+/* Threshold handlers see only the interval since the previous GUI poll, so
+ * each registration fires once even when several have different thresholds.
+ * Release handlers retain the full duration of the completed gesture.
+ */
+static int dispatch(unsigned event, unsigned from_ms, unsigned held_ms, int released)
 {
     int consumed = 0;
     if (!event)
         return 0;
     for (const struct button_hook_entry *entry = button_hook_registry;
             entry->handler; ++entry) {
-        if (entry->event == event && held_ms >= entry->hold_ms) {
+        if (entry->event == event && held_ms >= entry->hold_ms &&
+                ((entry->flags & BUTTON_HOOK_AT_THRESHOLD) ?
+                    entry->hold_ms > from_ms : released)) {
             int handled = entry->handler(event, held_ms);
-            consumed |= handled && entry->consume;
+            consumed |= handled && (entry->flags & BUTTON_HOOK_CONSUME);
         }
     }
     return consumed;
@@ -197,15 +216,32 @@ void button_hooks_take_event(struct panel *panel, u8 *event)
     }
     ((void (*)(struct panel *, u8 *))state->original[PANEL_TAKE])(panel, event);
     unsigned held_ms = state->pending_ms;
+    unsigned from_ms = state->pending_from_ms;
     unsigned held_event = state->pending_event;
+    unsigned consumed = state->pending_id == state->consumed_id;
     state->pending_event = 0;
+    unsigned active_event = 0;
+    unsigned active_ms = state->held_ms;
+    unsigned active_from_ms = state->reported_ms;
+    unsigned gesture_id = state->gesture_id;
+    if (!state->cancelled && state->debounced) {
+        active_event = state->buttons == KEY_HOME ? BUTTON_HOME_HOLD : BUTTON_ENCODER_HOLD;
+        state->reported_ms = active_ms;
+    }
     unsigned calibration = panel->calibration;
     irq_restore(saved);
 
     if (calibration)
         return;
-    if (dispatch(held_event, held_ms) && *event == held_event - 0x10)
+    consumed |= dispatch(held_event, from_ms, held_ms, 1);
+    if (consumed && held_event && *event == held_event - 0x10)
         *event = 0;
-    if (dispatch(*event, 0))
+    if (dispatch(active_event, active_from_ms, active_ms, 0)) {
+        /* The producer may have released the key while the handler ran. Keep
+         * consumption attached to that gesture, not a subsequent press/reset.
+         */
+        state->consumed_id = gesture_id;
+    }
+    if (dispatch(*event, 0, 0, 1))
         *event = 0;
 }

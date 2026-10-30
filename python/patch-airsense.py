@@ -175,6 +175,8 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self.variable_callbacks = {}
         self.variable_callback_handlers = {}
         self.button_handlers = {}
+        self.keep_backlight_enabled = False
+        self.keep_backlight_requests = {}
         self._init_compiled_payloads()
         self.custom_patch_settings_init()
 
@@ -720,8 +722,9 @@ class ASFirmwarePatches(CompiledPayloadMixin):
                        (stock_count, len(callbacks), address))
         return PatchOutcome.ok(None, *details)
 
-    def button_hook_add(self, event, payload, symbol, *, hold_ms=None, consume=False):
-        """Bind a physical button event to a payload handler; holds fire on release."""
+    def button_hook_add(self, event, payload, symbol, *, hold_ms=None, consume=False,
+                        on_release=True):
+        """Bind a button event; holds can fire on release or once at their threshold."""
         if self.asf.cdx_ver not in self.BUTTON_HOOK_SITES:
             raise ValueError("button hooks: unsupported CDX version %s" % self.asf.cdx_ver)
         event_name = event
@@ -735,6 +738,8 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         else:
             if hold_ms is not None:
                 raise ValueError("button hooks: hold_ms applies only to home_hold/encoder_hold")
+            if not on_release:
+                raise ValueError("button hooks: on_release applies only to home_hold/encoder_hold")
             hold_ms = 0
         if event == 7 and consume:
             raise ValueError("button hooks: Home+encoder must remain available to firmware")
@@ -744,10 +749,11 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         handler = self._elf_symbol_addr(elf_path, symbol) | 1
         if (event, handler) in self.button_handlers:
             raise ValueError("button hooks: duplicate handler for %s" % event_name)
-        if consume and any(code == event and flags for (code, _), (flags, _) in
+        if consume and any(code == event and flags & 1 for (code, _), (flags, _) in
                            self.button_handlers.items()):
             raise ValueError("button hooks: %s already has a consuming handler" % event_name)
-        self.button_handlers[event, handler] = (int(bool(consume)), hold_ms)
+        flags = int(bool(consume)) | (0 if on_release else 2)
+        self.button_handlers[event, handler] = (flags, hold_ms)
 
     def patch_button_hooks(self):
         """Emit the completed registry and install shared panel/GUI input hooks."""
@@ -763,8 +769,8 @@ class ASFirmwarePatches(CompiledPayloadMixin):
 
         # Feature payloads are already installed. Registry pointers therefore
         # refer to their final linked functions, with no feature-specific ABI.
-        registry = b''.join(struct.pack('<IHHI', handler, event, consume, hold_ms)
-                            for (event, handler), (consume, hold_ms) in self.button_handlers.items())
+        registry = b''.join(struct.pack('<IHHI', handler, event, flags, hold_ms)
+                            for (event, handler), (flags, hold_ms) in self.button_handlers.items())
         registry += bytes(12)
         off = self.asf.find_ccx_ff_range_backwards(len(registry), alignment=4)
         self.asf.patch(registry, off, checkempty=True)
@@ -2456,24 +2462,66 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         hw2 = 0xD000 | (J1 << 13) | (J2 << 11) | imm11
         return struct.pack('<HH', hw1, hw2)
 
-    def patch_graph_keep_screen_on(self):
-        """Keep the screen awake during therapy while Monitoring is enabled."""
+    def enable_keep_backlight(self):
+        """Enable the standalone encoder hold; installation follows registration."""
+        self.keep_backlight_enabled = True
+        return PatchOutcome.ok()
+
+    def keep_backlight_request_add(self, payload, symbol):
+        """Register a no-argument predicate returning nonzero to keep the screen on."""
+        if payload not in self.applied_payloads:
+            raise ValueError("keep backlight: payload %s was not applied" % payload)
+        elf_path = self._require_versioned_artifact(payload, 'elf')
+        handler = self._elf_symbol_addr(elf_path, symbol) | 1
+        self.keep_backlight_requests.setdefault(handler, payload)
+        self.keep_backlight_enabled = True
+
+    def patch_keep_backlight(self):
+        """Install the shared timeout/LED hooks and the encoder-hold action."""
+        if not self.keep_backlight_enabled:
+            return PatchOutcome.skip("keep backlight not selected")
+        # PWM singleton constructor call, backlight timeout call.
         sites = {
-            '0302': 0x798a8,
-            '0305': 0x7a020,
-            '0306': 0x7a01c,
-            '0401': 0x7a01c,
-            '0402': 0x7a01c,
+            'SX584-0204': (0x55e74, 0x54390),
+            'SX584-0205': (0x55e74, 0x54390),
+            'SX567-0302': (0x7fe40, 0x798a8),
+            'SX567-0305': (0x805c8, 0x7a020),
+            'SX567-0306': (0x80548, 0x7a01c),
+            'SX567-0401': (0x80548, 0x7a01c),
+            'SX567-0402': (0x80548, 0x7a01c),
         }
-        site = sites.get(self._payload_version_key())
-        if site is None or 'graph' not in self.applied_payloads:
+        if self.asf.cdx_ver not in sites:
+            return PatchOutcome.skip("unsupported CDX version %s" % self.asf.cdx_ver)
+        name = 'keep_backlight'
+        data, _, elf_path = self._load_versioned_payload(name)
+        flash, _ = self._inject_payload(name, data)
+        details = [self._payload_detail(name, len(data), flash)]
+        if self.keep_backlight_requests:
+            registry = struct.pack('<%dI' % (len(self.keep_backlight_requests) + 1),
+                                   *self.keep_backlight_requests, 0)
+            off = self.asf.find_ccx_ff_range_backwards(len(registry), alignment=4)
+            self.asf.patch(registry, off, checkempty=True)
+            slot = self._elf_symbol_addr(elf_path, 'keep_backlight_requests')
+            self.asf.write_u32(slot - self.asf.FLASH_BASE, self.asf.FLASH_BASE + off)
+        for site, original, replacement in zip(
+                sites[self.asf.cdx_ver],
+                ('pwm_controller_init', 'backlight_output_timeout_update'),
+                ('keep_backlight_init', 'start')):
+            original = self._elf_symbol_addr(elf_path, original)
+            target = self._elf_symbol_addr(elf_path, replacement)
+            details.append(self._patch_thumb_bl_checked(
+                site, self._encode_thumb_bl(site, original), target, 'keep backlight'))
+        self.applied_payloads.add(name)
+        self.button_hook_add('encoder_hold', name, 'keep_backlight_toggle',
+                             consume=True, on_release=False)
+        return PatchOutcome.ok(None, *details)
+
+    def patch_graph_keep_screen_on(self):
+        """Request keep-awake during therapy while Monitoring is enabled."""
+        if 'graph' not in self.applied_payloads:
             return PatchOutcome.skip("graph payload not installed")
-        elf_path = self._require_versioned_artifact('graph', 'elf')
-        target = self._elf_symbol_addr(elf_path, 'graph_backlight_timeout')
-        detail = self._patch_thumb_bl_checked(
-            site, bytes.fromhex('00F079F8'), target,
-            'patch_graph_keep_screen_on: backlight timeout call')
-        return PatchOutcome.ok(None, detail)
+        self.keep_backlight_request_add('graph', 'graph_keep_backlight_requested')
+        return PatchOutcome.ok()
 
     def patch_font_repack(self):
         """Share identical glyph bitmaps and free the tails of their CDX areas."""
@@ -3168,6 +3216,8 @@ PATCH_PHASES = (
                   True, 'patch_defaults'),
         PatchSpec('patch-fw-backlight', 'Improve backlight adaptation to ambient light.',
                   True, 'patch_backlight_adapt'),
+        PatchSpec('patch-keep-backlight', 'Toggle screen keep-awake by holding the encoder.',
+                  True, 'enable_keep_backlight'),
         PatchSpec('patch-header-clock', 'Add a clock to the Home and therapy-screen headers.',
                   True, 'patch_header_clock'),
         PatchSpec('patch-target-rh',
@@ -3390,6 +3440,9 @@ def run_patcher(args, detail_log=None):
         args, detail_log)
     apply_reported_patch(
         'patch-variable-callbacks', patches.patch_variable_callbacks,
+        args, detail_log)
+    apply_reported_patch(
+        'keep-backlight', patches.patch_keep_backlight,
         args, detail_log)
     apply_reported_patch(
         'patch-button-hooks', patches.patch_button_hooks,

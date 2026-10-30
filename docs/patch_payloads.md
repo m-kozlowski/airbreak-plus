@@ -185,7 +185,7 @@ run. Current registered users are VID spoof and custom menu visibility.
 
 ## Button hooks
 
-`button_hook_add(event, payload, symbol, hold_ms=None, consume=False)` registers
+`button_hook_add(event, payload, symbol, hold_ms=None, consume=False, on_release=True)` registers
 a handler from an already injected payload. Finalization emits the registry and
 installs the standalone `button_hooks` payload only when handlers are registered.
 
@@ -195,10 +195,13 @@ installs the standalone `button_hooks` payload only when handlers are registered
 | `start_stop_hold` | Stock long Start/Stop event |
 | `clinical_menu` | Stock Home+encoder combination; observation only |
 | `aux_8`, `aux_9` | Stock events 8 and 9 on front-panel profiles providing them |
-| `home_hold`, `encoder_hold` | Release after a debounced standalone hold |
+| `home_hold`, `encoder_hold` | Debounced standalone hold; on release or at the configured threshold |
 
 `hold_ms` applies to `home_hold` and `encoder_hold`, defaulting to 3000 ms.
-Pressing another button cancels that hold until all buttons are released.
+With `on_release=False`, the handler runs once at the first GUI poll after the
+threshold is reached, without waiting for release. Pressing another button
+cancels pending hold actions until all buttons are released; an action that
+already ran is not undone.
 Input reset discards pending gestures and ignores buttons held across the reset.
 Rotary movement and UART-injected key events retain their stock paths.
 
@@ -210,17 +213,17 @@ int handler(unsigned event, unsigned held_ms);
 
 They run in registration order in the GUI input task, with interrupts restored,
 and should return promptly. `held_ms` contains the measured duration for the two
-release-triggered holds and zero for stock events. A nonzero return reports that
+holds and zero for stock events. A nonzero return reports that
 the action was handled. With `consume=True`, this suppresses the stock event or
 the hold's accompanying click; other registered observers still run. A zero
 return preserves stock behavior. Each event permits one consuming handler.
 Home+encoder always remains available to firmware.
 
-For example, a feature can register its release-triggered handler with:
+For example, a feature can register an action that fires after three seconds with:
 
 ```python
 self.button_hook_add('encoder_hold', payload, 'on_encoder_hold',
-                     hold_ms=3000, consume=True)
+                     hold_ms=3000, consume=True, on_release=False)
 ```
 
 The controller retains stock sampling, debounce and event storage. Additional

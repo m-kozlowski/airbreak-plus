@@ -87,6 +87,7 @@ All patches below are **enabled by default** unless noted.
 | Bypass PSU check | Disables power supply ID check at startup | `--patch-bypass-psuid` |
 | Color palette | Applies custom color scheme | `--patch-custom-palette` |
 | [Backlight adaptation](features/backlight.md) | Continuously adjusts LCD and button brightness to ambient light | `--patch-fw-backlight` |
+| [Keep backlight](features/general.md#keep-backlight) | Hold the dial to toggle screen keep-awake | `--patch-keep-backlight` |
 | [Header clock](features/general.md#header-clock) | Adds Clock in Configuration to show time on Home and therapy screens | `--patch-header-clock` |
 | [Custom settings](../custom_settings.md) | Exposes menu settings for active compiled payloads and optional features | `--patch-custom-settings` |
 | [Target humidity](features/general.md#target-humidity) | Adjusts target humidity in Auto and Manual; adds a menu control with custom settings | `--patch-target-rh PERCENT\|y\|n` (default / `y`: 85%, `n`: disabled) |
@@ -112,7 +113,8 @@ flow and pressure graph. Without custom settings, the graph remains enabled.
 
 Optionally enable `--patch-graph-keep-screen-on Y` (or
 `PATCH_GRAPH_KEEP_SCREEN_ON=1`) to keep the screen awake during therapy while
-Monitoring is On. This option requires the graph patch and is off by default.
+Monitoring is On. This option requires the graph patch, includes the
+[dial shortcut](features/general.md#keep-backlight), and is off by default.
 
 Example with custom VAuto:
 ```

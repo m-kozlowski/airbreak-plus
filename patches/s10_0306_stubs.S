@@ -108,6 +108,9 @@ NSTUB(0x0807A2A4, backlight_state_machine)
 NSTUB(0x0807A112, backlight_output_timeout_update)
 NSTUB(0x0807A0A4, backlight_outputs_apply_state)
 NSTUB(0x0806CFDA, millisecond_timer_init)
+NSTUB(0x0806D002, millisecond_timer_expired)
+NSTUB(0x080803D0, pwm_controller_init)
+NSTUB(0x0808053A, pwm_controller_get)
 
 // LCD driver
 NSTUB(0x08080E37, lcd_write_cmd)

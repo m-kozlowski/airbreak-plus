@@ -46,6 +46,12 @@ NSTUB(0x080C8C5D, asv_task_function)
 
 // Backlight
 NSTUB(0x080546AF, backlight_state_machine)
+NSTUB(0x080544CB, backlight_output_timeout_update)
+NSTUB(0x0805445F, backlight_outputs_apply_state)
+NSTUB(0x08046083, millisecond_timer_init)
+NSTUB(0x080460AB, millisecond_timer_expired)
+NSTUB(0x08055CFD, pwm_controller_init)
+NSTUB(0x08055E67, pwm_controller_get)
 
 // LCD
 NSTUB(0x080634EF, lcd_write_cmd)

@@ -115,6 +115,12 @@ Higher targets increase condensation risk; 100% targets saturation.
 Enable **Clock** in clinical **Configuration** to replace the Home and active
 therapy-screen titles with the device time in 24-hour `HH:MM` format.
 
+## Keep Backlight
+
+Hold the dial for three seconds to toggle screen keep-awake.
+Home and dial illumination blink once when enabled and twice when disabled.
+The switch works during therapy and in standby, and starts Off after reboot.
+
 ## Motor Runtime Warning
 
 The patch removes the "Motor life exceeded" nag screen that stock firmware can
