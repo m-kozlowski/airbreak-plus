@@ -54,6 +54,9 @@ with `--baud`. Transfer framing is described in the
 ```
 
 Flash CMX on Air 10 or CCX+CDX on S9 from the complete internal-flash `IMAGE`.
+To keep AirSense/AirCurve 10 settings, let the tool enter the bootloader.
+If the device is already in the bootloader, the tool cannot enable settings
+preservation.
 
 | Option | Meaning | Default |
 |--------|---------|---------|
@@ -63,6 +66,7 @@ Flash CMX on Air 10 or CCX+CDX on S9 from the complete internal-flash `IMAGE`.
 | `--force` | Permit flashing with invalid CRCs | Off |
 | `--dry-run` | Validate without writing; standalone blocks may require device identity | Off |
 | `--no-reset` | Skip the final reset | Off |
+| `--factory-reset` | Restore AirSense/AirCurve 10 settings to firmware defaults, retaining calibration and serial numbers | Off |
 
 ```sh
 resmed_flash.py -p /dev/ttyACM0 -f patched.bin
@@ -132,7 +136,7 @@ resmed_flash.py -p tcp:airbridge-host --info
 | `--tcp-mode MODE` | `raw` or `transparent` | `transparent` |
 | `--baud BAUD` | `auto`, `57600`, `115200`, or `460800` | `auto` |
 | `--completion-timeout SECONDS` | Wait for the device's final transfer status; S9 verification retains a minimum 15-second budget | `3` |
-| `--no-enter` | Use an already-running bootloader | Off |
+| `--no-enter` | Use an already-running bootloader; settings may be reset | Off |
 | `--no-wait` | Fail immediately if the device is unavailable | Off |
 | `--timing` | Print transfer timing statistics | Off |
 | `-h`, `--help` | Show help | -- |

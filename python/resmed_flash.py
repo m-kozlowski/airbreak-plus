@@ -37,7 +37,7 @@ PLATFORMS = {
     'SX577': {'baud_method': 'bdd', 'default_baud': 57600,
               'baud_rates': {57600: '0000', 115200: '0001', 460800: '0002'},
               'enter_cmd': 'P S #BLL 0001', 'reset_cmd': 'P S #RES 0001',
-              'flash_status': 'BLE'},
+              'flash_status': 'BLE', 'rop_settings': True},
     'SX585': {'baud_method': 'bdd', 'default_baud': 57600,
               'baud_rates': {57600: '0000', 115200: '0001', 460800: '0002'},
               'enter_cmd': 'P S #BLL 0001', 'reset_cmd': 'P S #RES 0001',
@@ -472,7 +472,8 @@ def connect_device(ser, baud_arg, wait=True):
     return bid
 
 
-def enter_bootloader(ser, max_retries=3, enter_cmd='P S #BLL 0001', platform=None):
+def enter_bootloader(ser, max_retries=3, enter_cmd='P S #BLL 0001', platform=None,
+                     preserve_settings=False):
     """Enter bootloader mode. Returns bootloader BID on success, None on failure."""
     for retry in range(max_retries):
         if retry > 0:
@@ -504,6 +505,16 @@ def enter_bootloader(ser, max_retries=3, enter_cmd='P S #BLL 0001', platform=Non
                 continue
 
         # BLS=0 (CDX running)
+        if preserve_settings and bls == 0:
+            # Calibration only exits through Standby; it rejects ROP=5.
+            if query_boot_var(ser, 'ZRM') == 6:
+                send_cmd(ser, 'P S #ROP 0000', quiet=True)
+                continue
+            print("[*] Preserving settings (ROP=5)...")
+            send_cmd(ser, 'P S #ROP 0005', quiet=True)
+            if query_boot_var(ser, 'ROP') != 5:
+                raise RuntimeError('Cannot set ROP=5 to preserve settings')
+
         print("[*] Triggering reboot...")
         reset_input_buffer(ser)
         ser.write(build_q_frame(enter_cmd))
@@ -526,6 +537,7 @@ def enter_bootloader(ser, max_retries=3, enter_cmd='P S #BLL 0001', platform=Non
                     return bid
                 break
             elif bls == 0:
+                # BLL is rejected during UpgradePrep; retry until Upgrade is ready.
                 ser.write(build_q_frame(enter_cmd))
                 ser.flush()
                 time.sleep(0.3)
@@ -1007,6 +1019,8 @@ Examples:
     parser.add_argument('--dry-run', action='store_true', help='Validate only, do not flash')
     parser.add_argument('--no-reset', action='store_true', help='Do not reset device after flash')
     parser.add_argument('--no-enter', action='store_true', help='Skip bootloader entry')
+    parser.add_argument('--factory-reset', action='store_true',
+                        help='Reset AirSense/AirCurve 10 settings to firmware defaults (default: preserve)')
     parser.add_argument('--info', action='store_true', help='Show device info and exit')
     parser.add_argument('--raw', action='store_true', help='Flash raw image smaller than block size')
     parser.add_argument('--no-wait', action='store_true', help='Fail immediately if device not found')
@@ -1231,6 +1245,10 @@ Examples:
         can_bdd = plat.get('baud_method', 'bdd') == 'bdd'
         flash_status = plat.get('flash_status')
 
+        preserve_settings = (not args.factory_reset and not args.no_enter
+                             and (_platform(device_bid) or {}).get('rop_settings', False)
+                             and any(block_id != 'BLX' for block_id, _, _ in jobs))
+
         if not args.no_enter:
             if ser.baudrate != default_baud:
                 if can_bdd:
@@ -1238,7 +1256,8 @@ Examples:
                 else:
                     ser.baudrate = default_baud
 
-            bl_bid = enter_bootloader(ser, enter_cmd=enter_cmd, platform=plat)
+            bl_bid = enter_bootloader(ser, enter_cmd=enter_cmd, platform=plat,
+                                      preserve_settings=preserve_settings)
             if not bl_bid:
                 return 1
 
@@ -1278,7 +1297,8 @@ Examples:
                     time.sleep(0.5)
                     if ser.baudrate != default_baud:
                         ser.baudrate = default_baud
-                    if not enter_bootloader(ser, 30, enter_cmd=enter_cmd, platform=plat):
+                    if not enter_bootloader(ser, 30, enter_cmd=enter_cmd, platform=plat,
+                                            preserve_settings=preserve_settings):
                         return 1
                     if can_bdd:
                         if args.baud == 'auto':
