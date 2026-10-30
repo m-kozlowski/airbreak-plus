@@ -9,7 +9,7 @@ ACC	S.PtAccess	PATIENT_ACCESS_TYPE	0x0216	0x0216	0x0234	Patient Access
 ADR		ALARM_DUR	0x0031	0x0031	0x0036	
 AEM					0x0173	Lumis SX584-020x exclusive
 AEP		AVG_EPR_PRESS	0x0044	0x0044	0x0049	Avg EPR Pressure
-AER		APP_ERR_ORI	0x01FB	0x01FB	0x0219	App Error Origin
+AER		APP_ERR_ORI	0x01FB	0x01FB	0x0219	Internal firmware check code recorded in the ERR stream; separate from LCD system-error numbers
 AES		ALARM_EVENT_TYPE			0x02E5	Lumis SX584-020x exclusive; Alarm event type; AEV signal
 AET		APN_EV_TYPE	0x0220	0x0220	0x0244	Apnea Event Type
 AEV			0x02C7	0x02C8	0x02FF	EDF event channel
@@ -166,7 +166,7 @@ EEP	S.AV.EPAP	SET_EEP	0x01E0	0x01E0	0x01FA	EPAP [cmH2O] (4.0 .. 15.0 step 0.2); 
 EGL			0x02DB	0x02DC	0x0314	EPR settings storage group
 EGT			0x013C	0x013C	0x014D	EGL EPR settings EEPROM group change tracker
 ELI			0x02D2	0x02D3	0x030A	EEPROM stream: ELV records
-ELV			0x01FC	0x01FC	0x021A	
+ELV			0x01FC	0x01FC	0x021A	Exception PC imported from BKP11R at startup for BKP10R reasons 0x0A..0x0E (NMI, HardFault, MemManage, BusFault, UsageFault); recorded in ELI
 EMS			0x0208	0x0208	0x0226	
 EPA	S.EPR.ClinEnable	EPR_ACCESS	0x0232	0x0232	0x0256	Clinical menu EPR master switch: 0=Off, 1=On; EPR requires both EPA and EPX enabled; Off also clears EPX; EPX/EPT/EPR are visible only when EPA is On and visible
 EPI	S.i.EPAP	IVAPS_EPAP	0x01E9	0x01E9	0x0203	EPAP [cmH2O] (2.0 .. 25.0 step 0.2); iVAPS EPAP
@@ -185,7 +185,7 @@ EX5	B5ETime.2s	B5_EXP_TIME	0x0085	0x0085	0x0091	Expiration Time 5-Breath [s]
 EXR			0x0016	0x0016	0x0017	
 EXT		EXPIRATION_TIME	0x0087	0x0087	0x0093	Expiration Time [s]
 EXW			0x0015	0x0015	0x0016	
-FAT			0x00D6	0x00D6	0x00E7	Abort-error value recorded by the ABR EEPROM stream
+FAT			0x00D6	0x00D6	0x00E7	Abort-error value recorded by the ABR EEPROM stream; startup imports the report_fatal_error detail saved in BKP13R, then clears that register
 FBD		FIRST_BREATH_DAY	0x00BE	0x00BE	0x00CF	First Breath Day
 FFL	FlowLim.2s	FUZZY_FLOW_LIM	0x0071	0x0071	0x0076	Fuzzy Flow Limit
 FGT		FG_TYPE	0x0001	0x0001	0x0001	FG Type
@@ -470,7 +470,7 @@ RMA	S.RampEnable	RAMP_CONTROL	0x0240	0x0240	0x0265	Ramp Enable
 RMM			0x026D	0x026E	0x0297	
 RMT	S.RampTime	RAMP_TIME	0x01EF	0x01EF	0x020B	Ramp Time
 RNM					0x0266	Lumis SX584-020x exclusive
-ROP		RUNNING_MODE	0x020E	0x020E	0x022C	Modes: 0000=Standby, 0001=Normal, 0002=Power Recovery, 0003=Power Save, 0004=Calibration, 0005=Upgrade; ROP=0004 requests calibration mode; Run Mode Request
+ROP		RUNNING_MODE	0x020E	0x020E	0x022C	Modes: 0000=Standby, 0001=Normal, 0002=Power Recovery, 0003=Power Save, 0004=Calibration, 0005=Upgrade; ROP=0004 requests calibration mode; Run Mode Request; retained across reset in CRC-protected BKP18R; ROP=0005 suppresses firmware-update-triggered settings reinitialization and product identity default restoration
 ROT			0x0251	0x0251	0x027B	CAL 0007 rotary result: 0001=negative delta, 0002=positive delta, reset to 0000 when the service stops; Rotary Encoder Position
 RPF		RECUR_PERIOD_ENABLE_FILTER	0x0238	0x0238	0x025D	Reminder recurrence enable: Filter (0000=Off, 0001=On)
 RPH		RECUR_PERIOD_ENABLE_TUBE	0x023A	0x023A	0x025F	Reminder recurrence enable: Tube (0000=Off, 0001=On)
@@ -586,7 +586,7 @@ TID		TIDAL_VOLUME	0x00A4	0x00A4	0x00B2	Vt [L] (0.00 .. 4.00 step 0.02); Tidal Vo
 TIP		TGT_INSP_PRES	0x003E	0x003E	0x0043	Pressure [cmH2O] (4.0 .. 30.0 step 0.2); Target IPAP
 TIT			0x015E	0x015E	0x0170	
 TLF		THERAPY_LED_ENABLE	0x0235	0x0235	0x025A	Therapy LED
-TMD			0x01BB	0x01BB	0x01D3	
+TMD			0x01BB	0x01BB	0x01D3	One-shot transport configuration: nonzero value is copied to BKP17R and TMD cleared; applied at next startup. Bits 0..1: 0=no proxy UART, 1=USART1 (internal cellular connection), 2=USART3 (external service connector), 3=invalid; 0x04=EEPROM proxy, 0x08=SD proxy, 0x10=initial SD proxy enable, 0x20=write-protected SD proxy mode. Binary service commands share the selected proxy UART; ordinary Q frames use the other UART
 TMM			0x0292	0x0293	0x02C8	
 TMU		TEMP_UNIT	0x022A	0x022A	0x024E	Temperature units: 0=degC, 1=degF; shared callback with HTS/HTF selects synchronization direction by TMU, not by the variable written: 0 copies converted HTS to HTF, 1 copies converted HTF to HTS; UART writes should target HTS for 0 or HTF for 1
 TPA		TUBE_POWER_APPLIED	0x0061	0x0061	0x0066	Tube Power Applied
@@ -732,7 +732,7 @@ ZPK			0x020C	0x020C	0x022A	SPM message-condition bitfield on SX567: b0=no SD car
 ZPM			0x001D	0x001D	0x001E	
 ZPP			0x01CF	0x01CF	0x01E7	Set Pressure [cmH2O] (0.0 .. 30.0 step 0.2)
 ZPR			0x019F	0x019F	0x01B4	CPU profiling update interval in ms, checked by Task40Ms; default 1000 ms
-ZPT			0x01A0	0x01A0	0x01B5	
+ZPT			0x01A0	0x01A0	0x01B5	Previous shutdown duration/status, imported from the signed low halfword of BKP12R before that register is cleared: 0=no saved duration, -1=shutdown started but not completed, positive=completed shutdown duration
 ZPU			0x01D0	0x01D0	0x01E8	Peak L03 CPU load; raw / 1000 = %
 ZPV			0x0289	0x028A	0x02BD	
 ZRA			0x026E	0x026F	0x0298	
