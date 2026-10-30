@@ -704,6 +704,10 @@ g[18]: 0x02B7:TIC  flags=ACT|VIS|EDT  callback=0  dependency=none
 | `ELI` | `ELV` records | `ELV` |
 | `ZRL` | Saved system-error records | `ZSE` (`SAVED_SYSTEM_ERROR`) |
 
+`SYS` and `SYT` codes are listed under [System errors](system_errors.md).
+Fatal-error details and exit reasons are listed under
+[RTC backup registers](backup_registers.md#exit-and-startup-diagnostics).
+
 At startup the firmware creates one runtime stream object for each entry. The
 object watches its trigger variable, serializes the configured field list, and
 stores bounded history records. The runtime record width is calculated from

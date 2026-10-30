@@ -269,14 +269,14 @@ Use `--sd PATH` to read SD-card log files instead, without a device connection.
 
 | Log | Contents |
 |-----|----------|
-| `ABR` | Fatal application errors |
+| `ABR` | Fatal application errors; see [BKP13R](../backup_registers.md#bkp13r-fatal-error-detail) |
 | `ERR` | Firmware diagnostic codes, including SD, storage, and restart errors |
 | `ELI` | Saved exception addresses |
 | `TXC` | Humidifier faults |
 | `TXH` | Heated-tube faults |
-| `TXE`, `TXW` | System faults |
+| `TXE`, `TXW` | System faults; see [System errors](../system_errors.md) |
 | `TRR` | Transient alarms and peripheral communication errors |
-| `ZRL` | Saved system-error state |
+| `ZRL` | Saved system-error state; see [Saved Restart Errors](../system_errors.md#saved-restart-errors) |
 | `DLL` | Therapy and mask-on/off transitions, dial and button actions, menu navigation, SD-card insertion/removal, and humidifier state changes |
 
 Read selected logs from the device:
@@ -414,4 +414,5 @@ resmed_config.py -p ecp:/sdcard/SETTINGS/ get PNA
 ## See Also
 
 [Serial protocol](../serial_protocol.md), [custom settings](../custom_settings.md),
+[system errors](../system_errors.md), [RTC backup registers](../backup_registers.md),
 [eeprom_tool](eeprom_tool.md), [resmed_flash](resmed_flash.md).

@@ -520,6 +520,9 @@ R: P S #TAG VALUE = VALUE
 | `P F *BLOCK ARG` | Select and erase flash block |
 | `P S #PIP KEY` | Enter UART bridge mode |
 
+Reset paths and their exit markers are described under
+[BKP10R](backup_registers.md#bkp10r-exit-reason-and-stage).
+
 `BLS`, `BLE`, and `BDD` return four uppercase hex digits. In the bootloader,
 `BLS` is `0001` during the normal command window and `0002` when the
 application image is unavailable. CDX reports `0000`. `BID`, `SID`, and `CID`
@@ -624,6 +627,9 @@ the retained bootloader status:
 | `7009` | Record address lies outside the selected block |
 | `700D` | Block selected; erase or transfer in progress |
 | `7016` | Firmware integrity or CCX/CDX compatibility check failed at startup |
+
+BLX retains the status in
+[BKP7R](backup_registers.md#bkp6r-and-bkp7r-boot-gate-and-status).
 
 On Air 10, the completion marker sets the transfer-complete flag, clears `BLE`
 to `0000`, and restarts the approximately two-second bootloader timeout. It does
