@@ -15,6 +15,8 @@ import json
 import zlib
 from pathlib import Path
 
+from lib.as10_error_logs import LOG_LAYOUTS, find_error_logs, read_error_log, summarize_error_logs
+
 
 GROUPS = {
     'AGL': ['AFC', 'STU', 'MPI', 'MPA'],
@@ -2012,6 +2014,60 @@ def connect(ser, baud_arg):
     return True
 
 
+def cmd_errors(sd_path, as_json=False, tags=None, summary=False, order='time'):
+    """Read SD error history without opening a device connection."""
+    logs = []
+    errors = []
+    try:
+        paths = find_error_logs(sd_path)
+    except (OSError, ValueError) as e:
+        paths = []
+        errors.append(str(e))
+
+    if tags and paths:
+        missing = set(tags) - {path.stem.upper() for path in paths}
+        if missing:
+            errors.append('Requested logs not found: ' + ', '.join(sorted(missing)))
+        paths = [path for path in paths if path.stem.upper() in tags]
+
+    for path in paths:
+        try:
+            logs.append(read_error_log(path))
+        except (OSError, ValueError) as e:
+            errors.append(str(e))
+
+    if as_json:
+        result = {'logs': logs, 'errors': errors}
+        if summary:
+            result['summary'] = summarize_error_logs(logs)
+        print(json.dumps(result, indent=2))
+    else:
+        for error in errors:
+            print(f'[!] {error}', file=sys.stderr)
+        for log in logs:
+            for warning in log['warnings']:
+                print(f'[!] {warning}', file=sys.stderr)
+        if logs:
+            records = [record for log in logs for record in log['records']]
+            if order == 'time':
+                records.sort(key=lambda record: record['timestamp'])
+            print(f"Read {len(records)} records from {len(logs)} log files")
+            if records and summary:
+                print(f"{'Log':3}  {'Var':3}  {'Value':10}  {'Records':>7}  {'First':16}  {'Last':16}  Description")
+                for group in summarize_error_logs(logs):
+                    print(f"{group['tag']}  {group['source']}  {group['raw']:10}  {group['records']:7}  "
+                          f"{group['first']}  {group['last']}  {group['description']}")
+            elif records:
+                print(f"{'Date/time':16}  {'Log':3}  {'Var':3}  {'Value':10}  {'NOC':>5}  Description")
+                for record in records:
+                    print(f"{record['timestamp']}  {record['tag']}  {record['source']}  "
+                          f"{record['raw']:10}  {record['noc']:5}  {record['description']}")
+            else:
+                print('No error records')
+
+    return 1 if errors else 0
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='ResMed AirSense UART Configuration Tool',
@@ -2029,6 +2085,7 @@ Commands:
   caps                          Query variable limits from device
   custom-settings               Show Airbreak custom menu metadata
   calibration eeprom            Run stock-firmware EEPROM/SD maintenance
+  errors --sd PATH              Read Air 10 error logs from an SD card (offline)
 
 Groups: """ + ', '.join(sorted(GROUPS.keys())) + """
 
@@ -2118,6 +2175,16 @@ Examples:
     p_caps = sub.add_parser('caps', help='Query variable values and limits from device')
     p_caps.add_argument('targets', nargs='*', help='Variable names, group names, or "all" (default: all)')
 
+    p_errors = sub.add_parser('errors', help='Read Air 10 error logs from an SD card (offline)')
+    p_errors.add_argument('--sd', required=True, type=Path, metavar='PATH',
+                          help='SD-card root, SETTINGS directory, or one TAG.log file')
+    p_errors.add_argument('--json', action='store_true', help='Print records and file metadata as JSON')
+    p_errors.add_argument('--logs', nargs='+', type=str.upper, choices=sorted(LOG_LAYOUTS), metavar='TAG',
+                          help='Only read selected logs, for example ERR TRR TXC')
+    p_errors.add_argument('--summary', action='store_true', help='Group records by code with counts and date ranges')
+    p_errors.add_argument('--order', choices=['time', 'record'], default='time',
+                          help='Sort by timestamp or retain write order within each log (default: time)')
+
     sub.add_parser('custom-settings',
                    help='Show Airbreak custom variable metadata')
 
@@ -2148,6 +2215,9 @@ Examples:
 
     if args.command == 'known':
         return cmd_known(args.action, args.pattern)
+
+    if args.command == 'errors':
+        return cmd_errors(args.sd, args.json, args.logs, args.summary, args.order)
 
     if args.command == 'calibration' and args.calibration_command == 'eeprom':
         if not check_eeprom_confirmations(args.action, args.yes, args.really):

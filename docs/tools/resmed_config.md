@@ -22,6 +22,7 @@
   - [stream](#stream)
   - [caps](#caps)
   - [custom-settings](#custom-settings)
+  - [errors](#errors)
   - [calibration eeprom](#calibration-eeprom)
 - [Variable groups](#variable-groups)
 - [Output](#output)
@@ -42,7 +43,8 @@ resmed_config.py -p PORT [OPTIONS] COMMAND [ARGUMENTS]
 Reads and writes variables as raw or scaled values, saves and restores
 configuration snapshots, decodes live streams, and queries variable limits and
 custom-setting metadata. Provides EEPROM backup, restore, and maintenance
-operations, offline variable lookup, and SD-card settings-file editing.
+operations, offline variable lookup, SD-card settings-file editing, and Air 10
+SD error-log reading.
 
 ## Options
 
@@ -50,7 +52,7 @@ Global options precede the command.
 
 | Option | Meaning | Default |
 |--------|---------|---------|
-| `-p`, `--port PORT` | Serial port, `tcp:host[:port]`, or `ecp:path` | Required except for `list` and `known` |
+| `-p`, `--port PORT` | Serial port, `tcp:host[:port]`, or `ecp:path` | Required except for `list`, `known`, and `errors --sd` |
 | `--tcp-mode MODE` | `raw`, `transparent`, or `text` | `text` |
 | `--baud BAUD` | `auto`, `57600`, `115200`, or `460800` | `auto` |
 | `-v`, `--verbose` | Include variable descriptions | Off |
@@ -239,6 +241,64 @@ for the underlying `G C &CSG` records.
 ```sh
 resmed_config.py -p /dev/ttyACM0 custom-settings
 ```
+
+### errors
+
+```text
+errors --sd PATH [--logs TAG ...] [--summary] [--order time|record] [--json]
+```
+
+Read Air 10 fault and activity history from SD-card log files, without a
+device connection. `PATH` accepts the card root, its `SETTINGS` directory,
+or a single `.log` file.
+
+| Option | Meaning | Default |
+|--------|---------|---------|
+| `--sd PATH` | Log file or directory to read | Required |
+| `--logs TAG ...` | Select logs by name, case-insensitive | All available logs |
+| `--summary` | Show one row per code, with record count and first/last timestamps | Off |
+| `--order time\|record` | Sort by date, or keep write order within each log | `time` |
+| `--json` | Write records, file metadata, warnings, and errors as JSON to stdout | Off |
+
+`TAG` is the log filename without `.log`: use `ERR` for `ERR.log`, not
+`AER`. The `Var` column names the variable recorded in that log; for example,
+`ERR` records `AER`, and `DLL` records `DLA`.
+
+| Log | Contents |
+|-----|----------|
+| `ABR` | Fatal application errors |
+| `ERR` | Firmware diagnostic codes, including SD, storage, and restart errors |
+| `ELI` | Saved exception addresses |
+| `TXC` | Humidifier faults |
+| `TXH` | Heated-tube faults |
+| `TXE`, `TXW` | System faults |
+| `TRR` | Transient alarms and peripheral communication errors |
+| `ZRL` | Saved system-error state |
+| `DLL` | Therapy and mask-on/off transitions, dial and button actions, menu navigation, SD-card insertion/removal, and humidifier state changes |
+
+Summarize faults without listing the activity log:
+
+```sh
+resmed_config.py errors --sd /media/RESMED --logs ABR ERR TXC TXH TXE TXW TRR --summary
+```
+
+Read a single log or export the complete history:
+
+```sh
+resmed_config.py errors --sd ./SETTINGS/TXC.log
+resmed_config.py errors --sd ./SETTINGS --json > errors.json
+```
+
+Timestamps use the device clock. Use `--order record` to follow the recorded
+sequence when the clock has been changed. Only retained history is available;
+the device overwrites the oldest records when a log fills. Summary counts
+refer to stored records, not a sum of `NOC`.
+
+JSON retains per-file write order regardless of `--order`. With `--summary`,
+it includes both individual records and grouped counts.
+
+Unreadable or invalid files and missing requested logs produce exit status
+`1`; other selected files are still read.
 
 ### calibration eeprom
 
