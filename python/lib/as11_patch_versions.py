@@ -38,6 +38,13 @@ AS11_FGBL_PATCH_VERSIONS = {
 # An explicit None means that the patch does not apply to that APPX.
 AS11_PATCH_VERSIONS = {
     "8_0_1": {
+        "backlight": {
+            "threshold_low": 0x0808A960,
+            "threshold_high": 0x0808A968,
+            "low": 0x0807E6AC,
+            "high": 0x0807E6A8,
+            "delay_ms": 0x0808A920,
+        },
         "airplane_reminder": {
             "address": 0x0806F4F6,
             "before": "00f072f8",
@@ -91,6 +98,13 @@ AS11_PATCH_VERSIONS = {
         },
     },
     "8_3_0": {
+        "backlight": {
+            "threshold_low": 0x080AD330,
+            "threshold_high": 0x080AD338,
+            "low": 0x0809E170,
+            "high": 0x0809E16C,
+            "delay_ms": 0x080AD2F0,
+        },
         "airplane_reminder": {
             "address": 0x0808D87C,
             "before": "00f071f8",
@@ -168,6 +182,13 @@ AS11_PATCH_VERSIONS = {
         },
     },
     "8_4_0": {
+        "backlight": {
+            "threshold_low": 0x080AF97A,
+            "threshold_high": 0x080AF982,
+            "low": 0x080A06BC,
+            "high": 0x080A06B8,
+            "delay_ms": 0x080AF928,
+        },
         "airplane_reminder": {
             "address": 0x0809176A,
             "before": "00f076f8",
@@ -260,6 +281,13 @@ AS11_PATCH_VERSIONS = {
         },
     },
     "8_5_0": {
+        "backlight": {
+            "threshold_low": 0x080AFE6E,
+            "threshold_high": 0x080AFE76,
+            "low": 0x080A0A2C,
+            "high": 0x080A0A28,
+            "delay_ms": 0x080AFE1C,
+        },
         "airplane_reminder": {
             "address": 0x08091CD0,
             "before": "00f07bf8",
@@ -357,6 +385,13 @@ AS11_PATCH_VERSIONS = {
         },
     },
     "8_6_0": {
+        "backlight": {
+            "threshold_low": 0x080B06D2,
+            "threshold_high": 0x080B06DA,
+            "low": 0x080A1268,
+            "high": 0x080A1264,
+            "delay_ms": 0x080B0680,
+        },
         "airplane_reminder": {
             "address": 0x08092520,
             "before": "00f079f8",
@@ -473,6 +508,13 @@ AS11_PATCH_VERSIONS = {
         },
     },
     "8_7_0": {
+        "backlight": {
+            "threshold_low": 0x080B1856,
+            "threshold_high": 0x080B185E,
+            "low": 0x080A1E34,
+            "high": 0x080A1E30,
+            "delay_ms": 0x080B1804,
+        },
         "airplane_reminder": {
             "address": 0x08093050,
             "before": "00f079f8",

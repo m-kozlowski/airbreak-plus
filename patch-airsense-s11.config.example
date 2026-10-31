@@ -24,6 +24,14 @@
 # --patch-airplane-reminder y
 # --patch-timezone-write y
 
+# Automatic brightness: ambient thresholds, LCD percentages, response delay in ms.
+# --patch-backlight n
+# --backlight-threshold-low 10
+# --backlight-threshold-high 19
+# --backlight-low 20
+# --backlight-high 100
+# --backlight-delay-ms 3000
+
 # Optional startup logo: 0 Off, 1 AirSense 11, 2 AirCurve 11, 3 Lumis 11, 4 ResMed.
 # Omitting the number selects 4; omitting the option leaves the logo unchanged.
 # --patch-startup-logo 4

@@ -97,6 +97,7 @@ instead of producing that reduced result.
 | Defaults | Changes the initial values of selected settings without replacing values already saved on the device | `--patch-defaults` |
 | Header clock | Shows local time in the dashboard and therapy-screen headers when enabled in Configuration; default Off | `--patch-header-clock` |
 | Screen keep-awake | Uses a three-finger hold to toggle whether inactivity turns off the display | `--patch-screen-keep-awake` |
+| Backlight (optional) | Sets ambient-light thresholds, LCD brightness levels, and response delay at build time | `--patch-backlight` |
 | Startup logo (optional) | Selects the logo shown when the device starts | `--patch-startup-logo [0..4]` |
 | Sensitivity split screen (optional) | Shows a graphic beside Trigger/Cycle sensitivity choices in supported modes | `--patch-sensitivity-split-screen` |
 | Motor nag removal | Removes the design-life warning while preserving the runtime counter | `--patch-motor-nagscreen` |
@@ -135,6 +136,30 @@ For example, add both optional patches to the standard build:
 
 ```bash
 make as11 AIR11_PATCH_ARGS='--patch-startup-logo 4 --patch-sensitivity-split-screen y'
+```
+
+## Backlight
+
+Enable `--patch-backlight y` to configure automatic brightness when building
+the image:
+
+| Option | Range | Default | Meaning |
+|--------|-------|---------|---------|
+| `--backlight-threshold-low` | 0..255 | 10 | Dim mode is selected below this `AmbientLight` value |
+| `--backlight-threshold-high` | 0..255 | 19 | Bright mode is selected at or above this `AmbientLight` value |
+| `--backlight-low` | 0..100 | 20 | Dim LCD brightness, in percent |
+| `--backlight-high` | 0..100 | 100 | Bright LCD brightness, in percent |
+| `--backlight-delay-ms` | 0..65534 | 3000 | Time the requested ambient mode must differ from the current mode before switching, in ms |
+
+Between the thresholds, the device holds the previous mode.
+APPX 8.4.0 and later also require more than 10 seconds since activity before
+switching to dim mode.
+
+For example, use 10%/80% LCD brightness, ambient thresholds of 5/30, and a
+one-second response delay:
+
+```bash
+make as11 AIR11_PATCH_ARGS='--patch-backlight y --backlight-threshold-low 5 --backlight-threshold-high 30 --backlight-low 10 --backlight-high 80 --backlight-delay-ms 1000'
 ```
 
 ## Bootloader Service

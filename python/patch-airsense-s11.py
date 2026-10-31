@@ -1040,7 +1040,9 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         "enum": "custom_menu_enum_factory",
     }
 
-    def __init__(self, asf, rpc_method_permissions=None, rpc_dataitem_permissions=None, cloud_firmware_change_mode="metadata"):
+    def __init__(self, asf, rpc_method_permissions=None, rpc_dataitem_permissions=None, cloud_firmware_change_mode="metadata",
+                 backlight_threshold_low=10, backlight_threshold_high=19,
+                 backlight_low=20, backlight_high=100, backlight_delay_ms=3000):
         self.asf = asf
         self._init_compiled_payloads()
         self.mop_callback_handlers = []
@@ -1065,6 +1067,8 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         self.rpc_method_permission_rules = DEFAULT_RPC_METHOD_PERMISSIONS if rpc_method_permissions is None else rpc_method_permissions
         self.rpc_dataitem_permission_rules = DEFAULT_RPC_DATAITEM_PERMISSIONS if rpc_dataitem_permissions is None else rpc_dataitem_permissions
         self.cloud_firmware_change_mode = cloud_firmware_change_mode
+        self.backlight_settings = (backlight_threshold_low, backlight_threshold_high,
+                                   backlight_low, backlight_high, backlight_delay_ms)
 
     def _payload_version_key(self, region=None):
         region = "APPL" if region is None else region
@@ -2859,6 +2863,32 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         )
         return PatchOutcome.ok()
 
+    def backlight(self):
+        """Set ambient thresholds, LCD levels, and transition delay."""
+        anchors = self._patch_version_data("backlight")
+        threshold_low, threshold_high, low, high, delay_ms = self.backlight_settings
+        if not 0 <= threshold_low <= threshold_high <= 255:
+            raise ValueError("backlight thresholds must satisfy 0 <= low <= high <= 255")
+        if not 0 <= low <= high <= 100:
+            raise ValueError("backlight levels must satisfy 0 <= low <= high <= 100")
+        if not 0 <= delay_ms <= 65534:
+            raise ValueError("backlight delay must be 0..65534 ms")
+
+        # The native comparison is elapsed > delay; MOVW loads delay + 1.
+        immediate = delay_ms + 1
+        delay_instruction = struct.pack("<HH",
+            0xF240 | ((immediate >> 12) & 0xF) | (((immediate >> 11) & 1) << 10),
+            0x0100 | (((immediate >> 8) & 7) << 12) | (immediate & 0xFF))
+
+        self.asf.patch_exact(anchors["threshold_low"], "0a28", struct.pack("<H", 0x2800 | threshold_low))
+        self.asf.patch_exact(anchors["threshold_high"], "1328", struct.pack("<H", 0x2800 | threshold_high))
+        # Constructor arguments for channel 3 (LCD): r3 = low, stack = high.
+        self.asf.patch_exact(anchors["low"], "1423", struct.pack("<H", 0x2300 | low))
+        self.asf.patch_exact(anchors["high"], "6421", struct.pack("<H", 0x2100 | high))
+        self.asf.patch_exact(anchors["delay_ms"], "40f6b931", delay_instruction)
+        print("Patching backlight... ambient thresholds=%d/%d, LCD=%d/%d%%, delay=%d ms" %
+              (threshold_low, threshold_high, low, high, delay_ms))
+
     def scroll_animation(self):
         """Increase the native scroll step by 50%, retaining its timer interval."""
         ver = self._payload_version_key()
@@ -3215,6 +3245,12 @@ PATCH_LIST = [
         "function": "screen_keep_awake",
     },
     {
+        "arg": "patch-backlight",
+        "desc": "Set ambient-light thresholds, LCD brightness levels, and response delay.",
+        "default": False,
+        "function": "backlight",
+    },
+    {
         "arg": "patch-scroll-animation",
         "desc": "Shorten menu scrolling with a 1.5x step at the native timer interval.",
         "default": False,
@@ -3377,6 +3413,17 @@ def build_arg_parser():
               "metadata only, or stage and verify the file without applying it. "
               "Default: metadata."),
     )
+    backlight = parser.add_argument_group("patch-backlight parameters")
+    backlight.add_argument("--backlight-threshold-low", type=int, default=10, metavar="VALUE",
+                           help="Dim mode below this AmbientLight value, 0..255. Default: 10.")
+    backlight.add_argument("--backlight-threshold-high", type=int, default=19, metavar="VALUE",
+                           help="Bright mode at or above this AmbientLight value, 0..255. Default: 19.")
+    backlight.add_argument("--backlight-low", type=int, default=20, metavar="PERCENT",
+                           help="Dim LCD brightness, 0..100, no higher than --backlight-high. Default: 20.")
+    backlight.add_argument("--backlight-high", type=int, default=100, metavar="PERCENT",
+                           help="Bright LCD brightness, 0..100. Default: 100.")
+    backlight.add_argument("--backlight-delay-ms", type=int, default=3000, metavar="MS",
+                           help="Ambient-mode change delay, 0..65534 ms. Default: 3000.")
     return parser
 
 
@@ -3440,6 +3487,11 @@ def run_patcher(args, detail_log=None):
         rpc_method_permissions=rpc_method_permissions,
         rpc_dataitem_permissions=rpc_dataitem_permissions,
         cloud_firmware_change_mode=args.cloud_firmware_change_mode,
+        backlight_threshold_low=args.backlight_threshold_low,
+        backlight_threshold_high=args.backlight_threshold_high,
+        backlight_low=args.backlight_low,
+        backlight_high=args.backlight_high,
+        backlight_delay_ms=args.backlight_delay_ms,
     )
 
     print("\n=== Patches")

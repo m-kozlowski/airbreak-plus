@@ -154,6 +154,7 @@ class PortCandidates:
     scroll_animation: AddressResult | None
     flow_wave: dict[str, AddressResult] | None
     airplane_reminder: AddressResult | None
+    backlight: dict[str, AddressResult] | None
 
 
 @dataclass(frozen=True)
@@ -1067,6 +1068,26 @@ def resolve_screen_keep_awake_candidates(
     return ScreenKeepAwakeCandidates(sites)
 
 
+def resolve_backlight_candidates(matcher: AddressMatcher, reference: dict) -> dict[str, AddressResult]:
+    """Locate the immediate loads and compares within their native functions."""
+    sites = {}
+    for name, address in reference.items():
+        result = matcher.site(address)
+        if result.address is not None:
+            # Hysteresis gained extra code in newer releases. Local instruction
+            # matching corrects the offset suggested by the surrounding islands.
+            matches, width = matcher._local_prefix_matches(address, result.address)
+            selected = matches[0] if len(matches) == 1 else None
+            if selected is None and result.address in matches:
+                selected = result.address
+            result = AddressResult(address, selected,
+                result.quality if selected is not None else "missing",
+                "%s; %d-byte instruction prefix, %d matches" % (result.evidence, width, len(matches)),
+                tuple(matches) if selected is None else ())
+        sites[name] = result
+    return sites
+
+
 def resolve_scroll_animation_candidate(
         data: bytes, stubs: dict[str, AddressResult], reference: dict) -> AddressResult:
     """Find the clamped step store in the transferred scroller constructor."""
@@ -1820,6 +1841,7 @@ def resolve_port_candidates(
         resolve_flow_wave_candidates(target_fw, matcher, stubs, reference["flow_wave"])
         if reference.get("flow_wave") is not None else None
     )
+    backlight = resolve_backlight_candidates(matcher, reference["backlight"]) if reference.get("backlight") else None
     airplane_reminder = None
     if reference.get("airplane_reminder") is not None:
         address = reference["airplane_reminder"]["address"]
@@ -1831,7 +1853,7 @@ def resolve_port_candidates(
     return PortCandidates(
         stubs, cloud_firmware_change, cellular_download, rpc_dispatcher, mop,
         timezone_write, header_clock, screen_keep_awake, custom_settings, therapy_screen_style, asv,
-        ota_compatibility, ble_oxi_fallback, scroll_animation, flow_wave, airplane_reminder
+        ota_compatibility, ble_oxi_fallback, scroll_animation, flow_wave, airplane_reminder, backlight
     )
 
 
@@ -2170,6 +2192,12 @@ def self_check_candidates(
         checks.append(compare_candidate("ble_oxi_fallback.%s" % name, value,
             CandidateValue(result.address, result.quality, result.evidence)))
 
+    for name, value in expected_version.get("backlight", {}).items():
+        result = (candidates.backlight or {}).get(
+            name, AddressResult(0, None, "missing", "reference has no patch data"))
+        checks.append(compare_candidate("backlight.%s" % name, value,
+            CandidateValue(result.address, result.quality, result.evidence)))
+
     reminder_expected = expected_version.get("airplane_reminder")
     if reminder_expected is not None:
         result = candidates.airplane_reminder or AddressResult(0, None, "missing", "reference has no patch data")
@@ -2500,6 +2528,10 @@ def prepare(args) -> int:
     if candidates.airplane_reminder is not None:
         address_rows.append(("airplane_reminder", "address", candidates.airplane_reminder))
     address_rows.extend(
+        ("backlight", name, result)
+        for name, result in (candidates.backlight or {}).items()
+    )
+    address_rows.extend(
         ("flow_wave", name, result)
         for name, result in (candidates.flow_wave or {}).items()
     )
@@ -2675,6 +2707,15 @@ def prepare(args) -> int:
             '    },',
         ]
 
+    backlight_snippet_lines = []
+    if candidates.backlight is not None:
+        backlight_snippet_lines = [
+            '    "backlight": {',
+            *('        "%s": %s,' % (name, format_address(result.address))
+              for name, result in candidates.backlight.items()),
+            '    },',
+        ]
+
     scroll_snippet_lines = []
     if candidates.scroll_animation is not None:
         site = candidates.scroll_animation.address
@@ -2712,6 +2753,7 @@ def prepare(args) -> int:
         "%r: {" % target_id.appx_key,
         *cellular_snippet_lines,
         *oxi_snippet_lines,
+        *backlight_snippet_lines,
         *scroll_snippet_lines,
         *reminder_snippet_lines,
         *flow_wave_snippet_lines,
