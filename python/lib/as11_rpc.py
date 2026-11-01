@@ -95,6 +95,15 @@ class Transport(Protocol):
             *, timeout: float = 5.0,
             post_send_delay: float = 0.0) -> dict: ...
 
+    def rpc_batch(self, requests: list[dict], *, timeout: float = 5.0,
+                  post_send_delay: float = 0.0) -> dict | list[dict]:
+        """Send a batch and return its first matching response document.
+
+        Denied methods may be omitted; asynchronous replies may arrive later.
+        A batch containing only notifications returns [] after sending.
+        """
+        ...
+
     def set_notification_handler(self, handler) -> None:
         """Install a persistent notification handler.
 
@@ -164,6 +173,45 @@ def parse_response(raw: bytes, expected_id: int | None = None) -> dict:
             f"RPC id mismatch: expected {expected_id}, got {obj.get('id')}"
         )
     return obj
+
+
+def build_batch(requests: list[dict]) -> tuple[bytes, set[int | str]]:
+    """Encode complete request envelopes, preserving caller-supplied fields."""
+    if not isinstance(requests, list) or not requests:
+        raise ValueError("RPC batch must be a non-empty array of requests")
+    ids = set()
+    for request in requests:
+        if not isinstance(request, dict) or not isinstance(request.get("method"), str):
+            raise ValueError("each RPC batch entry must be an object with a method")
+        if "id" not in request:
+            continue
+        rpc_id = request["id"]
+        if isinstance(rpc_id, bool) or not isinstance(rpc_id, (int, str)):
+            raise ValueError("RPC batch ids must be integers or strings")
+        if rpc_id in ids:
+            raise ValueError(f"duplicate RPC batch id: {rpc_id!r}")
+        ids.add(rpc_id)
+    return json.dumps(requests, separators=(",", ":")).encode("utf-8"), ids
+
+
+def select_response(message, expected_id: int | set[int | str], notify=None):
+    """Route notifications and match replies without waiting for omitted ids."""
+    batch = isinstance(expected_id, set)
+    ids = expected_id if batch else {expected_id}
+    replies = []
+    for item in message if isinstance(message, list) else [message]:
+        if not isinstance(item, dict):
+            continue
+        if "method" in item and "id" not in item:
+            if notify is not None:
+                notify(item)
+        elif (isinstance(item.get("id"), (int, str))
+              and item["id"] in ids
+              and ("result" in item or "error" in item)):
+            replies.append(item)
+    if not replies:
+        return None
+    return replies if batch and isinstance(message, list) else replies[0]
 
 
 
@@ -337,6 +385,8 @@ def parse_flex_datetime(s: str) -> _dt.datetime:
 
 
 __all__ = [
+    "build_batch",
+    "select_response",
     "AS11_RPC_PROFILE",
     "AIRMINI_RPC_PROFILE",
     "AS11_RPC_VERSIONS",

@@ -23,7 +23,7 @@ from as11_can_common import (
     DEFAULT_RPC_TX_ID,
     hex_bytes,
 )
-from as11_rpc import FramingError, TransportError, build_request
+from as11_rpc import FramingError, TransportError, build_request, build_batch, select_response
 
 
 SERIAL_BAUD_DEFAULT = 2_000_000
@@ -687,7 +687,16 @@ class CanCanableTransport:
             time.sleep(post_send_delay)
         return self._rpc_await_response(rpc_id, timeout)
 
-    def _rpc_await_response(self, rpc_id: int, timeout: float) -> dict:
+    def rpc_batch(self, requests: list[dict], *, timeout: float = DEFAULT_TIMEOUT,
+                  post_send_delay: float = 0.0) -> dict | list[dict]:
+        payload, ids = build_batch(requests)
+        self._rpc_id = max([self._rpc_id] + [i for i in ids if isinstance(i, int)])
+        self.send_payload(payload)
+        if post_send_delay > 0:
+            time.sleep(post_send_delay)
+        return self._rpc_await_response(ids, timeout) if ids else []
+
+    def _rpc_await_response(self, rpc_id: int | set[int | str], timeout: float) -> dict | list[dict]:
         deadline = time.monotonic() + timeout
         while True:
             remaining = deadline - time.monotonic()
@@ -698,12 +707,9 @@ class CanCanableTransport:
                 obj = _json.loads(raw.decode("utf-8", errors="replace"))
             except _json.JSONDecodeError:
                 continue
-            if isinstance(obj, dict) and "method" in obj and "id" not in obj:
-                self._dispatch_notification(obj)
-                continue
-            if obj.get("id") == rpc_id:
-                return obj
-            _log_can_rpc.debug("unmatched id=%s (want %s)", obj.get("id"), rpc_id)
+            response = select_response(obj, rpc_id, self._dispatch_notification)
+            if response is not None:
+                return response
 
     def _dispatch_notification(self, msg: dict) -> None:
         if self._notification_handler is None:

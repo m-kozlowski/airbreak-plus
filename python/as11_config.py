@@ -58,6 +58,7 @@ from as11_rpc import (  # noqa: E402
     AIRMINI_RPC_PROFILE, AS11_RPC_PROFILE,
     Transport, TransportError, FramingError,
     load_json_blob,
+    build_batch,
     set_params_from_args,
     host_datetime_iso, parse_flex_datetime, format_datetime_iso,
 )
@@ -364,15 +365,20 @@ def connect_transport(args: argparse.Namespace):
 
 
 def call_rpc(t: Transport, args: argparse.Namespace,
-             method: str, params) -> dict:
+             method: str | None, params) -> dict | list[dict]:
     try:
+        if method is None:
+            send_batch = getattr(t, "rpc_batch", None)
+            if send_batch is None:
+                raise TransportError(f"{t.name} does not support RPC batches")
+            return send_batch(params, timeout=args.timeout)
         return t.rpc(method, params, timeout=args.timeout)
     except FramingError as exc:
-        eprint(f"\n{method}: framing/CRC error, device state is UNKNOWN. {exc}")
+        eprint(f"\n{method or 'RPC batch'}: framing/CRC error, device state is UNKNOWN. {exc}")
         raise
 
 
-def print_response(resp: dict) -> None:
+def print_response(resp: dict | list[dict]) -> None:
     print(json.dumps(resp, indent=2))
 
 
@@ -419,7 +425,15 @@ def cmd_get(args: argparse.Namespace) -> int:
 
 def cmd_rpc(args: argparse.Namespace) -> int:
     params = None
-    if args.params is not None:
+    if args.batch is not None:
+        if args.params is not None:
+            raise SystemExit("rpc: --params cannot be used with --batch")
+        params = load_json_blob(args.batch, what="--batch")
+        try:
+            build_batch(params)
+        except ValueError as exc:
+            raise SystemExit(f"rpc: {exc}") from exc
+    elif args.params is not None:
         params = load_json_blob(args.params, what="--params")
     with connect_transport(args) as t:
         resp = call_rpc(t, args, args.method, params)
@@ -1402,17 +1416,22 @@ def build_parser() -> argparse.ArgumentParser:
 
     r = sub.add_parser(
         "rpc", parents=[command_common],
-        help="call an arbitrary JSON-RPC method",
+        help="call a JSON-RPC method or send a batch",
         epilog="examples:\n"
                "  rpc --method GetVersion\n"
                "  rpc --method Get --params '[\"SerialNumber\"]'\n"
                "  rpc --method Set --params '{\"SetPressure\":10}'\n"
                "  rpc --method GetDateTime --params -       # JSON from stdin\n"
-               "  rpc --method Set --params @params.json",
+               "  rpc --method Set --params @params.json\n"
+               "  rpc --batch @requests.json",
         formatter_class=raw_fmt,
     )
     add_rpc_args(r)
-    r.add_argument("--method", required=True, help="RPC method name")
+    request = r.add_mutually_exclusive_group(required=True)
+    request.add_argument("--method", help="RPC method name")
+    request.add_argument("--batch", metavar="JSON",
+                         help="complete request array (literal, '-' stdin, or '@PATH'); "
+                              "return the first response document")
     r.add_argument("--params", default=None,
                    help="JSON params (literal, '-' stdin, or '@PATH')")
     r.set_defaults(func=cmd_rpc)

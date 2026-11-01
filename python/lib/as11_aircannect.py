@@ -27,7 +27,7 @@ import socket
 import time
 from dataclasses import dataclass as _dataclass
 
-from as11_rpc import FramingError, TransportError, build_request
+from as11_rpc import FramingError, TransportError, build_request, build_batch, select_response
 
 
 DEFAULT_PORT = 39011
@@ -238,7 +238,16 @@ class AirCannectTransport:
             time.sleep(post_send_delay)
         return self._await_response(rpc_id, timeout=timeout)
 
-    def _await_response(self, rpc_id: int, *, timeout: float) -> dict:
+    def rpc_batch(self, requests: list[dict], *, timeout: float = DEFAULT_TIMEOUT,
+                  post_send_delay: float = 0.0) -> dict | list[dict]:
+        payload, ids = build_batch(requests)
+        self._rpc_id = max([self._rpc_id] + [i for i in ids if isinstance(i, int)])
+        self._send_line(payload)
+        if post_send_delay > 0:
+            time.sleep(post_send_delay)
+        return self._await_response(ids, timeout=timeout) if ids else []
+
+    def _await_response(self, rpc_id: int | set[int | str], *, timeout: float) -> dict | list[dict]:
         deadline = time.monotonic() + timeout
         while True:
             remaining = deadline - time.monotonic()
@@ -256,20 +265,11 @@ class AirCannectTransport:
                 # JSON. Per the spec, treat as a transport error.
                 raise TransportError(
                     f"aircannect non-JSON line: {text!r}")
-            if not isinstance(obj, dict):
+            response = select_response(obj, rpc_id, self._dispatch_notification)
+            if response is not None:
                 if self._cfg.debug:
-                    _log.debug("dropping non-object response: %r", obj)
-                continue
-            if "method" in obj and "id" not in obj:
-                self._dispatch_notification(obj)
-                continue
-            if obj.get("id") == rpc_id:
-                if self._cfg.debug:
-                    _log.debug("RX matching id=%d", rpc_id)
-                return obj
-            if self._cfg.debug:
-                _log.debug("dropping unrelated response id=%s (waiting for %s)",
-                           obj.get("id"), rpc_id)
+                    _log.debug("RX matching ids=%s", rpc_id)
+                return response
 
     def _dispatch_notification(self, msg: dict) -> None:
         if self._notification_handler is None:

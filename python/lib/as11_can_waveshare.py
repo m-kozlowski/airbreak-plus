@@ -729,6 +729,8 @@ from dataclasses import dataclass as _dataclass
 from as11_rpc import (
     TransportError, FramingError,
     build_request,
+    build_batch,
+    select_response,
 )
 DEFAULT_LOG_ID    = 0x796   # device -> host, S70-prefixed CAL log
 DEFAULT_FG_POWERUP_ID = 0x2C8  # device boot notification
@@ -927,7 +929,16 @@ class CanWaveshareTransport:
         self.send_payload(payload)
         return self._rpc_await_response(rpc_id, timeout)
 
-    def _rpc_await_response(self, rpc_id: int, timeout: float) -> dict:
+    def rpc_batch(self, requests: list[dict], *, timeout: float = DEFAULT_TIMEOUT,
+                  post_send_delay: float = 0.0) -> dict | list[dict]:
+        payload, ids = build_batch(requests)
+        self._rpc_id = max([self._rpc_id] + [i for i in ids if isinstance(i, int)])
+        self.send_payload(payload)
+        if post_send_delay > 0:
+            time.sleep(post_send_delay)
+        return self._rpc_await_response(ids, timeout) if ids else []
+
+    def _rpc_await_response(self, rpc_id: int | set[int | str], timeout: float) -> dict | list[dict]:
         """Consume RX datagrams until one with matching id is reassembled.
 
         Notifications ("method" + no "id") arriving during the wait are
@@ -947,13 +958,9 @@ class CanWaveshareTransport:
             except _json.JSONDecodeError as exc:
                 _log_can_rpc.warning("bad JSON response: %s", exc)
                 continue
-            if isinstance(obj, dict) and "method" in obj and "id" not in obj:
-                self._dispatch_notification(obj)
-                continue
-            if obj.get("id") == rpc_id:
-                return obj
-            _log_can_rpc.debug("unmatched id=%s (want %s)",
-                               obj.get("id"), rpc_id)
+            response = select_response(obj, rpc_id, self._dispatch_notification)
+            if response is not None:
+                return response
 
     def _dispatch_notification(self, msg: dict) -> None:
         """Forward `msg` to the installed notification handler, if any.

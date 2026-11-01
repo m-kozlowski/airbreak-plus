@@ -31,6 +31,8 @@ from as11_rpc import (
     AIRMINI_RPC_PROFILE,
     AS11_RPC_PROFILE,
     TransportError,
+    build_batch,
+    select_response,
     rpc_version,
 )
 from resmed_fig import (
@@ -118,6 +120,7 @@ class As11Connection:
         self._rpc_id = 0
         self._response_event = asyncio.Event()
         self._response_data = None
+        self._response_id = None
         self._mtu = 244
         self._write_without_response = False
         self._session_key = None
@@ -265,17 +268,19 @@ class As11Connection:
                     log.warning("non-JSON payload on vcid %d: %r", vcid, raw_payload)
                     continue
 
-            if "method" in msg and "id" not in msg:
-                log.info("RX notification: %s(%s)",
-                         msg["method"], json.dumps(msg.get("params", {}))[:100])
-                if self._notification_cb:
-                    self._notification_cb(msg)
-                continue
+            expected = self._response_id if self._response_id is not None else set()
+            response = select_response(msg, expected, self._dispatch_notification)
+            if response is not None and not self._response_event.is_set():
+                if self.debug:
+                    log.debug("  JSON response: %s", json.dumps(response)[:300])
+                self._response_data = response
+                self._response_event.set()
 
-            if self.debug:
-                log.debug("  JSON response: %s", json.dumps(msg)[:300])
-            self._response_data = msg
-            self._response_event.set()
+    def _dispatch_notification(self, msg):
+        log.info("RX notification: %s(%s)",
+                 msg["method"], json.dumps(msg.get("params", {}))[:100])
+        if self._notification_cb:
+            self._notification_cb(msg)
 
     async def _send_raw(self, data: bytes):
         chunk_size = max(self._mtu, 20)
@@ -299,11 +304,33 @@ class As11Connection:
         fallback = "2.0" if self._rpc_profile == AS11_RPC_PROFILE else None
         version = rpc_version(method, self._rpc_profile, default=fallback)
         msg = {"id": self._rpc_id, "jsonrpc": version, "method": method}
-        if params:
+        if params is not None:
             msg["params"] = params
 
         json_bytes = json.dumps(msg, separators=(',', ':')).encode('utf-8')
+        log.info("RPC >>> %s(%s)", method, json.dumps(params or {}))
+        resp = await self._send_rpc_payload(
+            json_bytes, self._rpc_id, timeout=timeout, encrypted=encrypted,
+            vcid_override=vcid_override, length_prefix=length_prefix,
+            hmac_key=hmac_key, post_send_delay=post_send_delay,
+        )
+        if "error" in resp:
+            err = resp["error"]
+            raise RuntimeError(f"RPC error {err.get('code', '?')}: {err.get('message', '?')}")
+        log.info("RPC <<< %s", json.dumps(resp.get("result", resp))[:200])
+        return resp
 
+    async def send_rpc_batch(self, requests: list[dict], *, timeout: float = 60.0,
+                             encrypted: bool = False, **kw) -> dict | list[dict]:
+        payload, ids = build_batch(requests)
+        self._rpc_id = max([self._rpc_id] + [i for i in ids if isinstance(i, int)])
+        log.info("RPC >>> batch (%d requests)", len(requests))
+        return await self._send_rpc_payload(payload, ids, timeout=timeout, encrypted=encrypted, **kw)
+
+    async def _send_rpc_payload(self, json_bytes: bytes, rpc_id: int | set[int | str], *,
+                                timeout: float, encrypted: bool = False,
+                                vcid_override: int = None, length_prefix: bool = True,
+                                hmac_key: bytes = None, post_send_delay: float = 0.0):
         if encrypted and self._session_key:
             payload = self._aes_encrypt(json_bytes, length_prefix=length_prefix)
             if hmac_key:
@@ -317,30 +344,24 @@ class As11Connection:
 
         packet = FigCodec.encode(vcid, payload)
 
-        log.info("RPC >>> %s(%s)", method, json.dumps(params or {}))
         if self.debug:
             log.debug("TX packet (%d bytes): %s", len(packet), packet.hex())
 
         self._response_event.clear()
         self._response_data = None
-
-        await self._send_raw(packet)
-
-        if post_send_delay > 0:
-            await asyncio.sleep(post_send_delay)
-
+        self._response_id = rpc_id
         try:
+            await self._send_raw(packet)
+            if post_send_delay > 0:
+                await asyncio.sleep(post_send_delay)
+            if isinstance(rpc_id, set) and not rpc_id:
+                return []
             await asyncio.wait_for(self._response_event.wait(), timeout=timeout)
+            return self._response_data
         except asyncio.TimeoutError:
-            raise TimeoutError(f"no response to {method} within {timeout}s")
-
-        resp = self._response_data
-        if "error" in resp:
-            err = resp["error"]
-            raise RuntimeError(f"RPC error {err.get('code', '?')}: {err.get('message', '?')}")
-
-        log.info("RPC <<< %s", json.dumps(resp.get("result", resp))[:200])
-        return resp
+            raise TimeoutError(f"no RPC response for id={rpc_id} within {timeout}s")
+        finally:
+            self._response_id = None
 
     async def reconnect(self, client_id: str | None,
                         master_pair_key: str) -> dict:
@@ -443,26 +464,15 @@ class As11Connection:
         """send_rpc without error-raising; returns raw response dict or None."""
         self._rpc_id += 1
         msg = {"id": self._rpc_id, "jsonrpc": "2.0", "method": method}
-        if params:
+        if params is not None:
             msg["params"] = params
 
         payload = json.dumps(msg, separators=(',', ':')).encode('utf-8')
-        packet = FigCodec.encode(FIG_VCID_RPC, payload)
-
         log.info("RPC >>> %s(%s)", method, json.dumps(params or {}))
-        if self.debug:
-            log.debug("TX packet (%d bytes): %s", len(packet), packet.hex())
-
-        self._response_event.clear()
-        self._response_data = None
-        await self._send_raw(packet)
-
         try:
-            await asyncio.wait_for(self._response_event.wait(), timeout=timeout)
-        except asyncio.TimeoutError:
+            return await self._send_rpc_payload(payload, self._rpc_id, timeout=timeout)
+        except TimeoutError:
             return None
-
-        return self._response_data
 
     async def pair(self, passkey: str = None) -> dict:
         """Obtain pairing keys using the RPC flow selected by the profile."""
@@ -736,6 +746,15 @@ class BleTransport:
         return self._submit(
             self.conn.send_rpc(method, params, timeout=timeout,
                                encrypted=encrypted, **kw),
+            timeout=timeout + 5,
+        )
+
+    def rpc_batch(self, requests: list[dict], *, timeout: float = DEFAULT_TIMEOUT,
+                  encrypted: bool | None = None, **kw) -> dict | list[dict]:
+        if encrypted is None:
+            encrypted = self._authenticated
+        return self._submit(
+            self.conn.send_rpc_batch(requests, timeout=timeout, encrypted=encrypted, **kw),
             timeout=timeout + 5,
         )
 

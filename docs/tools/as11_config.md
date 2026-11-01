@@ -51,7 +51,7 @@ aliases, and OTA keys, and looks up variables, groups, and selectors offline.
 
 ### JSON input
 
-`set --json JSON` and `rpc --params JSON` accept a literal JSON value,
+`set --json JSON`, `rpc --params JSON`, and `rpc --batch JSON` accept a literal JSON value,
 `-` for stdin, or `@PATH` for a file. `set --json` requires an object
 mapping setting names to values.
 
@@ -158,19 +158,30 @@ as11_config.py -d ble:as11 set --json '{"Cpap-SetPressure":10}'
 
 ```text
 rpc --method NAME [--params JSON]
+rpc --batch JSON
 ```
 
-Call an arbitrary JSON-RPC method.
+Call a JSON-RPC method or send a batch over CAN, BLE, or TCP.
 
 | Option | Meaning |
 |--------|---------|
-| `--method NAME` | Required method name |
+| `--method NAME` | Method name; mutually exclusive with `--batch` |
 | `--params JSON` | Method parameters; see [JSON input](#json-input); omitted by default |
+| `--batch JSON` | Array of complete request envelopes, including each request's `jsonrpc`, `method`, `id`, and optional `params` |
 
 ```sh
 as11_config.py -d ble:as11 rpc --method GetVersion
 as11_config.py -d ble:as11 rpc --method Get --params '["SerialNumber"]'
+as11_config.py -d ble:as11 rpc --batch '[
+  {"jsonrpc":"1.0","id":101,"method":"GetDateTime"},
+  {"jsonrpc":"1.0","id":102,"method":"Get","params":["_MOP"]}
+]'
 ```
+
+Batch output is the first response document containing a matching ID. Denied
+requests may be omitted; asynchronous replies may arrive later. IDs must be
+unique within the batch. Notifications omit `id`; a notification-only batch
+returns `[]` after sending.
 
 ### reset
 
