@@ -1466,6 +1466,9 @@ decoding; permission does not change the endpoint encoding. Command-specific
 parameter, state, hardware, and authentication gates still apply. See the
 [NCP RPC stack](ncp_protocol.md#rpc-stack) for the shared dispatch path.
 
+When a channel permission denies a command, the dispatcher logs the rejection
+and sends no RPC response. A client waiting for that request times out.
+
 `Get` requires the target DataItem's `RPC_EXPOSED` descriptor flag; `Set`
 additionally requires `RPC_WRITABLE`. These flags are global to the DataItem
 rather than selected per VCID. Their definitions are in the
@@ -1479,7 +1482,7 @@ Standard JSON-RPC errors:
 |------|---------|---------|
 | `-32700` | `Parse Error` | malformed JSON payload |
 | `-32600` | `Invalid Request` | valid JSON but invalid RPC request object |
-| `-32601` | `Method Not Found` | unknown method or method unavailable on the selected channel |
+| `-32601` | `Method Not Found` | unknown method name or no registered handler |
 | `-32602` | `Invalid Params` | missing, malformed, or unsupported parameters |
 | `-32603` | `Internal Error` | method failed without a more specific application error |
 
