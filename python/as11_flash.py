@@ -83,6 +83,7 @@ from as11_rpc import (  # noqa: E402
 from resmed_credentials import load_all_credentials  # noqa: E402
 from lib.as11_patch_versions import (  # noqa: E402
     AS11_OTA_COMPATIBILITY_FINGERPRINT_PRESETS,
+    AS11_OTA_FGBL_COMPATIBILITY_FINGERPRINTS,
 )
 from lib.firmware_io import paths_alias, write_output  # noqa: E402
 
@@ -398,19 +399,17 @@ def fetch_fg_security_fingerprint(t: Transport) -> int | None:
         return None
 
 
-def fetch_firmware_version(t: Transport) -> str | None:
-    """Query the device's ApplicationIdentifier; normalized version or None."""
+def fetch_firmware_identifier(t: Transport, name: str) -> str | None:
+    """Read an application or bootloader build identifier."""
     try:
-        resp = t.rpc("Get", ["ApplicationIdentifier"], timeout=10.0)
+        resp = t.rpc("Get", [name], timeout=10.0)
     except Exception as e:
-        log.warning("Get(ApplicationIdentifier) failed: %s", e)
+        log.warning("Get(%s) failed: %s", name, e)
         return None
     result = resp.get("result")
     if isinstance(result, dict):
-        return normalize_version(result.get("ApplicationIdentifier"))
-    if isinstance(result, str):
-        return normalize_version(result)
-    return None
+        result = result.get(name)
+    return result if isinstance(result, str) else None
 
 
 def resolve_block(raw: str) -> TargetRegion:
@@ -670,9 +669,9 @@ def _auto_preset_needed(args, target: TargetRegion) -> bool:
 
 
 def resolve_descriptor_fingerprints(
-        args, target: TargetRegion, *, detected_preset: str | None = None
+        args, target: TargetRegion, *, detected_fingerprints: dict[str, int] | None = None
         ) -> tuple[int, int, int]:
-    """Combine a release preset with explicit fingerprint overrides."""
+    """Combine detected or preset fingerprints with explicit overrides."""
 
     conf_appl_compatibility_fingerprint = parse_u32(
         args.conf_appl_compatibility_fingerprint,
@@ -687,19 +686,14 @@ def resolve_descriptor_fingerprints(
         name="fg_security_fingerprint",
     )
 
-    preset_key = args.fingerprint_preset
-    if preset_key == "auto":
-        preset_key = detected_preset
-
-    if (preset_key and preset_key != "none"
-            and preset_key in COMPATIBILITY_FINGERPRINT_PRESETS):
-        preset = COMPATIBILITY_FINGERPRINT_PRESETS[preset_key]
-        if conf_appl_compatibility_fingerprint is None:
-            conf_appl_compatibility_fingerprint = preset[
-                "conf_appl_compatibility_fingerprint"]
-        if fgbl_appl_compatibility_fingerprint is None:
-            fgbl_appl_compatibility_fingerprint = preset[
-                "fgbl_appl_compatibility_fingerprint"]
+    if args.fingerprint_preset == "auto":
+        preset = detected_fingerprints or {}
+    else:
+        preset = COMPATIBILITY_FINGERPRINT_PRESETS.get(args.fingerprint_preset, {})
+    if conf_appl_compatibility_fingerprint is None:
+        conf_appl_compatibility_fingerprint = preset.get("conf_appl_compatibility_fingerprint")
+    if fgbl_appl_compatibility_fingerprint is None:
+        fgbl_appl_compatibility_fingerprint = preset.get("fgbl_appl_compatibility_fingerprint")
 
     if conf_appl_compatibility_fingerprint is None:
         conf_appl_compatibility_fingerprint = 0
@@ -1390,7 +1384,7 @@ def check_and_maybe_fix_hw_crcs(payload: bytes, target: TargetRegion,
 
 def _build_container(args, *,
                      target: TargetRegion | None = None,
-                     detected_preset: str | None = None
+                     detected_fingerprints: dict[str, int] | None = None
                      ) -> tuple[bytes, TargetRegion, bytes]:
     """Assemble the .abc container"""
 
@@ -1405,7 +1399,7 @@ def _build_container(args, *,
     (conf_appl_compatibility_fingerprint,
      fgbl_appl_compatibility_fingerprint,
      fg_security_fingerprint) = resolve_descriptor_fingerprints(
-         args, target, detected_preset=detected_preset)
+         args, target, detected_fingerprints=detected_fingerprints)
     abc = build_0005(
         target, payload,
         conf_appl_compatibility_fingerprint=conf_appl_compatibility_fingerprint,
@@ -1422,9 +1416,9 @@ def build_container_with_live_defaults(args, t: Transport,
                    and _auto_preset_needed(args, target))
     fg_security_fetch_needed = args.fg_security_fingerprint is None
 
-    detected_preset = None
+    detected_fingerprints = None
     if need_detect:
-        detected_preset = detect_compatibility_fingerprint_preset(t)
+        detected_fingerprints = detect_compatibility_fingerprints(t, target)
 
     if fg_security_fetch_needed:
         print("[auto] querying device _SBA and _SKF...")
@@ -1438,7 +1432,7 @@ def build_container_with_live_defaults(args, t: Transport,
         args.fg_security_fingerprint = f"0x{fingerprint:08X}"
 
     abc, target, fmt = _build_container(
-        args, target=target, detected_preset=detected_preset)
+        args, target=target, detected_fingerprints=detected_fingerprints)
     print(f"Built {fmt.decode('ascii')} container for {target.code}  "
           f"({target.flash_start:#010x}..{target.flash_end:#010x}, "
           f"{len(abc)} bytes)")
@@ -1880,23 +1874,35 @@ def read_container(path: str) -> tuple[bytes, dict]:
         raise SystemExit(f"{path}: {exc}") from exc
 
 
-def detect_compatibility_fingerprint_preset(t: Transport) -> str:
-    """Map the device's ApplicationIdentifier to a reviewed preset."""
+def detect_compatibility_fingerprints(t: Transport, target: TargetRegion) -> dict[str, int]:
+    """Use the APPL preset, or a known BID for bootloader-only updates."""
     print("[auto] querying device firmware version...")
-    detected = fetch_firmware_version(t)
+    detected = normalize_version(fetch_firmware_identifier(t, "ApplicationIdentifier"))
+    if detected in COMPATIBILITY_FINGERPRINT_PRESETS:
+        print(f"[auto] device reports {detected}; using matching preset")
+        return COMPATIBILITY_FINGERPRINT_PRESETS[detected]
+
+    if target.code == "FGBL":
+        print("[auto] no matching application preset; querying BootloaderIdentifier...")
+        bid = fetch_firmware_identifier(t, "BootloaderIdentifier")
+        fingerprint = AS11_OTA_FGBL_COMPATIBILITY_FINGERPRINTS.get(bid)
+        if fingerprint is None:
+            raise SystemExit(
+                f"no FGBL/APPL fingerprint for application {detected!r} "
+                f"or bootloader {bid!r}; pass --fgbl-appl-fingerprint explicitly")
+        print(f"[auto] bootloader {bid}; using FGBL/APPL fingerprint 0x{fingerprint:08X}")
+        return {"fgbl_appl_compatibility_fingerprint": fingerprint}
+
     if detected is None:
         raise SystemExit(
             "auto-detect failed: device didn't return ApplicationIdentifier. "
             "Pass --fingerprint-preset or explicit compatibility fingerprints.")
-    if detected not in COMPATIBILITY_FINGERPRINT_PRESETS:
-        known = ", ".join(sorted(COMPATIBILITY_FINGERPRINT_PRESETS))
-        raise SystemExit(
-            f"device reports firmware {detected!r} which isn't in "
-            f"the compatibility presets ({known}). Pass explicit "
-            "compatibility fingerprints or add a reviewed preset; see "
-            "docs/as11/ota_protocol.md.")
-    print(f"[auto] device reports {detected}; using matching preset")
-    return detected
+    known = ", ".join(sorted(COMPATIBILITY_FINGERPRINT_PRESETS))
+    raise SystemExit(
+        f"device reports firmware {detected!r} which isn't in "
+        f"the compatibility presets ({known}). Pass explicit "
+        "compatibility fingerprints or add a reviewed preset; see "
+        "docs/as11/ota_protocol.md.")
 
 
 def _upload_kwargs_from_args(args, *,

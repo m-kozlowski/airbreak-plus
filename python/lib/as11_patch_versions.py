@@ -25,6 +25,11 @@ AS11_OTA_COMPATIBILITY_FINGERPRINT_PRESETS = {
 }
 
 
+AS11_OTA_FGBL_COMPATIBILITY_FINGERPRINTS = {
+    "SW04601.00.1.1.0.736edbdfd": 0xBEB37EE2,
+}
+
+
 # TODO: Integrate FGBL patch metadata with the version-maintenance workflow.
 AS11_FGBL_PATCH_VERSIONS = {
     "1_1_0": {

@@ -89,7 +89,7 @@ bridge, default port `39011`. See [connection syntax](as11_config.md#connection)
 
 | Option | Commands | Meaning / default |
 |--------|----------|-------------------|
-| `--fingerprint-preset NAME` | `build`, `flash` | Default `auto`: live `flash` queries `ApplicationIdentifier`; offline `build` requires an explicit preset or fingerprint overrides when needed |
+| `--fingerprint-preset NAME` | `build`, `flash` | Default `auto`: live `flash` queries `ApplicationIdentifier`; for FGBL-only updates, a missing application preset falls back to `BootloaderIdentifier`. Offline `build` requires an explicit preset or fingerprint overrides when needed |
 | `--conf-appl-fingerprint U32` | `build`, `flash` | Override CONF/APPL compatibility fingerprint |
 | `--fgbl-appl-fingerprint U32` | `build`, `flash` | Override FGBL/APPL compatibility fingerprint |
 | `--fg-security-fingerprint U32` | `build`, `flash` | Override security fingerprint; queried live, zero offline |
