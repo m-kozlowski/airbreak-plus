@@ -215,11 +215,15 @@ def download_queue(args):
         print(f"[{number}/{len(work)}] {job['url']}", flush=True)
         if job['state'] == 'pending':
             status = wait_for_rpc(args.device, args.boot_timeout, args.poll_interval)
+            request = {'url': job['url']}
             if status['state'] not in ('idle', 'complete', 'error'):
-                raise RuntimeError(f"upgrade path is occupied: {status['state']}")
+                if status['state'] == 'external' and args.force:
+                    request['force'] = True
+                else:
+                    raise RuntimeError(f"upgrade path is occupied: {status['state']}")
             job['attempt'] = job.get('attempt', 0) + 1
             job['fromDateTime'] = config_json(args.device, 'gettime')['result']['dateTime']
-            rpc(args.device, 'set', {'url': job['url']})
+            rpc(args.device, 'set', request)
             checkpoint(job, 'downloading')
 
         if job['state'] == 'downloading':
@@ -302,6 +306,7 @@ def main(argv=None):
     parser.add_argument('--boot-timeout', type=positive_seconds, default=180, metavar='SECONDS')
     parser.add_argument('--retries', type=int, default=3, help='transport retries per file; 0 disables retries (default: 3)')
     parser.add_argument('--retry-delay', type=positive_seconds, default=30, metavar='SECONDS')
+    parser.add_argument('--force', action='store_true', help='replace external upgrade metadata once the native fetch task is idle (requires force-capable AirbreakDownload)')
     parser.add_argument('--dry-run', action='store_true', help='show the queue without contacting a device or writing files')
     args = parser.parse_args(argv)
     if args.retries < 0:

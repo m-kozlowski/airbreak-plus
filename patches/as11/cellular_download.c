@@ -34,6 +34,8 @@ typedef struct {
 typedef struct {
     unsigned char reserved[0x1Cu];
     gfile_fetcher_control_t *control;
+    unsigned char reserved_20[8];
+    unsigned char started;
 } gfile_fetcher_task_t;
 
 /* Native ModemFota layout shared by APPX 8.6/8.7. */
@@ -59,6 +61,7 @@ typedef struct {
     unsigned int host_end;
     unsigned int path_start;
     unsigned int port;
+    unsigned int force;
 } download_request_t;
 
 /* The patcher supplies the RAM slot holding the native FileFetcher task. */
@@ -103,15 +106,13 @@ static int config_equals(void *config, const char *key, const char *value)
     return ((config_equals_t)vtable[7])(config, key, value);
 }
 
-static gfile_fetcher_control_t *download_control(void *context)
+static gfile_fetcher_task_t *download_task(void *context)
 {
     unsigned int slot = *(const volatile unsigned int *)context;
-    gfile_fetcher_task_t *task;
 
     if (slot == 0u || slot == 0xFFFFFFFFu)
         return 0;
-    task = *(gfile_fetcher_task_t **)slot;
-    return task == 0 ? 0 : task->control;
+    return *(gfile_fetcher_task_t **)slot;
 }
 
 static enum download_state current_state(void *config)
@@ -329,7 +330,9 @@ static int parse_request(
     const unsigned char *cursor = skip_space(value->begin, value->end);
     char key[8];
     unsigned int have_url = 0;
+    unsigned int have_force = 0;
 
+    request->force = 0;
     if (cursor == value->end || *cursor++ != '{')
         return 0;
     for (;;) {
@@ -350,6 +353,15 @@ static int parse_request(
                     sizeof(request->url)) || !parse_http_url(request))
                 return 0;
             have_url = 1;
+        } else if (strings_equal(key, "force") && !have_force) {
+            const char *literal;
+            request->force = cursor != value->end && *cursor == 't';
+            literal = request->force ? "true" : "false";
+            while (*literal != '\0') {
+                if (cursor == value->end || *cursor++ != *literal++)
+                    return 0;
+            }
+            have_force = 1;
         } else {
             return 0;
         }
@@ -398,7 +410,8 @@ static void uint_to_text(char output[11], unsigned int value)
 
 static int cellular_download_write_value(void *context, void *encoder)
 {
-    gfile_fetcher_control_t *control = download_control(context);
+    gfile_fetcher_task_t *task = download_task(context);
+    gfile_fetcher_control_t *control = task == 0 ? 0 : task->control;
     enum download_state state = DOWNLOAD_UNAVAILABLE;
     unsigned int bytes_stored = 0;
     unsigned int size = 0;
@@ -435,7 +448,7 @@ static int cellular_download_write_schema(void *context, void *encoder)
 {
     static const unsigned char schema[] =
         "{\"type\":\"object\",\"required\":[\"url\"],"
-        "\"properties\":{\"url\":{\"type\":\"string\"}}}";
+        "\"properties\":{\"url\":{\"type\":\"string\"},\"force\":{\"type\":\"boolean\"}}}";
     const rpc_json_span_t span = {
         schema,
         schema + sizeof(schema) - 1u,
@@ -447,7 +460,8 @@ static int cellular_download_write_schema(void *context, void *encoder)
 static int cellular_download_apply_value(
     void *context, const rpc_json_span_t *value)
 {
-    gfile_fetcher_control_t *control = download_control(context);
+    gfile_fetcher_task_t *task = download_task(context);
+    gfile_fetcher_control_t *control = task == 0 ? 0 : task->control;
     download_request_t request;
     char port[11];
     char size[11];
@@ -458,7 +472,12 @@ static int cellular_download_apply_value(
     if (control == 0 || !parse_request(value, &request))
         return 0;
     state = current_state(control->config);
-    if (state == DOWNLOAD_QUEUED || state == DOWNLOAD_ACTIVE || state == DOWNLOAD_EXTERNAL)
+    if (state == DOWNLOAD_QUEUED || state == DOWNLOAD_ACTIVE)
+        return 0;
+    /* The native task sets started when dispatching a fetch and clears it
+     * during cellular task reset. Replace external metadata only after reset.
+     */
+    if (state == DOWNLOAD_EXTERNAL && (!request.force || task->started))
         return 0;
 
     uint_to_text(port, request.port);
@@ -564,7 +583,9 @@ void cellular_download_set_state(void *executor, unsigned int state)
             state = 6u;
         } else if (state == 5u) {
             config_set(config, key_status, marker_error);
-            /* Retain URL and the committed storage offset for a repeated Set. */
+            /* Keep the URL only when a transport retry can resume this file. */
+            if (!config_equals(config, key_state, marker_retryable))
+                finish_local_request(config);
             upgrade_command_executor_set_result(executor, 5u);
             state = 6u;
         }
