@@ -54,7 +54,7 @@ dispatch, descriptor record shapes, and per-table semantics.
 | g[11] | scalar count for g[10] |
 | g[12] | event spool definitions |
 | g[13] | per-event `EventNotification` payload rules |
-| g[14] | periodic collection schemas (`CSF`, `TIP`, `MLK`, `MPD`, `RFD`, `NRF`, `APD`) |
+| g[14] | periodic collection schemas (`CSF`, `TIP`, `MLK`, `MPD`, `RFD`, `NRF`, `APD`, `PTC`, `HTD`) |
 | g[15] | `STR.edf` `SummaryRecord` schema header |
 | g[16] | EDF stream file schemas (`BRP`, `SA2`, `PLD`, `TCV`) |
 | g[17] | event label tables (`EVE`, `AEV`, `CSL`) |
@@ -100,7 +100,7 @@ dispatch, descriptor record shapes, and per-table semantics.
   `ActiveTherapyProfile` and underscore aliases such as `_MOP`; bare
   three-letter tags are internal names.
 - [Variable reference](var_reference.tsv) lists variables and their
-  release-specific var IDs for 14.8.3.0, 15.8.4.0, 16.8.5.0, and 17.8.6.0.
+  release-specific var IDs.
 - Record layouts describe the structure shared by the listed firmware
   versions. Counts, addresses, IDs, masks, and example values belong to the
   version named in the adjacent table or example.
@@ -775,7 +775,7 @@ window.
 PDL membership and order are identical among the available variants of each
 release. Cells contain the zero-based member index; `--` means absent.
 
-| Tag | 11.8.0.1 | 14.8.3.0 | 15.8.4.0 | 16.8.5.0 | 17.8.6.0 |
+| Tag | 11.8.0.1 | 14.8.3.0 | 15.8.4.0 | 16.8.5.0 | 17.8.6.0 through 19.8.8.0 |
 |-----|----------:|---------:|---------:|---------:|---------:|
 | **Members** | **59** | **60** | **43** | **49** | **49** |
 | `REM` | 0 | 0 | 0 | 0 | 0 |
@@ -900,6 +900,8 @@ only var ID `0x7fff`; callers are responsible for supplying an in-range ID.
 | 15.8.4.0 | 1180 | 4 | 1184 |
 | 16.8.5.0 | 1198 | 4 | 1202 |
 | 17.8.6.0 | 1205 | 4 | 1209 |
+| 18.8.7.0 | 1223 | 4 | 1227 |
+| 19.8.8.0 | 1224 | 4 | 1228 |
 
 Example -- `MOP` in 16.8.5.0:
 
@@ -963,7 +965,7 @@ g[11] stores the number of g[10] records as a scalar value.
 | 14.8.3.0 | 103 | `0x67` |
 | 15.8.4.0 | 103 | `0x67` |
 | 16.8.5.0 | 101 | `0x65` |
-| 17.8.6.0 | 101 | `0x65` |
+| 17.8.6.0 through 19.8.8.0 | 101 | `0x65` |
 
 ---
 
@@ -1100,7 +1102,7 @@ the bit. The logged-data service becomes ready only after the initialization
 bits for every g[12] row are set.
 
 The initialization flags are shared by g[12] and g[14]. Firmware through
-8.6.0 stores them in `FIF`. Firmware 8.7.0 maps indexes 0..30 to `FIF` and
+8.6.0 stores them in `FIF`. From 8.7.0, indexes 0..30 map to `FIF` and
 indexes 31..32 to bits 0..1 of `FIE`.
 
 `erase_class` selects which `EraseData` request resets the file. Class 0 files
@@ -1113,7 +1115,7 @@ affects deletion only and does not alter record encoding or retention.
 | 14.8.3.0 | 22 |
 | 15.8.4.0 | 23 |
 | 16.8.5.0 | 23 |
-| 17.8.6.0 | 24 |
+| 17.8.6.0 through 19.8.8.0 | 24 |
 
 The count is a literal APPX loop bound and the return value for an unknown
 selector. The same value is stored as the `change_event_queue_index` no-queue
@@ -1238,7 +1240,7 @@ fields. Firmware 14.8.3.0 and later use the 0x30-byte layout.
 | 11.8.0.1 | 2 | 0x28 | `CSF` = `DiagnosticTenMinutePeriodic`; `NRF` = `TherapyOneMinutePeriodic` |
 | 14.8.3.0 | 6 | 0x30 | above plus `TIP` = `InspiratoryPressure0p5Hz`, `MLK` = `Leak0p5Hz`, `MPD` = `MaskPressure6p25Hz`, `RFD` = `RespiratoryFlow6p25Hz` |
 | 15.8.4.0 through 17.8.6.0 | 7 | 0x30 | above plus `APD` = `atmosphericPressure10min` |
-| 18.8.7.0 | 9 | 0x30 | above plus `PTC` (source `ACM`) and `HTD` (source `AHT`), both sampled every ten minutes |
+| 18.8.7.0 through 19.8.8.0 | 9 | 0x30 | above plus `PTC` (source `ACM`) and `HTD` (source `AHT`), both sampled every ten minutes |
 
 The number of g[14] collection rows is compiled into the APPX loops that
 construct, register, and reset the collection pipelines. Each row separately
@@ -1327,7 +1329,7 @@ projection, and the signal rows written to `STR.edf`.
 | 14.8.3.0 | 190 | `0x025408` | 3 | `XA5`, `XB3`, `ZZ6` |
 | 15.8.4.0 | 192 | `0x025688` | 3 | `XA5`, `XB3`, `ZZ6` |
 | 16.8.5.0 | 190 | `0x025768` | 5 | `XA5`, `XB3`, `ZZ6`, `XB9`, `XBA` |
-| 17.8.6.0 | 190 | varies | 5 | `XA5`, `XB3`, `ZZ6`, `XB9`, `XBA` |
+| 17.8.6.0 through 19.8.8.0 | 190 | varies | 5 | `XA5`, `XB3`, `ZZ6`, `XB9`, `XBA` |
 
 `retention_days` is 365 and `usage_interval_capacity` is 20 in these releases.
 
@@ -1419,6 +1421,8 @@ Enabled SummaryRecord counts:
 | 16.8.5.0 | 6 | 58 | 90 | 190 |
 | 17.8.6.0 | 3 | 53 | 74 | 190 |
 | 17.8.6.0 | 6 | 58 | 90 | 190 |
+| 18.8.7.0 | 12 | 51 | 70 | 190 |
+| 19.8.8.0 | 6 | 58 | 90 | 190 |
 
 Active families in 15.8.4.0:
 
@@ -1517,7 +1521,7 @@ FlowLim.2s     --      scale 100
 |---------------|----------:|---------------------------|
 | 11.8.0.1 vid13 | 12 | + TgtVent.2s, IERatio.2s, Ti.2s |
 | 14.8.3.0 through 17.8.6.0 vid03 | 9 | -- |
-| 15.8.4.0 vid07; 16.8.5.0/17.8.6.0 vid06 | 11 | + IERatio.2s, Ti.2s |
+| 15.8.4.0 vid07; 16.8.5.0/17.8.6.0/19.8.8.0 vid06 | 11 | + IERatio.2s, Ti.2s |
 | 15.8.4.0 vid10 | 10 | drops FlowLim.2s; + IERatio.2s, Ti.2s |
 | 15.8.4.0 vid12 | 10 | + TgtVent.2s |
 
@@ -1608,6 +1612,7 @@ CSL writer configuration:
 | 16.8.5.0 vid06 | 0 | 1 |
 | 17.8.6.0 vid03 | 1 | 1 |
 | 17.8.6.0 vid06 | 0 | 1 |
+| 19.8.8.0 vid06 | 0 | 1 |
 
 ---
 
@@ -1642,6 +1647,7 @@ The APPX `!NN` schema-reference resolver supplies the table's node count.
 | 15.8.4.0 | 143 |
 | 16.8.5.0 | 144 |
 | 17.8.6.0 | 144 |
+| 18.8.7.0 through 19.8.8.0 | 146 |
 
 ### RPC node metadata
 
@@ -1656,39 +1662,39 @@ Node IDs are release-specific. RPC metadata stores each name and node ID as a
 
 ### Therapy profile node IDs
 
-| Node | 14.8.3.0 | 15.8.4.0 | 16.8.5.0 | 17.8.6.0 |
-|------|---------:|---------:|---------:|---------:|
-| ASVAutoProfile | `0x61` | `0x63` | `0x64` | `0x64` |
-| ASVProfile | `0x62` | `0x64` | `0x65` | `0x65` |
-| AutoSetForHerProfile | `0x63` | `0x65` | `0x66` | `0x66` |
-| AutoSetProfile | `0x64` | `0x66` | `0x67` | `0x67` |
-| CpapProfile | `0x65` | `0x67` | `0x68` | `0x68` |
-| PACProfile | `0x66` | `0x68` | `0x69` | `0x69` |
-| STProfile | `0x67` | `0x69` | `0x6a` | `0x6a` |
-| SpontProfile | `0x68` | `0x6a` | `0x6b` | `0x6b` |
-| TimedProfile | `0x69` | `0x6b` | `0x6c` | `0x6c` |
-| VAutoProfile | `0x6a` | `0x6c` | `0x6d` | `0x6d` |
-| iVAPSProfile | `0x6b` | `0x6d` | `0x6e` | `0x6e` |
+| Node | 14.8.3.0 | 15.8.4.0 | 16.8.5.0 | 17.8.6.0 | 18.8.7.0 / 19.8.8.0 |
+|------|---------:|---------:|---------:|---------:|--------------------:|
+| ASVAutoProfile | `0x61` | `0x63` | `0x64` | `0x64` | `0x66` |
+| ASVProfile | `0x62` | `0x64` | `0x65` | `0x65` | `0x67` |
+| AutoSetForHerProfile | `0x63` | `0x65` | `0x66` | `0x66` | `0x68` |
+| AutoSetProfile | `0x64` | `0x66` | `0x67` | `0x67` | `0x69` |
+| CpapProfile | `0x65` | `0x67` | `0x68` | `0x68` | `0x6a` |
+| PACProfile | `0x66` | `0x68` | `0x69` | `0x69` | `0x6b` |
+| STProfile | `0x67` | `0x69` | `0x6a` | `0x6a` | `0x6c` |
+| SpontProfile | `0x68` | `0x6a` | `0x6b` | `0x6b` | `0x6d` |
+| TimedProfile | `0x69` | `0x6b` | `0x6c` | `0x6c` | `0x6e` |
+| VAutoProfile | `0x6a` | `0x6c` | `0x6d` | `0x6d` | `0x6f` |
+| iVAPSProfile | `0x6b` | `0x6d` | `0x6e` | `0x6e` | `0x70` |
 
 ### Feature profile node IDs
 
-| Node | 14.8.3.0 | 15.8.4.0 | 16.8.5.0 | 17.8.6.0 |
-|------|---------:|---------:|---------:|---------:|
-| ConfirmStopFeature | `0x4d` | `0x4f` | `0x50` | `0x50` |
-| HeightFeature | `0x51` | `0x53` | `0x54` | `0x54` |
-| RampDownFeature | `0x55` | `0x57` | `0x58` | `0x58` |
-| TherapyLEDFeature | `0x5d` | `0x5f` | `0x60` | `0x60` |
+| Node | 14.8.3.0 | 15.8.4.0 | 16.8.5.0 | 17.8.6.0 | 18.8.7.0 / 19.8.8.0 |
+|------|---------:|---------:|---------:|---------:|--------------------:|
+| ConfirmStopFeature | `0x4d` | `0x4f` | `0x50` | `0x50` | `0x52` |
+| HeightFeature | `0x51` | `0x53` | `0x54` | `0x54` | `0x56` |
+| RampDownFeature | `0x55` | `0x57` | `0x58` | `0x58` | `0x5a` |
+| TherapyLEDFeature | `0x5d` | `0x5f` | `0x60` | `0x60` | `0x62` |
 
 ### Alarm profile node IDs
 
-| Node | 14.8.3.0 | 15.8.4.0 | 16.8.5.0 | 17.8.6.0 |
-|------|---------:|---------:|---------:|---------:|
-| AlarmProfiles | `0x40` | `0x42` | `0x43` | `0x43` |
-| AlarmVolume | `0x41` | `0x43` | `0x44` | `0x44` |
-| ApneaAlarm | `0x42` | `0x44` | `0x45` | `0x45` |
-| HighLeakAlarm | `0x43` | `0x45` | `0x46` | `0x46` |
-| LowMinuteVentAlarm | `0x44` | `0x46` | `0x47` | `0x47` |
-| NonVentedMaskAlarm | `0x45` | `0x47` | `0x48` | `0x48` |
+| Node | 14.8.3.0 | 15.8.4.0 | 16.8.5.0 | 17.8.6.0 | 18.8.7.0 / 19.8.8.0 |
+|------|---------:|---------:|---------:|---------:|--------------------:|
+| AlarmProfiles | `0x40` | `0x42` | `0x43` | `0x43` | `0x45` |
+| AlarmVolume | `0x41` | `0x43` | `0x44` | `0x44` | `0x46` |
+| ApneaAlarm | `0x42` | `0x44` | `0x45` | `0x45` | `0x47` |
+| HighLeakAlarm | `0x43` | `0x45` | `0x46` | `0x46` | `0x48` |
+| LowMinuteVentAlarm | `0x44` | `0x46` | `0x47` | `0x47` | `0x49` |
+| NonVentedMaskAlarm | `0x45` | `0x47` | `0x48` | `0x48` | `0x4a` |
 
 Example -- `AutoSetProfile` in 16.8.5.0:
 
@@ -1747,7 +1753,7 @@ zero-filled `0x7fa`-byte buffer, and firmware compares its CRC-32/ISO-HDLC
 | 14.8.3.0 | 28 |
 | 15.8.4.0 | 29 |
 | 16.8.5.0 | 29 |
-| 17.8.6.0 | 29 |
+| 17.8.6.0 through 19.8.8.0 | 29 |
 
 The ordered 14.8.3.0 source list is:
 

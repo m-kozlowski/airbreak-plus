@@ -279,6 +279,7 @@ Known values:
 | 16.8.5.0 | `0x7862CBA7` | `0xBEB37EE2` |
 | 17.8.6.0 | `0xBECBC5BC` | `0xBEB37EE2` |
 | 18.8.7.0 | `0x1B460250` | `0xBEB37EE2` |
+| 19.8.8.0 | `0x94A7F622` | `0xBEB37EE2` |
 
 ## Format 0006
 

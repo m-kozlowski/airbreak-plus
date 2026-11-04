@@ -78,6 +78,13 @@ The complete mapping of known long names and short tags is maintained in the
 [variable reference](var_reference.tsv). The [`as11_config.py` known
 command](../tools/as11_config.md#known) provides an offline searchable catalog.
 
+Firmware 8.8 adds these long names and symbolic enum values:
+
+| Name | Short tag | Values | Meaning |
+|------|-----------|--------|---------|
+| `WarmUpEnable` | `_WUP` | `Off`, `On` | humidifier warm-up request |
+| `HumidifierState` | `_HUS` | `Reset`, `Idle`, `WarmingUp`, `WarmingUpInError`, `WarmReady`, `CoolDown`, `HumidifyActive`, `HumidifyInactive`, `Error`, `MockDown` | humidifier operating state |
+
 ## Object Selectors
 
 The selectors below are predefined `Get` targets beyond individual variables.

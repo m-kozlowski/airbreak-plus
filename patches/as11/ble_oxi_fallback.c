@@ -6,8 +6,8 @@
  * flag (0x75) and connection context (0x78), owned by this patch. Queueing
  * a new request initializes it; native reset leaves it untouched. */
 #define STATE_OFFSET          0x0Cu
-/* APPX 8.7 moves the sample sink; 0x28 holds the result callback there. */
-#if defined(APPX_VER_8_7_0)
+/* APPX 8.7/8.8 use 0x2C for the sink and 0x28 for the result callback. */
+#if defined(APPX_VER_8_7_0) || defined(APPX_VER_8_8_0)
 #define SAMPLE_SINK_OFFSET    0x2Cu
 #else
 #define SAMPLE_SINK_OFFSET    0x28u

@@ -26,7 +26,7 @@
 /* Native page indexes and localized statistic labels differ between releases. */
 #if defined(APPX_VER_8_6_0)
 #define GUI_VERSION_VALUE(v86, v87) v86
-#elif defined(APPX_VER_8_7_0)
+#elif defined(APPX_VER_8_7_0) || defined(APPX_VER_8_8_0)
 #define GUI_VERSION_VALUE(v86, v87) v87
 #else
 #error Flow GUI layout is not defined for this APPX

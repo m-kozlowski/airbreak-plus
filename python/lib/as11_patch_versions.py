@@ -22,6 +22,10 @@ AS11_OTA_COMPATIBILITY_FINGERPRINT_PRESETS = {
         "conf_appl_compatibility_fingerprint": 0x1B460250,
         "fgbl_appl_compatibility_fingerprint": 0xBEB37EE2,
     },
+    "19.8.8.0": {
+        "conf_appl_compatibility_fingerprint": 0x94A7F622,
+        "fgbl_appl_compatibility_fingerprint": 0xBEB37EE2,
+    },
 }
 
 
@@ -641,6 +645,134 @@ AS11_PATCH_VERSIONS = {
             # Native therapy-page classification: state publication and UI policy.
             "therapy_page_state_call": 0x080B0ED0,
             "therapy_page_policy_call": 0x080A28F4,
+        },
+    },
+    "8_8_0": {
+        "cellular_download": {
+            "task_pointer_slot": 0x3000AF38,
+            "can_start_vtable_slot": 0x081C9818,
+            "set_state_prologue": "73b50446",
+        },
+        "ble_oxi_fallback": {
+            "ble_oxi_gatt_client_on_stack_event": 0x081B1874,
+            "ble_oxi_gatt_client_queue_connect": 0x081B1880,
+            "ble_oxi_gatt_client_request_disconnect": 0x081B1884,
+            "thunk_ble_oxi_gatt_client_queue_connect": 0x081B18A0,
+            "this_adjustor_ble_oxi_gatt_client_request_disconnect": 0x081B18A4,
+        },
+        "backlight": {
+            "threshold_low": 0x080B1916,
+            "threshold_high": 0x080B191E,
+            "low": 0x080A1EF8,
+            "high": 0x080A1EF4,
+            "delay_ms": 0x080B18C4,
+        },
+        "scroll_animation": {
+            "step_init": 0x08068808,
+            "before": "29640121ab63",
+        },
+        "airplane_reminder": {
+            "address": 0x08093118,
+            "before": "00f079f8",
+            "after": "00bf00bf",
+        },
+        "flow_wave": {
+            "gui_update_call": 0x08093968,
+            "page_build_start": 0x0806333E,
+            "page_build_end": 0x0806356A,
+            "page_store": 0x08063566,
+            "tss_switch_pointer": 0x080596F4,
+            "therapy_page_state_call": 0x080B0F90,
+            "therapy_page_policy_call": 0x080A29B8,
+        },
+        "cloud_firmware_change": {
+            "suppress_download": {
+                "address": 0x080C0536,
+                "before": "80b9",
+                "after": "00bf",
+            },
+            "suppress_apply": {
+                "address": 0x080E323C,
+                "before": "0322",
+                "after": "0222",
+            },
+        },
+        "rpc_dispatcher": {
+            "init_entry": 0x08193FB0,
+        },
+        "mop_callback_dispatcher": {
+            "writeback": 0x08071E3C,
+            "vtable_slot": 0x081A9138,
+        },
+        "timezone_write": {
+            "metadata_gate": {
+                "address": 0x081B05D8,
+                "before": "e10f",
+                "after": "0121",
+            },
+            "data_rule_gate": {
+                "address": 0x081603E8,
+                "before": "17ead47f",
+                "after": "002f00bf",
+            },
+            "menu_warning_action": {
+                "address": 0x0805E8B6,
+                "before": "05f034f9",
+                "after": "00bf00bf",
+            },
+        },
+        "screen_keep_awake": {
+            "touch_report_vtable_slot": 0x081AF8B8,
+            "process_touch_events_call": 0x0809384E,
+            "fade_transition_call": 0x080B1820,
+            "target_intensity_call": 0x080B1270,
+            "runtime_state_init": {
+                "address": 0x080B124C,
+                "before": "84f86800",
+                "after": "c4f86800",
+            },
+        },
+        "header_clock": {
+            "draw_call": 0x080645C6,
+            "menu_draw_call": 0x08069C5E,
+            "root_ctor_call": 0x080A14F8,
+            "timer_callback_slot": 0x081AE4A8,
+            "home_page_store": 0x0805A2B0,
+            "single_pressure_page_store": 0x0805ACCE,
+            "pressure_bar_page_store": 0x0805B388,
+            "page_array_base": 0x080B0FB6,
+            "page_ids": (1, 3, 4),
+            "home_text_id": 0x0079,
+            "empty_text_id": 0x006B,
+            "menu_text_id": 0x0133,
+        },
+        "custom_settings": {
+            "gui_enum_count_pointer": 0x08077664,
+            "gui_enum_table_pointer": 0x08077668,
+            "rpc_enum_symbols": 0x08109AE4,
+            "rpc_enum_symbol_count": 1065,
+            "menu": {
+                "scroller_call": 0x0805EACC,
+            },
+            "reclaim": {
+                "reminders": {
+                    "row_index": 0x81,
+                    "row_call": (0x0805E836, 0x0806A746),
+                    "row_label": (0x0805E832, "40f23311"),
+                    "row_store": (0x0805E83E, "cbf80402"),
+                    "scheduler_call": (0x08093936, 0x080A1B88),
+                    "row_build_start": 0x0805E806,
+                    "row_build_end": 0x0805E842,
+                },
+            },
+        },
+        "asv_backup_rate": {
+            "vtable_slot": 0x081B2254,
+            "label_id": 0x00F3,
+        },
+        "therapy_screen_style": {
+            "label_id": 0x00B5,
+            "option_labels": (0x01FE, 0x009D, 0x0212),
         },
     },
 }
