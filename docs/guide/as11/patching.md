@@ -95,7 +95,7 @@ instead of producing that reduced result.
 |-------|--------------|--------|
 | Unlock languages | Enables all configured language choices | `--patch-unlock-languages` |
 | Defaults | Changes the initial values of selected settings without replacing values already saved on the device | `--patch-defaults` |
-| Header clock | Shows local time in the dashboard and therapy-screen headers when enabled in Configuration; default Off | `--patch-header-clock` |
+| Header clock | Shows local time and usage time in the header during therapy | `--patch-header-clock` |
 | Screen keep-awake | Uses a three-finger hold to toggle whether inactivity turns off the display | `--patch-screen-keep-awake` |
 | Backlight (optional) | Sets ambient-light thresholds, LCD brightness levels, and response delay at build time | `--patch-backlight` |
 | Startup logo (optional) | Selects the logo shown when the device starts | `--patch-startup-logo [0..4]` |

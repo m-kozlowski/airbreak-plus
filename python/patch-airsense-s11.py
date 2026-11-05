@@ -1042,7 +1042,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
 
     def __init__(self, asf, rpc_method_permissions=None, rpc_dataitem_permissions=None, cloud_firmware_change_mode="metadata",
                  backlight_threshold_low=10, backlight_threshold_high=19,
-                 backlight_low=20, backlight_high=100, backlight_delay_ms=3000):
+                 backlight_low=20, backlight_high=100, backlight_delay_ms=3000, header_clock_usage="PPD"):
         self.asf = asf
         self._init_compiled_payloads()
         self.mop_callback_handlers = []
@@ -1067,6 +1067,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         self.rpc_method_permission_rules = DEFAULT_RPC_METHOD_PERMISSIONS if rpc_method_permissions is None else rpc_method_permissions
         self.rpc_dataitem_permission_rules = DEFAULT_RPC_DATAITEM_PERMISSIONS if rpc_dataitem_permissions is None else rpc_dataitem_permissions
         self.cloud_firmware_change_mode = cloud_firmware_change_mode
+        self.header_clock_usage = header_clock_usage
         self.backlight_settings = (backlight_threshold_low, backlight_threshold_high,
                                    backlight_low, backlight_high, backlight_delay_ms)
 
@@ -2781,7 +2782,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         return PatchOutcome.ok()
 
     def header_clock(self):
-        """Show local time in the dashboard and therapy-screen title bar."""
+        """Show local time and therapy usage in the title bar."""
         ver = self._payload_version_key()
         anchors = self._patch_version_data("header_clock", ver)
         data, _ = self._load_versioned_bin(AS11_HEADER_CLOCK_PAYLOAD)
@@ -2803,6 +2804,8 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             elf_path, "header_clock_text_ids"
         )
         setting_slot = self._elf_symbol_addr(elf_path, "header_clock_var_id")
+        usage_slot = self._elf_symbol_addr(elf_path, "header_clock_usage_var_id")
+        usage = self.asf.find_descriptors(self.header_clock_usage, ("g2",))[0]
         page_ids = self._elf_symbol_addr(elf_path, "header_clock_page_ids")
         stock_draw = self._elf_symbol_addr(
             elf_path, "GuiPaint_DrawLocalizedTextById"
@@ -2833,6 +2836,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             raise ValueError("header_clock: root-widget timer callback does not match")
 
         flash, _off = self._inject_payload(AS11_HEADER_CLOCK_PAYLOAD, data)
+        self.asf.write_u16(usage_slot - self.asf.FLASH_BASE, usage["var_id"])
         text_ids_off = text_ids - self.asf.FLASH_BASE
         for index, page in enumerate(anchors["page_ids"]):
             self.asf.write_u16(page_ids - self.asf.FLASH_BASE + 2 * index, page)
@@ -2858,8 +2862,8 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             self.custom_setting_bind(setting, setting_slot)
 
         print(
-            "Patching header clock... build/%s_%s.bin (%dB) at 0x%08X" %
-            (AS11_HEADER_CLOCK_PAYLOAD, ver, len(data), flash)
+            "Patching header clock... build/%s_%s.bin (%dB) at 0x%08X; usage: %s" %
+            (AS11_HEADER_CLOCK_PAYLOAD, ver, len(data), flash, self.header_clock_usage)
         )
         return PatchOutcome.ok()
 
@@ -3222,7 +3226,7 @@ PATCH_LIST = [
     },
     {
         "arg": "patch-header-clock",
-        "desc": "Show local time in the dashboard and therapy-screen headers.",
+        "desc": "Show local time and usage time in the header during therapy.",
         "default": True,
         "function": "header_clock",
     },
@@ -3424,6 +3428,8 @@ def build_arg_parser():
                            help="Bright LCD brightness, 0..100. Default: 100.")
     backlight.add_argument("--backlight-delay-ms", type=int, default=3000, metavar="MS",
                            help="Ambient-mode change delay, 0..65534 ms. Default: 3000.")
+    parser.add_argument("--header-clock-usage", type=str.upper, choices=("PPD", "PUD"), default="PPD",
+                        help="Usage shown during therapy: PPD for the therapy day (default), PUD for the current mask-on interval.")
     return parser
 
 
@@ -3487,6 +3493,7 @@ def run_patcher(args, detail_log=None):
         rpc_method_permissions=rpc_method_permissions,
         rpc_dataitem_permissions=rpc_dataitem_permissions,
         cloud_firmware_change_mode=args.cloud_firmware_change_mode,
+        header_clock_usage=args.header_clock_usage,
         backlight_threshold_low=args.backlight_threshold_low,
         backlight_threshold_high=args.backlight_threshold_high,
         backlight_low=args.backlight_low,

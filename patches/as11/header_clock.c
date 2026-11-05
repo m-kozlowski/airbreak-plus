@@ -1,4 +1,4 @@
-/* Display local time in the dashboard and therapy-screen title bar. */
+/* Local time in the title bar, plus usage minutes during therapy. */
 
 #include "stubs.h"
 #include "vars.h"
@@ -39,6 +39,10 @@ volatile const unsigned short header_clock_page_ids[3]
 volatile const unsigned short header_clock_var_id
     __attribute__((used, section(".rodata.params.var_id"))) = 0xFFFFu;
 
+/* The patcher selects the therapy-day (PPD) or mask-interval (PUD) counter. */
+volatile const unsigned short header_clock_usage_var_id
+    __attribute__((used, section(".rodata.params.usage"))) = VAR_ID_PPD;
+
 static int clock_is_enabled(void)
 {
     return header_clock_var_id == 0xFFFFu ||
@@ -64,15 +68,44 @@ static void schedule_next_minute(user_interface_root_widget_layout_t *root)
         root->status_timer, delay);
 }
 
-static int clock_replaces_label(unsigned int text_id)
+static char *two_digits(char *out, unsigned int value)
+{
+    *out++ = (char)('0' + value / 10u);
+    *out++ = (char)('0' + value % 10u);
+    return out;
+}
+
+static char *write_hhmm(char *out, unsigned int minutes)
+{
+    out = two_digits(out, minutes / 60u);
+    *out++ = ':';
+    return two_digits(out, minutes % 60u);
+}
+
+static int format_header(char *text, unsigned int text_id)
 {
     unsigned int page = (unsigned int)DataItem_read_value_by_id(VAR_ID_ZMD);
+    int therapy = page == header_clock_page_ids[1] || page == header_clock_page_ids[2];
+    if (!(therapy && text_id == header_clock_text_ids.empty) &&
+        !(page == header_clock_page_ids[0] && text_id == header_clock_text_ids.home))
+        return 0;
 
-    if (page == header_clock_page_ids[0])
-        return text_id == header_clock_text_ids.home;
-    if (page == header_clock_page_ids[1] || page == header_clock_page_ids[2])
-        return text_id == header_clock_text_ids.empty;
-    return 0;
+    char *out = text;
+    unsigned int local_ms;
+    if (read_local_milliseconds(&local_ms))
+        out = write_hhmm(out, local_ms / MINUTE_MILLISECONDS);
+    if (therapy) {
+        unsigned int minutes = (unsigned int)DataItem_read_value_by_id(header_clock_usage_var_id);
+        if (minutes <= 1440u) {
+            if (out != text) {
+                for (const char *p = "  |  "; *p; ++p)
+                    *out++ = *p;
+            }
+            out = write_hhmm(out, minutes);
+        }
+    }
+    *out = '\0';
+    return out != text;
 }
 
 void __attribute__((section(".text.0.main")))
@@ -84,33 +117,18 @@ start(
     int clip,
     unsigned int alignment)
 {
-    unsigned int local_ms;
-    unsigned int total_minutes;
-    unsigned int hour;
-    unsigned int minute;
-    char clock[6];
+    char text[sizeof("HH:MM  |  HH:MM")];
 
     /* The hook is shared by other title bars; preserve their stock labels. */
-    if (!clock_is_enabled() || !clock_replaces_label(text_id) ||
-            !read_local_milliseconds(&local_ms)) {
+    if (!clock_is_enabled() || !format_header(text, text_id)) {
         GuiPaint_DrawLocalizedTextById(
             text_id, rect, text_size, font, clip, alignment);
         return;
     }
 
-    total_minutes = local_ms / MINUTE_MILLISECONDS;
-    hour = total_minutes / 60u;
-    minute = total_minutes - hour * 60u;
-    clock[0] = (char)('0' + hour / 10u);
-    clock[1] = (char)('0' + hour % 10u);
-    clock[2] = ':';
-    clock[3] = (char)('0' + minute / 10u);
-    clock[4] = (char)('0' + minute % 10u);
-    clock[5] = '\0';
-
     /* Draw dynamic text with the font slot selected for the replaced label. */
     GuiPaint_DrawStringInRect(
-        clock,
+        text,
         rect,
         text_size,
         font,

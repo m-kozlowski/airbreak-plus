@@ -54,10 +54,16 @@ control.
 
 ## Header Clock
 
-The clock patch shows local time in the home and therapy-screen headers.
-Enable `Clock` in the clinical menu's Configuration section. The default is
-`Off`.
-Without the custom-settings patch, the clock is always shown.
+The home screen header shows local time. During therapy, the header shows
+local time and usage time side by side.
+
+Usage time is the total hours and minutes of mask use since the last local
+noon, including earlier sessions. Build with `--header-clock-usage PUD` to
+show only the current mask-on interval.
+
+To enable the feature, turn on `Clock` under Configuration in the clinical
+menu. The default is `Off`. Without the custom-settings patch, the feature
+is always enabled.
 
 ## Startup Logo (Optional)
 

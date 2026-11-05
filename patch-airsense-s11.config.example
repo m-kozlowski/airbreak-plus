@@ -16,6 +16,7 @@
 # --patch-therapy-screen-style y
 # --patch-vid-spoof y
 # --patch-header-clock y
+# --header-clock-usage PPD
 # --patch-screen-keep-awake y
 # --patch-scroll-animation n
 # --patch-asv-backup-rate y
