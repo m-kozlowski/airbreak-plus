@@ -18,6 +18,7 @@ typedef struct {
 
 void init_triggercycle(triggercycle_t *trc);
 triggercycle_t* get_triggercycle();
+void update_triggercycle_settings(triggercycle_t *trc);
 void update_triggercycle(triggercycle_t *trc, tracking_t *tr, history_t *hist);
 
 #endif

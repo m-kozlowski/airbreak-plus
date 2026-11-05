@@ -30,9 +30,8 @@ static float *cmd_ipap = &fvars[0x2a]; // (cmH2O) This is set to epap+ps somewhe
 
 static float *cmd_epap_ramp = &fvars[0x2d]; // (cmH2O) 
 
-static const float *leak_basal = &fvars[0x22]; // I believe this to be basal unintentional leak (L/min)
+static const float *leak_basal = &fvars[0x23]; // Reference leak flow before pressure adjustment (L/min)
 static const float *leak = &fvars[0x24]; // Unintentional leak (L/min) - this is what flow_compensated incorporates
-// const float *leak_b = &fvars[0x23]; // Also unintentional leak, but smaller amplitude, unsure of significance
 
 static const float *flow_raw = &fvars[0x3]; // (L/min)
 static const float *flow_patient = &fvars[0x0]; // (L/min)
@@ -238,7 +237,7 @@ typedef struct {
 
 void init_tracking(tracking_t *tr);
 tracking_t* get_tracking();
-void update_tracking(tracking_t *tr, history_t *hist);
+void update_tracking(tracking_t *tr, history_t *hist, float configured_cycle);
 
 #include "my_asv.h"
 #include "feat_triggercycle.h"

@@ -17,14 +17,17 @@ triggercycle_t* get_triggercycle() {
   return GET_PTR(PTR_TRIGGERCYCLE, triggercycle_t, init_triggercycle);
 }
 
-void update_triggercycle(triggercycle_t *trc, tracking_t *tr, history_t *hist) {
-  // If the value is changed, it means it was changed by the UI code due to user input. Update the reference value
+// Capture firmware setting changes before tracking; ignore our own last overrides.
+void update_triggercycle_settings(triggercycle_t *trc) {
   if (sens_trigger != trc->last_trigger) {
     trc->real_trigger = sens_trigger;
   }
   if (sens_cycle != trc->last_cycle) {
     trc->real_cycle = sens_cycle;
   }
+}
+
+void update_triggercycle(triggercycle_t *trc, tracking_t *tr, history_t *hist) {
 
   if (!trc->custom_trigger) { sens_trigger = trc->real_trigger; }
   if (!trc->custom_cycle) { sens_cycle = trc->real_cycle; }

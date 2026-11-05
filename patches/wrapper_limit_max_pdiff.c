@@ -79,10 +79,13 @@ void MAIN start() {
     return;
   }
 
+  triggercycle_t *trc = get_triggercycle();
+  update_triggercycle_settings(trc);
+
   history_t *hist = get_history();
   update_history(hist);
   tracking_t *tr = get_tracking();
-  update_tracking(tr, hist);
+  update_tracking(tr, hist, trc->real_cycle);
   asv_data_t *asv = get_asv_data();
   float asv_max = custom_asv_max_cm();
   asv->asv_sens = custom_asv_sens_multiplier();
@@ -96,7 +99,6 @@ void MAIN start() {
   float dps = 0.0f;
   bool triggercycle_toggle = custom_g8_toggle(wrapper_limit_max_pdiff_triggercycle_var_id, true);
 
-  triggercycle_t *trc = get_triggercycle();
   trc->custom_trigger = trc->custom_cycle = false; // Default state is off.
   if (triggercycle_toggle && (*therapy_mode == MODE_S)) {
     trc->custom_trigger = true;

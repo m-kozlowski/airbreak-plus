@@ -152,7 +152,7 @@ tracking_t* get_tracking() {
   return GET_PTR(PTR_TRACKING, tracking_t, init_tracking);
 }
 
-void update_tracking(tracking_t *tr, history_t *hist) {
+void update_tracking(tracking_t *tr, history_t *hist, float configured_cycle) {
   const unsigned now = tim_read_tim5();
   // Initialize if it's the first time or more than 0.1s elapsed, suggesting that the therapy was stopped and re-started.
   if ((now - tr->last_time) > 100000) { init_tracking(tr); }
@@ -188,8 +188,8 @@ void update_tracking(tracking_t *tr, history_t *hist) {
     tr->current.ti += 0.01f;
     inplace(max, &tr->current.inh_maxflow, *flow_compensated);
 
-    // If cycle would normally happen, start pre_cycle, for use when custom cycle is used
-    if (*flow_compensated < tr->current.inh_maxflow * sens_cycle) {
+    // Track the configured cycle threshold, not Custom T/C's live override.
+    if (*flow_compensated < tr->current.inh_maxflow * configured_cycle) {
       if (tr->st_pre_cycle < 255) { tr->st_pre_cycle += 1; }
     }
     else { tr->st_pre_cycle = max(tr->st_pre_cycle - 1, 0); } // Don't just reset it
