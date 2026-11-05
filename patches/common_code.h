@@ -231,7 +231,7 @@ typedef struct {
 
 void init_tracking(tracking_t *tr);
 tracking_t* get_tracking();
-void update_tracking(tracking_t *tr, history_t *hist, float configured_cycle);
+void update_tracking(tracking_t *tr, history_t *hist, float configured_trigger, float configured_cycle);
 
 #include "my_asv.h"
 #include "feat_triggercycle.h"

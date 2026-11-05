@@ -85,7 +85,7 @@ void MAIN start() {
   history_t *hist = get_history();
   update_history(hist);
   tracking_t *tr = get_tracking();
-  update_tracking(tr, hist, trc->real_cycle);
+  update_tracking(tr, hist, trc->real_trigger, trc->real_cycle);
   asv_data_t *asv = get_asv_data();
   float asv_max = custom_asv_max_cm();
   asv->asv_sens = custom_asv_sens_multiplier();

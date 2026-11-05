@@ -139,7 +139,7 @@ tracking_t* get_tracking() {
   return GET_PTR(PTR_TRACKING, tracking_t, init_tracking);
 }
 
-void update_tracking(tracking_t *tr, history_t *hist, float configured_cycle) {
+void update_tracking(tracking_t *tr, history_t *hist, float configured_trigger, float configured_cycle) {
   const unsigned now = tim_read_tim5();
   // Initialize if it's the first time or more than 0.1s elapsed, suggesting that the therapy was stopped and re-started.
   if ((now - tr->last_time) > 100000) { init_tracking(tr); }
@@ -187,7 +187,8 @@ void update_tracking(tracking_t *tr, history_t *hist, float configured_cycle) {
 
     // If flow extrapolated 80ms(~blower delay) into the future crosses threshold, increment pretrigger
     const float flow2 = max(*flow_compensated, *flow_compensated + get_delta_flow(hist, 4)*8.0f); // Flow extrapolated 80ms into the future
-    if (flow2 > sens_trigger) { tr->st_pre_trigger += 1; } // Slightly higher than baseline trigger sens
+    // Track the configured trigger threshold, not Custom T/C's live override.
+    if (flow2 > configured_trigger) { tr->st_pre_trigger += 1; }
     else { tr->st_pre_trigger = 0; } // This has to reset, flow doesn't slow down during the start of a breath
   }
 
