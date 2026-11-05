@@ -94,8 +94,6 @@ void MAIN start() {
 
   features_t *feat = GET_PTR(PTR_FEATURES, features_t, init_features);
 
-  apply_jitter(hist, true);
-
   float dps = 0.0f;
   bool triggercycle_toggle = custom_g8_toggle(wrapper_limit_max_pdiff_triggercycle_var_id, true);
 
@@ -161,6 +159,4 @@ void MAIN start() {
   *cmd_ps = new_ps;
   pressure_limit_max_difference(); // Execute the original function
   *cmd_ps = orig_ps;
-
-  apply_jitter(hist, false);
 }

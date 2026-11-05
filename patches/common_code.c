@@ -56,7 +56,6 @@ void init_history(history_t *hist) {
     hist->cmd_ipap[i] = 0.0f;
   }
   hist->tick = -1;
-  hist->last_jitter = 0;
 }
 
 void update_history(history_t *hist) {
@@ -95,18 +94,6 @@ bool is_cmd_ipap_constant(history_t *hist) {
   const int t1 = t & (HISTORY_LENGTH - 1);
   const int t2 = (t-4) & (HISTORY_LENGTH - 1);
   return absf(hist->cmd_ipap[t1] - hist->cmd_ipap[t2]) <= 0.041f;
-}
-
-
-void apply_jitter(history_t *hist, bool undo) {
-  if (undo) { // Undo the previous
-    hist->last_jitter *= -1;
-  } else { // Get new jitter value
-    hist->last_jitter = 1 - ((*pap_timer)/4) % 2 * 2;
-  }
-  // FIXME: This needs to be relative to either EPAP or IPAP, the "is the PS sufficiently different to trigger a redraw?" routine is relative to pressure.
-  const float amtf = 0.01f * hist->last_jitter;
-  *cmd_ps += amtf; *cmd_epap_ramp -= amtf;
 }
 
 
