@@ -1,6 +1,6 @@
 #!/bin/bash
 
-rx='^([0-9]+-[0-9]+)[[:space:]]+([0-9a-f]{4}:[0-9a-f]{4})[[:space:]]+(.*)[[:space:]]+(Shared|Not shared)'
+rx='^([0-9]+-[0-9]+)[[:space:]]+([0-9a-f]{4}:[0-9a-f]{4})[[:space:]]+(.*)[[:space:]]+(Shared|Allowed|Not shared)'
 
 TIMEOUT=10
 failed=0
