@@ -114,6 +114,7 @@ void MAIN start() {
 
   if (*therapy_mode == MODE_VAUTO) {
 
+    // The pre-ramp reference is EPAP + PS/2, so this uses EPAP - PS/2.
     float current_eps = clamp((*cmd_epap - vauto_ps) * 0.2f, 0.4f, 1.6f);
 
     int t = hist->tick;
@@ -152,7 +153,8 @@ void MAIN start() {
       new_ps += feat->ips_fa;
     }
 
-    new_ps = *cmd_ps + (new_ps - ps); // Correction for the bizarre way VAuto handles the *cmd_ps fvar
+    // Convert support above EPAP back to the signed midpoint-relative waveform.
+    new_ps = *cmd_ps + (new_ps - ps);
   }
 
   const float orig_ps = *cmd_ps;

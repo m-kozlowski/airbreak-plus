@@ -24,11 +24,11 @@ typedef _Bool bool;
 extern float fvars[];
 extern int ivars[];
 
-static float *cmd_ps = &fvars[0x29]; // (cmH2O)
-static float *cmd_epap = &fvars[0x28]; // (cmH2O)
-static float *cmd_ipap = &fvars[0x2a]; // (cmH2O) This is set to epap+ps somewhere else, no point in writing directly to it
+static float *cmd_ps = &fvars[0x29]; // Additive pressure waveform; signed around the midpoint in VAuto (cmH2O)
+static float *cmd_epap = &fvars[0x28]; // Pressure reference before ramp; EPAP + PS/2 in VAuto (cmH2O)
+static float *cmd_ipap = &fvars[0x2a]; // Final pressure command throughout the breath, not a stored IPAP setting (cmH2O)
 
-static float *cmd_epap_ramp = &fvars[0x2d]; // (cmH2O) 
+static float *cmd_epap_ramp = &fvars[0x2d]; // Ramped pressure reference (cmH2O)
 
 static const float *leak_basal = &fvars[0x23]; // Reference leak flow before pressure adjustment (L/min)
 static const float *leak = &fvars[0x24]; // Unintentional leak (L/min) - this is what flow_compensated incorporates
@@ -73,16 +73,14 @@ static const   int *pap_timer = &ivars[0];
 #define s_ips (s_ipap - s_epap)
 #define s_rise_time_i ivars[0xD] // (8ms ticks)
 #define s_rise_time_f (s_rise_time_i * 0.008f) // (s)
-// VAuto mode configuration
-#define vauto_max_ipap fvars[0x9]
-#define vauto_epap fvars[0xa]
+// VAuto bounds use the midpoint between EPAP and IPAP (cmH2O).
+#define vauto_reference_max fvars[0x9] // Max IPAP - PS/2
+#define vauto_reference_min fvars[0xa] // Min EPAP + PS/2
 #define vauto_ps fvars[0xb]
-#define vauto_ipap (vauto_epap + vauto_ps)
-// 0x91 seems to contain epap-derived value
 
-// These overlap with VAuto settings.
-#define apap_epap_min fvars[0x9]
-#define apap_epap_max fvars[0xa]
+// AutoSet/APAP pressure bounds share the VAuto slots (cmH2O).
+#define apap_pressure_max fvars[0x9]
+#define apap_pressure_min fvars[0xa]
 #define apap_epr fvars[0xb]
 
 #define ti_min (ivars[0x5]*10) // (ms) integer

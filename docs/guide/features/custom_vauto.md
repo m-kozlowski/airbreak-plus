@@ -3,10 +3,10 @@
 The `stm32-plus.bin` build can replace the stock VAuto within-breath
 pressure-support behavior with Custom VAuto.
 
-The therapy mode remains VAuto. Stock VAuto continues to control EPAP, and the
-configured VAuto PS and Max IPAP settings remain in effect. Custom VAuto changes
-how pressure support is delivered during inspiration and expiration, and can
-add breath-by-breath adaptive support.
+The therapy mode remains VAuto. Stock VAuto continues to select EPAP using the
+normal Min EPAP, Max IPAP, and PS settings. Custom VAuto changes how pressure
+support is delivered during inspiration and expiration, and can add
+breath-by-breath adaptive support.
 
 This is separate from the stock ASV and ASVAuto modes. It does not use their
 settings and does not add a timed backup rate.
@@ -74,7 +74,7 @@ stock final pressure limiter.
 | Expiration | Stock pressure return toward EPAP | Custom downslope with calculated exhale relief |
 | Trigger preparation | Stock response | May add up to 0.4 cmH2O of pre-trigger pressure assist |
 | Trigger and cycle decisions | Configured stock thresholds | Stock thresholds or Custom T/C decisions |
-| Final pressure | Limited by Max IPAP | Limited by the same stock Max IPAP path |
+| Final pressure | Limited by Max IPAP | Adaptive boost can exceed the selected Max IPAP; see Pressure limits |
 | Backup rate | None | None |
 | Reported mode | VAuto | VAuto |
 
@@ -157,7 +157,7 @@ expiratory downslope. After an inspiration lasting at least 0.7 seconds, the
 initial exhale-relief magnitude is calculated as:
 
 ```text
-relief = clamp(0.2 * (EPAP - PS), 0.4, 1.6)
+relief = clamp(0.2 * (EPAP - PS/2), 0.4, 1.6)
 relief = max(0, relief - 0.25 * (peak_support - PS))
 ```
 
@@ -208,12 +208,12 @@ remain in use.
 
 ### Pressure limits
 
-EPAP remains under stock VAuto control. The configured VAuto PS defines the
-nominal full-inspiration support. ASV Max limits only the adaptive addition above
-the custom base shape, while the stock final pressure limiter continues to apply
-the configured Max IPAP ceiling.
+Max IPAP limits the stock VAuto baseline. Adaptive support is added afterwards
+and can raise inspiratory pressure above the selected Max IPAP. ASV Max limits
+this addition relative to the custom base shape, not absolute IPAP.
 
-A low Max IPAP can therefore limit adaptive support before ASV Max is reached.
+The stock final limiter uses the upper allowed bound of the Max IPAP setting,
+not the value selected in the menu.
 
 ## Backup rate
 
