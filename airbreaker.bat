@@ -2,12 +2,13 @@
 rem Opens AirBreaker (no console)
 set "GUI=%~dp0python\airbreaker.py"
 
-rem Python Launcher (python.org installs), then any Python on PATH.
-where pyw >nul 2>&1 && (start "" pyw -3 "%GUI%" & exit /b 0)
-where pythonw >nul 2>&1 && (start "" pythonw "%GUI%" & exit /b 0)
-rem The Microsoft Store "python" alias fails --version when Python is absent.
-python --version >nul 2>&1 && (start "" python "%GUI%" & exit /b 0)
-
+rem A Python only counts when it runs and has tkinter: the Microsoft Store and Python
+rem install manager stubs (pyw, pythonw, python) exist on PATH without a working Python.
+py -3 -c "import tkinter" >nul 2>&1 && (start "" pyw -3 "%GUI%" & exit /b 0)
+python -c "import tkinter" >nul 2>&1 && (
+    where pythonw >nul 2>&1 && (start "" pythonw "%GUI%" & exit /b 0)
+    start "" python "%GUI%" & exit /b 0
+)
 rem No Windows Python: run the window with python3 in WSL (it shows through WSLg).
 where wsl.exe >nul 2>&1 || goto nopython
 wsl.exe --exec python3 -c "import tkinter" >nul 2>&1 && goto runwsl
