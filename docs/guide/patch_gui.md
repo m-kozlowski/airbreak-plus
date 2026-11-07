@@ -38,13 +38,15 @@ Run it from the repository folder. Pick your platform:
 
 ### Windows
 
-1. Install Python 3 from [python.org](https://www.python.org/downloads/windows/).
-   In the installer, keep **py launcher** and **tcl/tk and IDLE** selected.
+1. Install Python 3 from [python.org](https://www.python.org/downloads/windows/)
+   (optional when WSL is set up). In the installer, keep **py launcher** and **tcl/tk and IDLE** selected.
 2. Set up [WSL2](wsl_setup.md) with the toolchain. It is only needed for
    *Build payloads* (and for flashing through WSL).
 3. Double-click `airbreaker.bat` in the repository folder. It opens the
-   window without a console. If Python is not found, the batch file tells you
-   what to install.
+   window without a console. Without Windows Python it runs the window with
+   `python3` in WSL instead (shown through WSLg) and installs `python3-tk`,
+   `make` and the ARM toolchain there when they are missing. If neither is
+   available, the batch file tells you what to install.
 
 Without the batch file: `python python\airbreaker.py` in a terminal
 shows the same window, with error output in the terminal.
