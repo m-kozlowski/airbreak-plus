@@ -25,6 +25,9 @@ This is a convenience wrapper that runs `openocd -f interface/stlink.cfg -f tcl/
 ./run-ocd.sh airsense     # default, same as no argument
 ```
 
+`-c COMMAND` (repeatable) runs OpenOCD commands after the config instead of
+waiting for telnet, for example `./run-ocd.sh -c dump -c shutdown`.
+
 Or run OpenOCD directly:
 
 ```
