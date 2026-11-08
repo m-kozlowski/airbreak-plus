@@ -15,11 +15,11 @@ void pid_init(pid_t *pid, float p, float i, float d, float _min, float _max) {
   pid->output_max = _max;
 }
 
-float pid_get_signal(pid_t *pid) {
+float pid_get_raw_signal(pid_t *pid) {
   float result = pid->kp * pid->current_error; // Proportional branch
   result += pid->cumulative_error; // Integral branch (pre-multiplied by pid->ki in update)
   result += pid->kd * (pid->current_error - pid->last_error); // Derivative branch
-  return clamp(result, pid->output_min, pid->output_max);
+  return result;
 }
 
 void pid_update(pid_t *pid, float current_error) {
@@ -175,11 +175,23 @@ void update_asv_data(asv_data_t* asv, tracking_t* tr, bool boost_enabled) {
     }
   }
 
+  // Check before clamping: infinity must not become a valid maximum demand.
+  float pid_signal = 0.0f;
+  if (asv->full_inspiration && boost_enabled) {
+    pid_signal = pid_get_raw_signal(&asv->pid);
+    if (!__builtin_isfinite(pid_signal)) {
+      asv_reset_feedback(asv);
+      pid_signal = 0.0f;
+    } else {
+      pid_signal = clamp(pid_signal, asv->pid.output_min, asv->pid.output_max);
+    }
+  }
+
   if (!tr->st_inhaling && tr->st_just_started) {
     if (asv->full_inspiration) {
       // Capture the old reference's result before learning from this inspiration.
       asv->breath_need = !boost_enabled || !asv->pid_updated ? ASV_UNKNOWN :
-                        pid_get_signal(&asv->pid) <= 0.1f ? ASV_NO_NEED : ASV_NEED;
+                        pid_signal <= 0.1f ? ASV_NO_NEED : ASV_NEED;
       asv_learn_inspiration(asv, current->volume_max);
     }
     asv->full_inspiration = false;
@@ -190,7 +202,7 @@ void update_asv_data(asv_data_t* asv, tracking_t* tr, bool boost_enabled) {
 
   // Diminish the asv factor during the first `(N+1)*50ms`, to avoid huge sudden PS in case of false breaths
   const float mult = remap01c(1.0f * current->t, 0.0f, 1.0f * ASV_STEP_LENGTH * (ASV_STEP_SKIP+1));
-  float pid_signal = pid_get_signal(&asv->pid) * asv->asv_sens;
+  pid_signal *= asv->asv_sens;
   asv->asv_factor = clamp(1.0f + pid_signal * mult, 1.0f, 1.0f + asv_pid_max);
  
   if (asv->asv_skip < 0) {

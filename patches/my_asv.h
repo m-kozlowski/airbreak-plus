@@ -51,7 +51,7 @@ typedef struct {
 } pid_t;
 
 void pid_init(pid_t *pid, float p, float i, float d, float _min, float _max);
-float pid_get_signal(pid_t *pid);
+float pid_get_raw_signal(pid_t *pid);
 void pid_update(pid_t *pid, float current_error);
 
 ////////////////////////
