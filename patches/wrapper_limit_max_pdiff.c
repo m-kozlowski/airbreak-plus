@@ -255,7 +255,10 @@ void MAIN start() {
       current_eps = max(0.0f, current_eps - (asv->final_ips - vauto_ps) * 0.25f);
       if (tr->st_just_started) { feat->eps = -current_eps; }
       else {
-        float eps1 = remap01c(tr->current.volume / tr->current.volume_max, 0.10f, 0.7f);
+        float fraction = tr->current.volume_max > 0.0f
+            ? tr->current.volume / tr->current.volume_max
+            : 0.0f;
+        float eps1 = remap01c(fraction, 0.10f, 0.7f);
         eps1 = sqrtf(eps1);
         eps1 = min(eps1, remap01c(tr->current.te, max(1.2f, tr->recent.te * 0.8f), max(0.4f, tr->recent.te * 0.4f)));
         feat->eps = max(feat->eps, -current_eps * eps1);
