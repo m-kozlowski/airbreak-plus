@@ -160,18 +160,25 @@ void update_asv_data(asv_data_t* asv, tracking_t* tr, bool boost_enabled) {
   int i = current->t / ASV_STEP_LENGTH - ASV_STEP_SKIP;
   if (asv->full_inspiration && (current->t%ASV_STEP_LENGTH == 0) && (i>=0) && (i<ASV_STEP_COUNT) &&
       (tr->st_inhaling || tr->st_just_started)) {
-    asv->targets_current[i] = current->volume;
-    asv->checkpoints |= 1u << i;
-    if (boost_enabled && asv->target_samples[i] >= ASV_WARMUP_BREATHS) {
-      const float error_volume = asv->targets_current[i] / (asv->targets_recent[i] + 0.001f);
+    // Do not let conversion to float16 put infinity into the learned reference.
+    if (!(current->volume <= 65504.0f)) {
+      asv->full_inspiration = false;
+      asv->pid_updated = false;
+      asv->breath_need = ASV_UNKNOWN;
+    } else {
+      asv->targets_current[i] = current->volume;
+      asv->checkpoints |= 1u << i;
+      if (boost_enabled && asv->target_samples[i] >= ASV_WARMUP_BREATHS) {
+        const float error_volume = asv->targets_current[i] / (asv->targets_recent[i] + 0.001f);
 
-      float error = remap01c(error_volume, asv_low + asv_mod, 0.4f + asv_mod) - remap01c(error_volume, asv_high + asv_mod*0.5f, 1.4f + asv_mod*0.5f);
-      // Speed up tiny adjustments slightly.
-      if (error > 0.0f) { error = error * 0.975f - 0.025f; }
-      if (error < 0.0f) { error = error * 0.95f - 0.05f; }
+        float error = remap01c(error_volume, asv_low + asv_mod, 0.4f + asv_mod) - remap01c(error_volume, asv_high + asv_mod*0.5f, 1.4f + asv_mod*0.5f);
+        // Speed up tiny adjustments slightly.
+        if (error > 0.0f) { error = error * 0.975f - 0.025f; }
+        if (error < 0.0f) { error = error * 0.95f - 0.05f; }
 
-      pid_update(&asv->pid, error);
-      asv->pid_updated = true;
+        pid_update(&asv->pid, error);
+        asv->pid_updated = true;
+      }
     }
   }
 
