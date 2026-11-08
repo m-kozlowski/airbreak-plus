@@ -101,7 +101,7 @@ environment variables.
 | Env variable | What it does |
 |-------------|-------------|
 | `PATCH_CODE=1` | Add the therapy graph overlay and its shared code |
-| `PATCH_S=1` | Enable [Square Wave](features/squarewave.md) pressure shaping in S, ST, T, and PAC; requires `PATCH_VAUTO_WRAPPER=1` |
+| `PATCH_S=1` | Enable [Square Wave](features/squarewave.md) pressure shaping in S, ST, T, and PAC, including its shared code |
 | `PATCH_ASV_TASK_WRAPPER=1` | Add [runtime control](features/asv_backup_rate.md) for stock ASV/ASVAuto backup rate |
 | `PATCH_VAUTO_WRAPPER=1` | Add [Custom VAuto](features/custom_vauto.md) pressure shaping and trigger/cycle assist, including its shared code |
 | `PATCH_FALL_TIME=1` | Add [Fall Time](features/general.md#fall-time) in S/ST/T/PAC/iVAPS through custom settings |

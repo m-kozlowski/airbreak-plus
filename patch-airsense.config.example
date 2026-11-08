@@ -33,7 +33,7 @@
 # Custom VAuto (PATCH_VAUTO_WRAPPER=1): set common code above and VAuto to y.
 # --patch-fw-vauto-wrapper n
 
-# Square Wave (PATCH_S=1): requires common code and Custom VAuto above.
+# Square Wave (PATCH_S=1): set common code above and Square Wave to y.
 # --patch-fw-squarewave n
 
 # ASV backup-rate runtime control (PATCH_ASV_TASK_WRAPPER=1).

@@ -14,7 +14,7 @@ LOCAL_FILES = {"air10": "patch-airsense.config", "air11": "patch-airsense-s11.co
 AIR10_LEGACY_OPTIONS = {
     "PATCH_CODE": ("--patch-fw-common-code", "y", "--patch-fw-graph", "y"),
     "PATCH_VAUTO_WRAPPER": ("--patch-fw-common-code", "y", "--patch-fw-vauto-wrapper", "y"),
-    "PATCH_S": ("--patch-fw-squarewave", "y"),
+    "PATCH_S": ("--patch-fw-common-code", "y", "--patch-fw-squarewave", "y"),
     "PATCH_ASV_TASK_WRAPPER": ("--patch-fw-asv-wrapper", "y"),
     "PATCH_FALL_TIME": ("--patch-fall-time", "y"),
     "PATCH_ST_IBR": ("--patch-st-ibr", "y"),
