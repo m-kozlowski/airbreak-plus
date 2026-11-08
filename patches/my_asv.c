@@ -128,8 +128,8 @@ void update_asv_data(asv_data_t* asv, tracking_t* tr, bool boost_enabled) {
     asv->boost_enabled = boost_enabled;
   }
 
-  // A bypass or restart must not turn a partial inspiration into learning data.
-  if (tr->tick != asv->tracking_tick + 1) {
+  // Missing or invalid samples must not turn a partial inspiration into learning data.
+  if (!tr->st_valid_sample || tr->tick != asv->tracking_tick + 1) {
     asv->full_inspiration = false;
     asv->pid_updated = false;
     asv->breath_need = ASV_UNKNOWN;

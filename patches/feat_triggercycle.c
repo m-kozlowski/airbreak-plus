@@ -9,6 +9,10 @@ void init_triggercycle(triggercycle_t *trc) {
 // configured sensitivities, including for stock rearming and waveform shaping.
 void prepare_triggercycle(triggercycle_t *trc, tracking_t *tr, history_t *hist, bool enabled) {
   trc->trigger = trc->cycle = TC_STOCK;
+  if (!tr->st_valid_sample) {
+    trc->volbased = 0.0f;
+    return;
+  }
   if (tr->st_inhaling) {
     trc->volbased = 0.0f;
     if (enabled) {

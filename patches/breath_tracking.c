@@ -59,6 +59,7 @@ void init_tracking(tracking_t *tr) {
   tr->st_just_started = false;
   tr->st_valid_breath = false;
   tr->st_full_breath = false;
+  tr->st_valid_sample = false;
   tr->st_pre_trigger = 0;
   tr->st_pre_cycle = 0;
 
@@ -81,7 +82,7 @@ void finish_tracking(tracking_t *tr, bool inhaling) {
     init_breath(&tr->current);
     tr->final_ps = *cmd_ps;
 
-    // Exclude the initial partial record, not short complete breaths.
+    // Exclude partial or interrupted records, not short complete breaths.
     tr->st_valid_breath = tr->st_full_breath;
     tr->st_full_breath = true;
     if (tr->st_valid_breath) {
@@ -104,8 +105,21 @@ void finish_tracking(tracking_t *tr, bool inhaling) {
 void prepare_tracking(tracking_t *tr, history_t *hist) {
   tr->st_just_started = false;
   tr->tick += 1; tr->current.t += 1;
+  if (tr->st_inhaling) { tr->current.ti += 0.01f; }
+  else { tr->current.te += 0.01f; }
+
+  tr->st_valid_sample = __builtin_isfinite(*flow_compensated);
+  if (!tr->st_valid_sample) {
+    tr->st_full_breath = false;
+    tr->st_pre_trigger = tr->st_pre_cycle = 0;
+    // Restart the window instead of joining samples across an unknown interval.
+    init_history(hist);
+    return;
+  }
+  // Flow is fresh; the pressure command is still from the preceding tick.
+  update_history(hist);
+
   if (tr->st_inhaling) {
-    tr->current.ti += 0.01f;
     inplace(max, &tr->current.inh_maxflow, *flow_compensated);
 
     if (*flow_compensated < tr->current.inh_maxflow * sens_cycle) {
@@ -114,7 +128,6 @@ void prepare_tracking(tracking_t *tr, history_t *hist) {
     else { tr->st_pre_cycle = max(tr->st_pre_cycle - 1, 0); } // Don't just reset it
 
   } else {
-    tr->current.te += 0.01f;
     inplace(min, &tr->current.exh_maxflow, *flow_compensated);
 
     // If flow extrapolated 80ms(~blower delay) into the future crosses threshold, increment pretrigger
@@ -178,8 +191,6 @@ STATIC void tracking_prepare(breath_node *node) {
     } else { s->tr.st_inhaling = s->timing[0x28] != 0; }
     s->reset = false;
   }
-  // Flow is fresh; the pressure command is still from the preceding tick.
-  update_history(&s->hist);
   prepare_tracking(&s->tr, &s->hist);
 }
 
