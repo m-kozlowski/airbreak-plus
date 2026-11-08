@@ -146,7 +146,9 @@ void finish_tracking(tracking_t *tr, bool inhaling) {
       inplace(lerp, &tr->recent.exh_maxflow, tr->last.exh_maxflow, tr_coeff);
       inplace(lerp, &tr->recent.inh_maxflow, tr->last.inh_maxflow, tr_coeff);
       inplace(lerp, &tr->recent.ti, tr->last.ti, tr_coeff);
-      inplace(lerp, &tr->recent.te, tr->last.te, tr_coeff);
+      // Limit one record's influence while still adapting to sustained changes.
+      const float te_limit = tr->recent.te * 0.5f;
+      tr->recent.te += tr_coeff * clamp(tr->last.te - tr->recent.te, -te_limit, te_limit);
     }
   } else {
     tr->st_inhaling = false; tr->st_just_started = true; tr->st_pre_trigger = 0; tr->st_pre_cycle = 0;
