@@ -204,7 +204,7 @@ typedef struct {
 
   bool st_inhaling : 1;
   bool st_just_started : 1; // Whether the inhale/exhale portion started this tick
-  bool st_valid_breath : 1; // Was the last breath valid(e.g. not a super-short pseudo-inhale)?
+  bool st_valid_breath : 1; // Last record contains an observed inspiration and expiration
   bool st_full_breath : 1; // Started at an observed inspiration, not partway through a breath
   uint8 st_pre_trigger ;  // "early trigger", e.g. flow will cross trigger threshold in amount of time similar to blower response, eliminating delay
   uint8 st_pre_cycle ;    // Low-flow counter used by Custom T/C and the squarewave PS ramp-down

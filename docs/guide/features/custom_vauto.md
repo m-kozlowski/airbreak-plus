@@ -98,9 +98,11 @@ remains active when ASV Max is zero.
 
 ### Adaptive boost
 
-The adaptive controller tracks recent valid breaths and builds a moving
-reference breath. It does not use a fixed tidal-volume target. At roughly 50 ms
-checkpoints it compares cumulative inspired volume with the reference at the
+The adaptive controller builds a reference from fully observed inspirations,
+without a fixed tidal-volume target. Each checkpoint starts with the average of
+its first 20 measurements before it is used to adjust support. Subsequent
+measurements update a two-stage moving reference. At roughly 50 ms checkpoints,
+the controller compares cumulative inspired volume with the reference at the
 same point in the breath:
 
 ```text
@@ -228,6 +230,4 @@ and ASVAuto backup response is a separate
 ## Caveats
 
 - Large leaks or unstable triggering can distort flow and volume tracking.
-- The moving reference is updated only from breaths accepted as valid by the
-  custom breath tracker.
 - ASV and ASVAuto settings do not control Custom VAuto.

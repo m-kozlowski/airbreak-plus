@@ -138,10 +138,8 @@ void finish_tracking(tracking_t *tr, bool inhaling) {
     init_breath(&tr->current);
     tr->final_ps = *cmd_ps;
 
-    // Update recent breath representing the recent "weighted averages"
-    // TODO: Expand checks for whether a breath was valid
-    tr->st_valid_breath = tr->st_full_breath && tr->last.te > max(tr->recent.te * 0.6f, 0.7f);
-    tr->st_valid_breath &= tr->last.ti > 0.7f;
+    // Exclude the initial partial record, not short complete breaths.
+    tr->st_valid_breath = tr->st_full_breath;
     tr->st_full_breath = true;
     if (tr->st_valid_breath) {
       inplace(lerp, &tr->recent.volume_max, tr->last.volume_max, tr_coeff);
