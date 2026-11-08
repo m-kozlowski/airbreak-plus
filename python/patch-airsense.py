@@ -1216,7 +1216,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self.custom_menu_add('therapy', myasv_var, self.mop_bitmask('VAuto'))
         self.custom_menu_add('therapy', max_var, self.mop_bitmask('VAuto'))
         self.custom_menu_add('therapy', sens_var, self.mop_bitmask('VAuto'))
-        self.custom_menu_add('therapy', tc_var, self.mop_bitmask('S', 'ST', 'T', 'VAuto', 'PAC'))
+        self.custom_menu_add('therapy', tc_var, self.mop_bitmask('S', 'ST', 'VAuto', 'PAC'))
         for var in (max_var, sens_var, tc_var):
             self.custom_menu_add_condition(var, myasv_var, self.mop_bitmask('VAuto'))
         self.custom_menu_add_condition(tc_var, 'EBE', self.mop_bitmask('S'), nonzero=False)
@@ -2395,21 +2395,40 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         return PatchOutcome.ok(None, *details)
 
     def patch_wrapper_limit_max_pdiff(self):
-        """Add VAuto/ASV pressure shaping wrapper"""
+        """Add pressure shaping, two-phase tracking and Custom T/C decisions."""
         ver = self._payload_version_key()
-        FPTR = {
-            '0302': 0xf8a24,
-            '0305': 0xf916c,
-            '0306': 0xf9170,
-            '0401': 0xf93d0,
-            '0402': 0xf9648,
+        # Output vtable slot, worker registrations, then trigger/cycle comparisons
+        # for the progress (ST/PAC) and timing (VAuto/S) detectors.
+        sites = {
+            '0302': (0xf8a24, (0xa0644, 0xa0668), (0xa7bd2, 0xa7cc2, 0xaa70a, 0xaa818)),
+            '0305': (0xf916c, (0xa0dc8, 0xa0dec), (0xa83c2, 0xa84b2, 0xaaefa, 0xab008)),
+            '0306': (0xf9170, (0xa0d4c, 0xa0d70), (0xa82da, 0xa83ca, 0xaae12, 0xaaf20)),
+            '0401': (0xf93d0, (0xa0fac, 0xa0fd0), (0xa853a, 0xa862a, 0xab072, 0xab180)),
+            '0402': (0xf9648, (0xa11dc, 0xa1200), (0xa876a, 0xa885a, 0xab2a2, 0xab3b0)),
         }
-        fptr = FPTR.get(ver)
-        if not self._supports_compiled_payloads() or fptr is None:
+        if not self._supports_compiled_payloads() or ver not in sites:
             return PatchOutcome.skip("unsupported CDX version %s" % self.asf.cdx_ver)
-        details = self._inject_function_pointer_payload(
+        fptr, registrations, comparisons = sites[ver]
+        details = list(self._inject_function_pointer_payload(
             'wrapper_limit_max_pdiff', fptr,
-            'VAuto pressure handler pointer')
+            'VAuto pressure handler pointer'))
+        elf_path = self._require_versioned_artifact('wrapper_limit_max_pdiff', 'elf')
+        for site, stock, hook in zip(registrations, (
+                'breath_progress_worker_register', 'breath_timing_progress_worker_register'), (
+                'custom_breath_register_prepare', 'custom_breath_register_finish')):
+            original = self._elf_symbol_addr(elf_path, stock) & ~1
+            target = self._elf_symbol_addr(elf_path, hook)
+            details.append(self._patch_thumb_bl_checked(
+                site, self._encode_thumb_bl(site, original), target, hook))
+        for site, hook, compare in zip(comparisons, (
+                'custom_tc_progress_trigger', 'custom_tc_progress_cycle',
+                'custom_tc_timing_trigger', 'custom_tc_timing_cycle'), (
+                'b4 ee 60 0a', 'f4 ee 40 0a', 'b4 ee 48 0a', 'b4 ee 40 8a')):
+            target = self._elf_symbol_addr(elf_path, hook)
+            expected = bytes.fromhex(compare + ' f1 ee 10 fa')  # VCMP + VMRS
+            replacement = self._encode_thumb_bl(site, target) + bytes.fromhex('af f3 00 80')
+            self._replace_bytes_checked(site, expected, replacement, hook)
+            details.append(self._hook_detail(hook, self.asf.FLASH_BASE + site, target))
         return PatchOutcome.ok(None, *details)
 
     def patch_lcd_ili9325(self):

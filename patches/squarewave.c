@@ -30,7 +30,7 @@ void MAIN start(int param_1) {
     return;
   }
 
-  // It's updated in `wrapper_limit_max_pdiff` which always runs
+  // The two tracking workers have already consumed this tick's flow and phase events.
   tracking_t *tr = get_tracking();
 
   const float s_eps = 0.8f;                // (cmH2O)

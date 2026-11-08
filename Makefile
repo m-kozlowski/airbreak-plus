@@ -184,6 +184,9 @@ $(foreach v,$(PAYLOAD_LAYOUT_VERSIONS),$(eval $(call S10_VERSIONED_OBJECTS_templ
 
 define S10_CODE_VERSION_template
 
+$(BUILD)/common_code_$(1).o: $(SRC)/my_asv.c $(SRC)/my_asv.h $(SRC)/feat_triggercycle.c $(SRC)/feat_triggercycle.h
+$(BUILD)/wrapper_limit_max_pdiff_$(1).o: $(SRC)/my_asv.h $(SRC)/feat_triggercycle.h
+
 # common_code provides shared symbols and has no executable entry point.
 $(BUILD)/common_code_$(1).probe.elf: $(BUILD)/common_code_$(1).o $(BUILD)/s10_$(1)_stubs.o | $(BUILD)
 	$$(LD) --nostdlib --no-dynamic-linker \

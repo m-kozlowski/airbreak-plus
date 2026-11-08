@@ -40,7 +40,7 @@ pre-trigger assist, and Custom T/C are disabled.
 | Custom VAuto | `RPO` | Off, On | Off | Therapy | VAuto | Selects stock VAuto or the complete custom pressure-support path | On |
 | ASV Max | `RCM` | 0.0 to 10.0 cmH2O, step 0.2 | 3.0 cmH2O | Therapy | VAuto | Limits adaptive boost above the custom base pressure shape; zero disables adaptive boost | `2 * VAuto PS` |
 | ASV Sens | `RXM` | Very Low, Low, Med, High, Very High | Med | Therapy | VAuto | Scales the adaptive controller response | Med |
-| Custom T/C | `RPH` | Off, On | Off | Therapy | S, ST, T, VAuto, PAC | Uses custom multi-signal trigger and flow-shape cycle decisions | On where supported by the runtime path |
+| Custom T/C | `RPH` | Off, On | Off | Therapy | S, ST, VAuto, PAC | Uses custom multi-signal trigger and flow-shape cycle decisions | On where supported by the runtime path |
 
 Firmware variable assignments and persistence are listed in the
 [custom settings registry](../../custom_settings.md#assignments).
@@ -175,7 +175,7 @@ positive, it can add 0.2 or 0.4 cmH2O of support before the detected inspiration
 
 ### Trigger and cycle
 
-Custom T/C is available in S, ST, T, VAuto, and PAC. The EasyBreathe pressure
+Custom T/C is available in S, ST, VAuto, and PAC. The EasyBreathe pressure
 waveform does not use Custom T/C.
 
 Custom trigger combines:
@@ -186,8 +186,8 @@ Custom trigger combines:
 - proximity to the recent typical breath timing
 
 The custom score takes control when commanded pressure is stable or the
-projected flow indicates a likely inspiration. A score at or above `1.0` forces
-inspiration; a lower score prevents an early trigger. At other times, the
+projected flow indicates a likely inspiration. A score at or above `1.0` requests
+inspiration; a lower score holds expiration. At other times, the
 configured stock trigger threshold remains in use.
 
 Custom cycle compares basal-leak-corrected flow with the peak inspiratory flow
@@ -198,13 +198,17 @@ of the same breath. The configured Cycle setting supplies the stock fraction
 custom_cycle_fraction = 0.5s - 0.225
 ```
 
-Expiration is selected when flow falls below that custom fraction of peak flow,
-or when the stock cycle condition has remained present for approximately
-600 ms. This delays cycling through short flow reductions while retaining a
-bounded path to expiration.
+Expiration is requested when flow falls below that custom fraction of peak
+flow, or when a low-flow counter reaches 600 ms. The counter counts up while
+flow is below the configured Cycle fraction of peak flow, and down otherwise.
 
-When Custom T/C is Off, the configured stock trigger and cycle sensitivities
-remain in use.
+Custom T/C cannot shorten inspiration below Ti Min or bypass the minimum
+expiratory time. Ti Max still ends inspiration, and modes with timed backup
+can still start a breath without a patient trigger. Before another patient
+trigger can be accepted, flow must fall below the configured Trigger threshold.
+
+With Custom T/C Off, triggering and cycling use the configured stock
+sensitivities.
 
 ### Pressure limits
 

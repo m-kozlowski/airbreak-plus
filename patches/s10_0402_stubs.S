@@ -18,6 +18,9 @@ NSTUB(0x080A8469, breath_progress_worker_reset)
 NSTUB(0x080A8495, breath_progress_worker_update_mode)
 NSTUB(0x080A853F, breath_progress_worker_disable)
 NSTUB(0x080A8545, breath_progress_worker_update)
+NSTUB(0x080A890B, breath_progress_worker_register)
+NSTUB(0x080AB5DB, breath_timing_progress_worker_register)
+NSTUB(0x080A177D, breath_phase_ramp_worker_update)
 
 // Stock bilevel and iVAPS pressure waveforms
 NSTUB(0x080A0A71, therapy_variable_get)

@@ -150,6 +150,7 @@ typedef enum {
   PTR_FEATURES,
   PTR_TRIGGERCYCLE,
   PTR_GRAPH_DATA,
+  PTR_BREATH_PIPELINE,
 
   __PTR_LAST,
 } ptr_index;
@@ -165,7 +166,6 @@ void *get_pointer(ptr_index index, int size, void (*init_fn)(void*));
 // TODO: Expand history, make graph.c use it
 typedef struct {
   int tick;
-  float last_time;
   float16 flow[HISTORY_LENGTH];
   float16 cmd_ipap[HISTORY_LENGTH];
   // float16 pressure[HISTORY_LENGTH];
@@ -189,38 +189,25 @@ typedef struct {
   // New stuff
   float exh_maxflow;
   float inh_maxflow;
-  int16 t; // (10ms ticks)
+  int16 t; // Completed 10ms intervals since inspiration
   float ti; // (s)
   float te; // (s)
 } breath_t;
 
 void init_breath(breath_t *breath);
 
-// Necessary to monitor actual setting changes despite the memory address being overwritten
-typedef struct {
-  float last_trigger;
-  float real_trigger;
-  float last_cycle;
-  float real_cycle;
-} settings_proxy_t;
-
-void init_settings(settings_proxy_t *sett);
-
 #define tr_coeff 0.025f
 
 typedef struct {
-  float last_progress;
-  uint32 last_time;
   uint32 breath_count;
   uint32 tick;
 
   bool st_inhaling : 1;
   bool st_just_started : 1; // Whether the inhale/exhale portion started this tick
   bool st_valid_breath : 1; // Was the last breath valid(e.g. not a super-short pseudo-inhale)?
+  bool st_full_breath : 1; // Started at an observed inspiration, not partway through a breath
   uint8 st_pre_trigger ;  // "early trigger", e.g. flow will cross trigger threshold in amount of time similar to blower response, eliminating delay
   uint8 st_pre_cycle ;    // Low-flow counter used by Custom T/C and the squarewave PS ramp-down
-
-  settings_proxy_t settings;
 
   breath_t recent; // Tracks recent breath parameters to compare against.
   breath_t last;
@@ -231,7 +218,8 @@ typedef struct {
 
 void init_tracking(tracking_t *tr);
 tracking_t* get_tracking();
-void update_tracking(tracking_t *tr, history_t *hist, float configured_trigger, float configured_cycle);
+void prepare_tracking(tracking_t *tr, history_t *hist);
+void finish_tracking(tracking_t *tr, bool inhaling);
 
 #include "my_asv.h"
 #include "feat_triggercycle.h"

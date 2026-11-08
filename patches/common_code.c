@@ -59,11 +59,6 @@ void init_history(history_t *hist) {
 }
 
 void update_history(history_t *hist) {
-  const unsigned now = tim_read_tim5();
-  // Initialize if it's the first time or more than 0.1s elapsed, suggesting that the therapy was stopped and re-started.
-  if ((now - hist->last_time) > 100000) { init_history(hist); }
-  
-  hist->last_time = now; // Keep it updated so we don't reset the struct
   hist->tick += 1;
   const int i = hist->tick & (HISTORY_LENGTH - 1);
   hist->flow[i] = *flow_compensated;
@@ -91,6 +86,7 @@ float get_delta_flow(history_t *hist, int bin_size) {
 
 bool is_cmd_ipap_constant(history_t *hist) {
   const int t = hist->tick;
+  if (t < 4) { return false; }
   const int t1 = t & (HISTORY_LENGTH - 1);
   const int t2 = (t-4) & (HISTORY_LENGTH - 1);
   return absf(hist->cmd_ipap[t1] - hist->cmd_ipap[t2]) <= 0.041f;
@@ -105,27 +101,19 @@ void init_breath(breath_t *breath) {
   breath->volume_max = 0.0f;
   breath->exh_maxflow = 0.0f;
   breath->inh_maxflow = 0.0f;
-  breath->t = -1;
+  breath->t = 0;
   breath->ti = 0.0f;
   breath->te = 0.0f;
 }
-void init_settings(settings_proxy_t *sett) {
-  sett->last_trigger = 0.0f;
-  sett->real_trigger = sens_trigger;
-  sett->last_cycle = 0.0f;
-  sett->real_cycle = sens_cycle;
-}
 void init_tracking(tracking_t *tr) {
-  tr->last_progress = breath_progress;
-  tr->last_time = tim_read_tim5();
   tr->breath_count = 0;
   tr->tick = 0;
   tr->st_inhaling = false;
   tr->st_just_started = false;
+  tr->st_valid_breath = false;
+  tr->st_full_breath = false;
   tr->st_pre_trigger = 0;
   tr->st_pre_cycle = 0;
-
-  init_settings(&tr->settings);
 
   init_breath(&tr->recent);
   tr->recent.te = 2.0f; tr->recent.ti = 1.6f; tr->recent.volume_max = 0.3f; tr->recent.exh_maxflow = -25.0f; tr->recent.inh_maxflow = 25.0f; // Init with reasonable-ish defaults in case code wants to rely on these
@@ -139,14 +127,10 @@ tracking_t* get_tracking() {
   return GET_PTR(PTR_TRACKING, tracking_t, init_tracking);
 }
 
-void update_tracking(tracking_t *tr, history_t *hist, float configured_trigger, float configured_cycle) {
-  const unsigned now = tim_read_tim5();
-  // Initialize if it's the first time or more than 0.1s elapsed, suggesting that the therapy was stopped and re-started.
-  if ((now - tr->last_time) > 100000) { init_tracking(tr); }
-
-  // Handle breaths and their stage
-  tr->st_just_started = false;
-  if ((tr->last_progress > 0.5f) && (breath_progress < 0.5f)) {
+// Called after the stock detectors, only for an accepted phase event.
+void finish_tracking(tracking_t *tr, bool inhaling) {
+  if (inhaling == tr->st_inhaling) { return; }
+  if (inhaling) {
     tr->st_inhaling = true; tr->st_just_started = true; tr->st_pre_trigger = 0; tr->st_pre_cycle = 0;
 
     tr->last = tr->current;
@@ -156,8 +140,9 @@ void update_tracking(tracking_t *tr, history_t *hist, float configured_trigger, 
 
     // Update recent breath representing the recent "weighted averages"
     // TODO: Expand checks for whether a breath was valid
-    tr->st_valid_breath = tr->last.te > max(tr->recent.te * 0.6f, 0.7f);
+    tr->st_valid_breath = tr->st_full_breath && tr->last.te > max(tr->recent.te * 0.6f, 0.7f);
     tr->st_valid_breath &= tr->last.ti > 0.7f;
+    tr->st_full_breath = true;
     if (tr->st_valid_breath) {
       inplace(lerp, &tr->recent.volume_max, tr->last.volume_max, tr_coeff);
       inplace(lerp, &tr->recent.exh_maxflow, tr->last.exh_maxflow, tr_coeff);
@@ -165,18 +150,22 @@ void update_tracking(tracking_t *tr, history_t *hist, float configured_trigger, 
       inplace(lerp, &tr->recent.ti, tr->last.ti, tr_coeff);
       inplace(lerp, &tr->recent.te, tr->last.te, tr_coeff);
     }
-  } else if ((tr->last_progress <= 0.5f) && (breath_progress > 0.5f)) {
+  } else {
     tr->st_inhaling = false; tr->st_just_started = true; tr->st_pre_trigger = 0; tr->st_pre_cycle = 0;
     tr->final_ps = *cmd_ps;
   }
+}
 
+// Sample N closes the previous 10 ms interval. The stock phase decision follows
+// this integration; a new phase starts at zero without counting this sample twice.
+void prepare_tracking(tracking_t *tr, history_t *hist) {
+  tr->st_just_started = false;
   tr->tick += 1; tr->current.t += 1;
   if (tr->st_inhaling) { 
     tr->current.ti += 0.01f;
     inplace(max, &tr->current.inh_maxflow, *flow_compensated);
 
-    // Track the configured cycle threshold, not Custom T/C's live override.
-    if (*flow_compensated < tr->current.inh_maxflow * configured_cycle) {
+    if (*flow_compensated < tr->current.inh_maxflow * sens_cycle) {
       if (tr->st_pre_cycle < 255) { tr->st_pre_cycle += 1; }
     }
     else { tr->st_pre_cycle = max(tr->st_pre_cycle - 1, 0); } // Don't just reset it
@@ -187,17 +176,15 @@ void update_tracking(tracking_t *tr, history_t *hist, float configured_trigger, 
 
     // If flow extrapolated 80ms(~blower delay) into the future crosses threshold, increment pretrigger
     const float flow2 = max(*flow_compensated, *flow_compensated + get_delta_flow(hist, 4)*8.0f); // Flow extrapolated 80ms into the future
-    // Track the configured trigger threshold, not Custom T/C's live override.
-    if (flow2 > configured_trigger) { tr->st_pre_trigger += 1; }
+    if (flow2 > sens_trigger) {
+      if (tr->st_pre_trigger < 255) { tr->st_pre_trigger += 1; }
+    }
     else { tr->st_pre_trigger = 0; } // This has to reset, flow doesn't slow down during the start of a breath
   }
 
   tr->current.volume += (*flow_compensated / 60.0f) * 0.01f;
   inplace(max, &tr->current.volume, 0.0f);
   inplace(max, &tr->current.volume_max, tr->current.volume);
-
-  tr->last_progress = breath_progress;
-  tr->last_time = now;
 }
 
 #include "my_asv.c"

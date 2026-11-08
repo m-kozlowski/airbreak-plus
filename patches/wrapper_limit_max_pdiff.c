@@ -16,7 +16,6 @@ STATIC void init_features(features_t *feat) {
 }
 
 
-// +1 pointer address: 0x000f93d0. Original function address: 0x080bc992
 extern void pressure_limit_max_difference();
 extern int variable_get_by_id(int var_id);
 extern const unsigned short wrapper_limit_max_pdiff_toggle_var_id;
@@ -51,6 +50,145 @@ STATIC float custom_asv_sens_multiplier(void) {
   }
 }
 
+typedef struct breath_node breath_node;
+typedef void (*breath_method)(breath_node *);
+struct breath_node {
+  const breath_method *methods;
+  breath_node *next;
+  uint32 enabled;
+};
+
+typedef struct {
+  breath_node prepare, finish;
+  unsigned char *progress, *timing, *timed;
+  history_t *hist;
+  tracking_t *tr;
+  triggercycle_t *trc;
+  bool reset;
+} breath_pipeline_t;
+
+extern void *therapy_manager_get(void);
+extern void therapy_worker_append(breath_node *, int group);
+extern void *breath_progress_worker_register(void);
+extern void *breath_timing_progress_worker_register(void);
+extern void breath_phase_ramp_worker_update(breath_node *);
+
+STATIC void init_breath_pipeline(breath_pipeline_t *s) {
+  unsigned char *p = (unsigned char *)s;
+  for (unsigned i = 0; i < sizeof(*s); ++i) { p[i] = 0; }
+  s->hist = get_history();
+  s->tr = get_tracking();
+  s->trc = get_triggercycle();
+  s->reset = true;
+}
+
+STATIC breath_pipeline_t *get_breath_pipeline(void) {
+  return GET_PTR(PTR_BREATH_PIPELINE, breath_pipeline_t, init_breath_pipeline);
+}
+
+STATIC void breath_noop(breath_node *node) { }
+
+STATIC void breath_stop(breath_node *node) {
+  breath_pipeline_t *s = (breath_pipeline_t *)node;
+  s->prepare.enabled = s->finish.enabled = 0;
+  s->trc->trigger = s->trc->cycle = TC_STOCK;
+  s->reset = true;
+}
+
+STATIC void breath_mode(breath_node *node) {
+  breath_pipeline_t *s = (breath_pipeline_t *)node;
+  // Lifecycle callbacks use the requested mode; I[6F] is published next tick.
+  s->prepare.enabled = s->finish.enabled = ivars[0x12] == MODE_VAUTO || ivars[0x12] == MODE_S;
+  s->trc->trigger = s->trc->cycle = TC_STOCK;
+  s->reset = true;
+}
+
+STATIC uint32 breath_events(void) {
+  // Group 2's event word is cleared before its 100 Hz worker pass.
+  return ((uint32 *)therapy_manager_get())[8] & 0x3fu;
+}
+
+STATIC void breath_prepare(breath_node *node) {
+  breath_pipeline_t *s = (breath_pipeline_t *)node;
+  if (s->reset) {
+    init_history(s->hist);
+    init_tracking(s->tr);
+    init_triggercycle(s->trc);
+    init_asv_data(get_asv_data());
+    init_features(GET_PTR(PTR_FEATURES, features_t, init_features));
+    // The native mode callbacks have now run. A retained native phase is not
+    // necessarily expiration, even when two modes share the same detector.
+    if (ivars[0x71] == 2) { s->tr->st_inhaling = s->progress[0x20] != 0; }
+    else if (ivars[0x71] == 1) {
+      uint32 events = breath_events();
+      // T's worker precedes preparation. On its transition tick the sample
+      // still belongs to the phase that just ended.
+      s->tr->st_inhaling = events ? (events & 0x38u) != 0 : s->timed[0x10] == 0;
+    } else { s->tr->st_inhaling = s->timing[0x28] != 0; }
+    s->reset = false;
+  }
+
+  // Flow and measured pressure are fresh; the pressure command is still N-1.
+  update_history(s->hist);
+  prepare_tracking(s->tr, s->hist);
+  bool enabled = ivars[0x71] != 1 &&
+                 custom_g8_toggle(wrapper_limit_max_pdiff_triggercycle_var_id, true);
+  if (*therapy_mode == MODE_VAUTO) {
+    enabled &= vauto_ps > 0.0f && custom_g8_toggle(wrapper_limit_max_pdiff_toggle_var_id, true);
+  }
+  prepare_triggercycle(s->trc, s->tr, s->hist, enabled);
+}
+
+STATIC void breath_finish(breath_node *node) {
+  breath_pipeline_t *s = (breath_pipeline_t *)((unsigned char *)node -
+                            __builtin_offsetof(breath_pipeline_t, finish));
+  uint32 events = breath_events();
+  if (events & 7u) { finish_tracking(s->tr, true); }
+  else if (events & 0x38u) { finish_tracking(s->tr, false); }
+}
+
+static const breath_method prepare_methods[7] = {
+  breath_noop, breath_noop, breath_stop, breath_mode, breath_mode, breath_stop, breath_prepare
+};
+static const breath_method finish_methods[7] = {
+  breath_noop, breath_noop, breath_noop, breath_noop, breath_noop, breath_noop, breath_finish
+};
+
+// These wrap two existing registrations, retaining the stock list order and
+// vtables (including the optional iBR wrapper). Both nodes use the shared heap.
+void *custom_breath_register_prepare(void) {
+  breath_pipeline_t *s = get_breath_pipeline();
+  if (!s->prepare.methods) {
+    therapy_worker_append(&s->prepare, 2);
+    s->prepare.methods = prepare_methods;
+    s->prepare.enabled = 0;
+  }
+  s->progress = breath_progress_worker_register();
+  return s->progress;
+}
+
+void *custom_breath_register_finish(void) {
+  breath_pipeline_t *s = get_breath_pipeline();
+  s->timing = breath_timing_progress_worker_register();
+  if (!s->finish.methods) {
+    therapy_worker_append(&s->finish, 2);
+    s->finish.methods = finish_methods;
+    s->finish.enabled = 0;
+    // Cache the already-registered T worker without a fixed singleton RAM address.
+    breath_node *n = ((breath_node **)therapy_manager_get())[4];
+    while (n && n->methods[6] != breath_phase_ramp_worker_update) { n = n->next; }
+    s->timed = (unsigned char *)n;
+  }
+  return s->timing;
+}
+
+// Assembly comparison hooks only read decisions prepared for this tick.
+int custom_tc_decision(int cycle) {
+  breath_pipeline_t *s = get_breath_pipeline();
+  if (!s->prepare.enabled || s->reset) { return TC_STOCK; }
+  return cycle ? s->trc->cycle : s->trc->trigger;
+}
+
 // Reshapes PS in 0.0-1.0 format to differently shaped slopes with `mult` times the AUC, first increasing slope before magnitude
 // Only using ^4 shape, because going to ^8 and above is very jarring and results in bad premature cycling
 STATIC float reshape_vauto_ps(float ps1, float mult) {
@@ -74,18 +212,12 @@ STATIC float reshape_vauto_ps(float ps1, float mult) {
 
 void MAIN start() {
   bool custom_enabled = custom_g8_toggle(wrapper_limit_max_pdiff_toggle_var_id, true);
-  if ((*therapy_mode == MODE_VAUTO) && (!custom_enabled || vauto_ps <= 0.0f)) {
+  if (*therapy_mode != MODE_VAUTO || !custom_enabled || vauto_ps <= 0.0f) {
     pressure_limit_max_difference();
     return;
   }
 
-  triggercycle_t *trc = get_triggercycle();
-  update_triggercycle_settings(trc);
-
-  history_t *hist = get_history();
-  update_history(hist);
   tracking_t *tr = get_tracking();
-  update_tracking(tr, hist, trc->real_trigger, trc->real_cycle);
   asv_data_t *asv = get_asv_data();
   float asv_max = custom_asv_max_cm();
   asv->asv_sens = custom_asv_sens_multiplier();
@@ -94,20 +226,6 @@ void MAIN start() {
 
   features_t *feat = GET_PTR(PTR_FEATURES, features_t, init_features);
 
-  float dps = 0.0f;
-  bool triggercycle_toggle = custom_g8_toggle(wrapper_limit_max_pdiff_triggercycle_var_id, true);
-
-  trc->custom_trigger = trc->custom_cycle = false; // Default state is off.
-  if (triggercycle_toggle && (*therapy_mode == MODE_S)) {
-    trc->custom_trigger = true;
-    trc->custom_cycle = true;
-  }
-  else if (triggercycle_toggle && (*therapy_mode == MODE_VAUTO)) {
-    trc->custom_trigger = true;
-    trc->custom_cycle = true;
-  }
-  update_triggercycle(trc, tr, hist);
-
   float new_ps = *cmd_ps;
 
   if (*therapy_mode == MODE_VAUTO) {
@@ -115,7 +233,6 @@ void MAIN start() {
     // The pre-ramp reference is EPAP + PS/2, so this uses EPAP - PS/2.
     float current_eps = clamp((*cmd_epap - vauto_ps) * 0.2f, 0.4f, 1.6f);
 
-    int t = hist->tick;
     const float ps = *cmd_ps + vauto_ps/2.0f;
     const float ps1 = (ps/vauto_ps); // 0.0 to 1.0
 

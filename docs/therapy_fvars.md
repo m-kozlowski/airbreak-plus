@@ -136,8 +136,8 @@ effective fraction of peak inspiratory flow: `0.45` represents 45%.
 | 4 | Very High | 1.8 | 0.50 | 0.75 |
 
 Firmware stores cycle values as integer percentages and divides them by 100.
-Custom T/C overrides these live thresholds while retaining the configured
-values separately; its behavior is described in
+Custom T/C uses these configured values to prepare separate phase decisions;
+its behavior is described in
 [Custom VAuto](guide/features/custom_vauto.md#trigger-and-cycle).
 
 ## Pressure commands and phase

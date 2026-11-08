@@ -1,84 +1,46 @@
-#ifndef _feat_triggercycle_c_
-#define _feat_triggercycle_c_
-
 #include "feat_triggercycle.h"
 
 void init_triggercycle(triggercycle_t *trc) {
-  trc->last_trigger = 0.0f;
-  trc->real_trigger = sens_trigger;
-  trc->last_cycle = 0.0f;
-  trc->real_cycle = sens_cycle;
-
-  trc->custom_trigger = false;
-  trc->custom_cycle = false;
+  trc->volbased = 0.0f;
+  trc->trigger = trc->cycle = TC_STOCK;
 }
 
-triggercycle_t* get_triggercycle() {
+triggercycle_t *get_triggercycle(void) {
   return GET_PTR(PTR_TRIGGERCYCLE, triggercycle_t, init_triggercycle);
 }
 
-// Capture firmware setting changes before tracking; ignore our own last overrides.
-void update_triggercycle_settings(triggercycle_t *trc) {
-  if (sens_trigger != trc->last_trigger) {
-    trc->real_trigger = sens_trigger;
-  }
-  if (sens_cycle != trc->last_cycle) {
-    trc->real_cycle = sens_cycle;
-  }
-}
-
-void update_triggercycle(triggercycle_t *trc, tracking_t *tr, history_t *hist) {
-
-  if (!trc->custom_trigger) { sens_trigger = trc->real_trigger; }
-  if (!trc->custom_cycle) { sens_cycle = trc->real_cycle; }
-  
+// Runs once per tick before either native phase detector. F[7]/F[8] remain the
+// configured sensitivities, including for stock rearming and waveform shaping.
+void prepare_triggercycle(triggercycle_t *trc, tracking_t *tr, history_t *hist, bool enabled) {
+  trc->trigger = trc->cycle = TC_STOCK;
   if (tr->st_inhaling) {
-    const float s = trc->real_cycle;
-
-    if (trc->custom_cycle) {
-      float s2 = -0.225f + 0.5f * s; // Results in thresholds of: 0.025, -0.05, -0.1, -0.15, -0.185 (% of peak flow)
-      if ( (flow_unfucked < (tr->current.inh_maxflow * s2)) || (tr->st_pre_cycle >= PRE_CYCLE_MAX_TICKS) ) {
-        sens_cycle = 0.95; // Guarantee cycling
-      } else {
-        sens_cycle = -0.5; // Do not cycle (unless flow is very negative)
-      }
+    trc->volbased = 0.0f;
+    if (enabled) {
+      float fraction = -0.225f + 0.5f * sens_cycle;
+      trc->cycle = (flow_unfucked < tr->current.inh_maxflow * fraction ||
+                    tr->st_pre_cycle >= PRE_CYCLE_MAX_TICKS) ? TC_SWITCH : TC_HOLD;
     }
-  } else {
-    const float cte = tr->current.te;
-    const float rte = tr->recent.te;
-    const float s = trc->real_trigger;
-
-    // Essentially: Increase threshold if we're >0.3s away from expected next inhale, more beyond >0.6s
-    sens_trigger = remapc(cte, rte - 0.6f, rte - 0.3f, s * 1.2f + 2.0f, s * 1.0f);
-
-    if(*flow_compensated < 0.0f) { trc->volbased = 0.0f; } else { trc->volbased += *flow_compensated / 60.0f * 0.01f; }
-
-    // Fuzzy logic custom trigger that considers each of: flow, volume, pressure error(early inhalation reduces mask pressure before blower compensates), time(expected moment of next inhale)
-    //  * Volbased: Most non-inhales only reach 10-15mL, most ineffective efforts reach 25-30mL
-    //  * Pressure Error: usually goes to at least 0.2cmH2O below command just before detected inhales, sometimes up to 0.4-0.5. Random fluctuations usually stay within 0.15
-    //  * Time-based: Slightly lower trigger threshold within +-0.3s of expected next 
-
-    const bool cmd_ipap_constant = trc->custom_trigger && is_cmd_ipap_constant(hist);
-    if (trc->custom_trigger && (cmd_ipap_constant || tr->st_pre_trigger > 0)) {
-      float do_trigger = remap01c(*flow_compensated, 0.0f, s);
-
-      if (cte >= 1.2f) {
-        do_trigger += remap01c(trc->volbased, 0.020f, 0.040f) * 0.3f - remap01c(trc->volbased, 0.015f, 0.05f) * 0.2f;
-      }
-      if (cmd_ipap_constant) {
-        do_trigger += (remap01c(p_error, -0.1f, -0.35f) - remap01c(p_error, 0.1f, 0.35f)) * 0.3f; 
-      }
-
-      do_trigger += remap01c(absf(rte-cte), 0.3f, 0.0f) * 0.2f;
-
-      if (do_trigger >= 1.0f) {sens_trigger = -5.0f; } // Guarantee trigger
-      else { sens_trigger = 999.0f; } // Make trigger impossible
-    } else { sens_trigger = trc->real_trigger; }
+    return;
   }
 
-  trc->last_cycle = sens_cycle;
-  trc->last_trigger = sens_trigger;
+  if (*flow_compensated < 0.0f) { trc->volbased = 0.0f; }
+  else { trc->volbased += *flow_compensated / 60.0f * 0.01f; }
+  if (!enabled) { return; }
+
+  // Outside this window the native flow comparison remains in control.
+  bool constant_pressure = is_cmd_ipap_constant(hist);
+  if (!constant_pressure && !tr->st_pre_trigger) { return; }
+
+  float score = remap01c(*flow_compensated, 0.0f, sens_trigger);
+  if (tr->current.te >= 1.2f) {
+    score += remap01c(trc->volbased, 0.020f, 0.040f) * 0.3f -
+             remap01c(trc->volbased, 0.015f, 0.05f) * 0.2f;
+  }
+  if (constant_pressure) {
+    // At this point F[1] is the current measurement and F[2A] is the command
+    // from the preceding tick, before either waveform writes a new command.
+    score += (remap01c(p_error, -0.1f, -0.35f) - remap01c(p_error, 0.1f, 0.35f)) * 0.3f;
+  }
+  score += remap01c(absf(tr->recent.te - tr->current.te), 0.3f, 0.0f) * 0.2f;
+  trc->trigger = score >= 1.0f ? TC_SWITCH : TC_HOLD;
 }
-
-
-#endif

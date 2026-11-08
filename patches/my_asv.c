@@ -119,10 +119,12 @@ void update_asv_data(asv_data_t* asv, tracking_t* tr) {
   }
 
 
-  // Handle the ASV checkpoints and calculate error signal for the PID 
+  // t counts completed 10 ms intervals from the accepted inspiration event.
+  // A cycle tick still contains the final inspiratory sample.
   // FIXME: The padded step logic needs to calculate with STEP_SKIP better
   int i = current->t / ASV_STEP_LENGTH - ASV_STEP_SKIP + 1;
-  if ((current->t%ASV_STEP_LENGTH == 0) && (i>=0) && (i<ASV_STEP_COUNT+1) && tr->st_inhaling) {
+  if ((current->t%ASV_STEP_LENGTH == 0) && (i>=0) && (i<ASV_STEP_COUNT+1) &&
+      (tr->st_inhaling || tr->st_just_started)) {
     asv->targets_current[i] = current->volume;
     if (i >= 1) { // Ignore the first, padded step 
       const float error_volume = asv->targets_current[i] / (asv->targets_recent[i] + 0.001f);
