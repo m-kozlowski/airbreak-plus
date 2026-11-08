@@ -58,7 +58,7 @@ void init_asv_data(asv_data_t *data) {
   data->full_inspiration = false;
   data->boost_enabled = false;
 
-  for(int i=0; i<ASV_STEP_COUNT+1; i++) {
+  for(int i=0; i<ASV_STEP_COUNT; i++) {
     data->targets_current[i] = 0.0f;
     data->targets_recent[i] = 0.0f;
     data->targets_recent2[i] = 0.0f;
@@ -81,7 +81,7 @@ STATIC void asv_learn_inspiration(asv_data_t *asv, float volume_max) {
   }
   asv->breath_count += 1;
 
-  for(int i=0; i<ASV_STEP_COUNT+1; i++) {
+  for(int i=0; i<ASV_STEP_COUNT; i++) {
     if (asv->checkpoints & (1u << i)) {
       if (asv->target_samples[i] < ASV_WARMUP_BREATHS) {
         // Average raw samples once, then seed both stages with that mean.
@@ -142,7 +142,7 @@ void update_asv_data(asv_data_t* asv, tracking_t* tr, bool boost_enabled) {
     asv->full_inspiration = true;
     asv->pid_updated = false;
     asv->checkpoints = 0;
-    for(int i=0; i<ASV_STEP_COUNT+1; i++) {
+    for(int i=0; i<ASV_STEP_COUNT; i++) {
       asv->targets_current[i] = 0.0f;
     }
     asv->final_ips = 0.0f;
@@ -156,17 +156,14 @@ void update_asv_data(asv_data_t* asv, tracking_t* tr, bool boost_enabled) {
 
   // t counts completed 10 ms intervals from the accepted inspiration event.
   // A cycle tick still contains the final inspiratory sample.
-  // FIXME: The padded step logic needs to calculate with STEP_SKIP better
-  int i = current->t / ASV_STEP_LENGTH - ASV_STEP_SKIP + 1;
-  if (asv->full_inspiration && (current->t%ASV_STEP_LENGTH == 0) && (i>=0) && (i<ASV_STEP_COUNT+1) &&
+  // Checkpoint i falls at (ASV_STEP_SKIP + i) * ASV_STEP_LENGTH ticks.
+  int i = current->t / ASV_STEP_LENGTH - ASV_STEP_SKIP;
+  if (asv->full_inspiration && (current->t%ASV_STEP_LENGTH == 0) && (i>=0) && (i<ASV_STEP_COUNT) &&
       (tr->st_inhaling || tr->st_just_started)) {
     asv->targets_current[i] = current->volume;
     asv->checkpoints |= 1u << i;
-    if (boost_enabled && i >= 1 && asv->target_samples[i] >= ASV_WARMUP_BREATHS) {
+    if (boost_enabled && asv->target_samples[i] >= ASV_WARMUP_BREATHS) {
       const float error_volume = asv->targets_current[i] / (asv->targets_recent[i] + 0.001f);
-      const float recent_flow = asv->targets_recent[i] - asv->targets_recent[i-1];
-      const float current_flow = asv->targets_current[i] - asv->targets_current[i-1];
-      const float error_flow = current_flow / (recent_flow + 0.001f);
 
       float error = remap01c(error_volume, asv_low + asv_mod, 0.4f + asv_mod) - remap01c(error_volume, asv_high + asv_mod*0.5f, 1.4f + asv_mod*0.5f);
       // Speed up tiny adjustments slightly.

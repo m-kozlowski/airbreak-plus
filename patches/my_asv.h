@@ -8,8 +8,12 @@
 
 #define ASV_STEP_LENGTH 5 // (10ms ticks)
 #define ASV_STEP_COUNT 20 // (steps)
-#define ASV_STEP_SKIP 3 // (steps) MUST be at least 1 for the padding code to work correctly
+#define ASV_STEP_SKIP 3 // (steps) Steps after the trigger before the first checkpoint
 #define ASV_WARMUP_BREATHS 20 // Raw samples per checkpoint before PID comparisons
+
+_Static_assert(ASV_STEP_SKIP >= 1, "First checkpoint must follow the trigger");
+_Static_assert(ASV_STEP_COUNT >= 1 && ASV_STEP_COUNT <= 32,
+               "Checkpoint count must fit the 32-bit mask");
 
 // Low and high targets. The ASV PID will target at least `asv_low` volume and at most `asv_high`
 #define asv_low 0.94f
@@ -79,11 +83,11 @@ typedef struct {
   bool full_inspiration; // Observed its start and every subsequent tracker sample
   bool pid_updated; // Compared at least one checkpoint with a warmed-up reference
   bool boost_enabled;
-  uint8 target_samples[ASV_STEP_COUNT+1]; // Saturates at ASV_WARMUP_BREATHS
+  uint8 target_samples[ASV_STEP_COUNT]; // Saturates at ASV_WARMUP_BREATHS
 
-  float16 targets_recent[ASV_STEP_COUNT+1]; // +1 for flow calculations
-  float16 targets_recent2[ASV_STEP_COUNT+1]; // sadly need a 2nd copy for the two-stage lerp
-  float16 targets_current[ASV_STEP_COUNT+1];
+  float16 targets_recent[ASV_STEP_COUNT];
+  float16 targets_recent2[ASV_STEP_COUNT]; // sadly need a 2nd copy for the two-stage lerp
+  float16 targets_current[ASV_STEP_COUNT];
 } asv_data_t;
 
 void init_asv_data(asv_data_t *data);
