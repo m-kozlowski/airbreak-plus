@@ -88,10 +88,8 @@ void update_asv_data(asv_data_t* asv, tracking_t* tr) {
         inplace(lerp, &asv->targets_recent2[i], asv->targets_current[i], asv_coeff3);
         inplace(lerp, &asv->targets_recent[i], asv->targets_recent2[i], asv_coeff1);
       }
-      asv->targets_current[i] = 0.0f;
     }
 
-    asv->final_ips = 0.0f;
     asv->breath_count += 1;
 
     // Skip first N breaths needing ASV, to ensure it doesn't fire on autotriggered breaths or other noise.
@@ -111,6 +109,13 @@ void update_asv_data(asv_data_t* asv, tracking_t* tr) {
       else { error_volume = (error_volume - 0.025f) * 0.75f; }
       asv->asv_dampen = clamp(asv->asv_dampen * 0.9f + error_volume, 0.0f, 1.0f);
     }
+  }
+
+  if (tr->st_inhaling && tr->st_just_started) {
+    for(int i=0; i<ASV_STEP_COUNT+1; i++) {
+      asv->targets_current[i] = 0.0f;
+    }
+    asv->final_ips = 0.0f;
   }
 
   float asv_mod = 0.0f;
