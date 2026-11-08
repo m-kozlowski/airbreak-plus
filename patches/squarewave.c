@@ -1,5 +1,6 @@
 #include "stubs.h"
 #include "common_code.h"
+#include "breath_tracking.h"
 
 const float EPS_FIXED_TIME = 1.2f;
 
@@ -31,7 +32,12 @@ void MAIN start(int param_1) {
   }
 
   // The two tracking workers have already consumed this tick's flow and phase events.
-  tracking_t *tr = get_tracking();
+  const breath_tracking_t *tracking = breath_tracking_find();
+  if (!tracking) {
+    squarewave_call_original(param_1);
+    return;
+  }
+  const tracking_t *tr = &tracking->tr;
 
   const float s_eps = 0.8f;                // (cmH2O)
   const float s_rise_time = s_rise_time_f; // (s)

@@ -33,10 +33,6 @@ void pid_update(pid_t *pid, float current_error) {
 ////////////////////////
 // ASV algorithm code //
 
-asv_data_t *get_asv_data() {
-  return GET_PTR(PTR_ASV_DATA, asv_data_t, init_asv_data);
-}
-
 STATIC void asv_reset_feedback(asv_data_t *asv) {
   pid_init(&asv->pid, asv_pid_p, asv_pid_i, asv_pid_d, asv_pid_min, asv_pid_max);
   asv->asv_skip = -ASV_BREATH_SKIP;

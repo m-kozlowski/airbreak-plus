@@ -235,7 +235,7 @@ events are a mailbox, not a queue of every press between GUI polls.
 
 | Family | Build behavior |
 |--------|----------------|
-| common-code dependent | imports symbols from the final `common_code` ELF during final linking |
+| shared-code dependent | imports symbols from its prerequisite payload's probe ELF during sizing and final ELF during final linking |
 | standalone | links source, optional `<payload>_abi.S`, and versioned stubs through the generic rule |
 | dispatcher | owns a shared firmware callback and calls a generated handler list |
 

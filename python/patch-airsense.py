@@ -2396,32 +2396,67 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         details = self._inject_function_pointer_payload('asv_task_wrapper', fptr, 'ASV task handler pointer')
         return PatchOutcome.ok(None, *details)
 
-    def patch_wrapper_limit_max_pdiff(self):
-        """Add pressure shaping, two-phase tracking and Custom T/C decisions."""
+    def patch_breath_tracking(self):
+        """Install shared tracking for Square Wave and the VAuto controller."""
+        if not {'squarewave', 'wrapper_limit_max_pdiff'} & self.applied_payloads:
+            return PatchOutcome.skip('no breath tracking consumer installed')
         ver = self._payload_version_key()
-        # Output vtable slot, worker registrations, then trigger/cycle comparisons
-        # for the progress (ST/PAC) and timing (VAuto/S) detectors.
         sites = {
-            '0302': (0xf8a24, (0xa0644, 0xa0668), (0xa7bd2, 0xa7cc2, 0xaa70a, 0xaa818)),
-            '0305': (0xf916c, (0xa0dc8, 0xa0dec), (0xa83c2, 0xa84b2, 0xaaefa, 0xab008)),
-            '0306': (0xf9170, (0xa0d4c, 0xa0d70), (0xa82da, 0xa83ca, 0xaae12, 0xaaf20)),
-            '0401': (0xf93d0, (0xa0fac, 0xa0fd0), (0xa853a, 0xa862a, 0xab072, 0xab180)),
-            '0402': (0xf9648, (0xa11dc, 0xa1200), (0xa876a, 0xa885a, 0xab2a2, 0xab3b0)),
+            '0302': (0xa0644, 0xa0668),
+            '0305': (0xa0dc8, 0xa0dec),
+            '0306': (0xa0d4c, 0xa0d70),
+            '0401': (0xa0fac, 0xa0fd0),
+            '0402': (0xa11dc, 0xa1200),
         }
-        if not self._supports_compiled_payloads() or ver not in sites:
-            return PatchOutcome.skip("unsupported CDX version %s" % self.asf.cdx_ver)
-        fptr, registrations, comparisons = sites[ver]
-        details = list(self._inject_function_pointer_payload(
-            'wrapper_limit_max_pdiff', fptr,
-            'VAuto pressure handler pointer'))
-        elf_path = self._require_versioned_artifact('wrapper_limit_max_pdiff', 'elf')
-        for site, stock, hook in zip(registrations, (
+        data, _, elf_path = self._load_versioned_payload('breath_tracking')
+        flash, _ = self._inject_payload('breath_tracking', data)
+        details = [self._payload_detail('breath_tracking', len(data), flash)]
+        for site, stock, hook in zip(sites[ver], (
                 'breath_progress_worker_register', 'breath_timing_progress_worker_register'), (
-                'custom_breath_register_prepare', 'custom_breath_register_finish')):
+                'breath_tracking_register_prepare', 'breath_tracking_register_finish')):
             original = self._elf_symbol_addr(elf_path, stock) & ~1
             target = self._elf_symbol_addr(elf_path, hook)
             details.append(self._patch_thumb_bl_checked(
                 site, self._encode_thumb_bl(site, original), target, hook))
+        self.applied_payloads.add('breath_tracking')
+        return PatchOutcome.ok(None, *details)
+
+    def connect_breath_controller(self):
+        """Bind both optional constructors after tracker and controller installation."""
+        if not {'breath_tracking', 'wrapper_limit_max_pdiff'} <= self.applied_payloads:
+            return PatchOutcome.skip('tracker and VAuto controller are not both active')
+        tracker = self._require_versioned_artifact('breath_tracking', 'elf')
+        controller = self._require_versioned_artifact('wrapper_limit_max_pdiff', 'elf')
+        bindings = [
+            (self._elf_symbol_addr(tracker, 'breath_tracking_attach_' + phase),
+             self._elf_symbol_addr(controller, 'custom_breath_attach_' + phase) | 1)
+            for phase in ('prepare', 'finish')
+        ]
+        details = []
+        for slot, target in bindings:
+            self.asf.write_u32(slot - self.asf.FLASH_BASE, target)
+            details.append(self._hook_detail('breath controller constructor', slot, target))
+        return PatchOutcome.ok(None, *details)
+
+    def patch_wrapper_limit_max_pdiff(self):
+        """Add pressure shaping and Custom T/C decisions."""
+        ver = self._payload_version_key()
+        # Output vtable slot, then trigger/cycle comparisons for the progress
+        # (ST/PAC) and timing (VAuto/S) detectors.
+        sites = {
+            '0302': (0xf8a24, (0xa7bd2, 0xa7cc2, 0xaa70a, 0xaa818)),
+            '0305': (0xf916c, (0xa83c2, 0xa84b2, 0xaaefa, 0xab008)),
+            '0306': (0xf9170, (0xa82da, 0xa83ca, 0xaae12, 0xaaf20)),
+            '0401': (0xf93d0, (0xa853a, 0xa862a, 0xab072, 0xab180)),
+            '0402': (0xf9648, (0xa876a, 0xa885a, 0xab2a2, 0xab3b0)),
+        }
+        if not self._supports_compiled_payloads() or ver not in sites:
+            return PatchOutcome.skip("unsupported CDX version %s" % self.asf.cdx_ver)
+        fptr, comparisons = sites[ver]
+        details = list(self._inject_function_pointer_payload(
+            'wrapper_limit_max_pdiff', fptr,
+            'VAuto pressure handler pointer'))
+        elf_path = self._require_versioned_artifact('wrapper_limit_max_pdiff', 'elf')
         for site, hook, compare in zip(comparisons, (
                 'custom_tc_progress_trigger', 'custom_tc_progress_cycle',
                 'custom_tc_timing_trigger', 'custom_tc_timing_cycle'), (
@@ -3452,6 +3487,12 @@ def run_patcher(args, detail_log=None):
     apply_patch_phases(patches, args, detail_log)
 
     print('\n=== Finalization')
+    if {'squarewave', 'wrapper_limit_max_pdiff'} & patches.applied_payloads:
+        apply_reported_patch('breath-tracking', patches.patch_breath_tracking,
+                             args, detail_log)
+    if 'wrapper_limit_max_pdiff' in patches.applied_payloads:
+        apply_reported_patch('breath-controller', patches.connect_breath_controller,
+                             args, detail_log)
     if 'autoepap' in patches.applied_payloads:
         apply_reported_patch('autoepap-fall-time', patches.connect_autoepap_fall_time,
                              args, detail_log)

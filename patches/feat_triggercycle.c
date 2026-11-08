@@ -5,10 +5,6 @@ void init_triggercycle(triggercycle_t *trc) {
   trc->trigger = trc->cycle = TC_STOCK;
 }
 
-triggercycle_t *get_triggercycle(void) {
-  return GET_PTR(PTR_TRIGGERCYCLE, triggercycle_t, init_triggercycle);
-}
-
 // Runs once per tick before either native phase detector. F[7]/F[8] remain the
 // configured sensitivities, including for stock rearming and waveform shaping.
 void prepare_triggercycle(triggercycle_t *trc, tracking_t *tr, history_t *hist, bool enabled) {

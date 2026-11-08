@@ -1,6 +1,8 @@
 #ifndef _my_asv_h_
 #define _my_asv_h_
 
+#include "breath_tracking.h"
+
 ///////////////////
 // Config values //
 
@@ -84,7 +86,6 @@ typedef struct {
   float16 targets_current[ASV_STEP_COUNT+1];
 } asv_data_t;
 
-asv_data_t *get_asv_data();
 void init_asv_data(asv_data_t *data);
 void update_asv_data(asv_data_t* asv, tracking_t* tr, bool boost_enabled);
 

@@ -35,7 +35,7 @@ PAYLOAD_LAYOUT_VERSIONS := 0204 0205 0302 0305 0306 0401 0402
 PAYLOADS_0204 := target_rh mop_callback_dispatcher variable_callback_dispatcher button_hooks keep_backlight custom_menu_hooks uart_stream_schema backlight_adapt header_clock s10_lcd_ili9325 asv_task_wrapper fall_time
 PAYLOADS_0205 := $(PAYLOADS_0204)
 PAYLOADS_0302 := mop_callback_dispatcher variable_callback_dispatcher button_hooks keep_backlight vid_spoof graph squarewave asv_task_wrapper \
-	common_code backlight_adapt wrapper_limit_max_pdiff s10_lcd_ili9325 custom_menu_hooks \
+	common_code breath_tracking backlight_adapt wrapper_limit_max_pdiff s10_lcd_ili9325 custom_menu_hooks \
 	uart_stream_schema language_fonts target_rh header_clock fall_time st_ibr autoepap
 PAYLOADS_0305 := $(PAYLOADS_0302)
 PAYLOADS_0306 := $(PAYLOADS_0302)
@@ -184,8 +184,8 @@ $(foreach v,$(PAYLOAD_LAYOUT_VERSIONS),$(eval $(call S10_VERSIONED_OBJECTS_templ
 
 define S10_CODE_VERSION_template
 
-$(BUILD)/common_code_$(1).o: $(SRC)/my_asv.c $(SRC)/my_asv.h $(SRC)/feat_triggercycle.c $(SRC)/feat_triggercycle.h
-$(BUILD)/wrapper_limit_max_pdiff_$(1).o: $(SRC)/my_asv.h $(SRC)/feat_triggercycle.h
+$(BUILD)/wrapper_limit_max_pdiff_$(1).o: $(SRC)/my_asv.c $(SRC)/my_asv.h $(SRC)/feat_triggercycle.c $(SRC)/feat_triggercycle.h
+$(BUILD)/breath_tracking_$(1).o $(BUILD)/squarewave_$(1).o $(BUILD)/wrapper_limit_max_pdiff_$(1).o: $(SRC)/breath_tracking.h
 
 # common_code provides shared symbols and has no executable entry point.
 $(BUILD)/common_code_$(1).probe.elf: $(BUILD)/common_code_$(1).o $(BUILD)/s10_$(1)_stubs.o | $(BUILD)
@@ -193,22 +193,28 @@ $(BUILD)/common_code_$(1).probe.elf: $(BUILD)/common_code_$(1).o $(BUILD)/s10_$(
 		--Ttext $(PROBE_LINK_ADDR) --entry 0 --sort-section=name \
 		-o $$@ $$^
 
+$(BUILD)/breath_tracking_$(1).probe.elf: $(BUILD)/breath_tracking_$(1).o $(BUILD)/breath_tracking_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/common_code_$(1).probe.elf | $(BUILD)
+	$$(LD) --nostdlib --no-dynamic-linker \
+		--Ttext $(PROBE_LINK_ADDR) \
+		--just-symbols=$$(BUILD)/common_code_$(1).probe.elf \
+		--entry 0 --sort-section=name -o $$@ $(BUILD)/breath_tracking_$(1).o $(BUILD)/breath_tracking_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o
+
 $(BUILD)/graph_$(1).probe.elf: $(BUILD)/graph_$(1).o $(BUILD)/graph_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/common_code_$(1).probe.elf | $(BUILD)
 	$$(LD) --nostdlib --no-dynamic-linker \
 		--Ttext $(PROBE_LINK_ADDR) \
 		--just-symbols=$$(BUILD)/common_code_$(1).probe.elf \
 		--entry start --sort-section=name -o $$@ $(BUILD)/graph_$(1).o $(BUILD)/graph_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o
 
-$(BUILD)/squarewave_$(1).probe.elf: $(BUILD)/squarewave_$(1).o $(BUILD)/squarewave_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/common_code_$(1).probe.elf | $(BUILD)
+$(BUILD)/squarewave_$(1).probe.elf: $(BUILD)/squarewave_$(1).o $(BUILD)/squarewave_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/breath_tracking_$(1).probe.elf | $(BUILD)
 	$$(LD) --nostdlib --no-dynamic-linker \
 		--Ttext $(PROBE_LINK_ADDR) \
-		--just-symbols=$$(BUILD)/common_code_$(1).probe.elf \
+		--just-symbols=$$(BUILD)/breath_tracking_$(1).probe.elf \
 		--entry start --sort-section=name -o $$@ $(BUILD)/squarewave_$(1).o $(BUILD)/squarewave_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o
 
-$(BUILD)/wrapper_limit_max_pdiff_$(1).probe.elf: $(BUILD)/wrapper_limit_max_pdiff_$(1).o $(BUILD)/wrapper_limit_max_pdiff_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/common_code_$(1).probe.elf | $(BUILD)
+$(BUILD)/wrapper_limit_max_pdiff_$(1).probe.elf: $(BUILD)/wrapper_limit_max_pdiff_$(1).o $(BUILD)/wrapper_limit_max_pdiff_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/breath_tracking_$(1).probe.elf | $(BUILD)
 	$$(LD) --nostdlib --no-dynamic-linker \
 		--Ttext $(PROBE_LINK_ADDR) \
-		--just-symbols=$$(BUILD)/common_code_$(1).probe.elf \
+		--just-symbols=$$(BUILD)/breath_tracking_$(1).probe.elf \
 		--entry start --sort-section=name -o $$@ $(BUILD)/wrapper_limit_max_pdiff_$(1).o $(BUILD)/wrapper_limit_max_pdiff_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o
 
 $(BUILD)/common_code_$(1).elf: $(BUILD)/common_code_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/payload_layout_$(1).tsv | $(BUILD)
@@ -217,6 +223,13 @@ $(BUILD)/common_code_$(1).elf: $(BUILD)/common_code_$(1).o $(BUILD)/s10_$(1)_stu
 		--Ttext $$$$addr --entry 0 --sort-section=name \
 		-o $$@ $(BUILD)/common_code_$(1).o $(BUILD)/s10_$(1)_stubs.o
 
+$(BUILD)/breath_tracking_$(1).elf: $(BUILD)/breath_tracking_$(1).o $(BUILD)/breath_tracking_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/common_code_$(1).elf $(BUILD)/payload_layout_$(1).tsv | $(BUILD)
+	@set -e; addr=$$$$(awk -v name=breath_tracking '$$$$1 == name { print $$$$2; found=1; exit } END { if (!found) exit 1 }' $(BUILD)/payload_layout_$(1).tsv); \
+	$$(LD) --nostdlib --no-dynamic-linker \
+		--Ttext $$$$addr \
+		--just-symbols=$$(BUILD)/common_code_$(1).elf \
+		--entry 0 --sort-section=name -o $$@ $(BUILD)/breath_tracking_$(1).o $(BUILD)/breath_tracking_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o
+
 $(BUILD)/graph_$(1).elf: $(BUILD)/graph_$(1).o $(BUILD)/graph_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/common_code_$(1).elf $(BUILD)/payload_layout_$(1).tsv | $(BUILD)
 	@set -e; addr=$$$$(awk -v name=graph '$$$$1 == name { print $$$$2; found=1; exit } END { if (!found) exit 1 }' $(BUILD)/payload_layout_$(1).tsv); \
 	$$(LD) --nostdlib --no-dynamic-linker \
@@ -224,18 +237,18 @@ $(BUILD)/graph_$(1).elf: $(BUILD)/graph_$(1).o $(BUILD)/graph_abi_$(1).o $(BUILD
 		--just-symbols=$$(BUILD)/common_code_$(1).elf \
 		--entry start --sort-section=name -o $$@ $(BUILD)/graph_$(1).o $(BUILD)/graph_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o
 
-$(BUILD)/squarewave_$(1).elf: $(BUILD)/squarewave_$(1).o $(BUILD)/squarewave_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/common_code_$(1).elf $(BUILD)/payload_layout_$(1).tsv | $(BUILD)
+$(BUILD)/squarewave_$(1).elf: $(BUILD)/squarewave_$(1).o $(BUILD)/squarewave_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/breath_tracking_$(1).elf $(BUILD)/payload_layout_$(1).tsv | $(BUILD)
 	@set -e; addr=$$$$(awk -v name=squarewave '$$$$1 == name { print $$$$2; found=1; exit } END { if (!found) exit 1 }' $(BUILD)/payload_layout_$(1).tsv); \
 	$$(LD) --nostdlib --no-dynamic-linker \
 		--Ttext $$$$addr \
-		--just-symbols=$$(BUILD)/common_code_$(1).elf \
+		--just-symbols=$$(BUILD)/breath_tracking_$(1).elf \
 		--entry start --sort-section=name -o $$@ $(BUILD)/squarewave_$(1).o $(BUILD)/squarewave_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o
 
-$(BUILD)/wrapper_limit_max_pdiff_$(1).elf: $(BUILD)/wrapper_limit_max_pdiff_$(1).o $(BUILD)/wrapper_limit_max_pdiff_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/common_code_$(1).elf $(BUILD)/payload_layout_$(1).tsv | $(BUILD)
+$(BUILD)/wrapper_limit_max_pdiff_$(1).elf: $(BUILD)/wrapper_limit_max_pdiff_$(1).o $(BUILD)/wrapper_limit_max_pdiff_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/breath_tracking_$(1).elf $(BUILD)/payload_layout_$(1).tsv | $(BUILD)
 	@set -e; addr=$$$$(awk -v name=wrapper_limit_max_pdiff '$$$$1 == name { print $$$$2; found=1; exit } END { if (!found) exit 1 }' $(BUILD)/payload_layout_$(1).tsv); \
 	$$(LD) --nostdlib --no-dynamic-linker \
 		--Ttext $$$$addr \
-		--just-symbols=$$(BUILD)/common_code_$(1).elf \
+		--just-symbols=$$(BUILD)/breath_tracking_$(1).elf \
 		--entry start --sort-section=name -o $$@ $(BUILD)/wrapper_limit_max_pdiff_$(1).o $(BUILD)/wrapper_limit_max_pdiff_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o
 
 endef

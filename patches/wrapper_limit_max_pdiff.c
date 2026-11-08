@@ -1,7 +1,8 @@
 #include "stubs.h"
 #include "common_code.h"
 
-#include "my_asv.h" // Include the asv_data_t definition
+#include "my_asv.h"
+#include "feat_triggercycle.h"
 
 const float INSTANT_PS = 0.45f;
 
@@ -42,14 +43,6 @@ STATIC float custom_asv_sens_multiplier(void) {
   }
 }
 
-typedef struct breath_node breath_node;
-typedef void (*breath_method)(breath_node *);
-struct breath_node {
-  const breath_method *methods;
-  breath_node *next;
-  uint32 enabled;
-};
-
 typedef enum {
   VAUTO_OFF,
   VAUTO_WAIT_INSPIRATION,
@@ -58,10 +51,10 @@ typedef enum {
 
 typedef struct {
   breath_node prepare, finish;
-  unsigned char *progress, *timing, *timed;
-  history_t *hist;
-  tracking_t *tr;
-  triggercycle_t *trc;
+  breath_tracking_t *tracking;
+  triggercycle_t trc;
+  asv_data_t asv;
+  features_t features;
   int mode;
   vauto_state_t vauto_state;
   float asv_max, asv_sens;
@@ -70,18 +63,18 @@ typedef struct {
   bool reset;
 } breath_pipeline_t;
 
-extern void *therapy_manager_get(void);
-extern void therapy_worker_append(breath_node *, int group);
-extern void *breath_progress_worker_register(void);
-extern void *breath_timing_progress_worker_register(void);
-extern void breath_phase_ramp_worker_update(breath_node *);
 static const breath_method prepare_methods[7];
+
+STATIC breath_pipeline_t *find_breath_pipeline(void) {
+  breath_node *n = ((breath_node **)therapy_manager_get())[4];
+  while (n && n->methods != prepare_methods) { n = n->next; }
+  return (breath_pipeline_t *)n;
+}
 
 void custom_breath_settings_changed(void) {
   // Startup callbacks can precede worker creation. Do not allocate state here.
-  breath_node *n = ((breath_node **)therapy_manager_get())[4];
-  while (n && n->methods != prepare_methods) { n = n->next; }
-  if (n) { ((breath_pipeline_t *)n)->settings_dirty = true; }
+  breath_pipeline_t *s = find_breath_pipeline();
+  if (s) { s->settings_dirty = true; }
 }
 
 STATIC void load_breath_settings(breath_pipeline_t *s) {
@@ -96,15 +89,11 @@ STATIC void load_breath_settings(breath_pipeline_t *s) {
 STATIC void init_breath_pipeline(breath_pipeline_t *s) {
   unsigned char *p = (unsigned char *)s;
   for (unsigned i = 0; i < sizeof(*s); ++i) { p[i] = 0; }
-  s->hist = get_history();
-  s->tr = get_tracking();
-  s->trc = get_triggercycle();
+  init_triggercycle(&s->trc);
+  init_asv_data(&s->asv);
+  init_features(&s->features);
   s->settings_dirty = true;
   s->reset = true;
-}
-
-STATIC breath_pipeline_t *get_breath_pipeline(void) {
-  return GET_PTR(PTR_BREATH_PIPELINE, breath_pipeline_t, init_breath_pipeline);
 }
 
 STATIC void breath_noop(breath_node *node) { }
@@ -113,7 +102,7 @@ STATIC void breath_stop(breath_node *node) {
   breath_pipeline_t *s = (breath_pipeline_t *)node;
   s->prepare.enabled = s->finish.enabled = 0;
   s->vauto_state = VAUTO_OFF;
-  s->trc->trigger = s->trc->cycle = TC_STOCK;
+  s->trc.trigger = s->trc.cycle = TC_STOCK;
   s->reset = true;
 }
 
@@ -123,67 +112,46 @@ STATIC void breath_mode(breath_node *node) {
   s->mode = ivars[0x12];
   s->prepare.enabled = s->finish.enabled = s->mode == MODE_VAUTO || s->mode == MODE_S;
   s->vauto_state = VAUTO_OFF;
-  s->trc->trigger = s->trc->cycle = TC_STOCK;
+  s->trc.trigger = s->trc.cycle = TC_STOCK;
   s->settings_dirty = true;
   s->reset = true;
 }
 
-STATIC uint32 breath_events(void) {
-  // Group 2's event word is cleared before its 100 Hz worker pass.
-  return ((uint32 *)therapy_manager_get())[8] & 0x3fu;
-}
-
-STATIC void reset_vauto_state(void) {
-  init_asv_data(get_asv_data());
-  init_features(GET_PTR(PTR_FEATURES, features_t, init_features));
+STATIC void reset_vauto_state(breath_pipeline_t *s) {
+  init_asv_data(&s->asv);
+  init_features(&s->features);
 }
 
 STATIC void breath_prepare(breath_node *node) {
   breath_pipeline_t *s = (breath_pipeline_t *)node;
   if (s->settings_dirty) { load_breath_settings(s); }
   if (s->reset) {
-    init_history(s->hist);
-    init_tracking(s->tr);
-    init_triggercycle(s->trc);
-    reset_vauto_state();
-    // The native mode callbacks have now run. A retained native phase is not
-    // necessarily expiration, even when two modes share the same detector.
-    if (ivars[0x71] == 2) { s->tr->st_inhaling = s->progress[0x20] != 0; }
-    else if (ivars[0x71] == 1) {
-      uint32 events = breath_events();
-      // T's worker precedes preparation. On its transition tick the sample
-      // still belongs to the phase that just ended.
-      s->tr->st_inhaling = events ? (events & 0x38u) != 0 : s->timed[0x10] == 0;
-    } else { s->tr->st_inhaling = s->timing[0x28] != 0; }
+    init_triggercycle(&s->trc);
+    reset_vauto_state(s);
     s->reset = false;
   }
 
   bool requested = s->mode == MODE_VAUTO && vauto_ps > 0.0f && s->custom_enabled;
   if (!requested) {
-    if (s->vauto_state != VAUTO_OFF) { reset_vauto_state(); }
+    if (s->vauto_state != VAUTO_OFF) { reset_vauto_state(s); }
     s->vauto_state = VAUTO_OFF;
   } else if (s->vauto_state == VAUTO_OFF) {
     s->vauto_state = VAUTO_WAIT_INSPIRATION;
   }
 
-  // Flow and measured pressure are fresh; the pressure command is still N-1.
-  update_history(s->hist);
-  prepare_tracking(s->tr, s->hist);
   bool enabled = ivars[0x71] != 1 && s->custom_tc;
   if (s->mode == MODE_VAUTO) {
     enabled &= s->vauto_state == VAUTO_ACTIVE;
   }
-  prepare_triggercycle(s->trc, s->tr, s->hist, enabled);
+  prepare_triggercycle(&s->trc, &s->tracking->tr, &s->tracking->hist, enabled);
 }
 
 STATIC void breath_finish(breath_node *node) {
   breath_pipeline_t *s = (breath_pipeline_t *)((unsigned char *)node -
                             __builtin_offsetof(breath_pipeline_t, finish));
-  uint32 events = breath_events();
-  if (events & 7u) { finish_tracking(s->tr, true); }
-  else if (events & 0x38u) { finish_tracking(s->tr, false); }
+  const tracking_t *tr = &s->tracking->tr;
   if (s->vauto_state == VAUTO_WAIT_INSPIRATION &&
-      s->tr->st_inhaling && s->tr->st_just_started) {
+      tr->st_inhaling && tr->st_just_started) {
     s->vauto_state = VAUTO_ACTIVE;
   }
 }
@@ -195,39 +163,33 @@ static const breath_method finish_methods[7] = {
   breath_noop, breath_noop, breath_noop, breath_noop, breath_noop, breath_noop, breath_finish
 };
 
-// These wrap two existing registrations, retaining the stock list order and
-// vtables (including the optional iBR wrapper). Both nodes use the shared heap.
-void *custom_breath_register_prepare(void) {
-  breath_pipeline_t *s = get_breath_pipeline();
-  if (!s->prepare.methods) {
+// Called once by the tracker while constructing the native worker list.
+void custom_breath_attach_prepare(breath_tracking_t *tracking) {
+  breath_pipeline_t *s = find_breath_pipeline();
+  if (!s) {
+    s = malloc(sizeof(*s));
+    init_breath_pipeline(s);
+    s->tracking = tracking;
     therapy_worker_append(&s->prepare, 2);
     s->prepare.methods = prepare_methods;
     s->prepare.enabled = 0;
   }
-  s->progress = breath_progress_worker_register();
-  return s->progress;
 }
 
-void *custom_breath_register_finish(void) {
-  breath_pipeline_t *s = get_breath_pipeline();
-  s->timing = breath_timing_progress_worker_register();
+void custom_breath_attach_finish(breath_tracking_t *tracking) {
+  breath_pipeline_t *s = find_breath_pipeline();
   if (!s->finish.methods) {
     therapy_worker_append(&s->finish, 2);
     s->finish.methods = finish_methods;
     s->finish.enabled = 0;
-    // Cache the already-registered T worker without a fixed singleton RAM address.
-    breath_node *n = ((breath_node **)therapy_manager_get())[4];
-    while (n && n->methods[6] != breath_phase_ramp_worker_update) { n = n->next; }
-    s->timed = (unsigned char *)n;
   }
-  return s->timing;
 }
 
 // Assembly comparison hooks only read decisions prepared for this tick.
 int custom_tc_decision(int cycle) {
-  breath_pipeline_t *s = get_breath_pipeline();
-  if (!s->prepare.enabled || s->reset) { return TC_STOCK; }
-  return cycle ? s->trc->cycle : s->trc->trigger;
+  breath_pipeline_t *s = find_breath_pipeline();
+  if (!s || !s->prepare.enabled || s->reset) { return TC_STOCK; }
+  return cycle ? s->trc.cycle : s->trc.trigger;
 }
 
 // Reshapes PS in 0.0-1.0 format to differently shaped slopes with `mult` times the AUC, first increasing slope before magnitude
@@ -252,20 +214,20 @@ STATIC float reshape_vauto_ps(float ps1, float mult) {
 
 
 void MAIN start() {
-  breath_pipeline_t *s = get_breath_pipeline();
-  if (s->vauto_state != VAUTO_ACTIVE || !(vauto_ps > 0.0f)) {
+  breath_pipeline_t *s = find_breath_pipeline();
+  if (!s || s->vauto_state != VAUTO_ACTIVE || !(vauto_ps > 0.0f)) {
     pressure_limit_max_difference();
     return;
   }
 
-  tracking_t *tr = s->tr;
-  asv_data_t *asv = get_asv_data();
+  tracking_t *tr = &s->tracking->tr;
+  asv_data_t *asv = &s->asv;
   float asv_max = wrapper_limit_max_pdiff_asv_max_var_id == 0xFFFFu ?
                   2.0f * vauto_ps : s->asv_max;
   asv->asv_sens = s->asv_sens;
   update_asv_data(asv, tr, asv_max > 0.0f);
 
-  features_t *feat = GET_PTR(PTR_FEATURES, features_t, init_features);
+  features_t *feat = &s->features;
 
   float new_ps = *cmd_ps;
 
@@ -315,3 +277,6 @@ void MAIN start() {
   pressure_limit_max_difference(); // Execute the original function
   *cmd_ps = orig_ps;
 }
+
+#include "my_asv.c"
+#include "feat_triggercycle.c"
