@@ -58,7 +58,6 @@ typedef enum {
 } asv_need_t;
 
 typedef struct {
-  uint32 last_time;
   uint32 breath_count;
 
   uint32 tracking_tick; // Last tracker sample processed by ASV
@@ -77,6 +76,7 @@ typedef struct {
   asv_need_t breath_need; // Completed inspiration, consumed at the next trigger
   bool full_inspiration; // Observed its start and every subsequent tracker sample
   bool pid_updated; // Compared at least one checkpoint with a warmed-up reference
+  bool boost_enabled;
   uint8 target_samples[ASV_STEP_COUNT+1]; // Saturates at ASV_WARMUP_BREATHS
 
   float16 targets_recent[ASV_STEP_COUNT+1]; // +1 for flow calculations
@@ -86,6 +86,6 @@ typedef struct {
 
 asv_data_t *get_asv_data();
 void init_asv_data(asv_data_t *data);
-void update_asv_data(asv_data_t* asv, tracking_t* tr);
+void update_asv_data(asv_data_t* asv, tracking_t* tr, bool boost_enabled);
 
 #endif

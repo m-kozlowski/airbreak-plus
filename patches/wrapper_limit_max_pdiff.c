@@ -58,12 +58,20 @@ struct breath_node {
   uint32 enabled;
 };
 
+typedef enum {
+  VAUTO_OFF,
+  VAUTO_WAIT_INSPIRATION,
+  VAUTO_ACTIVE,
+} vauto_state_t;
+
 typedef struct {
   breath_node prepare, finish;
   unsigned char *progress, *timing, *timed;
   history_t *hist;
   tracking_t *tr;
   triggercycle_t *trc;
+  int mode;
+  vauto_state_t vauto_state;
   bool reset;
 } breath_pipeline_t;
 
@@ -91,6 +99,7 @@ STATIC void breath_noop(breath_node *node) { }
 STATIC void breath_stop(breath_node *node) {
   breath_pipeline_t *s = (breath_pipeline_t *)node;
   s->prepare.enabled = s->finish.enabled = 0;
+  s->vauto_state = VAUTO_OFF;
   s->trc->trigger = s->trc->cycle = TC_STOCK;
   s->reset = true;
 }
@@ -98,7 +107,9 @@ STATIC void breath_stop(breath_node *node) {
 STATIC void breath_mode(breath_node *node) {
   breath_pipeline_t *s = (breath_pipeline_t *)node;
   // Lifecycle callbacks use the requested mode; I[6F] is published next tick.
-  s->prepare.enabled = s->finish.enabled = ivars[0x12] == MODE_VAUTO || ivars[0x12] == MODE_S;
+  s->mode = ivars[0x12];
+  s->prepare.enabled = s->finish.enabled = s->mode == MODE_VAUTO || s->mode == MODE_S;
+  s->vauto_state = VAUTO_OFF;
   s->trc->trigger = s->trc->cycle = TC_STOCK;
   s->reset = true;
 }
@@ -108,14 +119,18 @@ STATIC uint32 breath_events(void) {
   return ((uint32 *)therapy_manager_get())[8] & 0x3fu;
 }
 
+STATIC void reset_vauto_state(void) {
+  init_asv_data(get_asv_data());
+  init_features(GET_PTR(PTR_FEATURES, features_t, init_features));
+}
+
 STATIC void breath_prepare(breath_node *node) {
   breath_pipeline_t *s = (breath_pipeline_t *)node;
   if (s->reset) {
     init_history(s->hist);
     init_tracking(s->tr);
     init_triggercycle(s->trc);
-    init_asv_data(get_asv_data());
-    init_features(GET_PTR(PTR_FEATURES, features_t, init_features));
+    reset_vauto_state();
     // The native mode callbacks have now run. A retained native phase is not
     // necessarily expiration, even when two modes share the same detector.
     if (ivars[0x71] == 2) { s->tr->st_inhaling = s->progress[0x20] != 0; }
@@ -128,13 +143,22 @@ STATIC void breath_prepare(breath_node *node) {
     s->reset = false;
   }
 
+  bool requested = s->mode == MODE_VAUTO && vauto_ps > 0.0f &&
+                   custom_g8_toggle(wrapper_limit_max_pdiff_toggle_var_id, true);
+  if (!requested) {
+    if (s->vauto_state != VAUTO_OFF) { reset_vauto_state(); }
+    s->vauto_state = VAUTO_OFF;
+  } else if (s->vauto_state == VAUTO_OFF) {
+    s->vauto_state = VAUTO_WAIT_INSPIRATION;
+  }
+
   // Flow and measured pressure are fresh; the pressure command is still N-1.
   update_history(s->hist);
   prepare_tracking(s->tr, s->hist);
   bool enabled = ivars[0x71] != 1 &&
                  custom_g8_toggle(wrapper_limit_max_pdiff_triggercycle_var_id, true);
-  if (*therapy_mode == MODE_VAUTO) {
-    enabled &= vauto_ps > 0.0f && custom_g8_toggle(wrapper_limit_max_pdiff_toggle_var_id, true);
+  if (s->mode == MODE_VAUTO) {
+    enabled &= s->vauto_state == VAUTO_ACTIVE;
   }
   prepare_triggercycle(s->trc, s->tr, s->hist, enabled);
 }
@@ -145,6 +169,10 @@ STATIC void breath_finish(breath_node *node) {
   uint32 events = breath_events();
   if (events & 7u) { finish_tracking(s->tr, true); }
   else if (events & 0x38u) { finish_tracking(s->tr, false); }
+  if (s->vauto_state == VAUTO_WAIT_INSPIRATION &&
+      s->tr->st_inhaling && s->tr->st_just_started) {
+    s->vauto_state = VAUTO_ACTIVE;
+  }
 }
 
 static const breath_method prepare_methods[7] = {
@@ -211,66 +239,62 @@ STATIC float reshape_vauto_ps(float ps1, float mult) {
 
 
 void MAIN start() {
-  bool custom_enabled = custom_g8_toggle(wrapper_limit_max_pdiff_toggle_var_id, true);
-  if (*therapy_mode != MODE_VAUTO || !custom_enabled || vauto_ps <= 0.0f) {
+  breath_pipeline_t *s = get_breath_pipeline();
+  if (s->vauto_state != VAUTO_ACTIVE || !(vauto_ps > 0.0f)) {
     pressure_limit_max_difference();
     return;
   }
 
-  tracking_t *tr = get_tracking();
+  tracking_t *tr = s->tr;
   asv_data_t *asv = get_asv_data();
   float asv_max = custom_asv_max_cm();
   asv->asv_sens = custom_asv_sens_multiplier();
-  update_asv_data(asv, tr);
-  if (asv_max <= 0.0f) { asv->asv_factor = 1.0f; }
+  update_asv_data(asv, tr, asv_max > 0.0f);
 
   features_t *feat = GET_PTR(PTR_FEATURES, features_t, init_features);
 
   float new_ps = *cmd_ps;
 
-  if (*therapy_mode == MODE_VAUTO) {
+  // The pre-ramp reference is EPAP + PS/2, so this uses EPAP - PS/2.
+  float current_eps = clamp((*cmd_epap - vauto_ps) * 0.2f, 0.4f, 1.6f);
 
-    // The pre-ramp reference is EPAP + PS/2, so this uses EPAP - PS/2.
-    float current_eps = clamp((*cmd_epap - vauto_ps) * 0.2f, 0.4f, 1.6f);
+  const float ps = *cmd_ps + vauto_ps/2.0f;
+  const float ps1 = (ps/vauto_ps); // 0.0 to 1.0
 
-    const float ps = *cmd_ps + vauto_ps/2.0f;
-    const float ps1 = (ps/vauto_ps); // 0.0 to 1.0
-
-    if (tr->st_inhaling) {
-      float base_ps = remap(ps1, 0.0f, 1.0f, feat->eps, vauto_ps-INSTANT_PS) + INSTANT_PS;
-      new_ps = base_ps;
-      if (asv_max > 0.0f) {
-        float new_ps1 = reshape_vauto_ps(ps1, asv->asv_factor);
-        float boosted_ps = remap(new_ps1, 0.0f, 1.0f, feat->eps, vauto_ps - INSTANT_PS) + INSTANT_PS*asv->asv_factor;
-        new_ps = min(boosted_ps, base_ps + asv_max);
-      }
-
-      feat->ips_fa = 0.0f;
-      feat->eps = min(feat->eps + 0.01f * current_eps, 0.0f);
-
-      asv->final_ips = max(asv->final_ips, new_ps);
-    } else { // Exhaling
-      if (tr->current.ti >= 0.7f) {
-        current_eps = max(0.0f, current_eps - (asv->final_ips - vauto_ps) * 0.25f);
-        if (tr->st_just_started) { feat->eps = -current_eps; }
-        else {
-          float eps1 = remap01c(tr->current.volume / tr->current.volume_max, 0.10f, 0.7f);
-          eps1 = sqrtf(eps1);
-          eps1 = min(eps1, remap01c(tr->current.te, max(1.2f, tr->recent.te * 0.8f), max(0.4f, tr->recent.te * 0.4f)));
-          feat->eps = max(feat->eps, -current_eps * eps1);
-        }
-      }
-      float new_ps1 = ps1*ps1 * 0.75f + 0.25f * ps1;
-      new_ps = remap(new_ps1, 0.0f, 1.0f, feat->eps, asv->final_ips);
-
-      if (tr->st_pre_trigger > 0) { feat->ips_fa = min(tr->st_pre_trigger, 2) * 0.2f; };
-      if (*flow_compensated <= 0.0f) { feat->ips_fa = 0.0f; }
-      new_ps += feat->ips_fa;
+  if (tr->st_inhaling) {
+    float base_ps = remap(ps1, 0.0f, 1.0f, feat->eps, vauto_ps-INSTANT_PS) + INSTANT_PS;
+    new_ps = base_ps;
+    if (asv_max > 0.0f) {
+      float new_ps1 = reshape_vauto_ps(ps1, asv->asv_factor);
+      float boosted_ps = remap(new_ps1, 0.0f, 1.0f, feat->eps, vauto_ps - INSTANT_PS) + INSTANT_PS*asv->asv_factor;
+      new_ps = min(boosted_ps, base_ps + asv_max);
     }
 
-    // Convert support above EPAP back to the signed midpoint-relative waveform.
-    new_ps = *cmd_ps + (new_ps - ps);
+    feat->ips_fa = 0.0f;
+    feat->eps = min(feat->eps + 0.01f * current_eps, 0.0f);
+
+    asv->final_ips = max(asv->final_ips, new_ps);
+  } else { // Exhaling
+    if (tr->current.ti >= 0.7f) {
+      current_eps = max(0.0f, current_eps - (asv->final_ips - vauto_ps) * 0.25f);
+      if (tr->st_just_started) { feat->eps = -current_eps; }
+      else {
+        float eps1 = remap01c(tr->current.volume / tr->current.volume_max, 0.10f, 0.7f);
+        eps1 = sqrtf(eps1);
+        eps1 = min(eps1, remap01c(tr->current.te, max(1.2f, tr->recent.te * 0.8f), max(0.4f, tr->recent.te * 0.4f)));
+        feat->eps = max(feat->eps, -current_eps * eps1);
+      }
+    }
+    float new_ps1 = ps1*ps1 * 0.75f + 0.25f * ps1;
+    new_ps = remap(new_ps1, 0.0f, 1.0f, feat->eps, asv->final_ips);
+
+    if (tr->st_pre_trigger > 0) { feat->ips_fa = min(tr->st_pre_trigger, 2) * 0.2f; };
+    if (*flow_compensated <= 0.0f) { feat->ips_fa = 0.0f; }
+    new_ps += feat->ips_fa;
   }
+
+  // Convert support above EPAP back to the signed midpoint-relative waveform.
+  new_ps = *cmd_ps + (new_ps - ps);
 
   const float orig_ps = *cmd_ps;
   *cmd_ps = new_ps;

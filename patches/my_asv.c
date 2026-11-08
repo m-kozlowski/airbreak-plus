@@ -34,35 +34,33 @@ void pid_update(pid_t *pid, float current_error) {
 // ASV algorithm code //
 
 asv_data_t *get_asv_data() {
-  asv_data_t *asv = GET_PTR(PTR_ASV_DATA, asv_data_t, init_asv_data);
-  const unsigned now = tim_read_tim5();
-  // Initialize if it's the first time or more than 0.1s elapsed, suggesting that the therapy was stopped and re-started.
-  if ((now - asv->last_time) > 100000) { init_asv_data(asv); }
-  asv->last_time = now;
+  return GET_PTR(PTR_ASV_DATA, asv_data_t, init_asv_data);
+}
 
-  return asv;
+STATIC void asv_reset_feedback(asv_data_t *asv) {
+  pid_init(&asv->pid, asv_pid_p, asv_pid_i, asv_pid_d, asv_pid_min, asv_pid_max);
+  asv->asv_skip = -ASV_BREATH_SKIP;
+  asv->breath_need = ASV_UNKNOWN;
+  asv->pid_updated = false;
 }
 
 void init_asv_data(asv_data_t *data) {
-  data->last_time = tim_read_tim5();
   data->breath_count = 0;
 
   data->tracking_tick = (uint32)-1;
 
-  pid_init(&data->pid, asv_pid_p, asv_pid_i, asv_pid_d, asv_pid_min, asv_pid_max);
+  asv_reset_feedback(data);
   data->asv_factor = 1.0f;
   data->final_ips = 0.0f;
   data->asv_sens = 1.0f;
 
   data->asv_dampen = 0.0f;
-  data->asv_skip = -ASV_BREATH_SKIP;
 
   data->target_vol = 0.0f;
   data->target_vol2 = 0.0f;
   data->checkpoints = 0;
-  data->breath_need = ASV_UNKNOWN;
   data->full_inspiration = false;
-  data->pid_updated = false;
+  data->boost_enabled = false;
 
   for(int i=0; i<ASV_STEP_COUNT+1; i++) {
     data->targets_current[i] = 0.0f;
@@ -123,8 +121,16 @@ STATIC void asv_apply_breath_need(asv_data_t *asv) {
   }
 }
 
-void update_asv_data(asv_data_t* asv, tracking_t* tr) {
+void update_asv_data(asv_data_t* asv, tracking_t* tr, bool boost_enabled) {
   breath_t *current = &tr->current;
+
+  if (boost_enabled != asv->boost_enabled) {
+    // Keep learning while boost is off, but never resume accumulated demand.
+    if (boost_enabled) { asv_reset_feedback(asv); }
+    asv->breath_need = ASV_UNKNOWN;
+    asv->pid_updated = false;
+    asv->boost_enabled = boost_enabled;
+  }
 
   // A bypass or restart must not turn a partial inspiration into learning data.
   if (tr->tick != asv->tracking_tick + 1) {
@@ -135,7 +141,7 @@ void update_asv_data(asv_data_t* asv, tracking_t* tr) {
   asv->tracking_tick = tr->tick;
 
   if (tr->st_inhaling && tr->st_just_started) {
-    asv_apply_breath_need(asv);
+    if (boost_enabled) { asv_apply_breath_need(asv); }
     asv->breath_need = ASV_UNKNOWN;
     asv->full_inspiration = true;
     asv->pid_updated = false;
@@ -160,7 +166,7 @@ void update_asv_data(asv_data_t* asv, tracking_t* tr) {
       (tr->st_inhaling || tr->st_just_started)) {
     asv->targets_current[i] = current->volume;
     asv->checkpoints |= 1u << i;
-    if (i >= 1 && asv->target_samples[i] >= ASV_WARMUP_BREATHS) {
+    if (boost_enabled && i >= 1 && asv->target_samples[i] >= ASV_WARMUP_BREATHS) {
       const float error_volume = asv->targets_current[i] / (asv->targets_recent[i] + 0.001f);
       const float recent_flow = asv->targets_recent[i] - asv->targets_recent[i-1];
       const float current_flow = asv->targets_current[i] - asv->targets_current[i-1];
@@ -179,7 +185,7 @@ void update_asv_data(asv_data_t* asv, tracking_t* tr) {
   if (!tr->st_inhaling && tr->st_just_started) {
     if (asv->full_inspiration) {
       // Capture the old reference's result before learning from this inspiration.
-      asv->breath_need = !asv->pid_updated ? ASV_UNKNOWN :
+      asv->breath_need = !boost_enabled || !asv->pid_updated ? ASV_UNKNOWN :
                         pid_get_signal(&asv->pid) <= 0.1f ? ASV_NO_NEED : ASV_NEED;
       asv_learn_inspiration(asv, current->volume_max);
     }
@@ -187,7 +193,7 @@ void update_asv_data(asv_data_t* asv, tracking_t* tr) {
   }
 
   asv->asv_factor = 1.0f;
-  if (!asv->full_inspiration) { return; }
+  if (!asv->full_inspiration || !boost_enabled) { return; }
 
   // Diminish the asv factor during the first `(N+1)*50ms`, to avoid huge sudden PS in case of false breaths
   const float mult = remap01c(1.0f * current->t, 0.0f, 1.0f * ASV_STEP_LENGTH * (ASV_STEP_SKIP+1));
