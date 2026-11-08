@@ -1228,6 +1228,8 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         tc_addr = self._write_payload_u16(payload, 'wrapper_limit_max_pdiff_triggercycle_var_id', tc_vid)
         max_addr = self._write_payload_u16(payload, 'wrapper_limit_max_pdiff_asv_max_var_id', max_vid)
         sens_addr = self._write_payload_u16(payload, 'wrapper_limit_max_pdiff_asv_sens_var_id', sens_vid)
+        for var in (myasv_var, tc_var, max_var, sens_var):
+            self.variable_callback_add(var, payload, 'custom_breath_settings_changed')
 
         self._custom_detail("custom VAuto enable: %s var_id=0x%04X label_str=0x%04X" %
                             (myasv_var, myasv_vid, myasv_label))

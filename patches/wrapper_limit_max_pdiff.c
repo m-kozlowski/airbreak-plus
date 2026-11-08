@@ -31,14 +31,6 @@ STATIC int custom_var_raw(unsigned short var_id, int fallback) {
   return (var_id == 0xFFFFu) ? fallback : variable_get_by_id((int)var_id);
 }
 
-STATIC float custom_asv_max_cm(void) {
-  if (wrapper_limit_max_pdiff_asv_max_var_id == 0xFFFFu) {
-    return 2.0f * vauto_ps;
-  }
-  int raw = variable_get_by_id((int)wrapper_limit_max_pdiff_asv_max_var_id);
-  return raw / 50.0f;
-}
-
 STATIC float custom_asv_sens_multiplier(void) {
   switch (custom_var_raw(wrapper_limit_max_pdiff_asv_sens_var_id, 2)) {
     case 0: return 0.50f;
@@ -72,6 +64,9 @@ typedef struct {
   triggercycle_t *trc;
   int mode;
   vauto_state_t vauto_state;
+  float asv_max, asv_sens;
+  bool custom_enabled, custom_tc;
+  volatile bool settings_dirty;
   bool reset;
 } breath_pipeline_t;
 
@@ -80,6 +75,23 @@ extern void therapy_worker_append(breath_node *, int group);
 extern void *breath_progress_worker_register(void);
 extern void *breath_timing_progress_worker_register(void);
 extern void breath_phase_ramp_worker_update(breath_node *);
+static const breath_method prepare_methods[7];
+
+void custom_breath_settings_changed(void) {
+  // Startup callbacks can precede worker creation. Do not allocate state here.
+  breath_node *n = ((breath_node **)therapy_manager_get())[4];
+  while (n && n->methods != prepare_methods) { n = n->next; }
+  if (n) { ((breath_pipeline_t *)n)->settings_dirty = true; }
+}
+
+STATIC void load_breath_settings(breath_pipeline_t *s) {
+  // Clear before reading so a callback during the reload remains pending.
+  s->settings_dirty = false;
+  s->custom_enabled = custom_g8_toggle(wrapper_limit_max_pdiff_toggle_var_id, true);
+  s->custom_tc = custom_g8_toggle(wrapper_limit_max_pdiff_triggercycle_var_id, true);
+  s->asv_max = custom_var_raw(wrapper_limit_max_pdiff_asv_max_var_id, 0) / 50.0f;
+  s->asv_sens = custom_asv_sens_multiplier();
+}
 
 STATIC void init_breath_pipeline(breath_pipeline_t *s) {
   unsigned char *p = (unsigned char *)s;
@@ -87,6 +99,7 @@ STATIC void init_breath_pipeline(breath_pipeline_t *s) {
   s->hist = get_history();
   s->tr = get_tracking();
   s->trc = get_triggercycle();
+  s->settings_dirty = true;
   s->reset = true;
 }
 
@@ -111,6 +124,7 @@ STATIC void breath_mode(breath_node *node) {
   s->prepare.enabled = s->finish.enabled = s->mode == MODE_VAUTO || s->mode == MODE_S;
   s->vauto_state = VAUTO_OFF;
   s->trc->trigger = s->trc->cycle = TC_STOCK;
+  s->settings_dirty = true;
   s->reset = true;
 }
 
@@ -126,6 +140,7 @@ STATIC void reset_vauto_state(void) {
 
 STATIC void breath_prepare(breath_node *node) {
   breath_pipeline_t *s = (breath_pipeline_t *)node;
+  if (s->settings_dirty) { load_breath_settings(s); }
   if (s->reset) {
     init_history(s->hist);
     init_tracking(s->tr);
@@ -143,8 +158,7 @@ STATIC void breath_prepare(breath_node *node) {
     s->reset = false;
   }
 
-  bool requested = s->mode == MODE_VAUTO && vauto_ps > 0.0f &&
-                   custom_g8_toggle(wrapper_limit_max_pdiff_toggle_var_id, true);
+  bool requested = s->mode == MODE_VAUTO && vauto_ps > 0.0f && s->custom_enabled;
   if (!requested) {
     if (s->vauto_state != VAUTO_OFF) { reset_vauto_state(); }
     s->vauto_state = VAUTO_OFF;
@@ -155,8 +169,7 @@ STATIC void breath_prepare(breath_node *node) {
   // Flow and measured pressure are fresh; the pressure command is still N-1.
   update_history(s->hist);
   prepare_tracking(s->tr, s->hist);
-  bool enabled = ivars[0x71] != 1 &&
-                 custom_g8_toggle(wrapper_limit_max_pdiff_triggercycle_var_id, true);
+  bool enabled = ivars[0x71] != 1 && s->custom_tc;
   if (s->mode == MODE_VAUTO) {
     enabled &= s->vauto_state == VAUTO_ACTIVE;
   }
@@ -247,8 +260,9 @@ void MAIN start() {
 
   tracking_t *tr = s->tr;
   asv_data_t *asv = get_asv_data();
-  float asv_max = custom_asv_max_cm();
-  asv->asv_sens = custom_asv_sens_multiplier();
+  float asv_max = wrapper_limit_max_pdiff_asv_max_var_id == 0xFFFFu ?
+                  2.0f * vauto_ps : s->asv_max;
+  asv->asv_sens = s->asv_sens;
   update_asv_data(asv, tr, asv_max > 0.0f);
 
   features_t *feat = GET_PTR(PTR_FEATURES, features_t, init_features);
