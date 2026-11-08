@@ -90,6 +90,14 @@ def rpc(device, method, value=None):
     return response['result']['AirbreakDownload']
 
 
+def detect_server(device):
+    host = config_json(device, 'get', 'ServiceHost')['result']['ServiceHost']
+    match = re.fullmatch(r'gsm([0-9]+)\.p\.ngcs\.local', host.strip().lower())
+    if not match:
+        raise ValueError(f'cannot select an OTA server from ServiceHost={host!r}; supply --server')
+    return f'http://ota{match[1]}.p.ngcs.local:9010'
+
+
 def record_download_error(device, job, output):
     # Use the device clock, since event timestamps need not match the host.
     # These are events in the attempt's time window, not request-ID correlation.
@@ -127,7 +135,8 @@ def save_queue(path, queue):
     temporary.replace(path)
 
 
-def load_queue(jobs, output, device):
+def load_queue(args):
+    output, device = args.output, args.device
     path = output / 'downloads.json'
     if path.exists():
         queue = json.loads(path.read_text(encoding='utf-8'))
@@ -135,6 +144,19 @@ def load_queue(jobs, output, device):
             raise ValueError('this output directory belongs to a different device selection')
     else:
         queue = {'device': device, 'jobs': []}
+    if not args.urls and not args.server:
+        # Recovery can start in bootloader service, where ServiceHost is not
+        # readable. Reuse the server saved when this queue was generated.
+        recovering = any(job['state'] in ('downloaded', 'dumped', 'extracted') for job in queue['jobs'])
+        if (recovering or args.dry_run) and queue.get('server'):
+            args.server = queue['server']
+        elif args.dry_run:
+            raise ValueError('--dry-run requires --server or a queue with a saved server')
+        else:
+            args.server = detect_server(device)
+    jobs = requested_jobs(args)
+    if args.server and not args.urls:
+        queue['server'] = args.server
     previous = {job['url']: job for job in queue['jobs']}
     selected = []
     for request in jobs:
@@ -144,7 +166,7 @@ def load_queue(jobs, output, device):
             if (output / job['file']).exists():
                 raise ValueError(f"output already exists: {job['file']}")
             queue['jobs'].append(job)
-        elif job['state'] in ('error', 'skipped', 'partial'):
+        elif job['state'] in ('error', 'skipped', 'partial', 'cancelled'):
             attempt = job.get('attempt', 0)
             job.clear()
             job.update(request)
@@ -190,10 +212,10 @@ def download_queue(args):
     output = args.output
     if not args.device.startswith(('can:', 'tcp:')):
         raise ValueError('-d requires a CAN adapter or TCP bridge')
-    state_path, queue, jobs = load_queue(requested_jobs(args), output, args.device)
+    state_path, queue, jobs = load_queue(args)
     # The staging file is shared by every URL. Finish saving an earlier job
     # even when it was omitted from the new VID selection.
-    unfinished = [job for job in queue['jobs'] if job['state'] in ('downloading', 'downloaded', 'dumped', 'extracted')]
+    unfinished = [job for job in queue['jobs'] if job['state'] in ('downloaded', 'dumped', 'extracted') or (job['state'] == 'downloading' and not args.force)]
     work = unfinished + [job for job in jobs if job not in unfinished]
     if args.dry_run:
         for job in work:
@@ -213,17 +235,24 @@ def download_queue(args):
             checkpoint(job, 'skipped')
             continue
         print(f"[{number}/{len(work)}] {job['url']}", flush=True)
-        if job['state'] == 'pending':
+        if job['state'] == 'pending' or (args.force and job['state'] == 'downloading'):
+            if (output / job['file']).exists():
+                raise ValueError(f"output already exists: {job['file']}")
             status = wait_for_rpc(args.device, args.boot_timeout, args.poll_interval)
             request = {'url': job['url']}
-            if status['state'] not in ('idle', 'complete', 'error'):
-                if status['state'] == 'external' and args.force:
-                    request['force'] = True
-                else:
-                    raise RuntimeError(f"upgrade path is occupied: {status['state']}")
+            if status['state'] == 'downloading':
+                raise RuntimeError('download is active; wait for it to finish')
+            if args.force:
+                request['force'] = True
+            elif status['state'] not in ('idle', 'complete', 'error'):
+                raise RuntimeError(f"upgrade path is occupied: {status['state']}; use --force to replace it")
             job['attempt'] = job.get('attempt', 0) + 1
             job['fromDateTime'] = config_json(args.device, 'gettime')['result']['dateTime']
             rpc(args.device, 'set', request)
+            if args.force:
+                for previous in queue['jobs']:
+                    if previous['state'] == 'downloading':
+                        previous['state'] = 'pending' if previous in jobs else 'cancelled'
             checkpoint(job, 'downloading')
 
         if job['state'] == 'downloading':
@@ -297,7 +326,7 @@ def main(argv=None):
     parser.add_argument('--git', help='target firmware git identifier')
     parser.add_argument('--vids', type=int, nargs='+', help='variants to download; default: all catalogued variants')
     parser.add_argument('--package', action='append', help='FG package prefix; repeat to try several candidates')
-    parser.add_argument('--server', default='http://ota203.p.ngcs.local:9010', help='HTTP server base URL')
+    parser.add_argument('--server', help='HTTP server base URL (default: select otaNNN from device ServiceHost gsmNNN)')
     parser.add_argument('--urls', type=Path, help='use complete URLs from a text file instead of generating them')
     parser.add_argument('-d', '--device', required=True, help='CAN/TCP device for application RPC and bootloader service')
     parser.add_argument('-o', '--output', type=Path, required=True, help='output directory and persistent queue state')
@@ -306,7 +335,7 @@ def main(argv=None):
     parser.add_argument('--boot-timeout', type=positive_seconds, default=180, metavar='SECONDS')
     parser.add_argument('--retries', type=int, default=3, help='transport retries per file; 0 disables retries (default: 3)')
     parser.add_argument('--retry-delay', type=positive_seconds, default=30, metavar='SECONDS')
-    parser.add_argument('--force', action='store_true', help='replace external upgrade metadata once the native fetch task is idle (requires force-capable AirbreakDownload)')
+    parser.add_argument('--force', action='store_true', help='replace a queued download and start the requested file from zero; active downloads are rejected')
     parser.add_argument('--dry-run', action='store_true', help='show the queue without contacting a device or writing files')
     args = parser.parse_args(argv)
     if args.retries < 0:
