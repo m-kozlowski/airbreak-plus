@@ -570,24 +570,25 @@ void cellular_download_set_state(void *executor, unsigned int state)
         state = 5u;
     }
     if (local_state >= DOWNLOAD_QUEUED && local_state <= DOWNLOAD_ERROR) {
-        /* Replace CheckFile or Error with a local Done transition. Result 5
-         * completes Done without posting to a cloud status URI.
-         */
         if (state == 3u) {
             uint_to_text(size, (unsigned int)config_get_int(
                 config, key_bytes_stored));
             config_set(config, key_size, size);
             config_set(config, key_status, marker_complete);
             finish_local_request(config);
-            upgrade_command_executor_set_result(executor, 5u);
-            state = 6u;
         } else if (state == 5u) {
             config_set(config, key_status, marker_error);
             /* Keep the URL only when a transport retry can resume this file. */
             if (!config_equals(config, key_state, marker_retryable))
                 finish_local_request(config);
-            upgrade_command_executor_set_result(executor, 5u);
-            state = 6u;
+        }
+        if (state == 3u || state == 5u) {
+            /* Native success arms ApplyUpgrade. Release FileFetcher through
+             * its failure callback; the local result is already in CamlData.
+             */
+            upgrade_command_executor_reset(executor);
+            upgrade_command_executor_notify_result(executor, 1u);
+            return;
         }
     }
     stock_set_state(executor, state);
