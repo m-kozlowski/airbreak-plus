@@ -188,6 +188,10 @@ replace custom setting labels with their former meanings.
 Already-patched images are accepted. Use translations adapted to their custom
 labels. A recognized Airbreak build stamp produces a warning, not a rejection.
 
+Labels that the patcher added as new string IDs are kept. Sources do not
+contain these IDs, so `build` reports each of them as missing and uses the
+English text, which is what the patcher stores.
+
 ## Output
 
 `inspect` prints image and capacity information. `export` writes a TSV file

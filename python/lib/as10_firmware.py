@@ -101,7 +101,11 @@ class ASFirmware(object):
         self.fw_lang_ids = None
         self.str_id_empty = None
         self.str_id_off_on_base = None
-        
+        # Queued g[2] changes; finalize_fw_strings() writes them.
+        self._fw_string_edits = {}
+        self._fw_string_base = None
+        self._fw_string_added = 0
+
         self.validate(validate_crc=validate_crc)
 
     def read_u8(self, off):
@@ -422,7 +426,11 @@ class ASFirmware(object):
         return raw
 
     def firmware_string(self, str_id, lang_slot=0):
-        """Return one localized globals[2] string."""
+        """Return one localized globals[2] string, including queued changes."""
+        edit = self._fw_string_edits.get(str_id)
+        if edit is not None:
+            self.load_firmware_string_metadata()
+            return edit[self.fw_lang_ids[lang_slot]].decode('utf-8', errors='replace')
         g2 = self.globals_offset(2)
         locale_ptr = self.read_u32(g2 + str_id * 8 + 4)
         locale_arr = self._flash_ptr_offset(locale_ptr)
@@ -441,90 +449,97 @@ class ASFirmware(object):
             raise ValueError("unterminated firmware string for str_id 0x%04X" % str_id)
         return self.read_bytes(string_off, length - 1).decode('utf-8', errors='replace')
 
-    def _raw_string_target_counts(self, raw):
-        """Count locale entries that point at each raw string."""
-        g2 = self.globals_offset(2)
-        counts = {}
-        for str_id in range(2000):
-            rec = g2 + str_id * 8
-            if rec + 8 > len(self.fw):
-                break
-            locale_ptr = self.read_u32(rec + 4)
-            if locale_ptr == 0:
-                continue
-            locale_arr = self._flash_ptr_offset(locale_ptr)
-            if locale_arr is None:
-                break
-            for slot in range(self.fw_lang_count):
-                raw_idx = self.read_u16(locale_arr + slot * 2)
-                raw_ptr_off = raw + raw_idx * 4
-                if raw_ptr_off < 0 or raw_ptr_off + 4 > len(self.fw):
-                    raise ValueError("raw string entry out of range")
-                target = self.read_u32(raw_ptr_off)
-                counts[target] = counts.get(target, 0) + 1
-        return counts
+    def _string_tables(self):
+        """Read the current g[2] tables with the language-arena reader."""
+        from .as10_languages import AS10LanguageFirmware
+        return AS10LanguageFirmware('<patched image>', bytes(self.fw))
+
+    def fw_string_count(self):
+        """Return the number of g[2] text IDs, including queued additions."""
+        if self._fw_string_base is None:
+            self._fw_string_base = self._string_tables().text_count
+        return self._fw_string_base + self._fw_string_added
+
+    def add_fw_strings(self, count=1):
+        """Reserve count consecutive new g[2] text IDs and return the first.
+
+        Each reserved ID must be defined with redefine_fw_string() before
+        finalize_fw_strings() writes the tables.
+        """
+        from .as10_languages import MAX_TEXT_IDS
+        if count <= 0:
+            raise ValueError("add_fw_strings: count must be positive")
+        first = self.fw_string_count()
+        if first + count > MAX_TEXT_IDS:
+            raise ValueError("add_fw_strings: text ID 0x%04X exceeds the firmware ID range"
+                             % (first + count - 1))
+        self._fw_string_added += count
+        return first
 
     def redefine_fw_string(self, str_id, strings):
-        """Rewrite one g[2] string for every locale compiled into the image.
+        """Queue text for one g[2] string in every locale compiled into the image.
 
-        Each locale slot ultimately points through the raw string table. Missing
-        translations reuse the English pointer. Existing storage is overwritten
-        only when it is uniquely referenced and large enough; otherwise new bytes
-        are allocated from an erased range at the end of CCX and the pointer is
-        updated.
+        strings maps ResMed language IDs to text and must contain English (0).
+        Compiled languages without an entry use the English text; entries for
+        other languages are ignored. The text is stored when
+        finalize_fw_strings() rebuilds the tables, so this does not depend on
+        how the current image shares raw entries or locale rows.
         """
         self.load_firmware_string_metadata()
         if 0 not in strings:
             raise ValueError("redefine_fw_string: missing English string at language id 0")
+        if not 0 <= str_id < self.fw_string_count():
+            raise ValueError("redefine_fw_string: str_id 0x%04X is not allocated" % str_id)
 
-        raw = self._raw_string_table_offset()
-        target_counts = self._raw_string_target_counts(raw)
-        g2 = self.globals_offset(2)
-        rec = g2 + str_id * 8
-        locale_arr = self.read_u32(rec + 4) - self.FLASH_BASE
-        if locale_arr < 0 or locale_arr >= len(self.fw):
-            raise ValueError("invalid locale array for str_id 0x%04X" % str_id)
+        from .as10_languages import text_length
+        texts = {}
+        for lang_id in self.fw_lang_ids:
+            text = strings.get(lang_id, strings[0])
+            texts[lang_id] = text.encode('utf-8') if isinstance(text, str) else bytes(text)
+            if b'\0' in texts[lang_id]:
+                raise ValueError("redefine_fw_string: text for str_id 0x%04X contains NUL" % str_id)
+        text_length(texts, str_id)
+        self._fw_string_edits[str_id] = texts
 
-        english_ptr = None
-        max_len = 0
-        for slot, lang_id in enumerate(self.fw_lang_ids):
-            text = strings.get(lang_id)
-            if text is None and english_ptr is not None:
-                raw_idx = self.read_u16(locale_arr + slot * 2)
-                raw_ptr_off = raw + raw_idx * 4
-                if raw_ptr_off < 0 or raw_ptr_off + 4 > len(self.fw):
-                    raise ValueError("raw string entry out of range")
-                self.write_u32(raw_ptr_off, english_ptr)
-                continue
+    def finalize_fw_strings(self, share=False):
+        """Rebuild the g[2] tables with queued strings; return the layout or None.
 
-            if text is None:
-                text = strings[0]
-            data = text.encode('ascii') + b'\x00'
-            max_len = max(max_len, len(data) - 1)
+        Unchanged strings keep their text and length field. Data owned by other
+        patches inside the language arena is preserved; emit_string_tables()
+        verifies the result.
+        """
+        if not self._fw_string_edits and not self._fw_string_added:
+            return None
+        from .as10_languages import emit_string_tables, text_length
 
-            raw_idx = self.read_u16(locale_arr + slot * 2)
-            raw_ptr_off = raw + raw_idx * 4
-            if raw_ptr_off < 0 or raw_ptr_off + 4 > len(self.fw):
-                raise ValueError("raw string entry out of range")
+        # Read the image now, after other patches have used CCX space.
+        tables = self._string_tables()
+        count = self.fw_string_count()
+        undefined = [tid for tid in range(tables.text_count, count)
+                     if tid not in self._fw_string_edits]
+        if undefined:
+            raise ValueError("finalize_fw_strings: new str_id 0x%04X has no text" % undefined[0])
 
-            old_ptr = self.read_u32(raw_ptr_off)
-            old = old_ptr - self.FLASH_BASE
-            old_cap = self.c_string_len(old)
-            if (old_cap is not None and len(data) <= old_cap and
-                    target_counts.get(old_ptr, 0) == 1):
-                self.fw[old:old+old_cap] = list(data + b'\x00' * (old_cap - len(data)))
-                new_off = old
+        languages = tables.languages
+        texts, lengths = [], []
+        for tid in range(count):
+            edit = self._fw_string_edits.get(tid)
+            if edit is None:
+                texts.append({lang: tables.texts[tid, lang] for lang in languages})
+                lengths.append(tables.lengths[tid])
             else:
-                new_off = self.find_ccx_ff_range_backwards(len(data))
-                self.fw[new_off:new_off+len(data)] = list(data)
+                texts.append(edit)
+                lengths.append(text_length(edit, tid))
+        data, layout = emit_string_tables(tables, languages, texts, lengths, share=share)
 
-            ptr = self.FLASH_BASE + new_off
-            self.write_u32(raw_ptr_off, ptr)
-            if lang_id == 0:
-                english_ptr = ptr
+        self.fw[:] = data
+        layout.update(texts=count, added=count - tables.text_count,
+                      edited=len(self._fw_string_edits))
+        self._fw_string_edits = {}
+        self._fw_string_base = None
+        self._fw_string_added = 0
+        return layout
 
-        self.write_u16(rec, max_len)
-        
     def validate(self, validate_crc=True):
         """Validate the input file looks OK and populate information"""
         
@@ -702,6 +717,8 @@ class ASFirmware(object):
         return address
         
     def write_output(self, filename, overwrite=False):
+        if self._fw_string_edits or self._fw_string_added:
+            raise ValueError("queued firmware strings were not written; call finalize_fw_strings() first")
         if os.path.exists(filename) and not overwrite:
             raise IOError("File %s exists already." % filename)
     

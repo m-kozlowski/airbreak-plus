@@ -428,7 +428,8 @@ def find_globals_array(flash):
     """Find the globals[] ABI vector by scanning for its pointer-heavy prefix.
 
     Most entries are ascending CCX pointers, but g[25] is a record count and
-    g[29] is the end marker.
+    g[29] is the end marker. g[2] is not ranked by order: the patcher moves
+    it behind the later tables when it adds string IDs.
     """
     scan_start = flash.base + 0x4000   # CCX starts after BLX
     scan_end = flash.base + 0x8000     # globals is early in CCX
@@ -443,6 +444,8 @@ def find_globals_array(flash):
                 break
             if flash.is_flash_ptr(ptr):
                 score += 1
+                if i == 2:
+                    continue
                 if ptr > prev:
                     score += 1  # bonus for ascending order
                 prev = ptr
@@ -1167,6 +1170,8 @@ class StringTable:
                 f"string raw table dereference failed at 0x{raw_addr:08X}")
         self.count = 0
         for i in range(2000):
+            if flash.u32(self.g2 + i * 8) == 0 and flash.u32(self.g2 + i * 8 + 4) == 0:
+                break  # terminator of a g[2] table relocated by the patcher
             ptr = flash.u32(self.g2 + i * 8 + 4)
             if ptr is None or (ptr != 0 and not flash.is_flash_ptr(ptr)):
                 break
@@ -1772,6 +1777,9 @@ class TimerScaleTable:
         count = (end_addr - addr) // self.STRIDE
         for i in range(count):
             ea = addr + i * self.STRIDE
+            o = flash._o(ea)
+            if o is not None and flash.data[o:o + self.STRIDE] == b'\xff' * self.STRIDE:
+                break  # erased space released by a relocated g[2] table
             level = flash.u8(ea)
             ticks = flash.u16(ea + 2)
             mult = flash.u32(ea + 4)
@@ -2010,10 +2018,13 @@ class DB:
                   f"raw={raw_s}, count={self.strtab.count}")
             self.no_string_id = self._infer_no_string_id()
 
-        # Load timer scale table (globals[1], bounded by globals[2])
+        # Load timer scale table (globals[1], bounded by the next globals[]
+        # target: g[2] in stock images, g[3] after g[2] moved to the CCX arena).
         g1 = ta.get('timers')
-        if g1 and g2:
-            self.timers = TimerScaleTable(flash, g1, g2)
+        following = [value for value in self.globals_values.values()
+                     if g1 and flash.is_flash_ptr(value) and value > g1]
+        if g1 and following:
+            self.timers = TimerScaleTable(flash, g1, min(following))
             if self.timers.entries:
                 print(f"[+] globals[1]: timer scale table ({len(self.timers.entries)} entries)")
 

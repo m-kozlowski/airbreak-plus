@@ -136,15 +136,30 @@ Feature labels are indexed by ResMed language ID. The patcher updates only the
 languages compiled into the current CCX. A missing translation points to the
 English string.
 
-String replacement follows this allocation order:
+`redefine_fw_string(-1, strings, owner)` allocates a string ID in this order:
 
-1. use the requested string ID, or allocate one from the reclaimed pool
-2. reuse the existing raw string storage when the new text fits
-3. otherwise scan backward through erased CCX space for the required bytes
-4. update locale pointers and the g[2] maximum length
+1. an unused ID from the reclaimed pool
+2. a new ID after the last firmware string ID
 
 Supplying an explicit string ID requests replacement of that firmware string.
 Pool membership is required only for automatic allocation.
+
+Patches only record the text. The `firmware-strings` finalization step runs
+after all other patches and rebuilds the language tables once, from the
+current image and the recorded strings. It writes the g[2] maximum lengths,
+removes text that no longer has a reference, and keeps data that other patches
+placed in the language area. The result is checked by reading every string
+back.
+
+g[2] has no room for further records in the stock image. The first new ID
+therefore moves the g[2] table into the CCX language area, ends it with a zero
+record, and updates the `globals[2]` pointer. The stock table is erased. The
+firmware locates g[2] only through that pointer and does not check ID bounds.
+String IDs are signed 16-bit values in firmware, so IDs up to `0x7FFF` are
+available.
+
+The text of a new ID is English for every compiled language without a supplied
+translation.
 
 ## Menu registry
 
@@ -250,5 +265,6 @@ Firmware-stable variables used directly by compiled code belong in the
 versioned `s10_vars` headers. Reclaimed assignments and other patch-time choices
 belong in ABI slots. See [Patch payloads](patch_payloads.md).
 
-The patcher prints unused reclaimed variables and string IDs after patching.
+The patcher prints unused reclaimed variables and string IDs after patching,
+and the new string IDs with their owners.
 This summary is the authoritative resource count for the selected feature set.

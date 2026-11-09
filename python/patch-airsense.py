@@ -264,6 +264,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self.custom_g8_claims = {}
         self.custom_g4_claims = {}
         self.custom_string_pool = []
+        self.custom_new_string_ids = {}
         self.custom_reclaimed_string_candidates = {}
         self.custom_menu_entries = []
         self.custom_menu_registered = set()
@@ -397,9 +398,6 @@ class ASFirmwarePatches(CompiledPayloadMixin):
 
     def custom_build_string_pool(self):
         """Build a pool from reclaimed strings with no remaining references."""
-        if not self.custom_reclaimed_string_candidates:
-            raise ValueError("custom_patch_settings: no reclaimed string IDs available")
-
         # Candidates come from descriptors and menu code removed by the reclaim
         # pass. Keep only IDs no surviving descriptor or g[5] entry still names.
         referenced = self._referenced_reclaimed_string_ids()
@@ -407,21 +405,37 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             str_id for str_id in self.custom_reclaimed_string_candidates
             if str_id not in referenced
         ]
-        if not self.custom_string_pool:
-            raise ValueError("custom_patch_settings: no reclaimed string IDs available")
 
     def custom_alloc_string(self, owner):
-        """Allocate one reclaimed string ID to a feature."""
-        if not self.custom_string_pool:
-            raise ValueError("custom_alloc_string: pool exhausted for %s" % owner)
-        return self.custom_string_pool.pop(0)
+        """Allocate a reclaimed string ID, or a new one once the pool is empty."""
+        if self.custom_string_pool:
+            return self.custom_string_pool.pop(0)
+        str_id = self.asf.add_fw_strings()
+        self.custom_new_string_ids[str_id] = owner
+        return str_id
 
     def redefine_fw_string(self, str_id, strings, owner='string'):
-        """Rewrite a firmware string, allocating from the reclaimed pool for -1."""
+        """Set a firmware string, allocating an ID for -1.
+
+        The text is written by finalize_fw_strings() after all patches ran.
+        """
         if str_id == -1:
             str_id = self.custom_alloc_string(owner)
         self.asf.redefine_fw_string(str_id, strings)
         return str_id
+
+    def finalize_fw_strings(self):
+        """Write queued firmware strings into the language tables."""
+        layout = self.asf.finalize_fw_strings()
+        if layout is None:
+            return PatchOutcome.skip("no firmware string changes")
+        details = ["Tables: %d bytes of %d available in the language arena" %
+                   (layout['used'], layout['capacity'])]
+        if layout['g2_relocated']:
+            details.append("globals[2]: %d records at 0x%08X" %
+                           (layout['texts'], self.asf.FLASH_BASE + layout['g2']))
+        return PatchOutcome.ok(
+            "%d strings set, %d new IDs" % (layout['edited'], layout['added']), *details)
 
     def _custom_reclaim_var(self, name, table_num, callback_off,
                             string_offsets, reclaimed):
@@ -1560,11 +1574,13 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         ]
 
         free_str_ids = ["0x%04X" % str_id for str_id in self.custom_string_pool]
+        new_str_ids = ["0x%04X %s" % item for item in self.custom_new_string_ids.items()]
 
         print("Custom resource summary:")
         self._print_resource_summary_line("unused reclaimed g[8] vars", unused_g8)
         self._print_resource_summary_line("unused reclaimed g[4] vars", unused_g4)
         self._print_resource_summary_line("free reclaimed str_id", free_str_ids)
+        self._print_resource_summary_line("new str_id", new_str_ids)
 
     def custom_patch_settings_reclaim_cal_placeholder(self):
         """Reclaim the variables of the CAL=0x0008 placeholder service.
@@ -3591,6 +3607,10 @@ def run_patcher(args, detail_log=None):
         args, detail_log)
     apply_reported_patch(
         'patch-button-hooks', patches.patch_button_hooks,
+        args, detail_log)
+    # Last CCX writer: earlier patches may queue strings or use arena space.
+    apply_reported_patch(
+        'firmware-strings', patches.finalize_fw_strings,
         args, detail_log)
 
     asf.patch_firmware_sid(build_identity)
