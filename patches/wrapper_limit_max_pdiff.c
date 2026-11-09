@@ -275,6 +275,13 @@ void MAIN start() {
   // Convert support above EPAP back to the signed midpoint-relative waveform.
   new_ps = *cmd_ps + (new_ps - ps);
 
+  if (!__builtin_isfinite(new_ps)) {
+    s->vauto_state = VAUTO_OFF;
+    s->reset = true;
+    pressure_limit_max_difference();
+    return;
+  }
+
   const float orig_ps = *cmd_ps;
   *cmd_ps = new_ps;
   pressure_limit_max_difference(); // Execute the original function
