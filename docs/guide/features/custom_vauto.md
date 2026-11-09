@@ -214,6 +214,10 @@ sensitivities.
 
 ### Pressure limits
 
+Exhale relief cannot lower the base pressure target below 4 cmH2O. If the stock
+target is already lower during a transition, Custom VAuto does not lower it
+further.
+
 Max IPAP limits the stock VAuto baseline. Adaptive support is added afterwards
 and can raise inspiratory pressure above the selected Max IPAP. ASV Max limits
 this addition relative to the custom base shape, not absolute IPAP.

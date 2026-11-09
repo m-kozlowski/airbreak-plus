@@ -284,6 +284,11 @@ void MAIN start() {
   }
 
   const float orig_ps = *cmd_ps;
+  // Keep pre-FOT pressure at least 4 cmH2O, or the stock value if lower.
+  const float pressure_floor = min(4.0f, *cmd_epap_ramp + orig_ps);
+  if (*cmd_epap_ramp + new_ps < pressure_floor) {
+    new_ps = pressure_floor - *cmd_epap_ramp;
+  }
   *cmd_ps = new_ps;
   pressure_limit_max_difference(); // Execute the original function
   *cmd_ps = orig_ps;
