@@ -100,10 +100,10 @@ environment variables.
 
 | Env variable | What it does |
 |-------------|-------------|
-| `PATCH_CODE=1` | Add the therapy graph overlay |
-| `PATCH_S=1` | Enable [Square Wave](features/squarewave.md) pressure shaping in S, ST, T, and PAC, including its shared code |
+| `PATCH_GRAPH=1` | Add the therapy graph overlay |
+| `PATCH_S=1` | Enable [Square Wave](features/squarewave.md) pressure shaping in S, ST, T, and PAC |
 | `PATCH_ASV_TASK_WRAPPER=1` | Add [runtime control](features/asv_backup_rate.md) for stock ASV/ASVAuto backup rate |
-| `PATCH_VAUTO_WRAPPER=1` | Add [Custom VAuto](features/custom_vauto.md) pressure shaping and trigger/cycle assist, including its shared code |
+| `PATCH_VAUTO_WRAPPER=1` | Add [Custom VAuto](features/custom_vauto.md) pressure shaping and trigger/cycle assist |
 | `PATCH_FALL_TIME=1` | Add [Fall Time](features/general.md#fall-time) in S/ST/T/PAC/iVAPS through custom settings |
 | `PATCH_ST_IBR=1` | Add [adaptive backup timing in ST](features/general.md#st-ibr) through custom settings |
 | `PATCH_AUTOEPAP=1` | Add [iVAPS AutoEPAP](features/general.md#ivaps-autoepap); requires font repacking and expanded heap |
@@ -118,7 +118,7 @@ Monitoring is On. This option requires the graph patch, includes the
 
 Example with custom VAuto:
 ```
-export PATCH_CODE=1
+export PATCH_GRAPH=1
 export PATCH_ASV_TASK_WRAPPER=1
 export PATCH_VAUTO_WRAPPER=1
 ./patch-airsense stm32.bin build/stm32-custom.bin
@@ -137,10 +137,10 @@ export PATCH_VAUTO_WRAPPER=1
 ## Selecting patches
 
 Use `y` to enable a patch or `n` to disable it. For example, to disable the
-graph even when `PATCH_CODE=1` selects it:
+graph even when `PATCH_GRAPH=1` selects it:
 
 ```bash
-PATCH_CODE=1 python3 python/patch-airsense.py \
+PATCH_GRAPH=1 python3 python/patch-airsense.py \
     stm32.bin build/stm32-custom.bin PATCH \
     --patch-fw-graph n
 ```

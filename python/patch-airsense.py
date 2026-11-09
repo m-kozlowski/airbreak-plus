@@ -2108,14 +2108,6 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             self.asf.write_u8(self.asf.find_var(name) + self.asf.G8_DEFAULT, value)
         return PatchOutcome.ok("Updated defaults for %d vars" % len(defaults))
 
-    def patch_common_code(self):
-        """Inject common_code shared library for therapy payloads."""
-        if not self._supports_compiled_payloads():
-            return PatchOutcome.skip("unsupported CDX version %s" % self.asf.cdx_ver)
-        data, _ = self._load_versioned_bin('common_code', required=True)
-        flash, _ = self._inject_payload('common_code', data)
-        return PatchOutcome.ok(None, self._payload_detail('common_code', len(data), flash))
-
     def patch_graph(self):
         """Add special graph module"""
         ver = self._payload_version_key()
@@ -3309,8 +3301,6 @@ PATCH_PHASES = (
     )),
 
     ('Therapy modifications', (
-        PatchSpec('patch-fw-common-code', 'Inject the shared therapy payload library.',
-                  False, 'patch_common_code'),
         PatchSpec('patch-fw-graph', 'Add the therapy pressure graph.',
                   False, 'patch_graph'),
         PatchSpec('patch-graph-keep-screen-on',
@@ -3361,8 +3351,6 @@ PATCH_DEPENDENCIES = {
     'patch-autoepap': ('patch-font-repack', 'patch-expand-heap'),
     'patch-ivaps-settings': ('patch-custom-settings',),
     'patch-graph-keep-screen-on': ('patch-fw-graph',),
-    'patch-fw-vauto-wrapper': ('patch-fw-common-code',),
-    'patch-fw-squarewave': ('patch-fw-common-code',),
 }
 
 

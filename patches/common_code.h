@@ -128,14 +128,26 @@ static const   int *pap_timer = &ivars[0];
   *_ptr = fn(*_ptr, args); \
 })
 
-//////////////////////////////////////
-// Functions implemented in .c file //
+static inline float remap01(float s, float start, float end) {
+  return (s - start)/(end-start);
+}
 
-float remap(float s, float start, float end, float new_start, float new_end);
-float remapc(float s, float start, float end, float new_start, float new_end); // Clamped to new_start-new_end
-float remap01(float s, float start, float end);
-float remap01c(float s, float start, float end); // Version that clamps to 0-1
-float lerp(float from, float to, float coeff);
+static inline float remap01c(float s, float start, float end) {
+  return clamp(remap01(s, start, end), 0.0f, 1.0f);
+}
+
+// Keep argument rounding separate from the fused multiply-add inside remap.
+static __attribute__((noinline, unused)) float remap(float s, float start, float end, float new_start, float new_end) {
+  return new_start + remap01(s, start, end) * (new_end - new_start);
+}
+
+static inline float remapc(float s, float start, float end, float new_start, float new_end) {
+  return new_start + remap01c(s, start, end) * (new_end - new_start);
+}
+
+static inline float lerp(float from, float to, float coeff) {
+  return from + (to - from) * coeff;
+}
 
 
 #endif

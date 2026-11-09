@@ -26,16 +26,13 @@
 # --patch-blx-dump y
 
 # Optional payloads: built-in defaults shown below.
-# Shared code for Custom VAuto and Square Wave.
-# --patch-fw-common-code n
-
-# Therapy graph (PATCH_CODE=1).
+# Therapy graph (PATCH_GRAPH=1).
 # --patch-fw-graph n
 
-# Custom VAuto (PATCH_VAUTO_WRAPPER=1): set common code above and VAuto to y.
+# Custom VAuto (PATCH_VAUTO_WRAPPER=1).
 # --patch-fw-vauto-wrapper n
 
-# Square Wave (PATCH_S=1): set common code above and Square Wave to y.
+# Square Wave (PATCH_S=1).
 # --patch-fw-squarewave n
 
 # ASV backup-rate runtime control (PATCH_ASV_TASK_WRAPPER=1).

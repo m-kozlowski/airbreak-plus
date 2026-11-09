@@ -9,7 +9,7 @@ AIR10_PATCH_ARGS ?=
 AIR10_FIRMWARE ?= stm32.bin
 export AIR10_PATCH_ARGS
 
-AIR10_LEGACY_ENV := PATCH_CODE PATCH_VAUTO_WRAPPER PATCH_S PATCH_ASV_TASK_WRAPPER \
+AIR10_LEGACY_ENV := PATCH_GRAPH PATCH_VAUTO_WRAPPER PATCH_S PATCH_ASV_TASK_WRAPPER \
 	PATCH_FALL_TIME PATCH_ST_IBR PATCH_AUTOEPAP PATCH_S10_LCD PATCH_GRAPH_KEEP_SCREEN_ON PATCH_TARGET_RH FORCE_DEPRECATED
 $(foreach name,$(AIR10_LEGACY_ENV),$(if $(filter undefined,$(origin $(name))),,$(eval export $(name))))
 
@@ -35,7 +35,7 @@ PAYLOAD_LAYOUT_VERSIONS := 0204 0205 0302 0305 0306 0401 0402
 PAYLOADS_0204 := target_rh mop_callback_dispatcher variable_callback_dispatcher button_hooks keep_backlight custom_menu_hooks uart_stream_schema backlight_adapt header_clock s10_lcd_ili9325 asv_task_wrapper fall_time
 PAYLOADS_0205 := $(PAYLOADS_0204)
 PAYLOADS_0302 := mop_callback_dispatcher variable_callback_dispatcher button_hooks keep_backlight vid_spoof graph squarewave asv_task_wrapper \
-	common_code breath_tracking backlight_adapt wrapper_limit_max_pdiff s10_lcd_ili9325 custom_menu_hooks \
+	breath_tracking backlight_adapt wrapper_limit_max_pdiff s10_lcd_ili9325 custom_menu_hooks \
 	uart_stream_schema language_fonts target_rh header_clock fall_time st_ibr autoepap
 PAYLOADS_0305 := $(PAYLOADS_0302)
 PAYLOADS_0306 := $(PAYLOADS_0302)
@@ -47,7 +47,7 @@ payload_bins = $(foreach v,$(call payload_versions,$(1)),$(BUILD)/$(1)_$(v).bin)
 
 PAYLOAD_NAMES := $(sort $(foreach v,$(PAYLOAD_LAYOUT_VERSIONS),$(PAYLOADS_$(v))))
 PAYLOAD_STAMPS := $(foreach p,$(PAYLOAD_NAMES),$(BUILD)/payload_$(p).stamp)
-S10_CODE_VERSIONS := $(call payload_versions,common_code)
+S10_CODE_VERSIONS := $(call payload_versions,breath_tracking)
 S10_STANDALONE_PAYLOADS := graph asv_task_wrapper backlight_adapt language_fonts uart_stream_schema vid_spoof target_rh header_clock fall_time st_ibr autoepap variable_callback_dispatcher button_hooks keep_backlight
 PAYLOAD_LAYOUT_TSVS := $(foreach v,$(PAYLOAD_LAYOUT_VERSIONS),$(BUILD)/payload_layout_$(v).tsv)
 
@@ -105,7 +105,7 @@ $(BUILD)/stm32-patched.bin: $(S10_PATCHER_DEPS) $(PAYLOAD_STAMPS) $(PAYLOAD_LAYO
 # Graph and optional therapy payloads, with their custom settings
 $(BUILD)/stm32-plus.bin: $(S10_PATCHER_DEPS) $(PAYLOAD_STAMPS) $(PAYLOAD_LAYOUT_TSVS) $(BLX_DUMP_BIN)
 	$(announce_image)
-	PATCH_CODE=1 PATCH_ASV_TASK_WRAPPER=1 PATCH_VAUTO_WRAPPER=1 PATCH_S=1 PATCH_FALL_TIME=1 PATCH_ST_IBR=1 PATCH_AUTOEPAP=1 ./patch-airsense '$(AIR10_FIRMWARE)' $@ $(PATCHER_OUTPUT_ARGS)
+	PATCH_GRAPH=1 PATCH_ASV_TASK_WRAPPER=1 PATCH_VAUTO_WRAPPER=1 PATCH_S=1 PATCH_FALL_TIME=1 PATCH_ST_IBR=1 PATCH_AUTOEPAP=1 ./patch-airsense '$(AIR10_FIRMWARE)' $@ $(PATCHER_OUTPUT_ARGS)
 
 binaries: $(PAYLOAD_TARGETS)
 
@@ -140,7 +140,7 @@ $(foreach p,$(PAYLOAD_NAMES),$(eval $(call PAYLOAD_STAMP_template,$(p))))
 
 # Per-version S10 code patches
 # Each version has its own stubs.S with platform-specific addresses.
-# Binaries are built per-version: common_code_0401.bin, graph_0402.bin, etc.
+# Binaries are built per-version: breath_tracking_0401.bin, graph_0402.bin, etc.
 
 PROBE_LINK_ADDR := 0x08000000
 
@@ -184,16 +184,9 @@ $(foreach v,$(PAYLOAD_LAYOUT_VERSIONS),$(eval $(call S10_VERSIONED_OBJECTS_templ
 
 define S10_CODE_VERSION_template
 
-# common_code provides shared symbols and has no executable entry point.
-$(BUILD)/common_code_$(1).probe.elf: $(BUILD)/common_code_$(1).o $(BUILD)/s10_$(1)_stubs.o | $(BUILD)
-	$$(LD) --nostdlib --no-dynamic-linker \
-		--Ttext $(PROBE_LINK_ADDR) --entry 0 --sort-section=name \
-		-o $$@ $$^
-
-$(BUILD)/breath_tracking_$(1).probe.elf: $(BUILD)/breath_tracking_$(1).o $(BUILD)/breath_tracking_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/common_code_$(1).probe.elf | $(BUILD)
+$(BUILD)/breath_tracking_$(1).probe.elf: $(BUILD)/breath_tracking_$(1).o $(BUILD)/breath_tracking_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o | $(BUILD)
 	$$(LD) --nostdlib --no-dynamic-linker \
 		--Ttext $(PROBE_LINK_ADDR) \
-		--just-symbols=$$(BUILD)/common_code_$(1).probe.elf \
 		--entry 0 --sort-section=name -o $$@ $(BUILD)/breath_tracking_$(1).o $(BUILD)/breath_tracking_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o
 
 $(BUILD)/squarewave_$(1).probe.elf: $(BUILD)/squarewave_$(1).o $(BUILD)/squarewave_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/breath_tracking_$(1).probe.elf | $(BUILD)
@@ -208,17 +201,10 @@ $(BUILD)/wrapper_limit_max_pdiff_$(1).probe.elf: $(BUILD)/wrapper_limit_max_pdif
 		--just-symbols=$$(BUILD)/breath_tracking_$(1).probe.elf \
 		--entry start --sort-section=name -o $$@ $(BUILD)/wrapper_limit_max_pdiff_$(1).o $(BUILD)/wrapper_limit_max_pdiff_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o
 
-$(BUILD)/common_code_$(1).elf: $(BUILD)/common_code_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/payload_layout_$(1).tsv | $(BUILD)
-	@set -e; addr=$$$$(awk -v name=common_code '$$$$1 == name { print $$$$2; found=1; exit } END { if (!found) exit 1 }' $(BUILD)/payload_layout_$(1).tsv); \
-	$$(LD) --nostdlib --no-dynamic-linker \
-		--Ttext $$$$addr --entry 0 --sort-section=name \
-		-o $$@ $(BUILD)/common_code_$(1).o $(BUILD)/s10_$(1)_stubs.o
-
-$(BUILD)/breath_tracking_$(1).elf: $(BUILD)/breath_tracking_$(1).o $(BUILD)/breath_tracking_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/common_code_$(1).elf $(BUILD)/payload_layout_$(1).tsv | $(BUILD)
+$(BUILD)/breath_tracking_$(1).elf: $(BUILD)/breath_tracking_$(1).o $(BUILD)/breath_tracking_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/payload_layout_$(1).tsv | $(BUILD)
 	@set -e; addr=$$$$(awk -v name=breath_tracking '$$$$1 == name { print $$$$2; found=1; exit } END { if (!found) exit 1 }' $(BUILD)/payload_layout_$(1).tsv); \
 	$$(LD) --nostdlib --no-dynamic-linker \
 		--Ttext $$$$addr \
-		--just-symbols=$$(BUILD)/common_code_$(1).elf \
 		--entry 0 --sort-section=name -o $$@ $(BUILD)/breath_tracking_$(1).o $(BUILD)/breath_tracking_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o
 
 $(BUILD)/squarewave_$(1).elf: $(BUILD)/squarewave_$(1).o $(BUILD)/squarewave_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/breath_tracking_$(1).elf $(BUILD)/payload_layout_$(1).tsv | $(BUILD)
