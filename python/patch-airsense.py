@@ -1520,6 +1520,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self.custom_patch_settings_init()
         if not self.custom_patch_settings_reclaim_reminders():
             return PatchOutcome.skip("unsupported CDX version %s" % self.asf.cdx_ver)
+        self.custom_patch_settings_reclaim_cal_placeholder()
         self.custom_patch_settings_rename_storage_group()
         self.custom_build_string_pool()
 
@@ -1564,6 +1565,18 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self._print_resource_summary_line("unused reclaimed g[8] vars", unused_g8)
         self._print_resource_summary_line("unused reclaimed g[4] vars", unused_g4)
         self._print_resource_summary_line("free reclaimed str_id", free_str_ids)
+
+    def custom_patch_settings_reclaim_cal_placeholder(self):
+        """Reclaim the variables of the CAL=0x0008 placeholder service.
+
+        The service registers g[8] LET and g[4] LEF only to mark them ready
+        when the service manager starts. It has no enter, update or stop
+        behavior, and no other firmware code uses either variable. Neither
+        belongs to a storage group. Checked on every version supported by the
+        Reminder reclaim pass.
+        """
+        self.custom_reclaim_g8_var('LET')
+        self.custom_reclaim_g4_var('LEF')
 
     def custom_patch_settings_reclaim_reminders(self):
         """Disable stock Reminders behavior and reclaim its variables.

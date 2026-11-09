@@ -108,8 +108,14 @@ It then makes these variables available in typed pools:
 | g[8] | RPF, RPO, RPH, RPW | recurrence enable for Filter, Mask, Tube, and Water Tub |
 | g[8] | RXF, RXM, RXH, RXW | reminder-date enable for Filter, Mask, Tube, and Water Tub |
 | g[8] | RSA | runtime reminder acknowledgement request |
+| g[8] | LET | `CAL=0x0008` placeholder service variable, registered but not processed |
 | g[4] | RCF, RCM, RCH, RCW | recurrence period in months |
 | g[4] | RDF, RDM, RDH, RDW | reminder due date |
+| g[4] | LEF | `CAL=0x0008` placeholder service variable, registered but not processed |
+
+`RSA`, `LET`, and `LEF` do not belong to a stock storage group. A feature that
+stores one of them adds it to `CSG` and links its descriptor to the group
+tracker.
 
 Reclaiming a descriptor clears its stock callback and replaces its name, option,
 and units string references with the firmware empty-string ID. The old string
