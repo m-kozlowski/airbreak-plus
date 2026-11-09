@@ -47,7 +47,6 @@ void init_asv_data(asv_data_t *data) {
 
   asv_reset_feedback(data);
   data->asv_factor = 1.0f;
-  data->final_ips = 0.0f;
   data->asv_sens = 1.0f;
 
   data->asv_dampen = 0.0f;
@@ -77,7 +76,7 @@ STATIC void asv_learn_inspiration(asv_data_t *asv, float volume_max) {
     asv->target_vol2 = asv->target_vol;
   } else {
     inplace(lerp, &asv->target_vol2, volume_max, asv_coeff3);
-    inplace(lerp, &asv->target_vol, volume_max, tr_coeff);
+    inplace(lerp, &asv->target_vol, volume_max, asv_volume_coeff);
   }
   asv->breath_count += 1;
 
@@ -145,7 +144,6 @@ void update_asv_data(asv_data_t* asv, tracking_t* tr, bool boost_enabled) {
     for(int i=0; i<ASV_STEP_COUNT; i++) {
       asv->targets_current[i] = 0.0f;
     }
-    asv->final_ips = 0.0f;
   }
 
   float asv_mod = 0.0f;

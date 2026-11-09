@@ -29,6 +29,7 @@ _Static_assert(ASV_STEP_COUNT >= 1 && ASV_STEP_COUNT <= 32,
 #define asv_coeff1 0.025f // ~40% contribution from last 20 breaths, ~66% from 40, ~77% from 60
 #define asv_coeff2 0.3f
 
+#define asv_volume_coeff 0.025f // Peak-volume reference for dampening
 #define asv_dampen_max 0.4f
 
 // Amount of breaths needing ASV to enable and disable asv_factor
@@ -69,7 +70,6 @@ typedef struct {
   uint32 tracking_tick; // Last tracker sample processed by ASV
   pid_t pid;
   float asv_factor;
-  float final_ips; // Final max IPS value, used to maintain correct downslope
   float asv_sens; // Multiplier applied to the ASV PID output
 
   float asv_dampen; // How much to drop the target by, other than after a hyperpnea, it's usually 0
