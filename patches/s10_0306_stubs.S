@@ -104,7 +104,6 @@ NSTUB(0x080D99BC, parse_hex_u16)
 NSTUB(0x080BC733, pressure_limit_max_difference)
 NSTUB_VAR(0x2000E948, fvars)
 NSTUB_VAR(0x2000E750, ivars)
-NSTUB_VAR(0x20000BE0, magic_ptr)
 
 // Backlight adaptation
 NSTUB(0x0807A2A4, backlight_state_machine)

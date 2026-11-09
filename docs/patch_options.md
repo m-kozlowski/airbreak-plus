@@ -87,7 +87,7 @@ Air 10 legacy variables:
 
 | Variable | Options enabled when set to `1` |
 |----------|--------------------------------|
-| `PATCH_CODE` | `--patch-fw-common-code y --patch-fw-graph y` |
+| `PATCH_CODE` | `--patch-fw-graph y` |
 | `PATCH_VAUTO_WRAPPER` | `--patch-fw-common-code y --patch-fw-vauto-wrapper y` |
 | `PATCH_S` | `--patch-fw-common-code y --patch-fw-squarewave y` |
 | `PATCH_ASV_TASK_WRAPPER` | `--patch-fw-asv-wrapper y` |

@@ -128,10 +128,6 @@ static const   int *pap_timer = &ivars[0];
   *_ptr = fn(*_ptr, args); \
 })
 
-#define GET_PTR(index, type, init_fn) ({ \
-  get_pointer(index, sizeof(type), (void (*)(void*))&init_fn);\
-})
-
 //////////////////////////////////////
 // Functions implemented in .c file //
 
@@ -140,22 +136,6 @@ float remapc(float s, float start, float end, float new_start, float new_end); /
 float remap01(float s, float start, float end);
 float remap01c(float s, float start, float end); // Version that clamps to 0-1
 float lerp(float from, float to, float coeff);
-
-
-typedef enum {
-  PTR_HISTORY,
-  PTR_SQUAREWAVE_DATA,
-  PTR_TRACKING,
-  PTR_ASV_DATA,
-  PTR_FEATURES,
-  PTR_TRIGGERCYCLE,
-  PTR_GRAPH_DATA,
-  PTR_BREATH_PIPELINE,
-
-  __PTR_LAST,
-} ptr_index;
-
-void *get_pointer(ptr_index index, int size, void (*init_fn)(void*));
 
 
 #endif

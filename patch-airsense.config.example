@@ -26,8 +26,10 @@
 # --patch-blx-dump y
 
 # Optional payloads: built-in defaults shown below.
-# Therapy graph (PATCH_CODE=1): set common code and graph to y.
+# Shared code for Custom VAuto and Square Wave.
 # --patch-fw-common-code n
+
+# Therapy graph (PATCH_CODE=1).
 # --patch-fw-graph n
 
 # Custom VAuto (PATCH_VAUTO_WRAPPER=1): set common code above and VAuto to y.

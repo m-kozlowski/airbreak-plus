@@ -48,7 +48,7 @@ payload_bins = $(foreach v,$(call payload_versions,$(1)),$(BUILD)/$(1)_$(v).bin)
 PAYLOAD_NAMES := $(sort $(foreach v,$(PAYLOAD_LAYOUT_VERSIONS),$(PAYLOADS_$(v))))
 PAYLOAD_STAMPS := $(foreach p,$(PAYLOAD_NAMES),$(BUILD)/payload_$(p).stamp)
 S10_CODE_VERSIONS := $(call payload_versions,common_code)
-S10_STANDALONE_PAYLOADS := asv_task_wrapper backlight_adapt language_fonts uart_stream_schema vid_spoof target_rh header_clock fall_time st_ibr autoepap variable_callback_dispatcher button_hooks keep_backlight
+S10_STANDALONE_PAYLOADS := graph asv_task_wrapper backlight_adapt language_fonts uart_stream_schema vid_spoof target_rh header_clock fall_time st_ibr autoepap variable_callback_dispatcher button_hooks keep_backlight
 PAYLOAD_LAYOUT_TSVS := $(foreach v,$(PAYLOAD_LAYOUT_VERSIONS),$(BUILD)/payload_layout_$(v).tsv)
 
 BLX_PAYLOAD_VERSIONS := SX577-0200 SX585-0200
@@ -196,12 +196,6 @@ $(BUILD)/breath_tracking_$(1).probe.elf: $(BUILD)/breath_tracking_$(1).o $(BUILD
 		--just-symbols=$$(BUILD)/common_code_$(1).probe.elf \
 		--entry 0 --sort-section=name -o $$@ $(BUILD)/breath_tracking_$(1).o $(BUILD)/breath_tracking_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o
 
-$(BUILD)/graph_$(1).probe.elf: $(BUILD)/graph_$(1).o $(BUILD)/graph_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/common_code_$(1).probe.elf | $(BUILD)
-	$$(LD) --nostdlib --no-dynamic-linker \
-		--Ttext $(PROBE_LINK_ADDR) \
-		--just-symbols=$$(BUILD)/common_code_$(1).probe.elf \
-		--entry start --sort-section=name -o $$@ $(BUILD)/graph_$(1).o $(BUILD)/graph_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o
-
 $(BUILD)/squarewave_$(1).probe.elf: $(BUILD)/squarewave_$(1).o $(BUILD)/squarewave_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/breath_tracking_$(1).probe.elf | $(BUILD)
 	$$(LD) --nostdlib --no-dynamic-linker \
 		--Ttext $(PROBE_LINK_ADDR) \
@@ -226,13 +220,6 @@ $(BUILD)/breath_tracking_$(1).elf: $(BUILD)/breath_tracking_$(1).o $(BUILD)/brea
 		--Ttext $$$$addr \
 		--just-symbols=$$(BUILD)/common_code_$(1).elf \
 		--entry 0 --sort-section=name -o $$@ $(BUILD)/breath_tracking_$(1).o $(BUILD)/breath_tracking_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o
-
-$(BUILD)/graph_$(1).elf: $(BUILD)/graph_$(1).o $(BUILD)/graph_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/common_code_$(1).elf $(BUILD)/payload_layout_$(1).tsv | $(BUILD)
-	@set -e; addr=$$$$(awk -v name=graph '$$$$1 == name { print $$$$2; found=1; exit } END { if (!found) exit 1 }' $(BUILD)/payload_layout_$(1).tsv); \
-	$$(LD) --nostdlib --no-dynamic-linker \
-		--Ttext $$$$addr \
-		--just-symbols=$$(BUILD)/common_code_$(1).elf \
-		--entry start --sort-section=name -o $$@ $(BUILD)/graph_$(1).o $(BUILD)/graph_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o
 
 $(BUILD)/squarewave_$(1).elf: $(BUILD)/squarewave_$(1).o $(BUILD)/squarewave_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/breath_tracking_$(1).elf $(BUILD)/payload_layout_$(1).tsv | $(BUILD)
 	@set -e; addr=$$$$(awk -v name=squarewave '$$$$1 == name { print $$$$2; found=1; exit } END { if (!found) exit 1 }' $(BUILD)/payload_layout_$(1).tsv); \

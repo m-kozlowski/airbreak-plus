@@ -2109,7 +2109,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         return PatchOutcome.ok("Updated defaults for %d vars" % len(defaults))
 
     def patch_common_code(self):
-        """Inject common_code shared library (required by graph, squarewave, etc.)"""
+        """Inject common_code shared library for therapy payloads."""
         if not self._supports_compiled_payloads():
             return PatchOutcome.skip("unsupported CDX version %s" % self.asf.cdx_ver)
         data, _ = self._load_versioned_bin('common_code', required=True)
@@ -2121,21 +2121,35 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         ver = self._payload_version_key()
         SITES = {
             '0302': ((0xf92dc, 0x08067601), (0xf92d8, 0x080675d3),
-                     (0xf396c, 0x080672f5), (0xfaa04, 0x0806771d)),
+                     (0xf396c, 0x080672f5), (0xfaa04, 0x0806771d),
+                     (0x62864, 0x62b0e, 0x62d2e)),
             '0305': ((0xf9a24, 0x08067d25), (0xf9a20, 0x08067cf7),
-                     (0xf4080, 0x08067a19), (0xfb14c, 0x08067e41)),
+                     (0xf4080, 0x08067a19), (0xfb14c, 0x08067e41),
+                     (0x62f84, 0x6322e, 0x6344e)),
             '0306': ((0xf9a28, 0x08067d2d), (0xf9a24, 0x08067cff),
-                     (0xf4084, 0x08067a21), (0xfb150, 0x08067e49)),
+                     (0xf4084, 0x08067a21), (0xfb150, 0x08067e49),
+                     (0x62f84, 0x6322e, 0x6344e)),
             '0401': ((0xf9c88, 0x08067d2d), (0xf9c84, 0x08067cff),
-                     (0xf42e4, 0x08067a21), (0xfb3b0, 0x08067e49)),
+                     (0xf42e4, 0x08067a21), (0xfb3b0, 0x08067e49),
+                     (0x62f84, 0x6322e, 0x6344e)),
             '0402': ((0xf9f00, 0x08067d2d), (0xf9efc, 0x08067cff),
-                     (0xf455c, 0x08067a21), (0xfb628, 0x08067e49)),
+                     (0xf455c, 0x08067a21), (0xfb628, 0x08067e49),
+                     (0x62f84, 0x6322e, 0x6344e)),
         }
         sites = SITES.get(ver)
         if not self._supports_compiled_payloads() or sites is None:
             return PatchOutcome.skip("unsupported CDX version %s" % self.asf.cdx_ver)
         data, _, elf_path = self._load_versioned_payload('graph')
-        draw_site, update_site, header_site, numbers_site = sites
+        draw_site, update_site, header_site, numbers_site, allocation_calls = sites
+        allocate = self._elf_symbol_addr(elf_path, 'graph_widget_alloc')
+        stock_malloc = self._elf_symbol_addr(elf_path, 'malloc') & ~1
+        allocation_hooks = []
+        for site in allocation_calls:
+            expected = self._encode_thumb_bl(site, stock_malloc)
+            replacement = self._encode_thumb_bl(site, allocate)
+            if self.asf.read_bytes(site, 4) not in (expected, replacement):
+                raise ValueError('patch_graph: unexpected widget allocation call at 0x%X' % site)
+            allocation_hooks.append((site, expected, replacement))
         draw_fptr = draw_site[0]
         update_fptr = update_site[0]
         start = self._elf_symbol_addr(elf_path, 'start')
@@ -2163,6 +2177,12 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             originals.append(original)
 
         flash, _ = self._inject_payload('graph', data)
+        allocation_details = []
+        for site, expected, replacement in allocation_hooks:
+            self._replace_bytes_checked(site, expected, replacement,
+                                        'patch_graph: widget allocation', accept_existing=True)
+            allocation_details.append(self._hook_detail(
+                'graph widget allocation', self.asf.FLASH_BASE + site, allocate))
         self.asf.write_u32(draw_slot - self.asf.FLASH_BASE, originals[0])
         self.asf.write_u32(update_slot - self.asf.FLASH_BASE, originals[1])
         self.asf.write_u32(header_slot - self.asf.FLASH_BASE, originals[2])
@@ -2180,7 +2200,8 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             self._hook_detail('graph header pointer', self.asf.FLASH_BASE + header_site[0],
                               header_wrapper | 1),
             self._hook_detail('graph pressure pointer', self.asf.FLASH_BASE + numbers_site[0],
-                              numbers_wrapper | 1))
+                              numbers_wrapper | 1),
+            *allocation_details)
 
     def patch_squarewave(self):
         """Add squarewave pressure mode"""
@@ -3339,7 +3360,6 @@ PATCH_PHASES = (
 PATCH_DEPENDENCIES = {
     'patch-autoepap': ('patch-font-repack', 'patch-expand-heap'),
     'patch-ivaps-settings': ('patch-custom-settings',),
-    'patch-fw-graph': ('patch-fw-common-code',),
     'patch-graph-keep-screen-on': ('patch-fw-graph',),
     'patch-fw-vauto-wrapper': ('patch-fw-common-code',),
     'patch-fw-squarewave': ('patch-fw-common-code',),

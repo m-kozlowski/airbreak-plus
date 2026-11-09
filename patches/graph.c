@@ -8,11 +8,14 @@
 #define DRAW_FLOW 0
 
 typedef struct {
+	uint32 vtable;
+	uint32 hwin;
+	int position;
 	int last_pos_x;
-} graph_state_t;
+} graph_widget_t;
 
-typedef int (*graph_draw_t)(int *obj);
-typedef int (*graph_update_t)(int *obj, int new_position);
+typedef int (*graph_draw_t)(graph_widget_t *obj);
+typedef int (*graph_update_t)(graph_widget_t *obj, int new_position);
 typedef void (*graph_header_update_t)(void *obj);
 typedef void (*graph_numbers_update_t)(void *obj, int left_var, int right_var);
 
@@ -28,12 +31,12 @@ extern void gui_method_fc104_setup_and_invalidate(
 extern void memcpy_unrolled(void *destination, const void *source,
 			    unsigned size);
 
-STATIC void init_graph_state(graph_state_t *state) {
-	state->last_pos_x = -1;
-}
-
-STATIC graph_state_t *get_graph_state(void) {
-	return GET_PTR(PTR_GRAPH_DATA, graph_state_t, init_graph_state);
+/* The stock constructor initializes the first 12 bytes after allocation. */
+graph_widget_t *MAIN graph_widget_alloc(void) {
+	graph_widget_t *obj = malloc(sizeof(*obj));
+	if (obj)
+		obj->last_pos_x = -1;
+	return obj;
 }
 
 STATIC bool graph_enabled(void) {
@@ -92,18 +95,16 @@ STATIC bool bytes_changed(const uint8 *before, const uint8 *after,
 	return false;
 }
 
-STATIC int graph_draw_current_column(bool only_if_new) {
-	graph_state_t *state = get_graph_state();
-
+STATIC int graph_draw_current_column(graph_widget_t *obj, bool only_if_new) {
 	// don't do anything if we are not in an active therapy mode
 	if (*therapy_mode == 0) {
-		state->last_pos_x = -1;
+		obj->last_pos_x = -1;
 		return 0;
 	}
 
 	const unsigned pos_x = (*pap_timer / 15) % 240; // ~6.66px per second (unit of timer is 10ms)
-	if (only_if_new && state->last_pos_x == (int)pos_x) return 0;
-	state->last_pos_x = pos_x;
+	if (only_if_new && obj->last_pos_x == (int)pos_x) return 0;
+	obj->last_pos_x = pos_x;
 
 	// break out of the current clipping so we can drawon the entire screen
 	unsigned * const color_ptr = (unsigned*)(gui_context + 60);
@@ -189,24 +190,24 @@ STATIC int graph_draw_current_column(bool only_if_new) {
 }
 
 // Replaces the stock bar draw method.
-int MAIN start(int *obj) {
+int MAIN start(graph_widget_t *obj) {
 	if (!graph_enabled()) {
-		get_graph_state()->last_pos_x = -1;
+		obj->last_pos_x = -1;
 		return ((graph_draw_t)graph_draw_original)(obj);
 	}
 	if (!graph_widget_is_invalidated()) return 0;
-	return graph_draw_current_column(false);
+	return graph_draw_current_column(obj, false);
 }
 
 // The stock update method only redraws when the quantized bar position changes.
 // Preserve its state, but drive the time-based graph directly on each new column.
-int MAIN graph_widget_update(int *obj, int new_position) {
+int MAIN graph_widget_update(graph_widget_t *obj, int new_position) {
 	if (!graph_enabled()) {
-		get_graph_state()->last_pos_x = -1;
+		obj->last_pos_x = -1;
 		return ((graph_update_t)graph_update_original)(obj, new_position);
 	}
-	obj[2] = new_position;
-	return graph_draw_current_column(true);
+	obj->position = new_position;
+	return graph_draw_current_column(obj, true);
 }
 
 /* The stock header updater invalidates on every raw MOP or PSP change, even

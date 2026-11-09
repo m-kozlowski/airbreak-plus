@@ -106,7 +106,6 @@ NSTUB_VAR(0x2000E814, isNotBreathingPtr)
 NSTUB_VAR(0x2000EAA8, breathPercentagePtr)
 NSTUB(0x080E36DD, asv_task_function)
 
-NSTUB_VAR(0x20000BE0, magic_ptr)
 
 // Variable system
 NSTUB(0x08066E7E, variable_set_by_id)
