@@ -15,6 +15,7 @@ import argparse
 from contextlib import redirect_stdout
 from dataclasses import dataclass
 import datetime
+import heapq
 import io
 import os
 import subprocess
@@ -2595,7 +2596,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         return PatchOutcome.ok()
 
     def patch_font_repack(self):
-        """Share identical glyph bitmaps and free the tails of their CDX areas."""
+        """Deduplicate bitmaps and overlap their zero tails/heads to free CDX space."""
         font_crcs = {
             '0302': 0x066B,
             '0305': 0xFE0B,
@@ -2669,22 +2670,81 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         if self.asf.crcfunc(font_data) != font_crcs[ver]:
             raise ValueError("font_repack: font data does not match stock SX567-%s" % ver)
 
+        def pack_bitmaps(bitmaps):
+            # Join the largest zero suffix/prefix matches first. Each bitmap has
+            # one predecessor/successor; chain membership prevents closed loops.
+            count = len(bitmaps)
+            leading = [len(data) - len(data.lstrip(b'\0')) for data in bitmaps]
+            trailing = [len(data) - len(data.rstrip(b'\0')) for data in bitmaps]
+            previous, following = [-1] * count, [-1] * count
+            overlap = [0] * count
+            parent = list(range(count))
+            heads = sorted(range(count), key=lambda i: (-leading[i], i))
+            candidates = []
+
+            def chain_root(i):
+                while parent[i] != i:
+                    parent[i] = parent[parent[i]]
+                    i = parent[i]
+                return i
+
+            # Keep one candidate per tail, advancing only when its head is taken
+            # or would close a loop. There is no quadratic table of glyph pairs.
+            def queue_link(tail, pos=0):
+                while pos < count:
+                    head = heads[pos]
+                    shared = min(trailing[tail], leading[head])
+                    if not shared:
+                        return
+                    if previous[head] < 0 and chain_root(tail) != chain_root(head):
+                        heapq.heappush(candidates, (-shared, tail, head, pos))
+                        return
+                    pos += 1
+
+            for tail in range(count):
+                queue_link(tail)
+            while candidates:
+                negative_shared, tail, head, pos = heapq.heappop(candidates)
+                if following[tail] >= 0:
+                    continue
+                if previous[head] >= 0 or chain_root(tail) == chain_root(head):
+                    queue_link(tail, pos + 1)
+                    continue
+                following[tail], previous[head] = head, tail
+                overlap[tail] = -negative_shared
+                parent[chain_root(head)] = chain_root(tail)
+
+            packed, offsets = bytearray(), {}
+            for head in range(count):
+                if previous[head] >= 0:
+                    continue
+                cursor = len(packed)
+                i = head
+                while i >= 0:
+                    data = bitmaps[i]
+                    offsets[data] = cursor
+                    packed.extend(data[len(packed) - cursor:])
+                    cursor += len(data) - overlap[i]
+                    i = following[i]
+            return packed, offsets
+
         updated = bytearray(original)
         canonical, reclaimed = {}, []
         for font in fonts:
             begin, end = font['begin'], font['end']
+            contents = list(dict.fromkeys(
+                original[bitmap:bitmap + length] for bitmap, length in font['spans']
+                if original[bitmap:bitmap + length] not in canonical))
+            packed, offsets = pack_bitmaps(contents)
             updated[begin:end] = b'\xff' * (end - begin)
-            cursor = begin
-            relocation = {}
-            for bitmap, length in font['spans']:
-                content = original[bitmap:bitmap + length]
-                if content not in canonical:
-                    canonical[content] = cursor
-                    updated[cursor:cursor + length] = content
-                    cursor = (cursor + length + 3) & ~3
-                relocation[bitmap] = canonical[content]
-            for record, bitmap, _ in font['glyphs']:
-                struct.pack_into('<I', updated, record + 4, base + relocation[bitmap])
+            updated[begin:begin + len(packed)] = packed
+            canonical.update((data, begin + offset) for data, offset in offsets.items())
+            for record, bitmap, length in font['glyphs']:
+                target = canonical[original[bitmap:bitmap + length]]
+                struct.pack_into('<I', updated, record + 4, base + target)
+            # The 1bpp renderer reads bytes. Only the reclaimed code cave needs
+            # four-byte alignment; bitmap pointers may point at any byte.
+            cursor = (begin + len(packed) + 3) & ~3
             if cursor < end:
                 reclaimed.append((cursor, end))
 
@@ -3249,7 +3309,7 @@ class PatchSpec:
 # callback table; CRCs are always last.
 PATCH_PHASES = (
     ('Firmware preparation', (
-        PatchSpec('patch-font-repack', 'Reclaim flash space by sharing identical font bitmaps.',
+        PatchSpec('patch-font-repack', 'Reclaim flash space by compacting font bitmaps.',
                   True, 'patch_font_repack'),
     )),
 
