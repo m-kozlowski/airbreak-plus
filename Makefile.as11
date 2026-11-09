@@ -91,6 +91,9 @@ AS11_NOR_READER_CFLAGS := \
 	-Wno-unused-parameter \
 	-Wno-unused-variable
 
+$(eval $(call compiler_config,as11,CC AS AS11_CFLAGS $(sort $(filter AS11_PAYLOAD_CFLAGS_%,$(.VARIABLES)))))
+$(eval $(call compiler_config,as11-nor,CC AS11_NOR_READER_CFLAGS))
+
 # Probe sizes feed the code-cave allocator for each region and version.
 # $(1): default region, $(2): version, $(3): output stem, $(4): payload list
 define AS11_PAYLOAD_LAYOUT_template
@@ -124,31 +127,23 @@ $(foreach v,$(AS11_PAYLOAD_LAYOUT_VERSIONS),\
 $(foreach v,$(AS11_FGBL_PAYLOAD_VERSIONS),\
 	$(eval $(call AS11_PAYLOAD_LAYOUT_template,fgbl,$(v),as11_fgbl,$(AS11_FGBL_PAYLOADS_$(v)))))
 
-$(BUILD)/as11_stubs_%.o: $(SRC)/as11/stubs_%.S Makefile Makefile.as11 | $(BUILD)
-	$(AS) $(AS11_CFLAGS) -DAPPX_VER_$* -DFGBL_VER_$* -c -o $@ $<
+$(BUILD)/as11_stubs_%.o: $(SRC)/as11/stubs_%.S Makefile Makefile.as11 $(BUILD)/as11.flags | $(BUILD)
+	$(AS) $(AS11_CFLAGS) $(DEPFLAGS) -DAPPX_VER_$* -DFGBL_VER_$* -c -o $@ $<
 
-$(BUILD)/as11_fgbl_stubs_%.o: $(SRC)/as11/fgbl_stubs_%.S Makefile Makefile.as11 | $(BUILD)
-	$(AS) $(AS11_CFLAGS) -DAPPX_VER_$* -DFGBL_VER_$* -c -o $@ $<
+$(BUILD)/as11_fgbl_stubs_%.o: $(SRC)/as11/fgbl_stubs_%.S Makefile Makefile.as11 $(BUILD)/as11.flags | $(BUILD)
+	$(AS) $(AS11_CFLAGS) $(DEPFLAGS) -DAPPX_VER_$* -DFGBL_VER_$* -c -o $@ $<
 
 # APPL and FGBL payloads share one versioned object rule.
 define AS11_VERSIONED_OBJECTS_template
-$$(BUILD)/as11_%_$(1).o: $$(SRC)/as11/%.c $$(SRC)/as11/stubs.h \
-		$$(SRC)/as11/rpc_object.h $$(SRC)/as11/custom_settings.h $$(SRC)/as11/vars.h \
-		$$(wildcard $$(SRC)/as11/vars_$(1).h) \
-		Makefile Makefile.as11 | $$(BUILD)
-	$$(CC) $$(AS11_CFLAGS) $$(AS11_PAYLOAD_CFLAGS_as11_$$*) \
+$$(BUILD)/as11_%_$(1).o: $$(SRC)/as11/%.c Makefile Makefile.as11 $$(BUILD)/as11.flags | $$(BUILD)
+	$$(CC) $$(AS11_CFLAGS) $$(AS11_PAYLOAD_CFLAGS_as11_$$*) $$(DEPFLAGS) \
 		-DAPPX_VER_$(1) -DFGBL_VER_$(1) -c -o $$@ $$<
 
-$$(BUILD)/as11_%_$(1).o: $$(SRC)/as11/%.S $$(SRC)/as11/stubs.h \
-		$$(SRC)/as11/vars.h $$(wildcard $$(SRC)/as11/vars_$(1).h) \
-		Makefile Makefile.as11 | $$(BUILD)
-	$$(AS) $$(AS11_CFLAGS) -DAPPX_VER_$(1) -DFGBL_VER_$(1) -c -o $$@ $$<
+$$(BUILD)/as11_%_$(1).o: $$(SRC)/as11/%.S Makefile Makefile.as11 $$(BUILD)/as11.flags | $$(BUILD)
+	$$(AS) $$(AS11_CFLAGS) $$(DEPFLAGS) -DAPPX_VER_$(1) -DFGBL_VER_$(1) -c -o $$@ $$<
 endef
 
 $(foreach v,$(AS11_PAYLOAD_VERSIONS),$(eval $(call AS11_VERSIONED_OBJECTS_template,$(v))))
-
-$(BUILD)/as11_fgbl_lz4_%.o: \
-		$(SRC)/as11/lz4/lz4.c $(SRC)/as11/lz4/lz4.h
 
 # Probe links derive runtime addresses from storage mappings; final links use
 # the allocator-selected runtime address and must retain the probed size.
@@ -223,8 +218,8 @@ as11:
 
 as11-binaries: $(AS11_PAYLOAD_STAMPS) $(AS11_PAYLOAD_LAYOUT_TSVS)
 
-$(AS11_NOR_READER_ELF): $(AS11_NOR_READER_SRC) Makefile Makefile.as11 | $(BUILD)
-	$(CC) $(AS11_NOR_READER_CFLAGS) \
+$(AS11_NOR_READER_ELF): $(AS11_NOR_READER_SRC) Makefile Makefile.as11 $(BUILD)/as11-nor.flags | $(BUILD)
+	$(CC) $(AS11_NOR_READER_CFLAGS) $(DEPFLAGS) \
 		-Wl,-Ttext=0x24000000 \
 		-Wl,-e,_start \
 		-Wl,--build-id=none \

@@ -109,11 +109,11 @@ $(BUILD)/stm32-plus.bin: $(S10_PATCHER_DEPS) $(PAYLOAD_STAMPS) $(PAYLOAD_LAYOUT_
 
 binaries: $(PAYLOAD_TARGETS)
 
-$(BUILD)/blx_dump.o: $(SRC)/blx_dump.c | $(BUILD)
-	$(CC) $(CFLAGS) -mno-unaligned-access -c -o $@ $<
+$(BUILD)/blx_dump.o: $(SRC)/blx_dump.c Makefile $(BUILD)/c.flags | $(BUILD)
+	$(CC) $(CFLAGS) $(DEPFLAGS) -mno-unaligned-access -c -o $@ $<
 
-$(BUILD)/blx_%_stubs.o: $(SRC)/blx_%_stubs.S | $(BUILD)
-	$(AS) $(ASFLAGS) -c -o $@ $<
+$(BUILD)/blx_%_stubs.o: $(SRC)/blx_%_stubs.S Makefile $(BUILD)/asm.flags | $(BUILD)
+	$(AS) $(ASFLAGS) $(DEPFLAGS) -c -o $@ $<
 
 define BLX_DUMP_template
 $(BUILD)/blx_dump_$(1).probe.elf: $(BUILD)/blx_dump.o $(BUILD)/blx_$(1)_stubs.o | $(BUILD)
@@ -169,23 +169,20 @@ endef
 
 $(foreach v,$(PAYLOAD_LAYOUT_VERSIONS) $(BLX_PAYLOAD_VERSIONS),$(eval $(call PAYLOAD_LAYOUT_template,$(v))))
 
-$(BUILD)/s10_%_stubs.o: $(SRC)/s10_%_stubs.S | $(BUILD)
-	$(AS) $(ASFLAGS) -c -o $@ $<
+$(BUILD)/s10_%_stubs.o: $(SRC)/s10_%_stubs.S Makefile $(BUILD)/asm.flags | $(BUILD)
+	$(AS) $(ASFLAGS) $(DEPFLAGS) -c -o $@ $<
 
 define S10_VERSIONED_OBJECTS_template
-$(BUILD)/%_$(1).o: $(SRC)/%.c $(SRC)/common_code.h $(SRC)/s10_vars.h $(SRC)/s10_vars_$(1).h | $(BUILD)
-	$$(CC) $$(CFLAGS) -DCDX_VER_$(1) -c -o $$@ $$<
+$(BUILD)/%_$(1).o: $(SRC)/%.c Makefile $(BUILD)/c.flags | $(BUILD)
+	$$(CC) $$(CFLAGS) $$(DEPFLAGS) -DCDX_VER_$(1) -c -o $$@ $$<
 
-$(BUILD)/%_$(1).o: $(SRC)/%.S $(SRC)/s10_vars.h $(SRC)/s10_vars_$(1).h | $(BUILD)
-	$$(AS) $$(ASFLAGS) -DCDX_VER_$(1) -c -o $$@ $$<
+$(BUILD)/%_$(1).o: $(SRC)/%.S Makefile $(BUILD)/asm.flags | $(BUILD)
+	$$(AS) $$(ASFLAGS) $$(DEPFLAGS) -DCDX_VER_$(1) -c -o $$@ $$<
 endef
 
 $(foreach v,$(PAYLOAD_LAYOUT_VERSIONS),$(eval $(call S10_VERSIONED_OBJECTS_template,$(v))))
 
 define S10_CODE_VERSION_template
-
-$(BUILD)/wrapper_limit_max_pdiff_$(1).o: $(SRC)/my_asv.c $(SRC)/my_asv.h $(SRC)/feat_triggercycle.c $(SRC)/feat_triggercycle.h
-$(BUILD)/breath_tracking_$(1).o $(BUILD)/squarewave_$(1).o $(BUILD)/wrapper_limit_max_pdiff_$(1).o: $(SRC)/breath_tracking.h
 
 # common_code provides shared symbols and has no executable entry point.
 $(BUILD)/common_code_$(1).probe.elf: $(BUILD)/common_code_$(1).o $(BUILD)/s10_$(1)_stubs.o | $(BUILD)
@@ -271,12 +268,7 @@ endef
 
 $(foreach v,$(call payload_versions,custom_menu_hooks),$(eval $(call S10_CUSTOM_MENU_HOOKS_template,$(v))))
 
-$(foreach v,$(call payload_versions,custom_menu_hooks),$(BUILD)/custom_menu_hooks_$(v).o): $(SRC)/custom_menu_registry.h
-$(foreach v,$(call payload_versions,button_hooks),$(BUILD)/button_hooks_$(v).o): $(SRC)/button_hooks.h
-
 define S10_STANDALONE_PAYLOAD_template
-$(BUILD)/$(1)_$(2).o: $(wildcard $(SRC)/$(1)/*.c)
-
 $(BUILD)/$(1)_$(2).probe.elf: $(BUILD)/$(1)_$(2).o $(if $(wildcard $(SRC)/$(1)_abi.S),$(BUILD)/$(1)_abi_$(2).o) $(BUILD)/s10_$(2)_stubs.o | $(BUILD)
 	$$(LD) --nostdlib --no-dynamic-linker \
 		--Ttext $(PROBE_LINK_ADDR) --entry start --sort-section=name \
@@ -319,6 +311,24 @@ CFLAGS ?= \
 
 ASFLAGS ?= $(CFLAGS)
 
+# Generate dependencies even when the caller overrides CFLAGS or ASFLAGS.
+DEPFLAGS = -MMD -MP -MF $(basename $@).d -MT $@
+
+# Rewrite a configuration file only when the compiler or flags change.
+# Conditional PHONY also lets make -q detect changes without writing files.
+# $(1): file stem, $(2): compiler/flag variable names
+define compiler_config
+compile_config_$(1) := $$(foreach name,$(2),$$(name)=$$($$(name)))
+ifneq ($$(file <$(BUILD)/$(1).flags),$$(compile_config_$(1)))
+.PHONY: $(BUILD)/$(1).flags
+endif
+$(BUILD)/$(1).flags: | $(BUILD)
+	printf '%s' '$$(subst ','"'"',$$(compile_config_$(1)))' > $$@
+endef
+
+$(eval $(call compiler_config,c,CC CFLAGS))
+$(eval $(call compiler_config,asm,AS ASFLAGS))
+
 LDFLAGS ?= \
 	--nostdlib \
 	--no-dynamic-linker \
@@ -330,10 +340,10 @@ LDFLAGS ?= \
 
 # $(BUILD)/shared_code.o: $(BUILD)/shared_code.c
 # 	$(CC) $(CFLAGS) -static -shared -c -o $@ $<
-$(BUILD)/%.o: $(SRC)/%.c | $(BUILD)
-	$(CC) $(CFLAGS) -c -o $@ $<
-$(BUILD)/%.o: $(SRC)/%.S | $(BUILD)
-	$(AS) $(ASFLAGS) -c -o $@ $<
+$(BUILD)/%.o: $(SRC)/%.c Makefile $(BUILD)/c.flags | $(BUILD)
+	$(CC) $(CFLAGS) $(DEPFLAGS) -c -o $@ $<
+$(BUILD)/%.o: $(SRC)/%.S Makefile $(BUILD)/asm.flags | $(BUILD)
+	$(AS) $(ASFLAGS) $(DEPFLAGS) -c -o $@ $<
 $(BUILD)/%.elf: | $(BUILD)
 	$(LD) $(LDFLAGS) -o $@ $^
 
@@ -365,8 +375,8 @@ EEPROM_STUB_OFFSET ?= 0x08040000
 EEPROM_STUB_SRC := $(PATCH_STUBS)/eeprom_stub.c
 EEPROM_STUB_OBJS := $(BUILD)/eeprom_stub.o
 
-$(BUILD)/eeprom_stub.o: $(EEPROM_STUB_SRC) $(PATCH_STUBS)/eeprom_stub.h | $(BUILD)
-	$(CC) $(CFLAGS) -c -o $@ $<
+$(BUILD)/eeprom_stub.o: $(EEPROM_STUB_SRC) Makefile $(BUILD)/c.flags | $(BUILD)
+	$(CC) $(CFLAGS) $(DEPFLAGS) -c -o $@ $<
 
 # The stub uses its own linker script
 $(BUILD)/eeprom_stub.elf: $(EEPROM_STUB_OBJS) $(PATCH_STUBS)/eeprom_stub.ld | $(BUILD)
@@ -419,8 +429,8 @@ s10_lcd_ili9325: $(call payload_bins,s10_lcd_ili9325)
 #
 
 define mop_callback_dispatcher_build_template
-$(BUILD)/mop_callback_dispatcher_$(1).o: $(SRC)/mop_callback_dispatcher.S | $(BUILD)
-	$$(AS) $$(ASFLAGS) -c -o $$@ $$<
+$(BUILD)/mop_callback_dispatcher_$(1).o: $(SRC)/mop_callback_dispatcher.S Makefile $(BUILD)/asm.flags | $(BUILD)
+	$$(AS) $$(ASFLAGS) $$(DEPFLAGS) -c -o $$@ $$<
 
 $(BUILD)/mop_callback_dispatcher_$(1).probe.elf: $(BUILD)/mop_callback_dispatcher_$(1).o | $(BUILD)
 	$$(LD) --nostdlib --no-dynamic-linker \
@@ -460,3 +470,5 @@ $(foreach image,$(BUILD_VARIANTS),$(eval $(call patch_config_rule,$(image),air10
 
 -include Makefile.s9
 -include Makefile.as11
+
+-include $(wildcard $(BUILD)/*.d)

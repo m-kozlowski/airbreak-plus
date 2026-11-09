@@ -17,19 +17,21 @@ S9_CFLAGS := -Os -mcpu=cortex-m3 -mthumb \
 	-W -Wall -Wno-unused-variable \
 	-nostdlib -nostdinc -ffreestanding
 
+$(eval $(call compiler_config,s9,CC S9_CFLAGS))
+
 S9_LCD_OFFSET := 0x080d8000
 S9_VERSIONS := 1201 1203 1301
 
-$(BUILD)/s9_lcd.o: $(SRC)/s9_lcd.c Makefile Makefile.s9 | $(BUILD)
-	$(CC) $(S9_CFLAGS) -c -o $@ $<
+$(BUILD)/s9_lcd.o: $(SRC)/s9_lcd.c Makefile Makefile.s9 $(BUILD)/s9.flags | $(BUILD)
+	$(CC) $(S9_CFLAGS) $(DEPFLAGS) -c -o $@ $<
 
-$(BUILD)/s9_lcd_native.o: $(SRC)/s9_lcd_native.S Makefile Makefile.s9 | $(BUILD)
-	$(CC) $(S9_CFLAGS) -c -o $@ $<
+$(BUILD)/s9_lcd_native.o: $(SRC)/s9_lcd_native.S Makefile Makefile.s9 $(BUILD)/s9.flags | $(BUILD)
+	$(CC) $(S9_CFLAGS) $(DEPFLAGS) -c -o $@ $<
 
 # Generate per-version stubs + link + objcopy rules
 define S9_LCD_VERSION_template
-$(BUILD)/s9_$(1)_stubs.o: $(SRC)/s9_$(1)_stubs.S Makefile Makefile.s9 | $(BUILD)
-	$$(CC) $$(S9_CFLAGS) -c -o $$@ $$<
+$(BUILD)/s9_$(1)_stubs.o: $(SRC)/s9_$(1)_stubs.S Makefile Makefile.s9 $(BUILD)/s9.flags | $(BUILD)
+	$$(CC) $$(S9_CFLAGS) $$(DEPFLAGS) -c -o $$@ $$<
 
 $(BUILD)/s9_lcd_$(1).elf: $(BUILD)/s9_lcd.o $(BUILD)/s9_lcd_native.o $(BUILD)/s9_$(1)_stubs.o | $(BUILD)
 	$$(LD) --nostdlib --no-dynamic-linker \
