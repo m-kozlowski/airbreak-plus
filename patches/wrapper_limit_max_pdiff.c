@@ -50,7 +50,7 @@ typedef enum {
 } vauto_state_t;
 
 typedef struct {
-  breath_node prepare, finish;
+  therapy_worker prepare, finish;
   breath_tracking_t *tracking;
   triggercycle_t trc;
   asv_data_t asv;
@@ -63,12 +63,10 @@ typedef struct {
   bool reset;
 } breath_pipeline_t;
 
-static const breath_method prepare_methods[7];
+static const therapy_worker_method prepare_methods[7];
 
 STATIC breath_pipeline_t *find_breath_pipeline(void) {
-  breath_node *n = ((breath_node **)therapy_manager_get())[4];
-  while (n && n->methods != prepare_methods) { n = n->next; }
-  return (breath_pipeline_t *)n;
+  return (breath_pipeline_t *)therapy_worker_find(2, prepare_methods);
 }
 
 void custom_breath_settings_changed(void) {
@@ -96,9 +94,9 @@ STATIC void init_breath_pipeline(breath_pipeline_t *s) {
   s->reset = true;
 }
 
-STATIC void breath_noop(breath_node *node) { }
+STATIC void breath_noop(therapy_worker *node) { }
 
-STATIC void breath_stop(breath_node *node) {
+STATIC void breath_stop(therapy_worker *node) {
   breath_pipeline_t *s = (breath_pipeline_t *)node;
   s->prepare.enabled = s->finish.enabled = 0;
   s->vauto_state = VAUTO_OFF;
@@ -106,7 +104,7 @@ STATIC void breath_stop(breath_node *node) {
   s->reset = true;
 }
 
-STATIC void breath_mode(breath_node *node) {
+STATIC void breath_mode(therapy_worker *node) {
   breath_pipeline_t *s = (breath_pipeline_t *)node;
   // Lifecycle callbacks use the requested mode; I[6F] is published next tick.
   s->mode = ivars[0x12];
@@ -122,7 +120,7 @@ STATIC void reset_vauto_state(breath_pipeline_t *s) {
   init_features(&s->features);
 }
 
-STATIC void breath_prepare(breath_node *node) {
+STATIC void breath_prepare(therapy_worker *node) {
   breath_pipeline_t *s = (breath_pipeline_t *)node;
   if (s->settings_dirty) { load_breath_settings(s); }
   if (s->reset) {
@@ -146,7 +144,7 @@ STATIC void breath_prepare(breath_node *node) {
   prepare_triggercycle(&s->trc, &s->tracking->tr, &s->tracking->hist, enabled);
 }
 
-STATIC void breath_finish(breath_node *node) {
+STATIC void breath_finish(therapy_worker *node) {
   breath_pipeline_t *s = (breath_pipeline_t *)((unsigned char *)node -
                             __builtin_offsetof(breath_pipeline_t, finish));
   const tracking_t *tr = &s->tracking->tr;
@@ -156,10 +154,10 @@ STATIC void breath_finish(breath_node *node) {
   }
 }
 
-static const breath_method prepare_methods[7] = {
+static const therapy_worker_method prepare_methods[7] = {
   breath_noop, breath_noop, breath_stop, breath_mode, breath_mode, breath_stop, breath_prepare
 };
-static const breath_method finish_methods[7] = {
+static const therapy_worker_method finish_methods[7] = {
   breath_noop, breath_noop, breath_noop, breath_noop, breath_noop, breath_noop, breath_finish
 };
 

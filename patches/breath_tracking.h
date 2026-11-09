@@ -2,6 +2,7 @@
 #define _breath_tracking_h_
 
 #include "common_code.h"
+#include "therapy_worker.h"
 
 ///////////////////////////
 // History functionality //
@@ -64,24 +65,13 @@ void init_tracking(tracking_t *tr);
 void prepare_tracking(tracking_t *tr, history_t *hist);
 void finish_tracking(tracking_t *tr, bool inhaling);
 
-typedef struct breath_node breath_node;
-typedef void (*breath_method)(breath_node *);
-struct breath_node {
-  const breath_method *methods;
-  breath_node *next;
-  uint32 enabled;
-};
-
 typedef struct {
-  breath_node prepare, finish;
+  therapy_worker prepare, finish;
   unsigned char *progress, *timing, *timed;
   history_t hist;
   tracking_t tr;
   bool reset;
 } breath_tracking_t;
-
-extern void *therapy_manager_get(void);
-extern void therapy_worker_append(breath_node *, int group);
 
 breath_tracking_t *breath_tracking_find(void);
 void *breath_tracking_register_prepare(void);

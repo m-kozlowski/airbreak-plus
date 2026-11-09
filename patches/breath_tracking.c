@@ -145,27 +145,25 @@ void prepare_tracking(tracking_t *tr, history_t *hist) {
 
 extern void *breath_progress_worker_register(void);
 extern void *breath_timing_progress_worker_register(void);
-extern void breath_phase_ramp_worker_update(breath_node *);
+extern void breath_phase_ramp_worker_update(therapy_worker *);
 extern const unsigned int breath_tracking_attach_prepare;
 extern const unsigned int breath_tracking_attach_finish;
 typedef void (*tracking_attach)(breath_tracking_t *);
-static const breath_method tracking_prepare_methods[7];
+static const therapy_worker_method tracking_prepare_methods[7];
 
 breath_tracking_t *breath_tracking_find(void) {
-  breath_node *n = ((breath_node **)therapy_manager_get())[4];
-  while (n && n->methods != tracking_prepare_methods) { n = n->next; }
-  return (breath_tracking_t *)n;
+  return (breath_tracking_t *)therapy_worker_find(2, tracking_prepare_methods);
 }
 
-STATIC void tracking_noop(breath_node *node) { }
+STATIC void tracking_noop(therapy_worker *node) { }
 
-STATIC void tracking_stop(breath_node *node) {
+STATIC void tracking_stop(therapy_worker *node) {
   breath_tracking_t *s = (breath_tracking_t *)node;
   s->prepare.enabled = s->finish.enabled = 0;
   s->reset = true;
 }
 
-STATIC void tracking_mode(breath_node *node) {
+STATIC void tracking_mode(therapy_worker *node) {
   breath_tracking_t *s = (breath_tracking_t *)node;
   int mode = ivars[0x12];
   s->prepare.enabled = s->finish.enabled = mode == MODE_VAUTO || mode == MODE_S;
@@ -174,10 +172,10 @@ STATIC void tracking_mode(breath_node *node) {
 
 STATIC uint32 breath_events(void) {
   // Group 2's event word is cleared before its 100 Hz worker pass.
-  return ((uint32 *)therapy_manager_get())[8] & 0x3fu;
+  return therapy_worker_events(2) & 0x3fu;
 }
 
-STATIC void tracking_prepare(breath_node *node) {
+STATIC void tracking_prepare(therapy_worker *node) {
   breath_tracking_t *s = (breath_tracking_t *)node;
   if (s->reset) {
     init_history(&s->hist);
@@ -194,7 +192,7 @@ STATIC void tracking_prepare(breath_node *node) {
   prepare_tracking(&s->tr, &s->hist);
 }
 
-STATIC void tracking_finish(breath_node *node) {
+STATIC void tracking_finish(therapy_worker *node) {
   breath_tracking_t *s = (breath_tracking_t *)((unsigned char *)node -
                            __builtin_offsetof(breath_tracking_t, finish));
   uint32 events = breath_events();
@@ -202,10 +200,10 @@ STATIC void tracking_finish(breath_node *node) {
   else if (events & 0x38u) { finish_tracking(&s->tr, false); }
 }
 
-static const breath_method tracking_prepare_methods[7] = {
+static const therapy_worker_method tracking_prepare_methods[7] = {
   tracking_noop, tracking_noop, tracking_stop, tracking_mode, tracking_mode, tracking_stop, tracking_prepare
 };
-static const breath_method tracking_finish_methods[7] = {
+static const therapy_worker_method tracking_finish_methods[7] = {
   tracking_noop, tracking_noop, tracking_noop, tracking_noop, tracking_noop, tracking_noop, tracking_finish
 };
 
@@ -236,7 +234,7 @@ void *breath_tracking_register_finish(void) {
     therapy_worker_append(&s->finish, 2);
     s->finish.methods = tracking_finish_methods;
     s->finish.enabled = 0;
-    breath_node *n = ((breath_node **)therapy_manager_get())[4];
+    therapy_worker *n = therapy_worker_first(2);
     while (n && n->methods[6] != breath_phase_ramp_worker_update) { n = n->next; }
     s->timed = (unsigned char *)n;
     if (breath_tracking_attach_finish != 0xFFFFFFFFu) {
