@@ -244,14 +244,30 @@ The generated layout is shared by all families.
 ## Adding a payload
 
 1. add the payload name to each supported `PAYLOADS_<version>` list
-2. provide source with a `start` entry point
+2. provide `<payload>.c` or `<payload>.S`, normally exporting `start`
 3. include `s10_vars.h` for firmware variable IDs
 4. add required firmware functions to each supported versioned stub
 5. add an ABI assembly file only for patch-time values
-6. add a generic build rule or use the standalone rule
+6. declare symbol imports or exceptions to the default link inputs in Makefile
 7. inject by payload name through the patcher layout helper
 8. resolve hook and ABI symbols from the final ELF
 9. verify generated layouts and all intended output images
+
+Every registered CDX payload uses the same probe/final link template. Defaults
+link its versioned object, optional `<payload>_abi.S`, and versioned firmware
+stubs. Declare exceptions before the template is expanded:
+
+| Makefile variable | Default |
+|-------------------|---------|
+| `S10_PAYLOAD_ENTRY_<payload>` | `start`; sets the ELF entry, not the patcher's hook target |
+| `S10_PAYLOAD_OBJECTS_<payload>` | `<payload>` and `<payload>_abi` when present; ordered stems for `<stem>_<version>.o` |
+| `S10_PAYLOAD_STUBS_<payload>` | `s10`, selecting `s10_<version>_stubs.o`; empty omits stubs |
+| `S10_PAYLOAD_IMPORTS_<payload>` | Empty; otherwise names of payloads supplying symbols |
+| `S10_PAYLOAD_LDFLAGS_<payload>` | `--sort-section=name` |
+
+Imports must appear in `PAYLOADS_<version>` for every version of the consumer.
+They become Make prerequisites and `--just-symbols` inputs: probe ELFs for
+the size pass, final ELFs for the final link.
 
 Do not add a fixed payload address to source, patcher code, or a second Makefile
 variable. Code-cave ownership belongs to `s10_code_caves.tsv` and the generated

@@ -47,8 +47,6 @@ payload_bins = $(foreach v,$(call payload_versions,$(1)),$(BUILD)/$(1)_$(v).bin)
 
 PAYLOAD_NAMES := $(sort $(foreach v,$(PAYLOAD_LAYOUT_VERSIONS),$(PAYLOADS_$(v))))
 PAYLOAD_STAMPS := $(foreach p,$(PAYLOAD_NAMES),$(BUILD)/payload_$(p).stamp)
-S10_CODE_VERSIONS := $(call payload_versions,breath_tracking)
-S10_STANDALONE_PAYLOADS := graph asv_task_wrapper backlight_adapt language_fonts uart_stream_schema vid_spoof target_rh header_clock fall_time st_ibr autoepap variable_callback_dispatcher button_hooks keep_backlight
 PAYLOAD_LAYOUT_TSVS := $(foreach v,$(PAYLOAD_LAYOUT_VERSIONS),$(BUILD)/payload_layout_$(v).tsv)
 
 BLX_PAYLOAD_VERSIONS := SX577-0200 SX585-0200
@@ -143,6 +141,7 @@ $(foreach p,$(PAYLOAD_NAMES),$(eval $(call PAYLOAD_STAMP_template,$(p))))
 # Binaries are built per-version: breath_tracking_0401.bin, graph_0402.bin, etc.
 
 PROBE_LINK_ADDR := 0x08000000
+layout_addr = awk -v name=$(1) '$$$$1 == name { print $$$$2; found=1; exit } END { if (!found) exit 1 }' $(BUILD)/payload_layout_$(2).tsv
 
 define PAYLOAD_LAYOUT_template
 PAYLOAD_PROBE_BINS_$(1) := $$(foreach p,$$(PAYLOADS_$(1)),$$(BUILD)/$$(p)_$(1).probe.bin)
@@ -182,81 +181,47 @@ endef
 
 $(foreach v,$(PAYLOAD_LAYOUT_VERSIONS),$(eval $(call S10_VERSIONED_OBJECTS_template,$(v))))
 
-define S10_CODE_VERSION_template
+S10_PAYLOAD_ENTRY_breath_tracking := 0
+S10_PAYLOAD_ENTRY_custom_menu_hooks := custom_menu_hook_therapy
+S10_PAYLOAD_ENTRY_s10_lcd_ili9325 := lcd_board_init
+S10_PAYLOAD_OBJECTS_custom_menu_hooks := custom_menu_hooks_entry custom_menu_hooks
+S10_PAYLOAD_STUBS_mop_callback_dispatcher :=
+S10_PAYLOAD_IMPORTS_squarewave := breath_tracking
+S10_PAYLOAD_IMPORTS_wrapper_limit_max_pdiff := breath_tracking
+# Keep the existing menu binary byte-identical; it does not require unsorted sections.
+S10_PAYLOAD_LDFLAGS_custom_menu_hooks :=
 
-$(BUILD)/breath_tracking_$(1).probe.elf: $(BUILD)/breath_tracking_$(1).o $(BUILD)/breath_tracking_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o | $(BUILD)
+s10_payload_objects = $(foreach o,$(S10_PAYLOAD_OBJECTS_$(1)),$(BUILD)/$(o)_$(2).o) $(foreach s,$(S10_PAYLOAD_STUBS_$(1)),$(BUILD)/$(s)_$(2)_stubs.o)
+s10_payload_imports = $(foreach p,$(S10_PAYLOAD_IMPORTS_$(1)),$(BUILD)/$(p)_$(2)$(3).elf)
+
+# $(1): payload, $(2): version. Declare only exceptions to these defaults above.
+define S10_PAYLOAD_template
+S10_PAYLOAD_ENTRY_$(1) ?= start
+S10_PAYLOAD_OBJECTS_$(1) ?= $(1) $(if $(wildcard $(SRC)/$(1)_abi.S),$(1)_abi)
+S10_PAYLOAD_STUBS_$(1) ?= s10
+S10_PAYLOAD_LDFLAGS_$(1) ?= --sort-section=name
+
+$(foreach p,$(S10_PAYLOAD_IMPORTS_$(1)),$(if $(filter $(p),$(PAYLOADS_$(2))),,$(error $(1)_$(2) requires payload $(p) in PAYLOADS_$(2))))
+
+$(BUILD)/$(1)_$(2).probe.elf: $$(call s10_payload_objects,$(1),$(2)) $$(call s10_payload_imports,$(1),$(2),.probe) | $(BUILD)
 	$$(LD) --nostdlib --no-dynamic-linker \
 		--Ttext $(PROBE_LINK_ADDR) \
-		--entry 0 --sort-section=name -o $$@ $(BUILD)/breath_tracking_$(1).o $(BUILD)/breath_tracking_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o
+		$$(addprefix --just-symbols=,$$(call s10_payload_imports,$(1),$(2),.probe)) \
+		--entry $$(S10_PAYLOAD_ENTRY_$(1)) $$(S10_PAYLOAD_LDFLAGS_$(1)) \
+		-o $$@ $$(filter %.o,$$^)
 
-$(BUILD)/squarewave_$(1).probe.elf: $(BUILD)/squarewave_$(1).o $(BUILD)/squarewave_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/breath_tracking_$(1).probe.elf | $(BUILD)
-	$$(LD) --nostdlib --no-dynamic-linker \
-		--Ttext $(PROBE_LINK_ADDR) \
-		--just-symbols=$$(BUILD)/breath_tracking_$(1).probe.elf \
-		--entry start --sort-section=name -o $$@ $(BUILD)/squarewave_$(1).o $(BUILD)/squarewave_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o
-
-$(BUILD)/wrapper_limit_max_pdiff_$(1).probe.elf: $(BUILD)/wrapper_limit_max_pdiff_$(1).o $(BUILD)/wrapper_limit_max_pdiff_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/breath_tracking_$(1).probe.elf | $(BUILD)
-	$$(LD) --nostdlib --no-dynamic-linker \
-		--Ttext $(PROBE_LINK_ADDR) \
-		--just-symbols=$$(BUILD)/breath_tracking_$(1).probe.elf \
-		--entry start --sort-section=name -o $$@ $(BUILD)/wrapper_limit_max_pdiff_$(1).o $(BUILD)/wrapper_limit_max_pdiff_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o
-
-$(BUILD)/breath_tracking_$(1).elf: $(BUILD)/breath_tracking_$(1).o $(BUILD)/breath_tracking_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/payload_layout_$(1).tsv | $(BUILD)
-	@set -e; addr=$$$$(awk -v name=breath_tracking '$$$$1 == name { print $$$$2; found=1; exit } END { if (!found) exit 1 }' $(BUILD)/payload_layout_$(1).tsv); \
+$(BUILD)/$(1)_$(2).elf: $$(call s10_payload_objects,$(1),$(2)) $$(call s10_payload_imports,$(1),$(2)) $(BUILD)/payload_layout_$(2).tsv | $(BUILD)
+	@set -e; addr=$$$$($(call layout_addr,$(1),$(2))); \
 	$$(LD) --nostdlib --no-dynamic-linker \
 		--Ttext $$$$addr \
-		--entry 0 --sort-section=name -o $$@ $(BUILD)/breath_tracking_$(1).o $(BUILD)/breath_tracking_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o
-
-$(BUILD)/squarewave_$(1).elf: $(BUILD)/squarewave_$(1).o $(BUILD)/squarewave_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/breath_tracking_$(1).elf $(BUILD)/payload_layout_$(1).tsv | $(BUILD)
-	@set -e; addr=$$$$(awk -v name=squarewave '$$$$1 == name { print $$$$2; found=1; exit } END { if (!found) exit 1 }' $(BUILD)/payload_layout_$(1).tsv); \
-	$$(LD) --nostdlib --no-dynamic-linker \
-		--Ttext $$$$addr \
-		--just-symbols=$$(BUILD)/breath_tracking_$(1).elf \
-		--entry start --sort-section=name -o $$@ $(BUILD)/squarewave_$(1).o $(BUILD)/squarewave_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o
-
-$(BUILD)/wrapper_limit_max_pdiff_$(1).elf: $(BUILD)/wrapper_limit_max_pdiff_$(1).o $(BUILD)/wrapper_limit_max_pdiff_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/breath_tracking_$(1).elf $(BUILD)/payload_layout_$(1).tsv | $(BUILD)
-	@set -e; addr=$$$$(awk -v name=wrapper_limit_max_pdiff '$$$$1 == name { print $$$$2; found=1; exit } END { if (!found) exit 1 }' $(BUILD)/payload_layout_$(1).tsv); \
-	$$(LD) --nostdlib --no-dynamic-linker \
-		--Ttext $$$$addr \
-		--just-symbols=$$(BUILD)/breath_tracking_$(1).elf \
-		--entry start --sort-section=name -o $$@ $(BUILD)/wrapper_limit_max_pdiff_$(1).o $(BUILD)/wrapper_limit_max_pdiff_abi_$(1).o $(BUILD)/s10_$(1)_stubs.o
-
+		$$(addprefix --just-symbols=,$$(call s10_payload_imports,$(1),$(2))) \
+		--entry $$(S10_PAYLOAD_ENTRY_$(1)) $$(S10_PAYLOAD_LDFLAGS_$(1)) \
+		-o $$@ $$(filter %.o,$$^)
 endef
 
-$(foreach v,$(S10_CODE_VERSIONS),$(eval $(call S10_CODE_VERSION_template,$(v))))
-
-define S10_CUSTOM_MENU_HOOKS_template
-$(BUILD)/custom_menu_hooks_$(1).probe.elf: $(BUILD)/custom_menu_hooks_entry_$(1).o $(BUILD)/custom_menu_hooks_$(1).o $(BUILD)/s10_$(1)_stubs.o | $(BUILD)
-	$$(LD) --nostdlib --no-dynamic-linker \
-		--Ttext $(PROBE_LINK_ADDR) \
-		--entry custom_menu_hook_therapy -o $$@ $$^
-
-$(BUILD)/custom_menu_hooks_$(1).elf: $(BUILD)/custom_menu_hooks_entry_$(1).o $(BUILD)/custom_menu_hooks_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/payload_layout_$(1).tsv | $(BUILD)
-	@set -e; addr=$$$$(awk -v name=custom_menu_hooks '$$$$1 == name { print $$$$2; found=1; exit } END { if (!found) exit 1 }' $(BUILD)/payload_layout_$(1).tsv); \
-	$$(LD) --nostdlib --no-dynamic-linker \
-		--Ttext $$$$addr \
-		--entry custom_menu_hook_therapy -o $$@ $(BUILD)/custom_menu_hooks_entry_$(1).o $(BUILD)/custom_menu_hooks_$(1).o $(BUILD)/s10_$(1)_stubs.o
-
-endef
-
-$(foreach v,$(call payload_versions,custom_menu_hooks),$(eval $(call S10_CUSTOM_MENU_HOOKS_template,$(v))))
-
-define S10_STANDALONE_PAYLOAD_template
-$(BUILD)/$(1)_$(2).probe.elf: $(BUILD)/$(1)_$(2).o $(if $(wildcard $(SRC)/$(1)_abi.S),$(BUILD)/$(1)_abi_$(2).o) $(BUILD)/s10_$(2)_stubs.o | $(BUILD)
-	$$(LD) --nostdlib --no-dynamic-linker \
-		--Ttext $(PROBE_LINK_ADDR) --entry start --sort-section=name \
-		-o $$@ $$^
-
-$(BUILD)/$(1)_$(2).elf: $(BUILD)/$(1)_$(2).o $(if $(wildcard $(SRC)/$(1)_abi.S),$(BUILD)/$(1)_abi_$(2).o) $(BUILD)/s10_$(2)_stubs.o $(BUILD)/payload_layout_$(2).tsv | $(BUILD)
-	@set -e; addr=$$$$(awk -v name=$(1) '$$$$1 == name { print $$$$2; found=1; exit } END { if (!found) exit 1 }' $(BUILD)/payload_layout_$(2).tsv); \
-	$$(LD) --nostdlib --no-dynamic-linker \
-		--Ttext $$$$addr --entry start --sort-section=name \
-		-o $$@ $(BUILD)/$(1)_$(2).o $(if $(wildcard $(SRC)/$(1)_abi.S),$(BUILD)/$(1)_abi_$(2).o) $(BUILD)/s10_$(2)_stubs.o
-endef
-
-$(foreach p,$(S10_STANDALONE_PAYLOADS),\
+$(foreach p,$(PAYLOAD_NAMES),\
 	$(foreach v,$(call payload_versions,$(p)),\
-		$(eval $(call S10_STANDALONE_PAYLOAD_template,$(p),$(v)))))
+		$(eval $(call S10_PAYLOAD_template,$(p),$(v)))))
 
 
 
@@ -302,23 +267,10 @@ endef
 $(eval $(call compiler_config,c,CC CFLAGS))
 $(eval $(call compiler_config,asm,AS ASFLAGS))
 
-LDFLAGS ?= \
-	--nostdlib \
-	--no-dynamic-linker \
-	--Ttext $($*-offset) \
-	$($*-extra) \
-	--entry start \
-	--sort-section=name \
-
-
-# $(BUILD)/shared_code.o: $(BUILD)/shared_code.c
-# 	$(CC) $(CFLAGS) -static -shared -c -o $@ $<
 $(BUILD)/%.o: $(SRC)/%.c Makefile $(BUILD)/c.flags | $(BUILD)
 	$(CC) $(CFLAGS) $(DEPFLAGS) -c -o $@ $<
 $(BUILD)/%.o: $(SRC)/%.S Makefile $(BUILD)/asm.flags | $(BUILD)
 	$(AS) $(ASFLAGS) $(DEPFLAGS) -c -o $@ $<
-$(BUILD)/%.elf: | $(BUILD)
-	$(LD) $(LDFLAGS) -o $@ $^
 
 $(BUILD)/%.bin: $(BUILD)/%.elf
 	$(OBJCOPY) -Obinary $< $@
@@ -377,21 +329,6 @@ $(BUILD)/eeprom_stub_full.bin: $(BUILD)/eeprom_stub_nocrc.bin
 # Build: make s10_lcd_ili9325
 # Usage: PATCH_S10_LCD=1 ./patch-airsense stm32.bin output.bin
 
-define S10_LCD_VERSION_template
-$(BUILD)/s10_lcd_ili9325_$(1).probe.elf: $(BUILD)/s10_lcd_ili9325_$(1).o $(BUILD)/s10_$(1)_stubs.o | $(BUILD)
-	$$(LD) --nostdlib --no-dynamic-linker \
-		--Ttext $(PROBE_LINK_ADDR) --entry lcd_board_init --sort-section=name \
-		-o $$@ $$^
-
-$(BUILD)/s10_lcd_ili9325_$(1).elf: $(BUILD)/s10_lcd_ili9325_$(1).o $(BUILD)/s10_$(1)_stubs.o $(BUILD)/payload_layout_$(1).tsv | $(BUILD)
-	@set -e; addr=$$$$(awk -v name=s10_lcd_ili9325 '$$$$1 == name { print $$$$2; found=1; exit } END { if (!found) exit 1 }' $(BUILD)/payload_layout_$(1).tsv); \
-	$$(LD) --nostdlib --no-dynamic-linker \
-		--Ttext $$$$addr --entry lcd_board_init --sort-section=name \
-		-o $$@ $(BUILD)/s10_lcd_ili9325_$(1).o $(BUILD)/s10_$(1)_stubs.o
-endef
-
-$(foreach v,$(call payload_versions,s10_lcd_ili9325),$(eval $(call S10_LCD_VERSION_template,$(v))))
-
 s10_lcd_ili9325: $(call payload_bins,s10_lcd_ili9325)
 	@echo "S10 LCD patches built:"
 	@$(foreach v,$(call payload_versions,s10_lcd_ili9325),echo "  $(BUILD)/s10_lcd_ili9325_$(v).bin";)
@@ -400,24 +337,6 @@ s10_lcd_ili9325: $(call payload_bins,s10_lcd_ili9325)
 #
 # MOP callback dispatcher
 #
-
-define mop_callback_dispatcher_build_template
-$(BUILD)/mop_callback_dispatcher_$(1).o: $(SRC)/mop_callback_dispatcher.S Makefile $(BUILD)/asm.flags | $(BUILD)
-	$$(AS) $$(ASFLAGS) $$(DEPFLAGS) -c -o $$@ $$<
-
-$(BUILD)/mop_callback_dispatcher_$(1).probe.elf: $(BUILD)/mop_callback_dispatcher_$(1).o | $(BUILD)
-	$$(LD) --nostdlib --no-dynamic-linker \
-		--Ttext $(PROBE_LINK_ADDR) --entry start --sort-section=name \
-		-o $$@ $$^
-
-$(BUILD)/mop_callback_dispatcher_$(1).elf: $(BUILD)/mop_callback_dispatcher_$(1).o $(BUILD)/payload_layout_$(1).tsv | $(BUILD)
-	@set -e; addr=$$$$(awk -v name=mop_callback_dispatcher '$$$$1 == name { print $$$$2; found=1; exit } END { if (!found) exit 1 }' $(BUILD)/payload_layout_$(1).tsv); \
-	$$(LD) --nostdlib --no-dynamic-linker \
-		--Ttext $$$$addr --entry start --sort-section=name \
-		-o $$@ $(BUILD)/mop_callback_dispatcher_$(1).o
-endef
-
-$(foreach v,$(call payload_versions,mop_callback_dispatcher),$(eval $(call mop_callback_dispatcher_build_template,$(v))))
 
 mop_callback_dispatcher: $(call payload_bins,mop_callback_dispatcher)
 	@echo "MOP callback dispatcher patches built:"
