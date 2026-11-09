@@ -69,7 +69,6 @@ void MAIN start(int param_1) {
   
   // Limit support to the configured PS and maximum exhale relief.
   *cmd_ps = clamp(*cmd_ps, -s_eps, s_ips);
-  *cmd_ipap = *cmd_epap + *cmd_ps;
 
   return;
 }
