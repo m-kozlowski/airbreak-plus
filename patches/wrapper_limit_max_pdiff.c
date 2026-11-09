@@ -25,6 +25,7 @@ extern const unsigned short wrapper_limit_max_pdiff_toggle_var_id;
 extern const unsigned short wrapper_limit_max_pdiff_triggercycle_var_id;
 extern const unsigned short wrapper_limit_max_pdiff_asv_max_var_id;
 extern const unsigned short wrapper_limit_max_pdiff_asv_sens_var_id;
+extern const unsigned short wrapper_limit_max_pdiff_eps_var_id;
 
 STATIC bool custom_g8_toggle(unsigned short var_id, bool fallback) {
   return (var_id == 0xFFFFu) ? fallback : (variable_get_by_id((int)var_id) != 0);
@@ -59,7 +60,7 @@ typedef struct {
   features_t features;
   int mode;
   vauto_state_t vauto_state;
-  float asv_max, asv_sens;
+  float asv_max, asv_sens, eps;
   bool custom_enabled, custom_tc;
   volatile bool settings_dirty;
   bool reset;
@@ -84,6 +85,7 @@ STATIC void load_breath_settings(breath_controller_t *s) {
   s->custom_tc = custom_g8_toggle(wrapper_limit_max_pdiff_triggercycle_var_id, true);
   s->asv_max = custom_var_raw(wrapper_limit_max_pdiff_asv_max_var_id, 0) / 50.0f;
   s->asv_sens = custom_asv_sens_multiplier();
+  s->eps = custom_var_raw(wrapper_limit_max_pdiff_eps_var_id, 50) / 50.0f;
 }
 
 STATIC void init_breath_controller(breath_controller_t *s) {
@@ -228,11 +230,11 @@ void MAIN start() {
   update_asv_data(asv, tr, asv_max > 0.0f);
 
   features_t *feat = &s->features;
+  if (feat->eps < -s->eps) { feat->eps = -s->eps; }
 
   float new_ps = *cmd_ps;
 
-  // The pre-ramp reference is EPAP + PS/2, so this uses EPAP - PS/2.
-  float current_eps = clamp((*cmd_epap - vauto_ps) * 0.2f, 0.4f, 1.6f);
+  float current_eps = s->eps;
 
   const float ps = *cmd_ps + vauto_ps/2.0f;
   const float ps1 = (ps/vauto_ps); // 0.0 to 1.0
@@ -253,7 +255,7 @@ void MAIN start() {
     feat->final_ips = max(feat->final_ips, new_ps);
   } else { // Exhaling
     if (tr->current.ti >= 0.7f) {
-      current_eps = max(0.0f, current_eps - (feat->final_ips - vauto_ps) * 0.25f);
+      current_eps = max(0.0f, current_eps - max(0.0f, feat->final_ips - vauto_ps) * 0.25f);
       if (tr->st_just_started) { feat->eps = -current_eps; }
       else {
         float fraction = tr->current.volume_max > 0.0f

@@ -24,6 +24,7 @@ Settings are assigned when their corresponding patch or payload is active.
 | [Custom VAuto](guide/features/custom_vauto.md) | Custom VAuto | RPO | g[8] | CSG |
 | [Custom VAuto](guide/features/custom_vauto.md) | ASV Max | RCM | g[4] | CSG |
 | [Custom VAuto](guide/features/custom_vauto.md) | ASV Sens | RXM | g[8] | CSG |
+| [Custom VAuto](guide/features/custom_vauto.md) | EPS | RDH | g[4] | CSG |
 | [Custom VAuto](guide/features/custom_vauto.md) | Custom T/C | RPH | g[8] | CSG |
 | [ASV backup-rate control](guide/features/asv_backup_rate.md) | Backup Rate | RPW | g[8] | CSG |
 | Therapy graph | Monitoring | RXH | g[8] | CSG |

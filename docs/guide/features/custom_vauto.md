@@ -40,6 +40,7 @@ pre-trigger assist, and Custom T/C are disabled.
 | Custom VAuto | `RPO` | Off, On | Off | Therapy | VAuto | Selects stock VAuto or the complete custom pressure-support path | On |
 | ASV Max | `RCM` | 0.0 to 10.0 cmH2O, step 0.2 | 3.0 cmH2O | Therapy | VAuto | Limits adaptive boost above the custom base pressure shape; zero disables adaptive boost | `2 * VAuto PS` |
 | ASV Sens | `RXM` | Very Low, Low, Med, High, Very High | Med | Therapy | VAuto | Scales the adaptive controller response | Med |
+| EPS | `RDH` | 0.0 to 3.0 cmH2O, step 0.2 | 0.0 cmH2O | Therapy | VAuto | Maximum exhale relief below EPAP; zero disables relief | 1.0 cmH2O |
 | Custom T/C | `RPH` | Off, On | Off | Therapy | S, ST, VAuto, PAC | Uses custom multi-signal trigger and flow-shape cycle decisions | On where supported by the runtime path |
 
 Firmware variable assignments and persistence are listed in the
@@ -71,7 +72,7 @@ stock final pressure limiter.
 | EPAP | Selected by the stock VAuto controller | Unchanged |
 | Configured PS | Defines the difference between EPAP and full inspiratory pressure | Defines the nominal support range used by the custom pressure shape |
 | Inspiration | Stock VAuto pressure waveform | Custom base shape with optional adaptive boost |
-| Expiration | Stock pressure return toward EPAP | Custom downslope with calculated exhale relief |
+| Expiration | Stock pressure return toward EPAP | Custom downslope with adjustable exhale relief |
 | Trigger preparation | Stock response | May add up to 0.4 cmH2O of pre-trigger pressure assist |
 | Trigger and cycle decisions | Configured stock thresholds | Stock thresholds or Custom T/C decisions |
 | Final pressure | Limited by Max IPAP | Adaptive boost can exceed the selected Max IPAP; see Pressure limits |
@@ -155,12 +156,12 @@ The adaptive response is stabilized by:
 ### Expiration and pre-trigger assist
 
 The largest support reached during inspiration is retained as the start of the
-expiratory downslope. After an inspiration lasting at least 0.7 seconds, the
-initial exhale-relief magnitude is calculated as:
+expiratory downslope. EPS sets the maximum exhale relief below EPAP; zero
+disables relief. After an inspiration lasting at least 0.7 seconds, adaptive
+boost reduces the initial relief:
 
 ```text
-relief = clamp(0.2 * (EPAP - PS/2), 0.4, 1.6)
-relief = max(0, relief - 0.25 * (peak_support - PS))
+relief = max(0, EPS - 0.25 * max(0, peak_support - PS))
 ```
 
 The relief fades with remaining integrated breath volume and with current and

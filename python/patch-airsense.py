@@ -1196,16 +1196,18 @@ class ASFirmwarePatches(CompiledPayloadMixin):
 
     def custom_patch_settings_vauto(self):
         """Expose reclaimed custom VAuto settings and pass their var_ids to the wrapper."""
-        # Claim stable storage-backed variables and allocate reclaimed localized
+        # Claim stable storage-backed variables and allocate localized
         # string IDs for their new menu labels.
         vauto_var = self.custom_claim_g8_var('RPO', 'custom_vauto_enable')
         tc_var = self.custom_claim_g8_var('RPH', 'custom_triggercycle')
         max_var = self.custom_claim_g4_var('RCM', 'my_asv_max')
         sens_var = self.custom_claim_g8_var('RXM', 'my_asv_sens')
+        eps_var = self.custom_claim_g4_var('RDH', 'vauto_eps')
         vauto_label = self.redefine_fw_string(-1, {0: 'Custom VAuto'}, 'custom_vauto_label')
         tc_label = self.redefine_fw_string(-1, {0: 'Custom T/C'}, 'custom_triggercycle_label')
         max_label = self.redefine_fw_string(-1, {0: 'ASV Max'}, 'my_asv_max_label')
         sens_label = self.redefine_fw_string(-1, {0: 'ASV Sens'}, 'my_asv_sens_label')
+        eps_label = self.redefine_fw_string(-1, {0: 'EPS'}, 'vauto_eps_label')
 
         # Keep the Reminder group chain root (RGT). These variables still live in
         # the renamed persistent group and edits must continue to dirty/save it.
@@ -1221,6 +1223,8 @@ class ASFirmwarePatches(CompiledPayloadMixin):
                              5, 0, 0x0000001F, sens_base, 0)
         self.redefine_g4_var(max_var, 0x0007, 0, storage_dep, max_label, 150,
                              500, 0, 1, 50, 10, cmh2o_units)
+        self.redefine_g4_var(eps_var, 0x0007, 0, storage_dep, eps_label, 0,
+                             150, 0, 1, 50, 10, cmh2o_units)
 
         # Firmware descriptors and menu registration can use UART names. Injected
         # code receives compact numeric var_ids through explicit ABI slots.
@@ -1228,11 +1232,13 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         tc_vid = self.asf.resolve_var_id(tc_var)
         max_vid = self.asf.resolve_var_id(max_var)
         sens_vid = self.asf.resolve_var_id(sens_var)
+        eps_vid = self.asf.resolve_var_id(eps_var)
         self.custom_menu_add('therapy', vauto_var, self.mop_bitmask('VAuto'))
         self.custom_menu_add('therapy', max_var, self.mop_bitmask('VAuto'))
         self.custom_menu_add('therapy', sens_var, self.mop_bitmask('VAuto'))
+        self.custom_menu_add('therapy', eps_var, self.mop_bitmask('VAuto'))
         self.custom_menu_add('therapy', tc_var, self.mop_bitmask('S', 'ST', 'VAuto', 'PAC'))
-        for var in (max_var, sens_var, tc_var):
+        for var in (max_var, sens_var, eps_var, tc_var):
             self.custom_menu_add_condition(var, vauto_var, self.mop_bitmask('VAuto'))
         self.custom_menu_add_condition(tc_var, 'EBE', self.mop_bitmask('S'), nonzero=False)
 
@@ -1243,7 +1249,8 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         tc_addr = self._write_payload_u16(payload, 'wrapper_limit_max_pdiff_triggercycle_var_id', tc_vid)
         max_addr = self._write_payload_u16(payload, 'wrapper_limit_max_pdiff_asv_max_var_id', max_vid)
         sens_addr = self._write_payload_u16(payload, 'wrapper_limit_max_pdiff_asv_sens_var_id', sens_vid)
-        for var in (vauto_var, tc_var, max_var, sens_var):
+        eps_addr = self._write_payload_u16(payload, 'wrapper_limit_max_pdiff_eps_var_id', eps_vid)
+        for var in (vauto_var, tc_var, max_var, sens_var, eps_var):
             self.variable_callback_add(var, payload, 'custom_breath_settings_changed')
 
         self._custom_detail("custom VAuto enable: %s var_id=0x%04X label_str=0x%04X" %
@@ -1252,11 +1259,14 @@ class ASFirmwarePatches(CompiledPayloadMixin):
                             (max_var, max_vid, max_label))
         self._custom_detail("my_asv sens: %s var_id=0x%04X label_str=0x%04X" %
                             (sens_var, sens_vid, sens_label))
+        self._custom_detail("VAuto EPS: %s var_id=0x%04X label_str=0x%04X" %
+                            (eps_var, eps_vid, eps_label))
         self._custom_detail("custom trigger/cycle: %s var_id=0x%04X label_str=0x%04X" %
                             (tc_var, tc_vid, tc_label))
         self._custom_detail("VAuto wrapper toggle var_id=0x%04X at 0x%08X" % (vauto_vid, addr))
         self._custom_detail("ASV Max var_id=0x%04X at 0x%08X" % (max_vid, max_addr))
         self._custom_detail("ASV Sens var_id=0x%04X at 0x%08X" % (sens_vid, sens_addr))
+        self._custom_detail("EPS var_id=0x%04X at 0x%08X" % (eps_vid, eps_addr))
         self._custom_detail("trigger/cycle toggle var_id=0x%04X at 0x%08X" % (tc_vid, tc_addr))
 
     def custom_patch_settings_ivaps(self):
