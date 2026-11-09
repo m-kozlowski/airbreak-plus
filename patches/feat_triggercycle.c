@@ -17,7 +17,7 @@ void prepare_triggercycle(triggercycle_t *trc, tracking_t *tr, history_t *hist, 
     trc->volbased = 0.0f;
     if (enabled) {
       float fraction = -0.225f + 0.5f * sens_cycle;
-      trc->cycle = (flow_minus_basal_leak < tr->current.inh_maxflow * fraction ||
+      trc->cycle = (*flow_compensated < tr->current.inh_maxflow * fraction ||
                     tr->st_pre_cycle >= PRE_CYCLE_MAX_TICKS) ? TC_SWITCH : TC_HOLD;
     }
     return;

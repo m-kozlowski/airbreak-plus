@@ -30,13 +30,9 @@ static float *cmd_ipap = &fvars[0x2a]; // Final pressure command throughout the 
 
 static float *cmd_epap_ramp = &fvars[0x2d]; // Ramped pressure reference (cmH2O)
 
-static const float *leak_basal = &fvars[0x23]; // Reference leak flow before pressure adjustment (L/min)
-static const float *leak = &fvars[0x24]; // Unintentional leak (L/min) - this is what flow_compensated incorporates
-
 static const float *flow_raw = &fvars[0x3]; // (L/min)
 static const float *flow_patient = &fvars[0x0]; // (L/min)
 static const float *flow_compensated = &fvars[0x25]; // (L/min)
-#define flow_minus_basal_leak (*flow_patient - *leak_basal) // Subtract reference leak without pressure adjustment
 
 static const float *actual_pressure = &fvars[1]; // (cmH2O) Actual current pressure in the circuit
 

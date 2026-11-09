@@ -192,8 +192,8 @@ projected flow indicates a likely inspiration. A score at or above `1.0` request
 inspiration; a lower score holds expiration. At other times, the
 configured stock trigger threshold remains in use.
 
-Custom cycle compares basal-leak-corrected flow with the peak inspiratory flow
-of the same breath. The configured Cycle setting supplies the stock fraction
+Custom cycle compares leak-compensated flow with its peak during the same
+inspiration. The configured Cycle setting supplies the stock fraction
 `s`, from which the custom threshold is calculated:
 
 ```text
