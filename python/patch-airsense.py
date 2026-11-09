@@ -1179,67 +1179,67 @@ class ASFirmwarePatches(CompiledPayloadMixin):
 
         self._custom_detail("CSG recovery: group index %d, invalid files reset without system fault" % group_index)
 
-    def custom_patch_settings_myasv(self):
+    def custom_patch_settings_vauto(self):
         """Expose reclaimed custom VAuto settings and pass their var_ids to the wrapper."""
         # Claim stable storage-backed variables and allocate reclaimed localized
         # string IDs for their new menu labels.
-        myasv_var = self.custom_claim_g8_var('RPO', 'my_asv_enable')
-        tc_var = self.custom_claim_g8_var('RPH', 'my_asv_triggercycle')
+        vauto_var = self.custom_claim_g8_var('RPO', 'custom_vauto_enable')
+        tc_var = self.custom_claim_g8_var('RPH', 'custom_triggercycle')
         max_var = self.custom_claim_g4_var('RCM', 'my_asv_max')
         sens_var = self.custom_claim_g8_var('RXM', 'my_asv_sens')
-        myasv_label = self.redefine_fw_string(-1, {0: 'Custom VAuto'}, 'my_asv_label')
-        tc_label = self.redefine_fw_string(-1, {0: 'Custom T/C'}, 'my_asv_triggercycle_label')
+        vauto_label = self.redefine_fw_string(-1, {0: 'Custom VAuto'}, 'custom_vauto_label')
+        tc_label = self.redefine_fw_string(-1, {0: 'Custom T/C'}, 'custom_triggercycle_label')
         max_label = self.redefine_fw_string(-1, {0: 'ASV Max'}, 'my_asv_max_label')
         sens_label = self.redefine_fw_string(-1, {0: 'ASV Sens'}, 'my_asv_sens_label')
 
         # Keep the Reminder group chain root (RGT). These variables still live in
         # the renamed persistent group and edits must continue to dirty/save it.
-        myasv_dep = self.asf.find_var_table_index(4, 'RGT')
+        storage_dep = self.asf.find_var_table_index(4, 'RGT')
         cmh2o_units = self.asf.read_u16(self.asf.find_var('IPC') + self.asf.G4_UNITS_STR)
         sens_base = self.asf.read_u16(self.asf.find_var('VCS') + self.asf.G8_BASE_STR)
 
-        self.redefine_g8_var(myasv_var, 0x0007, 0, myasv_dep, myasv_label, 0,
+        self.redefine_g8_var(vauto_var, 0x0007, 0, storage_dep, vauto_label, 0,
                              2, 0, 0x00000003, self.asf.str_id_off_on_base, 0)
-        self.redefine_g8_var(tc_var, 0x0007, 0, myasv_dep, tc_label, 0,
+        self.redefine_g8_var(tc_var, 0x0007, 0, storage_dep, tc_label, 0,
                              2, 0, 0x00000003, self.asf.str_id_off_on_base, 0)
-        self.redefine_g8_var(sens_var, 0x0007, 0, myasv_dep, sens_label, 2,
+        self.redefine_g8_var(sens_var, 0x0007, 0, storage_dep, sens_label, 2,
                              5, 0, 0x0000001F, sens_base, 0)
-        self.redefine_g4_var(max_var, 0x0007, 0, myasv_dep, max_label, 150,
+        self.redefine_g4_var(max_var, 0x0007, 0, storage_dep, max_label, 150,
                              500, 0, 1, 50, 10, cmh2o_units)
 
         # Firmware descriptors and menu registration can use UART names. Injected
         # code receives compact numeric var_ids through explicit ABI slots.
-        myasv_vid = self.asf.resolve_var_id(myasv_var)
+        vauto_vid = self.asf.resolve_var_id(vauto_var)
         tc_vid = self.asf.resolve_var_id(tc_var)
         max_vid = self.asf.resolve_var_id(max_var)
         sens_vid = self.asf.resolve_var_id(sens_var)
-        self.custom_menu_add('therapy', myasv_var, self.mop_bitmask('VAuto'))
+        self.custom_menu_add('therapy', vauto_var, self.mop_bitmask('VAuto'))
         self.custom_menu_add('therapy', max_var, self.mop_bitmask('VAuto'))
         self.custom_menu_add('therapy', sens_var, self.mop_bitmask('VAuto'))
         self.custom_menu_add('therapy', tc_var, self.mop_bitmask('S', 'ST', 'VAuto', 'PAC'))
         for var in (max_var, sens_var, tc_var):
-            self.custom_menu_add_condition(var, myasv_var, self.mop_bitmask('VAuto'))
+            self.custom_menu_add_condition(var, vauto_var, self.mop_bitmask('VAuto'))
         self.custom_menu_add_condition(tc_var, 'EBE', self.mop_bitmask('S'), nonzero=False)
 
         # Patch the prebuilt wrapper's ABI slots instead of coupling its source to
         # custom-menu internals or firmware-version-specific numeric IDs.
         payload = 'wrapper_limit_max_pdiff'
-        addr = self._write_payload_u16(payload, 'wrapper_limit_max_pdiff_toggle_var_id', myasv_vid)
+        addr = self._write_payload_u16(payload, 'wrapper_limit_max_pdiff_toggle_var_id', vauto_vid)
         tc_addr = self._write_payload_u16(payload, 'wrapper_limit_max_pdiff_triggercycle_var_id', tc_vid)
         max_addr = self._write_payload_u16(payload, 'wrapper_limit_max_pdiff_asv_max_var_id', max_vid)
         sens_addr = self._write_payload_u16(payload, 'wrapper_limit_max_pdiff_asv_sens_var_id', sens_vid)
-        for var in (myasv_var, tc_var, max_var, sens_var):
+        for var in (vauto_var, tc_var, max_var, sens_var):
             self.variable_callback_add(var, payload, 'custom_breath_settings_changed')
 
         self._custom_detail("custom VAuto enable: %s var_id=0x%04X label_str=0x%04X" %
-                            (myasv_var, myasv_vid, myasv_label))
+                            (vauto_var, vauto_vid, vauto_label))
         self._custom_detail("my_asv max: %s var_id=0x%04X label_str=0x%04X" %
                             (max_var, max_vid, max_label))
         self._custom_detail("my_asv sens: %s var_id=0x%04X label_str=0x%04X" %
                             (sens_var, sens_vid, sens_label))
-        self._custom_detail("my_asv trigger/cycle: %s var_id=0x%04X label_str=0x%04X" %
+        self._custom_detail("custom trigger/cycle: %s var_id=0x%04X label_str=0x%04X" %
                             (tc_var, tc_vid, tc_label))
-        self._custom_detail("VAuto wrapper toggle var_id=0x%04X at 0x%08X" % (myasv_vid, addr))
+        self._custom_detail("VAuto wrapper toggle var_id=0x%04X at 0x%08X" % (vauto_vid, addr))
         self._custom_detail("ASV Max var_id=0x%04X at 0x%08X" % (max_vid, max_addr))
         self._custom_detail("ASV Sens var_id=0x%04X at 0x%08X" % (sens_vid, sens_addr))
         self._custom_detail("trigger/cycle toggle var_id=0x%04X at 0x%08X" % (tc_vid, tc_addr))
@@ -1496,7 +1496,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         """Return active custom-settings feature functions."""
         feature_patches = (
             ('ivaps', self.custom_patch_settings_ivaps),
-            ('wrapper_limit_max_pdiff', self.custom_patch_settings_myasv),
+            ('wrapper_limit_max_pdiff', self.custom_patch_settings_vauto),
             ('asv_task_wrapper', self.custom_patch_settings_asv_task_wrapper),
             ('graph', self.custom_patch_settings_graph),
             ('squarewave', self.custom_patch_settings_squarewave),
@@ -2421,6 +2421,8 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             '0401': (0xa0fac, 0xa0fd0),
             '0402': (0xa11dc, 0xa1200),
         }
+        if not self._supports_compiled_payloads() or ver not in sites:
+            return PatchOutcome.skip("unsupported CDX version %s" % self.asf.cdx_ver)
         data, _, elf_path = self._load_versioned_payload('breath_tracking')
         flash, _ = self._inject_payload('breath_tracking', data)
         details = [self._payload_detail('breath_tracking', len(data), flash)]

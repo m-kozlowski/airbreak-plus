@@ -102,9 +102,9 @@ NSTUB(0x0809E279, file_get_size)
 NSTUB(0x080BC993, pressure_limit_max_difference)
 NSTUB_VAR(0x2000E948, fvars)
 NSTUB_VAR(0x2000E750, ivars)
-NSTUB_VAR(0x2000E808, isNotBreathingPtr)
-NSTUB_VAR(0x2000EA9C, breathPercentagePtr)
-NSTUB(0x080E3465, asv_task_function)
+NSTUB_VAR(0x2000E808, asv_low_flow_state)
+NSTUB_VAR(0x2000EA9C, asv_phase_estimate)
+NSTUB(0x080E3465, asv_publish_target_ventilation_and_pressure)
 
 
 // Variable system

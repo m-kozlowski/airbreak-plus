@@ -4,9 +4,6 @@
 #include "stubs.h"
 #include "common_code.h"
 
-#define DRAW_PRESSURE 1
-#define DRAW_FLOW 0
-
 typedef struct {
 	uint32 vtable;
 	uint32 hwin;
@@ -126,10 +123,8 @@ STATIC int graph_draw_current_column(graph_widget_t *obj, bool only_if_new) {
 	*yOff = 0;
 
 	// Draw a strip chart
-	const int width = 240;
 	const int top = 155; // 150--230
 	const int bottom = 235;
-	const int height = bottom - top;
 
 	#define HEIGHT_PRES 40
 	#define HEIGHT_FLOW 40
@@ -144,7 +139,6 @@ STATIC int graph_draw_current_column(graph_widget_t *obj, bool only_if_new) {
 		LCD_FillRect(pos_x, top - 1, pos_x + 1, bottom + 1);
 	}
 
-	float g_top = top + HEIGHT_FLOW;
 	float g_bottom = top + HEIGHT_FLOW + HEIGHT_PRES;
 
 	#if HEIGHT_PRES > 0
@@ -160,8 +154,7 @@ STATIC int graph_draw_current_column(graph_widget_t *obj, bool only_if_new) {
 		LCD_FillRect_Alt(pos_x, g_bottom - command, 2, 1);
 	#endif
 
-	g_top = top;
-	g_bottom = top + HEIGHT_FLOW;
+	float g_top = top;
 
 	#if HEIGHT_FLOW > 0
 		// Draw the leak-compensated flow variable as solid bars
@@ -260,32 +253,3 @@ void MAIN graph_numbers_update(void *obj, int left_var, int right_var) {
 		gui_method_fc104_setup_and_invalidate(
 			saved_hwin, 6, 0x19, 0xd6, 0x2d);
 }
-
-
-// Causes the device to crash and reboot
-/*
-#if 0
-	GUI_SetColor(0x8);
-	GUI_FillRect(0, 130, 200, 160);
-
-	GUI_SetColor(0xFF0000);
-	GUI_SetFont(font_16); // Causes device to crash and reboot
-	//static const char __attribute__((__section__(".text"))) msg[] = "Hello, world!";
-	//static const char __attribute__((__section__(".text"))) fmt[] = "%d.%02d";
-	GUI_DispStringAt("Hello, world", 10, 130);
-	char buf[16];
-	int flow = fvars[1] * 100;
-	snprintf(buf, sizeof(buf), "%d.%02d", flow / 100, flow % 100);
-	GUI_SetColor(0x00FF00);
-	GUI_DispStringAt(buf, 40, 150);
-#endif
-
-// Also tried:
-GUI_SetColor(0xFFFF00);
-GUI_SetTextMode(2);
-GUI_SetTextAlign(0);
-GUI_SetFont_default();
-GUI_DispStringAt("Hello, world", 20, top + HEIGHT_FLOW + 20);
-// No luck, displays nothing. Changing params of GUI_DispStringAt to short or unsigned short does nothing too.
-
-*/

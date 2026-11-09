@@ -133,9 +133,9 @@ NSTUB(0x0808735B, iwdg_reload)
 NSTUB(0x08080CDB, lcd_get_device)
 
 // ASV task wrapper
-NSTUB_VAR(0x2000E808, isNotBreathingPtr)
-NSTUB_VAR(0x2000EA9C, breathPercentagePtr)
-NSTUB(0x080E3204, asv_task_function)
+NSTUB_VAR(0x2000E808, asv_low_flow_state)
+NSTUB_VAR(0x2000EA9C, asv_phase_estimate)
+NSTUB(0x080E3204, asv_publish_target_ventilation_and_pressure)
 
 // iVAPS AutoEPAP: stock workers and numerical primitives
 NSTUB(0x080BDB71, expf)

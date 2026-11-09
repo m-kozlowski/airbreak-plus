@@ -73,7 +73,7 @@ typedef struct {
   float asv_sens; // Multiplier applied to the ASV PID output
 
   float asv_dampen; // How much to drop the target by, other than after a hyperpnea, it's usually 0
-  int8 asv_skip; // If < 0, limit maximum ASV factor for `ASV_BREATH_SKIP` breaths needing <0.1f ASV
+  int8 asv_skip; // Negative until ASV_BREATH_SKIP inspirations confirm PID demand > 0.1; limits the factor to 1.2
 
   float target_vol; // Single-stage peak-volume reference for dampening
   float target_vol2; // Faster peak-volume reference for the learning coefficient

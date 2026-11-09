@@ -26,10 +26,4 @@ typedef unsigned size_t;
 
 extern void * malloc(size_t __size);
 
-extern void pressure_work(int param_1);
-extern int compute_pressure_stuff_replaced_with_breath(float target, float * base);
-extern int pressure_target_normal_operation(float param_1, int * param_2);
-
-extern char pressure_timed_ramp(float param_1,float param_2,int *param_3);
-
 #endif

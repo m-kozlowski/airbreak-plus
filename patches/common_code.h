@@ -36,8 +36,7 @@ static const float *leak = &fvars[0x24]; // Unintentional leak (L/min) - this is
 static const float *flow_raw = &fvars[0x3]; // (L/min)
 static const float *flow_patient = &fvars[0x0]; // (L/min)
 static const float *flow_compensated = &fvars[0x25]; // (L/min)
-#define flow_unfucked (*flow_patient - *leak_basal) // Doesn't include the waveform-shape-distorting within-breath leak detection
-// const float *flow_delayed = &fvars[0x26]; // Slightly delayed 0x25 ?
+#define flow_minus_basal_leak (*flow_patient - *leak_basal) // Subtract reference leak without pressure adjustment
 
 static const float *actual_pressure = &fvars[1]; // (cmH2O) Actual current pressure in the circuit
 
@@ -63,9 +62,9 @@ static const   int *pap_timer = &ivars[0];
 
 #define p_error (p_actual - p_command) // Positive when above target
 
-// These seem to be universal across modes, e.g. S, VAuto, etc.
+// Configured flow-trigger and cycle thresholds.
 #define sens_trigger fvars[0x7] // (L/min). Possible values: 13.2, 8.1, 4.8, 3.3, 1.8
-#define sens_cycle fvars[0x8] // (%). Possible values: 0.5, 0.35, 0.25, 0.15, 0.08
+#define sens_cycle fvars[0x8] // Fraction of peak inspiratory flow; values depend on mode
 
 // S mode configuration
 #define s_ipap fvars[0xe]
@@ -85,18 +84,6 @@ static const   int *pap_timer = &ivars[0];
 
 #define ti_min (ivars[0x5]*10) // (ms) integer
 #define ti_max (ivars[0x6]*10) // (ms) integer
-
-// I believe these are the reported EPAP and IPAP written to EDF files.
-// However, they're probably written somewhere else(before end of inspiration), which needs to be debugged to write them
-// Or used to figure out how to add extra signals..?
-// float *report_epap = &fvars[0xC5];
-// float *report_ipap = &fvars[0xC4];
-// b9, be might be TV, ba, bb might be MV 
-
-// const float *asv_epap_min = &fvars[0x11];
-// const float *asv_epap_max = &fvars[0x10];
-// const float *asv_ips_min  = &fvars[0x14];
-// const float *asv_ips_max  = &fvars[0x13];
 
 // Utility functions
 #define min(a,b) ({ \
