@@ -11,6 +11,19 @@
 
 .text
 
+// Therapy page construction and lifetime
+NSTUB(0x08066E23, gui_scrollable_layout_items)
+NSTUB(0x080695E1, heap_free)
+NSTUB(0x0806CB49, gui_window_registry_remove)
+NSTUB(0x08073BCB, WM__DeleteWindow)
+NSTUB(0x0806D9D3, gui_task_group_get)
+NSTUB(0x0806DBB9, gui_menu_system_update_selected_page)
+NSTUB(0x0806CD4F, gui_base_window_y0)
+NSTUB(0x0806254F, gui_therapy_simple_body)
+NSTUB(0x080627BF, gui_therapy_bar_body)
+NSTUB(0x08062A5D, gui_therapy_data_body)
+NSTUB_VAR(0x6800BB60, gui_therapy_pages)
+
 // Front-panel input singleton
 NSTUB(0x08081DF7, front_panel_input_init)
 

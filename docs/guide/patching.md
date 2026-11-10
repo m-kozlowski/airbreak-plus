@@ -28,7 +28,7 @@ This builds compiled patches and produces following images:
 | Output | Content |
 |--------|---------|
 | `build/stm32-patched.bin` | unlocked stock-ish |
-| `build/stm32-plus.bin` | graph, Custom VAuto, ASV backup-rate control, Square Wave, Fall Time, ST iBR, iVAPS AutoEPAP |
+| `build/stm32-plus.bin` | Custom VAuto, ASV backup-rate control, Square Wave, Fall Time, ST iBR, iVAPS AutoEPAP |
 
 The additional features in `plus` have runtime controls in the clinical menu.
 
@@ -81,7 +81,7 @@ All patches below are **enabled by default** unless noted.
 | Unlock languages | Enables all built-in languages | `--patch-unlock-languages` |
 | Language fonts | Selects the correct font for each language, including the language selection list | `--patch-language-fonts` |
 | Ukrainian font (opt-in) | Adds missing Ukrainian letters to the standard font; does not add translations or change the language list | `--patch-font-ua Y` |
-| Therapy screen | Enables additional information on the therapy screen | `--patch-therapy-screen` |
+| [Therapy screen](features/general.md#therapy-screen) | Adds selectable therapy screen styles and live graphs | `--patch-therapy-screen` |
 | Defaults | Sets firmware defaults (English, cmH2O, pillows mask, slim tube) | `--patch-defaults` |
 | Bypass integrity check | Disables firmware integrity checks that prevent boot on CRC mismatch | `--patch-integrity-check` |
 | Bypass PSU check | Disables power supply ID check at startup | `--patch-bypass-psuid` |
@@ -100,7 +100,6 @@ environment variables.
 
 | Env variable | What it does |
 |-------------|-------------|
-| `PATCH_GRAPH=1` | Add the therapy graph overlay |
 | `PATCH_S=1` | Enable [Square Wave](features/squarewave.md) pressure shaping in S, ST, T, and PAC |
 | `PATCH_ASV_TASK_WRAPPER=1` | Add [runtime control](features/asv_backup_rate.md) for stock ASV/ASVAuto backup rate |
 | `PATCH_VAUTO_WRAPPER=1` | Add [Custom VAuto](features/custom_vauto.md) pressure shaping and trigger/cycle assist |
@@ -108,17 +107,8 @@ environment variables.
 | `PATCH_ST_IBR=1` | Add [adaptive backup timing in ST](features/general.md#st-ibr) through custom settings |
 | `PATCH_AUTOEPAP=1` | Add [iVAPS AutoEPAP](features/general.md#ivaps-autoepap); requires font repacking and expanded heap |
 
-With custom settings, `Monitoring` in clinical Options enables or disables the
-flow and pressure graph. Without custom settings, the graph remains enabled.
-
-Optionally enable `--patch-graph-keep-screen-on Y` (or
-`PATCH_GRAPH_KEEP_SCREEN_ON=1`) to keep the screen awake during therapy while
-Monitoring is On. This option requires the graph patch, includes the
-[dial shortcut](features/general.md#keep-backlight), and is off by default.
-
 Example with custom VAuto:
 ```
-export PATCH_GRAPH=1
 export PATCH_ASV_TASK_WRAPPER=1
 export PATCH_VAUTO_WRAPPER=1
 ./patch-airsense stm32.bin build/stm32-custom.bin
@@ -136,13 +126,13 @@ export PATCH_VAUTO_WRAPPER=1
 
 ## Selecting patches
 
-Use `y` to enable a patch or `n` to disable it. For example, to disable the
-graph even when `PATCH_GRAPH=1` selects it:
+Use `y` to enable a patch or `n` to disable it. For example, to disable
+Square Wave even when `PATCH_S=1` selects it:
 
 ```bash
-PATCH_GRAPH=1 python3 python/patch-airsense.py \
+PATCH_S=1 python3 python/patch-airsense.py \
     stm32.bin build/stm32-custom.bin PATCH \
-    --patch-fw-graph n
+    --patch-fw-squarewave n
 ```
 
 When building through Make, options can also be passed with `AIR10_PATCH_ARGS`.

@@ -110,6 +110,14 @@ Without this patch, the stock 85% target remains unchanged.
 The percentage is a target, not a measurement of humidity at the mask.
 Higher targets increase condensation risk; 100% targets saturation.
 
+## Therapy Screen
+
+Choose a round pressure indicator (**Simple**) or a pressure bar (**Bar**) under
+**Therapy scr.** in clinical **Options**. **Auto** selects the style according
+to the therapy mode.
+
+The **+Graph** variants add live flow and pressure traces. Bar is the default.
+
 ## Header Clock
 
 Enable **Clock** in clinical **Options** to replace the Home and active

@@ -1,4 +1,4 @@
-/* Keep-awake requests and button feedback, independent of the graph payload. */
+/* Keep-awake requests from features and front-panel button feedback. */
 typedef unsigned char u8;
 typedef void (*method_t)(void);
 typedef int (*request_t)(void);

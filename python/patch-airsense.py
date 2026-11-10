@@ -147,7 +147,6 @@ class ASFirmwarePatches(CompiledPayloadMixin):
     CUSTOM_MENU_MODE_BITS = 0x00000fff
     CUSTOM_MENU_MODE_KEEP_VISIBILITY = 0x80000000
     CUSTOM_MENU_PAGE_CONTAINER_BASE = 0x80
-    STR_ID_MONITORING = 0x0008
     CUSTOM_MENU_SECTIONS = {
         'therapy': 0,
         'comfort': 1,
@@ -1165,6 +1164,10 @@ class ASFirmwarePatches(CompiledPayloadMixin):
                 b'\xe0\x6b\x21\x78\x50\xf8\x21\x00\x01\x68' + activate_load + b'\x08\x47',
                 'current-page activation')
             self.asf.write_u8(page_limit_site, total_page_count)
+            if 'therapy_screen' in self.applied_payloads:
+                therapy_elf = self._require_versioned_artifact('therapy_screen', 'elf')
+                indirect = self._elf_symbol_addr(therapy_elf, 'therapy_screen_indirect_pages')
+                self.asf.write_u8(indirect - self.asf.FLASH_BASE, 1)
             self._custom_detail(
                 "custom pages: %d, page range %d..%d" %
                 (self.custom_menu_page_count, stock_page_count,
@@ -1395,22 +1398,23 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         handler = self.mop_callback_register_handler(handler, 'autoepap_visibility')
         self._custom_detail(self._mop_handler_detail('autoepap_visibility', handler))
 
-    def custom_patch_settings_graph(self):
-        """Expose the graph/stock-gauge switch in clinical Options."""
-        graph_var = self.custom_claim_g8_var('RXH', 'graph_enable')
-        graph_dep = self.asf.find_var_table_index(4, 'RGT')
-
-        self.redefine_g8_var(
-            graph_var, 0x0007, 0, graph_dep, self.STR_ID_MONITORING, 0,
-            2, 0, 0x00000003, self.asf.str_id_off_on_base, 0)
-
-        graph_vid = self.asf.resolve_var_id(graph_var)
-        self.custom_menu_add('options', graph_var, self.CUSTOM_MENU_MODE_BITS)
-
-        enable_addr = self._write_payload_u16('graph', 'graph_enable_var_id', graph_vid)
-
-        self._custom_detail("graph toggle: %s var_id=0x%04X label_str=0x%04X at 0x%08X" %
-                            (graph_var, graph_vid, self.STR_ID_MONITORING, enable_addr))
+    def custom_patch_settings_therapy_screen(self):
+        """Select the therapy-screen style and graph through RXH."""
+        var = self.custom_claim_g8_var('RXH', 'therapy_screen')
+        dep = self.asf.find_var_table_index(4, 'RGT')
+        label = self.redefine_fw_string(-1, {0: 'Therapy scr.'}, 'therapy_screen_label')
+        options = ('Auto', 'Simple', 'Bar', 'Auto+Graph', 'Simple+Graph', 'Bar+Graph')
+        base = self.asf.add_fw_strings(len(options))
+        for i, text in enumerate(options):
+            self.custom_new_string_ids[base + i] = 'therapy_screen_option_%d' % i
+            self.redefine_fw_string(base + i, {0: text}, 'therapy_screen_option_%d' % i)
+        self.redefine_g8_var(var, 0x0007, 0, dep, label, options.index('Bar'),
+                             len(options), 0, 0x3f, base, 0)
+        self.custom_menu_add('options', var, self.CUSTOM_MENU_MODE_BITS)
+        vid = self.asf.resolve_var_id(var)
+        addr = self._write_payload_u16('therapy_screen', 'therapy_screen_var_id', vid)
+        self._custom_detail('Therapy screen: %s var_id=0x%04X label_str=0x%04X at 0x%08X' %
+                            (var, vid, label, addr))
 
     def custom_patch_settings_asv_task_wrapper(self):
         """Expose the stock ASV/ASVAuto backup-rate runtime switch."""
@@ -1534,7 +1538,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             ('ivaps', self.custom_patch_settings_ivaps),
             ('wrapper_limit_max_pdiff', self.custom_patch_settings_vauto),
             ('asv_task_wrapper', self.custom_patch_settings_asv_task_wrapper),
-            ('graph', self.custom_patch_settings_graph),
+            ('therapy_screen', self.custom_patch_settings_therapy_screen),
             ('squarewave', self.custom_patch_settings_squarewave),
             ('fall_time', self.custom_patch_settings_fall_time),
             ('st_ibr', self.custom_patch_settings_st_ibr),
@@ -1934,14 +1938,122 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         return PatchOutcome.ok("Languages: " + ", ".join(languages))
 
     def patch_therapy_screen(self):
-        # Default in VAuto is \x0e, all enabled is \x0f
-        # 1000 - ti min, ti max, ti, I:E, spont cyc (doesn't fit graph)
-        # 0100 - leak MV, RR, tv (default in this script)
-        # 0010 - pressure bar
-        # 0001 - fancy round display
+        # Native TSS page bits:
+        # 0x01: round pressure display (Simple).
+        # 0x02: pressure bar (Bar).
+        # 0x04: leak, MV, RR, Vt and oximetry/ventilation values.
+        # 0x08: Ti Min/Max, Ti, I:E and spontaneous trigger/cycle percentages.
+        # 0x0f enables all four stock pages; 0x0e selects Bar and both data pages.
+        # On SX567 the selector constructs the main page independently of TSS;
+        # the native data-page constructors still require 0x04 and 0x08.
         mask = 0x0e
         self.asf.write_u8(self.asf.find_var('TSS') + self.asf.G6_DEFAULT, mask)
-        return PatchOutcome.ok("TSS mask set to 0x%02X" % mask)
+        if not self._supports_compiled_payloads():
+            return PatchOutcome.ok("TSS mask set to 0x%02X" % mask)
+        ver = self._payload_version_key()
+        SITES = {
+            '0302': {
+                'boot': (0x62542, 0x0806687a),
+                'finish': (0x627ae, 0x62a58),
+                'page_stores': (0x62584, 0x627f4),
+                'simple_page_id': 0x62576,
+                'page_allocations': (0x6254e, 0x627be),
+                'update': 0x79666,
+                'page_vtable': 0xf5008,
+            },
+            '0305': {
+                'boot': (0x62c62, 0x08066f9e),
+                'finish': (0x62ece, 0x63178),
+                'page_stores': (0x62ca4, 0x62f14),
+                'simple_page_id': 0x62c96,
+                'page_allocations': (0x62c6e, 0x62ede),
+                'update': 0x79dde,
+                'page_vtable': 0xf571c,
+            },
+            '0306': {
+                'boot': (0x62c62, 0x08066f9e),
+                'finish': (0x62ece, 0x63178),
+                'page_stores': (0x62ca4, 0x62f14),
+                'simple_page_id': 0x62c96,
+                'page_allocations': (0x62c6e, 0x62ede),
+                'update': 0x79dda,
+                'page_vtable': 0xf5720,
+            },
+            '0401': {
+                'boot': (0x62c62, 0x08066f9e),
+                'finish': (0x62ece, 0x63178),
+                'page_stores': (0x62ca4, 0x62f14),
+                'simple_page_id': 0x62c96,
+                'page_allocations': (0x62c6e, 0x62ede),
+                'update': 0x79dda,
+                'page_vtable': 0xf5980,
+            },
+            '0402': {
+                'boot': (0x62c62, 0x08066f9e),
+                'finish': (0x62ece, 0x63178),
+                'page_stores': (0x62ca4, 0x62f14),
+                'simple_page_id': 0x62c96,
+                'page_allocations': (0x62c6e, 0x62ede),
+                'update': 0x79dda,
+                'page_vtable': 0xf5bf8,
+            },
+        }
+        sites = SITES[ver]
+        data, _, elf = self._load_versioned_payload('therapy_screen')
+        sym = lambda name: self._elf_symbol_addr(elf, name)
+        finish = sym('therapy_screen_construct_finish')
+        boot_site, read_tss = sites['boot']
+        # Check native calls through the versioned symbols before replacing them.
+        replacements = []
+        branch = bytearray(self._encode_thumb_bl(boot_site, sym('therapy_screen_boot')))
+        branch[3] &= ~0x40
+        expected_read = b'\x0c\x20' + self._encode_thumb_bl(
+            boot_site + 2, read_tss)
+        replacements.append((boot_site, expected_read, bytes(branch) + b'\x00\xbf'))
+        for at in sites['finish']:
+            branch = bytearray(self._encode_thumb_bl(at, finish))
+            branch[3] &= ~0x40
+            replacements.append((at, self._encode_thumb_bl(at, sym('scrollbar_add_item')),
+                                 bytes(branch)))
+        simple_store, bar_store = sites['page_stores']
+        # The constructor adapter does not set r5 to the menu manager.
+        # Boot/update register the returned page, so remove the native stores.
+        for at, old, new in (
+                # str r4, [r5, #0x5c] -> nop (native page 8 slot).
+                (simple_store, b'\xec\x65', b'\x00\xbf'),
+                # str r4, [r5, #0x60] -> nop (native page 9 slot).
+                (bar_store, b'\x2c\x66', b'\x00\xbf'),
+                # movs r1, #8 -> #9: Simple shares Bar's page ID, keeping
+                # the main page and data pages numbered 9, 10, 11.
+                (sites['simple_page_id'], b'\x08\x21', b'\x09\x21')):
+            replacements.append((at, old, new))
+        # movs r0, #52 -> #60: both page allocations need the extra parent
+        # and choice fields in struct page (therapy_screen.c).
+        for at in sites['page_allocations']:
+            replacements.append((at, b'\x34\x20', b'\x3c\x20'))
+        update = sites['update']
+        replacements.append((update,
+                             self._encode_thumb_bl(update, sym('gui_menu_system_update_selected_page')),
+                             self._encode_thumb_bl(update, sym('therapy_screen_update_hook'))))
+        replacements.append((sites['page_vtable'] + 0x34,
+                             struct.pack('<I', sym('gui_scrollable_layout_items') | 1),
+                             struct.pack('<I', sym('therapy_screen_layout') | 1)))
+        graph_hooks, graph_originals, graph_details = self._therapy_screen_graph_hooks(elf)
+        replacements.extend(graph_hooks)
+        for at, old, new in replacements:
+            if self.asf.read_bytes(at, len(old)) not in (old, new):
+                raise ValueError('therapy screen: unexpected bytes at 0x%X' % at)
+        flash, _ = self._inject_payload('therapy_screen', data)
+        for at, old, new in replacements:
+            self._replace_bytes_checked(at, old, new, 'therapy screen', accept_existing=True)
+        for slot, original in graph_originals:
+            self.asf.write_u32(slot - self.asf.FLASH_BASE, original)
+        self.applied_payloads.add('therapy_screen')
+        self._write_payload_u16('therapy_screen', 'therapy_screen_simple_modes',
+                                self.mop_bitmask('CPAP', 'AutoSet', 'APAP', 'AFH'))
+        return PatchOutcome.ok('Selectable therapy screen',
+                               self._payload_detail('therapy_screen', len(data), flash),
+                               *graph_details)
 
     def unlock_respiratory_event_reporting(self):
         """Enable snore signals, airway classification, event history, and statistics."""
@@ -2160,92 +2272,60 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             self.asf.write_u8(self.asf.find_var(name) + self.asf.G8_DEFAULT, value)
         return PatchOutcome.ok("Updated defaults for %d vars" % len(defaults))
 
-    def patch_graph(self):
-        """Add special graph module"""
+    def _therapy_screen_graph_hooks(self, elf_path):
+        """Prepare the graph hooks and original-method slots for therapy_screen."""
         ver = self._payload_version_key()
         SITES = {
             '0302': ((0xf92dc, 0x08067601), (0xf92d8, 0x080675d3),
                      (0xf396c, 0x080672f5), (0xfaa04, 0x0806771d),
-                     (0x62864, 0x62b0e, 0x62d2e)),
+                     (0x62864, 0x62b0e, 0x62d2e), 0x6269a,
+                     (0xf3834, 0x080643f5), (0xf3864, 0x0806431d)),
             '0305': ((0xf9a24, 0x08067d25), (0xf9a20, 0x08067cf7),
                      (0xf4080, 0x08067a19), (0xfb14c, 0x08067e41),
-                     (0x62f84, 0x6322e, 0x6344e)),
+                     (0x62f84, 0x6322e, 0x6344e), 0x62dba,
+                     (0xf3f48, 0x08064b19), (0xf3f78, 0x08064a41)),
             '0306': ((0xf9a28, 0x08067d2d), (0xf9a24, 0x08067cff),
                      (0xf4084, 0x08067a21), (0xfb150, 0x08067e49),
-                     (0x62f84, 0x6322e, 0x6344e)),
+                     (0x62f84, 0x6322e, 0x6344e), 0x62dba,
+                     (0xf3f4c, 0x08064b19), (0xf3f7c, 0x08064a41)),
             '0401': ((0xf9c88, 0x08067d2d), (0xf9c84, 0x08067cff),
                      (0xf42e4, 0x08067a21), (0xfb3b0, 0x08067e49),
-                     (0x62f84, 0x6322e, 0x6344e)),
+                     (0x62f84, 0x6322e, 0x6344e), 0x62dba,
+                     (0xf41ac, 0x08064b19), (0xf41dc, 0x08064a41)),
             '0402': ((0xf9f00, 0x08067d2d), (0xf9efc, 0x08067cff),
                      (0xf455c, 0x08067a21), (0xfb628, 0x08067e49),
-                     (0x62f84, 0x6322e, 0x6344e)),
+                     (0x62f84, 0x6322e, 0x6344e), 0x62dba,
+                     (0xf4424, 0x08064b19), (0xf4454, 0x08064a41)),
         }
-        sites = SITES.get(ver)
-        if not self._supports_compiled_payloads() or sites is None:
-            return PatchOutcome.skip("unsupported CDX version %s" % self.asf.cdx_ver)
-        data, _, elf_path = self._load_versioned_payload('graph')
-        draw_site, update_site, header_site, numbers_site, allocation_calls = sites
-        allocate = self._elf_symbol_addr(elf_path, 'graph_widget_alloc')
+        (draw_site, update_site, header_site, numbers_site, allocation_calls,
+         simple_alloc_site, simple_draw_site, simple_update_site) = SITES[ver]
         stock_malloc = self._elf_symbol_addr(elf_path, 'malloc') & ~1
-        allocation_hooks = []
-        for site in allocation_calls:
+        replacements, originals, details = [], [], []
+        allocations = [(site, 'graph_widget_alloc') for site in allocation_calls]
+        allocations.append((simple_alloc_site, 'graph_simple_alloc'))
+        for site, name in allocations:
+            allocate = self._elf_symbol_addr(elf_path, name)
             expected = self._encode_thumb_bl(site, stock_malloc)
             replacement = self._encode_thumb_bl(site, allocate)
-            if self.asf.read_bytes(site, 4) not in (expected, replacement):
-                raise ValueError('patch_graph: unexpected widget allocation call at 0x%X' % site)
-            allocation_hooks.append((site, expected, replacement))
-        draw_fptr = draw_site[0]
-        update_fptr = update_site[0]
-        start = self._elf_symbol_addr(elf_path, 'start')
-        update = self._elf_symbol_addr(elf_path, 'graph_widget_update')
-        header_wrapper = self._elf_symbol_addr(elf_path, 'graph_header_update')
-        numbers_wrapper = self._elf_symbol_addr(elf_path, 'graph_numbers_update')
-        draw_slot = self._elf_symbol_addr(elf_path, 'graph_draw_original')
-        update_slot = self._elf_symbol_addr(elf_path, 'graph_update_original')
-        header_slot = self._elf_symbol_addr(elf_path, 'graph_header_update_original')
-        numbers_slot = self._elf_symbol_addr(elf_path, 'graph_numbers_update_original')
-
-        originals = []
-        for name, (site, expected), wrapper, slot in (
-                ('graph draw', draw_site, start, draw_slot),
-                ('graph update', update_site, update, update_slot),
-                ('header', header_site, header_wrapper, header_slot),
-                ('pressure', numbers_site, numbers_wrapper, numbers_slot)):
-            original = self.asf.read_u32(site)
-            if original == (wrapper | 1):
-                original = self.asf.read_u32(slot - self.asf.FLASH_BASE)
-            if original != expected:
-                raise ValueError(
-                    "patch_graph: unexpected %s update pointer 0x%08X" %
-                    (name, original))
-            originals.append(original)
-
-        flash, _ = self._inject_payload('graph', data)
-        allocation_details = []
-        for site, expected, replacement in allocation_hooks:
-            self._replace_bytes_checked(site, expected, replacement,
-                                        'patch_graph: widget allocation', accept_existing=True)
-            allocation_details.append(self._hook_detail(
+            replacements.append((site, expected, replacement))
+            details.append(self._hook_detail(
                 'graph widget allocation', self.asf.FLASH_BASE + site, allocate))
-        self.asf.write_u32(draw_slot - self.asf.FLASH_BASE, originals[0])
-        self.asf.write_u32(update_slot - self.asf.FLASH_BASE, originals[1])
-        self.asf.write_u32(header_slot - self.asf.FLASH_BASE, originals[2])
-        self.asf.write_u32(numbers_slot - self.asf.FLASH_BASE, originals[3])
-        self.asf.write_u32(draw_fptr, start | 1)
-        self.asf.write_u32(update_fptr, update | 1)
-        self.asf.write_u32(header_site[0], header_wrapper | 1)
-        self.asf.write_u32(numbers_site[0], numbers_wrapper | 1)
-        self.applied_payloads.add('graph')
-        return PatchOutcome.ok(
-            None,
-            self._payload_detail('graph', len(data), flash),
-            self._hook_detail('graph draw pointer', self.asf.FLASH_BASE + draw_fptr, start | 1),
-            self._hook_detail('graph update pointer', self.asf.FLASH_BASE + update_fptr, update | 1),
-            self._hook_detail('graph header pointer', self.asf.FLASH_BASE + header_site[0],
-                              header_wrapper | 1),
-            self._hook_detail('graph pressure pointer', self.asf.FLASH_BASE + numbers_site[0],
-                              numbers_wrapper | 1),
-            *allocation_details)
+        methods = [
+            (draw_site, 'graph_widget_draw', 'graph_draw_original'),
+            (update_site, 'graph_widget_update', 'graph_update_original'),
+            (header_site, 'graph_header_update', 'graph_header_update_original'),
+            (numbers_site, 'graph_numbers_update', 'graph_numbers_update_original'),
+            (simple_draw_site, 'graph_simple_draw', 'graph_simple_draw_original'),
+            (simple_update_site, 'graph_simple_update', 'graph_simple_update_original'),
+        ]
+        for (site, original), wrapper_name, slot_name in methods:
+            wrapper = self._elf_symbol_addr(elf_path, wrapper_name)
+            slot = self._elf_symbol_addr(elf_path, slot_name)
+            replacements.append((site, struct.pack('<I', original),
+                                 struct.pack('<I', wrapper | 1)))
+            originals.append((slot, original))
+            details.append(self._hook_detail(wrapper_name, self.asf.FLASH_BASE + site, wrapper | 1))
+        return replacements, originals, details
 
     def patch_squarewave(self):
         """Add squarewave pressure mode"""
@@ -2640,10 +2720,10 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         return PatchOutcome.ok(None, *details)
 
     def patch_graph_keep_screen_on(self):
-        """Request keep-awake during therapy while Monitoring is enabled."""
-        if 'graph' not in self.applied_payloads:
-            return PatchOutcome.skip("graph payload not installed")
-        self.keep_backlight_request_add('graph', 'graph_keep_backlight_requested')
+        """Request keep-awake during therapy for the +Graph screen choices."""
+        if 'therapy_screen' not in self.applied_payloads:
+            return PatchOutcome.skip("therapy-screen payload not installed")
+        self.keep_backlight_request_add('therapy_screen', 'graph_keep_backlight_requested')
         return PatchOutcome.ok()
 
     def patch_font_repack(self):
@@ -3392,7 +3472,7 @@ PATCH_PHASES = (
                   True, 'patch_language_fonts'),
         PatchSpec('patch-font-ua', 'Add Ukrainian glyphs to the standard GUI font.',
                   False, 'patch_font_ua'),
-        PatchSpec('patch-therapy-screen', 'Enable additional therapy-screen information.',
+        PatchSpec('patch-therapy-screen', 'Select the therapy-screen style and graph.',
                   True, 'patch_therapy_screen'),
         PatchSpec('patch-defaults', 'Change firmware defaults.',
                   True, 'patch_defaults'),
@@ -3414,10 +3494,8 @@ PATCH_PHASES = (
     )),
 
     ('Therapy modifications', (
-        PatchSpec('patch-fw-graph', 'Add the therapy pressure graph.',
-                  False, 'patch_graph'),
         PatchSpec('patch-graph-keep-screen-on',
-                  'Keep the screen awake during therapy while Monitoring is enabled.',
+                  'Keep the screen awake during therapy while the graph is enabled.',
                   False, 'patch_graph_keep_screen_on'),
         PatchSpec('patch-fw-squarewave', 'Add squarewave pressure shaping.',
                   False, 'patch_squarewave'),
@@ -3463,7 +3541,7 @@ PATCH_PHASES = (
 PATCH_DEPENDENCIES = {
     'patch-autoepap': ('patch-font-repack', 'patch-expand-heap'),
     'patch-ivaps-settings': ('patch-custom-settings',),
-    'patch-graph-keep-screen-on': ('patch-fw-graph',),
+    'patch-graph-keep-screen-on': ('patch-therapy-screen',),
 }
 
 

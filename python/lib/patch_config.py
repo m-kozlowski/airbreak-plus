@@ -12,7 +12,6 @@ import sys
 LOCAL_FILES = {"air10": "patch-airsense.config", "air11": "patch-airsense-s11.config",
                "s9": "patch-airsense-s9.config"}
 AIR10_LEGACY_OPTIONS = {
-    "PATCH_GRAPH": ("--patch-fw-graph", "y"),
     "PATCH_VAUTO_WRAPPER": ("--patch-fw-vauto-wrapper", "y"),
     "PATCH_S": ("--patch-fw-squarewave", "y"),
     "PATCH_ASV_TASK_WRAPPER": ("--patch-fw-asv-wrapper", "y"),

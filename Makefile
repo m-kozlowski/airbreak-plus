@@ -9,7 +9,7 @@ AIR10_PATCH_ARGS ?=
 AIR10_FIRMWARE ?= stm32.bin
 export AIR10_PATCH_ARGS
 
-AIR10_LEGACY_ENV := PATCH_GRAPH PATCH_VAUTO_WRAPPER PATCH_S PATCH_ASV_TASK_WRAPPER \
+AIR10_LEGACY_ENV := PATCH_VAUTO_WRAPPER PATCH_S PATCH_ASV_TASK_WRAPPER \
 	PATCH_FALL_TIME PATCH_ST_IBR PATCH_AUTOEPAP PATCH_S10_LCD PATCH_GRAPH_KEEP_SCREEN_ON PATCH_TARGET_RH FORCE_DEPRECATED
 $(foreach name,$(AIR10_LEGACY_ENV),$(if $(filter undefined,$(origin $(name))),,$(eval export $(name))))
 
@@ -34,9 +34,9 @@ endif
 PAYLOAD_LAYOUT_VERSIONS := 0204 0205 0302 0305 0306 0401 0402
 PAYLOADS_0204 := target_rh mop_callback_dispatcher variable_callback_dispatcher button_hooks keep_backlight custom_menu_hooks uart_stream_schema backlight_adapt header_clock s10_lcd_ili9325 asv_task_wrapper fall_time
 PAYLOADS_0205 := $(PAYLOADS_0204)
-PAYLOADS_0302 := mop_callback_dispatcher variable_callback_dispatcher button_hooks keep_backlight vid_spoof graph squarewave asv_task_wrapper \
+PAYLOADS_0302 := mop_callback_dispatcher variable_callback_dispatcher button_hooks keep_backlight vid_spoof squarewave asv_task_wrapper \
 	breath_tracking backlight_adapt wrapper_limit_max_pdiff s10_lcd_ili9325 custom_menu_hooks \
-	uart_stream_schema language_fonts target_rh header_clock fall_time st_ibr autoepap
+	uart_stream_schema language_fonts target_rh header_clock fall_time st_ibr autoepap therapy_screen
 PAYLOADS_0305 := $(PAYLOADS_0302)
 PAYLOADS_0306 := $(PAYLOADS_0302)
 PAYLOADS_0401 := $(PAYLOADS_0302)
@@ -102,10 +102,10 @@ $(BUILD)/stm32-patched.bin: $(S10_PATCHER_DEPS) $(PAYLOAD_STAMPS) $(PAYLOAD_LAYO
 	$(announce_image)
 	./patch-airsense '$(AIR10_FIRMWARE)' $@ $(PATCHER_OUTPUT_ARGS)
 
-# Graph and optional therapy payloads, with their custom settings
+# Optional therapy payloads, with their custom settings
 $(BUILD)/stm32-plus.bin: $(S10_PATCHER_DEPS) $(PAYLOAD_STAMPS) $(PAYLOAD_LAYOUT_TSVS) $(BLX_DUMP_BIN)
 	$(announce_image)
-	PATCH_GRAPH=1 PATCH_ASV_TASK_WRAPPER=1 PATCH_VAUTO_WRAPPER=1 PATCH_S=1 PATCH_FALL_TIME=1 PATCH_ST_IBR=1 PATCH_AUTOEPAP=1 ./patch-airsense '$(AIR10_FIRMWARE)' $@ $(PATCHER_OUTPUT_ARGS)
+	PATCH_ASV_TASK_WRAPPER=1 PATCH_VAUTO_WRAPPER=1 PATCH_S=1 PATCH_FALL_TIME=1 PATCH_ST_IBR=1 PATCH_AUTOEPAP=1 ./patch-airsense '$(AIR10_FIRMWARE)' $@ $(PATCHER_OUTPUT_ARGS)
 
 binaries: $(PAYLOAD_TARGETS)
 
@@ -140,7 +140,7 @@ $(foreach p,$(PAYLOAD_NAMES),$(eval $(call PAYLOAD_STAMP_template,$(p))))
 
 # Per-version S10 code patches
 # Each version has its own stubs.S with platform-specific addresses.
-# Binaries are built per-version: breath_tracking_0401.bin, graph_0402.bin, etc.
+# Binaries are built per-version: breath_tracking_0401.bin, therapy_screen_0402.bin, etc.
 
 PROBE_LINK_ADDR := 0x08000000
 layout_addr = awk -v name=$(1) '$$$$1 == name { print $$$$2; found=1; exit } END { if (!found) exit 1 }' $(BUILD)/payload_layout_$(2).tsv
@@ -187,6 +187,7 @@ S10_PAYLOAD_ENTRY_breath_tracking := 0
 S10_PAYLOAD_ENTRY_custom_menu_hooks := custom_menu_hook_append
 S10_PAYLOAD_ENTRY_s10_lcd_ili9325 := lcd_board_init
 S10_PAYLOAD_OBJECTS_custom_menu_hooks := custom_menu_hooks_entry custom_menu_hooks
+S10_PAYLOAD_OBJECTS_therapy_screen := therapy_screen therapy_screen_abi graph graph_abi
 S10_PAYLOAD_STUBS_mop_callback_dispatcher :=
 S10_PAYLOAD_IMPORTS_squarewave := breath_tracking
 S10_PAYLOAD_IMPORTS_wrapper_limit_max_pdiff := breath_tracking

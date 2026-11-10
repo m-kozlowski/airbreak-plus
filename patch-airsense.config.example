@@ -26,9 +26,6 @@
 # --patch-blx-dump y
 
 # Optional payloads: built-in defaults shown below.
-# Therapy graph (PATCH_GRAPH=1).
-# --patch-fw-graph n
-
 # Custom VAuto (PATCH_VAUTO_WRAPPER=1).
 # --patch-fw-vauto-wrapper n
 
@@ -38,7 +35,7 @@
 # ASV backup-rate runtime control (PATCH_ASV_TASK_WRAPPER=1).
 # --patch-fw-asv-wrapper n
 
-# Keep the screen awake during graph monitoring; requires the graph above.
+# Keep the screen awake for +Graph choices; requires --patch-therapy-screen.
 # --patch-graph-keep-screen-on n
 
 # Replacement ILI9325/ILI9328 LCD (PATCH_S10_LCD=1).
