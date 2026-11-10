@@ -429,7 +429,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
 
     def finalize_fw_strings(self):
         """Write queued firmware strings into the language tables."""
-        layout = self.asf.finalize_fw_strings()
+        layout = self.asf.finalize_fw_strings(share=True)
         if layout is None:
             return PatchOutcome.skip("no firmware string changes")
         details = ["Tables: %d bytes of %d available in the language arena" %
