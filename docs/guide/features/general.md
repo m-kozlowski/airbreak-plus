@@ -99,7 +99,7 @@ This patch lets users adjust humidification above or below the stock
 Lower targets reduce the requested moisture; higher targets increase it.
 Manual humidity levels remain available and work alongside this setting.
 
-With custom settings, **Target RH (%)** appears in clinical **Accessories**:
+With custom settings, **Target RH (%)** appears in clinical **Comfort**:
 70-100%, in steps of 1 percentage point. The setting is saved across restarts
 and is also available over UART as `RCH`. The default is 85%, unless a different
 value is selected when building the image.
@@ -112,7 +112,7 @@ Higher targets increase condensation risk; 100% targets saturation.
 
 ## Header Clock
 
-Enable **Clock** in clinical **Configuration** to replace the Home and active
+Enable **Clock** in clinical **Options** to replace the Home and active
 therapy-screen titles with the device time in 24-hour `HH:MM` format.
 
 ## Keep Backlight

@@ -1218,12 +1218,13 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         sens_vid = self.asf.resolve_var_id(sens_var)
         eps_vid = self.asf.resolve_var_id(eps_var)
         shape_vid = self.asf.resolve_var_id(shape_var)
-        self.custom_menu_add('therapy', vauto_var, self.mop_bitmask('VAuto'))
-        self.custom_menu_add('therapy', max_var, self.mop_bitmask('VAuto'))
-        self.custom_menu_add('therapy', sens_var, self.mop_bitmask('VAuto'))
-        self.custom_menu_add('therapy', eps_var, self.mop_bitmask('VAuto'))
-        self.custom_menu_add('therapy', shape_var, self.mop_bitmask('VAuto'))
-        self.custom_menu_add('therapy', tc_var, self.mop_bitmask('S', 'ST', 'VAuto', 'PAC'))
+        previous = stock('SPT')
+        for var in (vauto_var, max_var, sens_var, eps_var, shape_var):
+            previous = self.custom_menu_add(
+                'therapy', var, self.mop_bitmask('VAuto'), after=previous)
+        self.custom_menu_add(
+            'therapy', tc_var, self.mop_bitmask('S', 'ST', 'VAuto', 'PAC'),
+            before=stock('VTS'))
         for var in (max_var, sens_var, eps_var, shape_var, tc_var):
             self.custom_menu_add_condition(var, vauto_var, self.mop_bitmask('VAuto'))
         self.custom_menu_add_condition(tc_var, 'EBE', self.mop_bitmask('S'), nonzero=False)
@@ -1289,7 +1290,8 @@ class ASFirmwarePatches(CompiledPayloadMixin):
                 'therapy', var, ivaps_mask,
                 self.CUSTOM_MENU_FLAG_SHOW_UNITS, after=previous)
         self.custom_menu_add(
-            'configuration', 'IHU', self.CUSTOM_MENU_MODE_BITS)
+            'configuration', 'IHU', self.CUSTOM_MENU_MODE_BITS,
+            after=stock('TMU'))
 
         self._custom_detail(
             "iVAPS height: PHT/PHI active, PHI added with firmware-managed visibility")
@@ -1306,7 +1308,9 @@ class ASFirmwarePatches(CompiledPayloadMixin):
                              2, 0, 0x00000003, self.asf.str_id_off_on_base, 0)
 
         square_vid = self.asf.resolve_var_id(square_var)
-        self.custom_menu_add('therapy', square_var, self.mop_bitmask('S', 'ST', 'T', 'PAC'))
+        self.custom_menu_add(
+            'therapy', square_var, self.mop_bitmask('S', 'ST', 'T', 'PAC'),
+            before=stock('RST'))
         self.custom_menu_add_condition(square_var, 'EBE', self.mop_bitmask('S'), nonzero=False)
 
         enable_addr = self._write_payload_u16('squarewave', 'squarewave_enable_var_id', square_vid)
@@ -1325,7 +1329,9 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self.redefine_g4_var(time_var, 0x0007, 0, dep, time_label,
                              100, 900, 100, 0, 1, 50, units)
         modes = self.mop_bitmask('S', 'ST', 'T', 'PAC', 'iVAPS')
-        self.custom_menu_add('therapy', time_var, modes, self.CUSTOM_MENU_FLAG_SHOW_UNITS)
+        self.custom_menu_add(
+            'therapy', time_var, modes, self.CUSTOM_MENU_FLAG_SHOW_UNITS,
+            after=stock('RST'))
         self.custom_menu_add_condition(time_var, 'EBE', self.mop_bitmask('S'), nonzero=False)
 
         vid = self.asf.resolve_var_id(time_var)
@@ -1339,7 +1345,8 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         dep = self.asf.find_var_table_index(4, 'RGT')
         self.redefine_g8_var(var, 0x0007, 0, dep, label, 0,
                              2, 0, 0x00000003, self.asf.str_id_off_on_base, 0)
-        self.custom_menu_add('therapy', var, self.mop_bitmask('ST'))
+        self.custom_menu_add('therapy', var, self.mop_bitmask('ST'),
+                             before=stock('RRT'))
 
         vid = self.asf.resolve_var_id(var)
         addr = self._write_payload_u16('st_ibr', 'st_ibr_enable_var_id', vid)
@@ -1417,7 +1424,9 @@ class ASFirmwarePatches(CompiledPayloadMixin):
                              2, 0, 0x00000003, self.asf.str_id_off_on_base, 0)
 
         backup_vid = self.asf.resolve_var_id(backup_var)
-        self.custom_menu_add('therapy', backup_var, self.mop_bitmask('ASV', 'ASVAuto'))
+        self.custom_menu_add(
+            'therapy', backup_var, self.mop_bitmask('ASV', 'ASVAuto'),
+            after=stock('BRE'))
 
         backup_addr = self._write_payload_u16(
             'asv_task_wrapper', 'asv_task_wrapper_backup_rate_var_id',
@@ -1432,7 +1441,9 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         dep = self.asf.find_var_table_index(4, 'RGT')
         self.redefine_g8_var(var, 0x0007, 0, dep, label, 0,
                              2, 0, 0x00000003, self.asf.str_id_off_on_base, 0)
-        self.custom_menu_add('configuration', var, self.CUSTOM_MENU_MODE_BITS)
+        monitoring_vid = self.asf.resolve_var_id('RXH')
+        after = custom('RXH') if monitoring_vid in self.custom_menu_registered else None
+        self.custom_menu_add('options', var, self.CUSTOM_MENU_MODE_BITS, after=after)
         vid = self.asf.resolve_var_id(var)
         addr = self._write_payload_u16('header_clock', 'header_clock_var_id', vid)
         self._custom_detail('Clock: %s var_id=0x%04X at 0x%08X' % (var, vid, addr))
@@ -1474,7 +1485,9 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             self.custom_storage_add(var)
 
         all_modes = self.mop_bitmask(*self.MOP_INDEX)
-        self.custom_menu_add_page('lcd', 'configuration', lcd_label)
+        units_anchor = 'IHU' if self.asf.cdx_ver in ('SX584-0204', 'SX584-0205') else 'TMU'
+        self.custom_menu_add_page('lcd', 'configuration', lcd_label,
+                                  after=stock(units_anchor))
         self.custom_menu_add('lcd', low_var, all_modes)
         self.custom_menu_add('lcd', high_var, all_modes)
         self.custom_menu_add('lcd', 'ASF', all_modes)
@@ -1507,7 +1520,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self.redefine_g4_var(var, 0x0007, 0, dep, label,
                              int(self.target_rh_percent), 100, 70, 0, 1, 1,
                              self.asf.str_id_empty)
-        self.custom_menu_add('accessories', var, self.CUSTOM_MENU_MODE_BITS)
+        self.custom_menu_add('comfort', var, self.CUSTOM_MENU_MODE_BITS)
         vid = self.asf.resolve_var_id(var)
         addr = self._write_payload_u16('target_rh', 'target_rh_var_id', vid)
         self._custom_detail('Target RH: %s var_id=0x%04X at 0x%08X' % (var, vid, addr))
