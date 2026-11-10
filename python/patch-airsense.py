@@ -1454,8 +1454,11 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         high_var = self.custom_claim_g4_var('RCF', 'backlight_ambient_high')
         low_label = self.redefine_fw_string(-1, {0: 'Ambient Low'}, 'backlight_ambient_low_label')
         high_label = self.redefine_fw_string(-1, {0: 'Ambient High'}, 'backlight_ambient_high_label')
+        ambient_label = self.redefine_fw_string(-1, {0: 'Ambient Light'}, 'backlight_ambient_label')
         lcd_label = self.redefine_fw_string(-1, {0: 'LCD'}, 'backlight_lcd_label')
         buttons_label = self.redefine_fw_string(-1, {0: 'Buttons'}, 'backlight_buttons_label')
+
+        self.asf.write_u16(self.asf.find_var('ASF') + self.asf.G4_NAME_STR, ambient_label)
 
         # ATH remains in NGL; retain its stock linkage so edits keep dirtying
         # and saving the same storage group through the existing chain.
