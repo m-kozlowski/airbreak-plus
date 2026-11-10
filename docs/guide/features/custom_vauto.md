@@ -41,6 +41,7 @@ pre-trigger assist, and Custom T/C are disabled.
 | ASV Max | `RCM` | 0.0 to 10.0 cmH2O, step 0.2 | 3.0 cmH2O | Therapy | VAuto | Limits adaptive boost above the custom base pressure shape; zero disables adaptive boost | `2 * VAuto PS` |
 | ASV Sens | `RXM` | Very Low, Low, Med, High, Very High | Med | Therapy | VAuto | Scales the adaptive controller response | Med |
 | EPS | `RDH` | 0.0 to 3.0 cmH2O, step 0.2 | 0.0 cmH2O | Therapy | VAuto | Maximum exhale relief below EPAP; zero disables relief | 1.0 cmH2O |
+| Exh. Shape | `RDW` | 0 to 7, step 1 | 0 | Therapy | VAuto | Higher values retain more support during the expiratory descent | 0 |
 | Custom T/C | `RPH` | Off, On | Off | Therapy | S, ST, VAuto, PAC | Uses custom multi-signal trigger and flow-shape cycle decisions | On where supported by the runtime path |
 
 Firmware variable assignments and persistence are listed in the
@@ -84,7 +85,7 @@ stock final pressure limiter.
 Let:
 
 - `PS` be the configured VAuto pressure support
-- `x` be the stock VAuto pressure phase from 0 to 1
+- `x` be the normalized stock pressure-support command; `1` represents the configured PS
 - `e` be the current expiratory offset, at or below zero
 
 The non-adaptive custom support shape is:
@@ -138,7 +139,7 @@ The adaptive factor blends or scales this curve. ASV Max then places a relative
 limit on the resulting support:
 
 ```text
-support(x) = min(adaptive_shape(x), base(x) + ASV Max)
+support(x) = clamp(adaptive_shape(x), base(x), base(x) + ASV Max)
 ```
 
 ASV Max is not an absolute pressure setting. ASV Sens changes the strength of
@@ -155,22 +156,32 @@ The adaptive response is stabilized by:
 
 ### Expiration and pre-trigger assist
 
-The largest support reached during inspiration is retained as the start of the
-expiratory downslope. EPS sets the maximum exhale relief below EPAP; zero
-disables relief. After an inspiration lasting at least 0.7 seconds, adaptive
-boost reduces the initial relief:
+The expiratory downslope uses the largest support reached during inspiration.
+EPS sets the maximum exhale relief below EPAP; zero disables relief. After an
+inspiration lasting at least 0.7 seconds, adaptive boost reduces the initial
+relief. The equations below assume unchanged settings:
 
 ```text
 relief = max(0, EPS - 0.25 * max(0, peak_support - PS))
 ```
 
 The relief fades with remaining integrated breath volume and with current and
-recent expiratory timing. The expiratory phase is curved as follows:
+recent expiratory timing. Exh. Shape controls the descent between peak support
+and the expiratory offset. Higher levels hold more support during this descent:
 
 ```text
-x_exp = 0.25x + 0.75x^2
-support_exp = lerp(exhale_offset, peak_support, x_exp)
+s = -0.75 + 0.25 * Exh. Shape
+xc = clamp(x, 0, 1)
+x_exp = xc + s * xc * (1 - xc)
+support_exp = min(lerp(exhale_offset, peak_support, x_exp), end_support)
 ```
+
+The resulting expiratory support is capped at `end_support`, the support at
+the end of inspiration.
+
+Level 0 gives the original custom curve `0.25*xc + 0.75*xc^2`;
+level 3 follows the stock curve between the custom pressure endpoints; level 7
+gives `2*xc - xc^2`.
 
 During expiration, the wrapper also projects flow approximately 80 ms ahead.
 When the projected flow crosses the trigger threshold and current flow is

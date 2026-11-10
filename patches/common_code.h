@@ -101,7 +101,7 @@ static const   int *pap_timer = &ivars[0];
   _a > __max ? __max : (_a < __min ? __min : _a); \
 })
 
-#define clamp01(a) ({ clamp(a, 0.0f, 1.0f) })
+#define clamp01(a) ({ clamp(a, 0.0f, 1.0f); })
 
 #define absf(a) __builtin_fabsf(a)
 

@@ -78,3 +78,9 @@ wrapper_limit_max_pdiff_asv_sens_var_id:
 wrapper_limit_max_pdiff_eps_var_id:
 	.short 0xffff
 	.short 0xffff
+
+.global wrapper_limit_max_pdiff_exhale_shape_var_id
+.type wrapper_limit_max_pdiff_exhale_shape_var_id, %object
+wrapper_limit_max_pdiff_exhale_shape_var_id:
+	.short 0xffff
+	.short 0xffff

@@ -7,12 +7,18 @@
 const float INSTANT_PS = 0.45f;
 
 typedef struct {
+  float last_ips; // Last inspiratory support
+  float insp_ps; // PS on the last inspiratory tick
+  float peak_ps; // PS when final_ips was set
   float eps; // EPS (cmH2O) - used to prevent instant jumps in pressure in case of autotriggering
   float ips_fa; // Flow-Assist IPS (cmH2O) - currently used to augment pretrigger effort
   float final_ips; // Peak inspiratory support, used for the expiratory downslope
 } features_t;
 
 STATIC void init_features(features_t *feat) {
+  feat->last_ips = 0.0f;
+  feat->insp_ps = 0.0f;
+  feat->peak_ps = 0.0f;
   feat->eps = 0.0f;
   feat->ips_fa = 0.0f;
   feat->final_ips = 0.0f;
@@ -26,6 +32,7 @@ extern const unsigned short wrapper_limit_max_pdiff_triggercycle_var_id;
 extern const unsigned short wrapper_limit_max_pdiff_asv_max_var_id;
 extern const unsigned short wrapper_limit_max_pdiff_asv_sens_var_id;
 extern const unsigned short wrapper_limit_max_pdiff_eps_var_id;
+extern const unsigned short wrapper_limit_max_pdiff_exhale_shape_var_id;
 
 STATIC bool custom_g8_toggle(unsigned short var_id, bool fallback) {
   return (var_id == 0xFFFFu) ? fallback : (variable_get_by_id((int)var_id) != 0);
@@ -60,7 +67,7 @@ typedef struct {
   features_t features;
   int mode;
   vauto_state_t vauto_state;
-  float asv_max, asv_sens, eps;
+  float asv_max, asv_sens, eps, exhale_shape;
   bool custom_enabled, custom_tc;
   volatile bool settings_dirty;
   bool reset;
@@ -86,6 +93,7 @@ STATIC void load_breath_settings(breath_controller_t *s) {
   s->asv_max = custom_var_raw(wrapper_limit_max_pdiff_asv_max_var_id, 0) / 50.0f;
   s->asv_sens = custom_asv_sens_multiplier();
   s->eps = custom_var_raw(wrapper_limit_max_pdiff_eps_var_id, 50) / 50.0f;
+  s->exhale_shape = -0.75f + 0.25f * custom_var_raw(wrapper_limit_max_pdiff_exhale_shape_var_id, 0);
 }
 
 STATIC void init_breath_controller(breath_controller_t *s) {
@@ -237,25 +245,33 @@ void MAIN start() {
   float current_eps = s->eps;
 
   const float ps = *cmd_ps + vauto_ps/2.0f;
-  const float ps1 = (ps/vauto_ps); // 0.0 to 1.0
+  const float ps1 = (ps/vauto_ps);
 
   if (tr->st_inhaling) {
-    if (tr->st_just_started) { feat->final_ips = 0.0f; }
+    if (tr->st_just_started) {
+      feat->final_ips = 0.0f;
+      feat->peak_ps = vauto_ps;
+    }
     float base_ps = remap(ps1, 0.0f, 1.0f, feat->eps, vauto_ps-INSTANT_PS) + INSTANT_PS;
     new_ps = base_ps;
     if (asv_max > 0.0f) {
       float new_ps1 = reshape_vauto_ps(ps1, asv->asv_factor);
       float boosted_ps = remap(new_ps1, 0.0f, 1.0f, feat->eps, vauto_ps - INSTANT_PS) + INSTANT_PS*asv->asv_factor;
-      new_ps = min(boosted_ps, base_ps + asv_max);
+      new_ps = clamp(boosted_ps, base_ps, base_ps + asv_max);
     }
 
     feat->ips_fa = 0.0f;
     feat->eps = min(feat->eps + 0.01f * current_eps, 0.0f);
 
-    feat->final_ips = max(feat->final_ips, new_ps);
+    if (new_ps > feat->final_ips) {
+      feat->final_ips = new_ps;
+      feat->peak_ps = vauto_ps;
+    }
+    feat->last_ips = new_ps;
+    feat->insp_ps = vauto_ps;
   } else { // Exhaling
     if (tr->current.ti >= 0.7f) {
-      current_eps = max(0.0f, current_eps - max(0.0f, feat->final_ips - vauto_ps) * 0.25f);
+      current_eps = max(0.0f, current_eps - max(0.0f, feat->final_ips - feat->peak_ps) * 0.25f);
       if (tr->st_just_started) { feat->eps = -current_eps; }
       else {
         float fraction = tr->current.volume_max > 0.0f
@@ -267,8 +283,13 @@ void MAIN start() {
         feat->eps = max(feat->eps, -current_eps * eps1);
       }
     }
-    float new_ps1 = ps1*ps1 * 0.75f + 0.25f * ps1;
+    // Keep the completed inspiration's scale across positive PS edits.
+    const float exp_scale = feat->insp_ps > 0.0f ? feat->insp_ps : vauto_ps;
+    float xc = clamp01(ps / exp_scale);
+    float new_ps1 = xc + s->exhale_shape * xc * (1.0f - xc);
     new_ps = remap(new_ps1, 0.0f, 1.0f, feat->eps, feat->final_ips);
+    // min() would hide NaN/Inf from the final output check.
+    if (__builtin_isfinite(new_ps)) { new_ps = min(new_ps, feat->last_ips); }
 
     if (tr->st_pre_trigger > 0) { feat->ips_fa = min(tr->st_pre_trigger, 2) * 0.2f; };
     if (*flow_compensated <= 0.0f) { feat->ips_fa = 0.0f; }
