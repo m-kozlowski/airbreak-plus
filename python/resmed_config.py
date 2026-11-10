@@ -106,6 +106,8 @@ VAR_DESC = {
     'HTX': 'Tube Temp Enable',
     'IBR': 'iVAPS Target Rate',
     'IHU': 'Height Units',
+    'IMN': 'iVAPS Min EPAP',
+    'IMX': 'iVAPS Max EPAP',
     'IPC': 'CPAP Set Pressure',
     'IPP': 'Bilevel IPAP',
     'ITN': 'Ti Min',
@@ -113,8 +115,12 @@ VAR_DESC = {
     'ITX': 'Ti Max',
     'IVS': 'iVAPS Start EPAP',
     'LAN': 'Language',
+    'LBH': 'Button Backlight High',
+    'LBL': 'Button Backlight Low',
     'LCA': 'LCD Text Active',
     'LCT': 'LCD Text',
+    'LLH': 'LCD Backlight High',
+    'LLL': 'LCD Backlight Low',
     'LMA': 'Low MV Alarm',
     'LNC': 'Language Config Bitmask',
     'MCP': 'ASV Upper Pressure Limit',
@@ -171,6 +177,9 @@ VAR_DESC = {
     'WMV': 'iVAPS Target Va',
     'WPA': 'iVAPS Max PS',
     'WPM': 'iVAPS Min PS',
+    'ZMV': 'iVAPS Minute Ventilation [L/min]',
+    'ZTV': 'iVAPS Tidal Volume [mL]',
+    'ZVK': 'iVAPS Tidal Volume per kg IBW [mL/kg]',
 
     'BID': 'Bootloader ID',
     'CID': 'Config Software ID',
@@ -379,10 +388,9 @@ VAR_DESC = {
     'ZSE': 'Saved System Error',
 }
 
-# Variable scaling metadata from ResScan protocol definition (M36)
+# Variable scaling metadata from ResScan and firmware descriptors.
 # Format: (scale_divisor, decimal_places, unit_string)
 # Raw value ÷ scale_divisor = display value.  decimal_places for formatting.
-# Only includes variables with non-trivial scaling.
 VAR_SCALE = {
     # Pressures: raw value / 50
     'IPC': (50, 1, 'cmH2O'), 'STP': (50, 1, 'cmH2O'), 'MPA': (50, 1, 'cmH2O'),
@@ -394,6 +402,7 @@ VAR_SCALE = {
     'MXI': (50, 1, 'cmH2O'), 'MNE': (50, 1, 'cmH2O'), 'SPT': (50, 1, 'cmH2O'),
     'EAS': (50, 1, 'cmH2O'), 'STE': (50, 1, 'cmH2O'), 'STV': (50, 1, 'cmH2O'),
     'IVS': (50, 1, 'cmH2O'), 'MCP': (50, 1, 'cmH2O'),
+    'IMN': (50, 1, 'cmH2O'), 'IMX': (50, 1, 'cmH2O'),
     'MKP': (50, 1, 'cmH2O'), 'MKF': (50, 1, 'cmH2O'), 'MKI': (50, 1, 'cmH2O'),
     'MKE': (50, 1, 'cmH2O'), 'MAP': (50, 1, 'cmH2O'), 'SPP': (50, 1, 'cmH2O'),
     'TEP': (50, 1, 'cmH2O'), 'TIP': (50, 1, 'cmH2O'), 'ATP': (50, 1, 'cmH2O'),
@@ -427,6 +436,7 @@ VAR_SCALE = {
     # Resp rate: raw / 5
     'RR1': (5, 1, 'bpm'), 'RR9': (5, 1, 'bpm'), 'RRA': (5, 1, 'bpm'),
     'RRM': (5, 1, 'bpm'), 'RRR': (5, 0, 'bpm'),
+    'RRT': (5, 1, 'bpm'), 'IBR': (5, 1, 'bpm'),
     # Tidal volume: raw / 50
     'ATI': (50, 2, 'L'), 'TDD': (50, 2, 'L'), 'TID': (50, 2, 'L'),
     'TV9': (50, 2, 'L'), 'TVA': (50, 2, 'L'), 'TVM': (50, 2, 'L'),
@@ -443,11 +453,17 @@ VAR_SCALE = {
     # Insp/exp timing (bilevel): raw / 50 = seconds
     'INT': (50, 1, 's'), 'EXT': (50, 1, 's'), 'IN5': (50, 1, 's'), 'EX5': (50, 1, 's'),
     'ISM': (50, 1, 's'), 'IS9': (50, 1, 's'), 'ISA': (50, 1, 's'), 'MIS': (50, 1, 's'),
+    'ITT': (50, 1, 's'), 'ITN': (50, 1, 's'), 'ITX': (50, 1, 's'),
+    # Rise time, ramp time, and height use whole units.
+    'RST': (1, 0, 'ms'), 'RMT': (1, 0, 'min'),
+    'PHT': (1, 0, 'cm'), 'PHI': (1, 0, 'in'),
     # Spont cycle ratio: raw / 2 = %
     'VCR': (2, 1, '%'),
     # Target ventilation (ASV): raw / 8 = L/min
     'TGT': (8, 1, 'L/min'), 'MTT': (8, 1, 'L/min'),
     'VA9': (8, 1, 'L/min'), 'VAA': (8, 1, 'L/min'), 'VAM': (8, 1, 'L/min'),
+    # Target alveolar ventilation (iVAPS): raw / 10 = L/min
+    'WMV': (10, 1, 'L/min'),
 }
 
 # Live layouts from the ResScan MetaData_M*_V*.txt G C &TAG records. The
