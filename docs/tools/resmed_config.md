@@ -232,7 +232,8 @@ custom-settings
 
 Show the custom variables exposed by Airbreak-patched firmware, including
 localized labels, categories, mode masks, current values, display metadata,
-and stock variable capabilities.
+and stock variable capabilities. Registry versions `01` and `02` are
+supported; version `02` also shows the page and heading path.
 
 This command requires the UART metadata patch and a live serial or transparent
 TCP connection. See the [serial protocol](../serial_protocol.md#custom-settings-registry)

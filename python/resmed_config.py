@@ -1148,25 +1148,23 @@ def _parse_custom_variable_common(parts):
     }
 
 
-def _parse_sized_units(value):
+def _parse_sized_text(value, field):
     if len(value) < 3 or value[2] != ':':
-        raise ValueError("invalid units field")
-    length = _parse_fixed_hex(value[:2], 2, 'units length')
+        raise ValueError(f"invalid {field} field")
+    length = _parse_fixed_hex(value[:2], 2, f'{field} length')
     text = value[3:]
     if len(text) < length:
-        raise ValueError("truncated units field")
-    units = text[:length]
+        raise ValueError(f"truncated {field} field")
     remainder = text[length:]
     if remainder:
         if remainder[0] != ' ':
-            raise ValueError("invalid units/label separator")
+            raise ValueError(f"invalid separator after {field}")
         remainder = remainder[1:]
-    return units, remainder
+    return text[:length].encode('latin-1').decode('utf-8', errors='replace'), remainder
 
 
-def parse_custom_settings_entry(value):
+def parse_custom_settings_entry(value, version=1):
     """Parse one indexed G C &CSG registry record."""
-    value = value.rstrip()
     if value.startswith('V4 '):
         parts = value.split(' ', 7)
         if len(parts) != 8:
@@ -1177,18 +1175,25 @@ def parse_custom_settings_entry(value):
             'step': _parse_signed_hex(parts[5], 4, 'step'),
             'decimals': _parse_fixed_hex(parts[6], 2, 'decimal places'),
         })
-        entry['units'], entry['label'] = _parse_sized_units(parts[7])
-        return entry
-
-    if value.startswith('V8 '):
+        entry['units'], tail = _parse_sized_text(parts[7], 'units')
+    elif value.startswith('V8 '):
         parts = value.split(' ', 4)
         if len(parts) < 4:
             raise ValueError("invalid V8 field count")
         entry = _parse_custom_variable_common(parts)
-        entry['label'] = parts[4] if len(parts) == 5 else ''
-        return entry
+        tail = parts[4] if len(parts) == 5 else ''
+    else:
+        raise ValueError("unknown custom-settings record type")
 
-    raise ValueError("unknown custom-settings record type")
+    groups = []
+    if version == 2:
+        count, _, tail = tail.partition(' ')
+        for _ in range(_parse_fixed_hex(count, 2, 'group count')):
+            group, tail = _parse_sized_text(tail, 'group')
+            groups.append(group)
+    entry['groups'] = groups
+    entry['label'] = tail.encode('latin-1').decode('utf-8', errors='replace').rstrip()
+    return entry
 
 
 def _get_gc_value(ser, command):
@@ -1196,9 +1201,10 @@ def _get_gc_value(ser, command):
     for response in responses:
         if response['type'] != 'R':
             continue
+        # Keep one character per wire byte until length-prefixed fields are split.
         payload = response['payload'].decode('latin-1')
         if '=' in payload:
-            return payload.split('=', 1)[1].strip()
+            return payload.split('=', 1)[1].lstrip(' ')
     return None
 
 
@@ -1208,7 +1214,7 @@ def get_custom_settings_registry(ser):
     if value is None:
         return None
     version, count = parse_custom_settings_header(value)
-    if version != 1:
+    if version not in (1, 2):
         raise RuntimeError(f"unsupported custom settings protocol version {version}")
     entries = []
     for index in range(count):
@@ -1216,7 +1222,7 @@ def get_custom_settings_registry(ser):
         if value is None:
             raise RuntimeError(f"custom settings record {index:02X}: no response")
         try:
-            entry = parse_custom_settings_entry(value)
+            entry = parse_custom_settings_entry(value, version)
             entries.append(entry)
         except ValueError as exc:
             raise RuntimeError(
@@ -1912,12 +1918,13 @@ def cmd_custom_settings(ser):
         category = entry['category']
         category_name = CUSTOM_MENU_CONTAINERS.get(
             category, f'category 0x{category:02X}')
+        location = ' > '.join([category_name, *entry['groups']])
 
         frame_type, current = get_var(ser, entry['name'])
         current_text = current if frame_type == 'R' else '?'
         caps_type, caps = get_var_caps(ser, entry['name'])
         caps_text = caps if caps_type == 'R' else '?'
-        common = (f"  [{index:02X}] {kind} {category_name}: {entry['name']} "
+        common = (f"  [{index:02X}] {kind} {location}: {entry['name']} "
                   f"= {current_text}  {entry['label']}  "
                   f"modes=0x{entry['mop_mask']:08X} caps={caps_text}")
         if kind == 'V8':
