@@ -10,6 +10,7 @@
 # --patch-gui-config y
 # --patch-ivaps-settings y
 # --patch-asv-ps-range y
+# --patch-adjustable-mcp n
 # --patch-integrity-check y
 # --patch-bypass-psuid y
 # --patch-unlock-languages y

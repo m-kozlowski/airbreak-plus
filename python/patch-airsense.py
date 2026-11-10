@@ -1439,6 +1439,13 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self._custom_detail("ASV backup rate: %s var_id=0x%04X label_str=0x%04X at 0x%08X" %
                             (backup_var, backup_vid, backup_label, backup_addr))
 
+    def custom_patch_settings_adjustable_mcp(self):
+        """Add MCP to the CSG persistence group."""
+        rec = self.asf.find_var('MCP')
+        tracker = self.asf.find_var_table_index(4, 'RGT')
+        self.asf.write_u16(rec + self.asf.G4_NEXT_DEP, tracker)
+        self.custom_storage_add('MCP')
+
     def custom_patch_settings_header_clock(self):
         var = self.custom_claim_g8_var('RXF', 'header_clock')
         label = self.redefine_fw_string(-1, {0: 'Clock'}, 'header_clock_label')
@@ -1536,6 +1543,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         """Return active custom-settings feature functions."""
         feature_patches = (
             ('ivaps', self.custom_patch_settings_ivaps),
+            ('adjustable_mcp', self.custom_patch_settings_adjustable_mcp),
             ('wrapper_limit_max_pdiff', self.custom_patch_settings_vauto),
             ('asv_task_wrapper', self.custom_patch_settings_asv_task_wrapper),
             ('therapy_screen', self.custom_patch_settings_therapy_screen),
@@ -2179,6 +2187,24 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         return PatchOutcome.warn(
             "descriptor ranges updated, but CDX constraints are unknown for %s" %
             self.asf.cdx_ver)
+
+    def patch_adjustable_mcp(self):
+        """Enable runtime adjustment of MCP."""
+        if self.asf.find_var_table_number('MCP') != 4:
+            raise ValueError('MCP is not a numeric variable')
+        rec = self.asf.find_var('MCP')
+        scale = self.asf.read_u16(rec + self.asf.G4_SCALE)
+        default = self.asf.read_u32(rec + self.asf.G4_DEFAULT)
+        maximum = self.asf.read_u32(rec + self.asf.G4_MAX)
+        minimum = 10 * scale
+        if not scale or not minimum <= default <= maximum:
+            raise ValueError('MCP factory default is outside the requested range')
+
+        flags = self.asf.read_u16(rec + self.asf.G4_FLAGS)
+        self.asf.write_u16(rec + self.asf.G4_FLAGS, flags | 1)
+        self.asf.write_u32(rec + self.asf.G4_MIN, minimum)
+        self.enabled_custom_settings_features.add('adjustable_mcp')
+        return PatchOutcome.ok('MCP range: 10.0-%.1f cmH2O' % (maximum / scale))
 
     def ivaps_unlock_ps_range(self):
         """Remove the additional Max PS minimum used with iVAPS AutoEPAP."""
@@ -3457,6 +3483,8 @@ PATCH_PHASES = (
                   True, 'enable_ivaps_settings'),
         PatchSpec('patch-asv-ps-range', 'Unlock ASV/ASVAuto pressure constraints.',
                   True, 'asv_unlock_ps_range'),
+        PatchSpec('patch-adjustable-mcp', 'Make the ASV pressure limit adjustable.',
+                  False, 'patch_adjustable_mcp'),
         PatchSpec('patch-ivaps-ps-range', 'Unlock iVAPS AutoEPAP pressure support constraints.',
                   True, 'ivaps_unlock_ps_range'),
     )),
