@@ -5,46 +5,17 @@
 
 .extern custom_menu_hook_common
 
-/* The patcher replaces one stock append call at the tail of each clinical-menu
- * section with a branch to one of these thunks. The original call ABI already
- * has r0=list and r1=item; the thunk only adds r2=section id before tail-calling
- * the shared C implementation.
+/* All selected stock append calls use this adapter. Keep r0=list, r1=item and
+ * pass the original return PC in r2 to identify the callsite. The tail branch
+ * preserves LR and stack alignment for the C implementation's normal prologue.
  */
 
-.global custom_menu_hook_therapy
-.type custom_menu_hook_therapy, %function
+.global custom_menu_hook_append
+.type custom_menu_hook_append, %function
 .thumb_func
-custom_menu_hook_therapy:
-	movs r2, #0
-	b.n custom_menu_hook_common
-
-.global custom_menu_hook_comfort
-.type custom_menu_hook_comfort, %function
-.thumb_func
-custom_menu_hook_comfort:
-	movs r2, #1
-	b.n custom_menu_hook_common
-
-.global custom_menu_hook_accessories
-.type custom_menu_hook_accessories, %function
-.thumb_func
-custom_menu_hook_accessories:
-	movs r2, #2
-	b.n custom_menu_hook_common
-
-.global custom_menu_hook_options
-.type custom_menu_hook_options, %function
-.thumb_func
-custom_menu_hook_options:
-	movs r2, #3
-	b.n custom_menu_hook_common
-
-.global custom_menu_hook_configuration
-.type custom_menu_hook_configuration, %function
-.thumb_func
-custom_menu_hook_configuration:
-	movs r2, #4
-	b.n custom_menu_hook_common
+custom_menu_hook_append:
+	mov r2, lr
+	b.w custom_menu_hook_common
 
 #if defined(CDX_VER_0204) || defined(CDX_VER_0205)
 /* Lumis callers keep the menu in r4 and load the returned slot at +0x3c.
@@ -74,6 +45,12 @@ custom_settings_group_index:
 .global custom_menu_registry_addr
 .type custom_menu_registry_addr, %object
 custom_menu_registry_addr:
+	.word 0xffffffff
+
+/* Optional callsite dispatch table; menu registry remains the UART format. */
+.global custom_menu_dispatch_addr
+.type custom_menu_dispatch_addr, %object
+custom_menu_dispatch_addr:
 	.word 0xffffffff
 
 /* Optional sentinel-terminated visibility conditions, separate from the menu

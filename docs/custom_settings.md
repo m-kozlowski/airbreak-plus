@@ -12,6 +12,7 @@ SX567-0402, and Lumis SX584-0204/0205.
 
 Settings are assigned when their corresponding patch or payload is active.
 `Storage` names the globals[16] persistence group used by the patched image.
+`PHT` is a stock variable with a native menu row; the iVAPS patch activates it.
 
 | Feature | Setting | UART | Table | Storage |
 |---------|---------|------|-------|---------|
@@ -55,8 +56,8 @@ requests custom settings:
 3. reclaim selected Reminder variables and string IDs
 4. let each active feature activate or redefine its variables
 5. extend the CSG member list with any additional persistent firmware variables
-6. emit the custom menu registry into reclaimed CDX space
-7. inject the clinical menu hooks
+6. resolve menu placement and emit the custom menu registry into reclaimed CDX space
+7. emit the dispatch table and inject the required clinical menu hooks
 8. register mode visibility with the MOP callback dispatcher
 
 If no active feature requests settings, the framework is skipped and the stock
@@ -163,11 +164,46 @@ available.
 The text of a new ID is English for every compiled language without a supplied
 translation.
 
+## Menu placement
+
+`custom_menu_add`, `custom_menu_add_heading`, and `custom_menu_add_page` accept
+an optional `before` or `after` reference and return an item handle. Placement
+is relative to another entry in the same section or generated page:
+
+```python
+from lib.custom_menu import stock, custom
+
+self.custom_menu_add('therapy', 'PHI', height_mask, after=stock('PHT'))
+mv = self.custom_menu_add('therapy', 'ZMV', ivaps_mask, after=stock('WMV'))
+vt = self.custom_menu_add('therapy', 'ZTV', ivaps_mask, after=mv)
+self.custom_menu_add('therapy', 'ZVK', ivaps_mask, after=vt)
+```
+
+`stock('PHT')` refers to a native row by its UART variable name.
+`custom('ZMV')` refers to a registered custom variable, including one registered
+later. Returned handles also identify headings and page links. An omitted
+placement appends to the end of the section or generated page, in registration
+order. Generated pages retain their Back row first.
+
+Entries attached to the same side of an anchor retain registration order.
+An entry and the entries attached to it stay together: if A is before a stock
+row, B placed after A is still before that stock row. References cannot cross
+containers. Both placement arguments together, cycles, missing custom entries,
+and missing or ambiguous stock anchors stop patching.
+
+Stock anchors are the append sites in the five clinical sections listed per
+firmware version in [custom_menu_stock.py](../python/lib/custom_menu_stock.py).
+The patcher checks their UART bindings and original append instructions.
+Hidden rows can be used as anchors.
+A combined widget is one anchor: either of its unique variable names refers
+to the whole widget. For example, `HTX` occurs in two stock rows; use `HTS`
+or `HTF` to distinguish them.
+
 ## Menu registry
 
 Feature settings and generated pages use one shared registry. Containers 0
 through 4 represent the five stock clinical menu sections. Containers starting
-at `0x80` represent generated pages in declaration order.
+at `0x80` represent generated pages in page order after placement.
 
 The patcher emits sentinel-terminated 8-byte records:
 
@@ -193,11 +229,18 @@ typedef struct {
 
 An entry with container `0xFF` or item ID `0xFFFF` terminates the registry.
 Duplicate variable IDs are rejected before registry emission.
+The registry holds at most 64 entries, followed by the terminator.
 
-The payload hooks the final stock append operation in each clinical section.
-It first appends the displaced stock item, then appends matching variable,
-heading, and page-link records. The patcher increases the stock menu item
-capacity only for records added directly to stock sections.
+After feature registration, the patcher orders entries within each container.
+It emits containers in section and page order. The registry supplies GUI
+construction and UART group paths.
+
+A separate dispatch table maps the return address of each hooked append call
+to ranges of registry entries to insert before and after the stock item.
+Only used anchors are hooked. The shared payload inserts those entries and
+performs the stock append once.
+The dispatch table uses the shared CCX allocator. The patcher increases the
+stock list capacity by the number of entries added directly to stock sections.
 
 When the registry contains pages, the menu constructor preserves all stock page
 pointers in a larger table and appends the generated pages. Each generated page

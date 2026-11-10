@@ -64,6 +64,8 @@ S10_PATCHER_DEPS := \
 	python/patch-airsense.py \
 	python/edf_ccx_merge.py \
 	python/lib/as10_firmware.py \
+	python/lib/custom_menu.py \
+	python/lib/custom_menu_stock.py \
 	python/lib/compiled_payload.py
 
 # Payloads build in parallel; firmware patchers run serially for streaming output.
@@ -182,14 +184,12 @@ endef
 $(foreach v,$(PAYLOAD_LAYOUT_VERSIONS),$(eval $(call S10_VERSIONED_OBJECTS_template,$(v))))
 
 S10_PAYLOAD_ENTRY_breath_tracking := 0
-S10_PAYLOAD_ENTRY_custom_menu_hooks := custom_menu_hook_therapy
+S10_PAYLOAD_ENTRY_custom_menu_hooks := custom_menu_hook_append
 S10_PAYLOAD_ENTRY_s10_lcd_ili9325 := lcd_board_init
 S10_PAYLOAD_OBJECTS_custom_menu_hooks := custom_menu_hooks_entry custom_menu_hooks
 S10_PAYLOAD_STUBS_mop_callback_dispatcher :=
 S10_PAYLOAD_IMPORTS_squarewave := breath_tracking
 S10_PAYLOAD_IMPORTS_wrapper_limit_max_pdiff := breath_tracking
-# Keep the existing menu binary byte-identical; it does not require unsorted sections.
-S10_PAYLOAD_LDFLAGS_custom_menu_hooks :=
 
 s10_payload_objects = $(foreach o,$(S10_PAYLOAD_OBJECTS_$(1)),$(BUILD)/$(o)_$(2).o) $(foreach s,$(S10_PAYLOAD_STUBS_$(1)),$(BUILD)/$(s)_$(2)_stubs.o)
 s10_payload_imports = $(foreach p,$(S10_PAYLOAD_IMPORTS_$(1)),$(BUILD)/$(p)_$(2)$(3).elf)

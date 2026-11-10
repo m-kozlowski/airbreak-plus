@@ -9,6 +9,17 @@ typedef struct {
 	unsigned int mode_mask;
 } custom_menu_entry_t;
 
+/* Return PC (Thumb bit cleared) selects before/after ranges in the registry.
+ * An all-ones return_pc terminates this separate dispatch table.
+ */
+typedef struct {
+	unsigned int return_pc;
+	unsigned char before_first;
+	unsigned char before_count;
+	unsigned char after_first;
+	unsigned char after_count;
+} custom_menu_dispatch_t;
+
 /* All conditions applicable to an item and the current MOP must hold. */
 typedef struct {
 	unsigned short item_id;

@@ -25,6 +25,8 @@ import sys
 
 from lib.as10_firmware import ASFirmware
 from lib.compiled_payload import CompiledPayloadMixin
+from lib.custom_menu import MenuBuilder, stock, custom
+from lib.custom_menu_stock import StockMenu
 from lib.patch_config import parse_patch_args
 
 
@@ -267,6 +269,8 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self.custom_new_string_ids = {}
         self.custom_reclaimed_string_candidates = {}
         self.custom_menu_entries = []
+        self.custom_menu_builder = MenuBuilder()
+        self.custom_menu_plan = None
         self.custom_menu_registered = set()
         self.custom_menu_conditions = []
         self.custom_menu_conditions_addr = None
@@ -543,7 +547,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             return self.custom_menu_pages[key]
         raise ValueError("custom menu: unknown container %s" % name)
 
-    def custom_menu_add_page(self, name, parent_name, title_str_id):
+    def custom_menu_add_page(self, name, parent_name, title_str_id, *, before=None, after=None):
         """Declare a generated page and register its parent navigation row."""
         key = name.lower()
         if key in self.CUSTOM_MENU_SECTIONS or key in self.custom_menu_pages:
@@ -552,11 +556,14 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         ordinal = self.custom_menu_page_count
         if ordinal >= 0x7f:
             raise ValueError("custom_menu_add_page: page limit exceeded")
+        handle = self._custom_menu_register(
+            (parent, self.CUSTOM_MENU_FLAG_PAGE, int(title_str_id), 0xffffffff),
+            before=before, after=after)
         self.custom_menu_pages[key] = self.CUSTOM_MENU_PAGE_CONTAINER_BASE + ordinal
         self.custom_menu_page_count += 1
-        self.custom_menu_entries.append((parent, self.CUSTOM_MENU_FLAG_PAGE, int(title_str_id), 0xffffffff))
+        return handle
 
-    def custom_menu_add(self, container_name, var, mode_mask=None, flags=0):
+    def custom_menu_add(self, container_name, var, mode_mask=None, flags=0, *, before=None, after=None):
         """Register one variable in a clinical section or custom page."""
         container = self._custom_menu_container_id(container_name)
 
@@ -577,13 +584,41 @@ class ASFirmwarePatches(CompiledPayloadMixin):
                 (var, table_num))
         if vid in self.custom_menu_registered:
             raise ValueError("custom_menu_add: duplicate variable %s (var_id 0x%04X)" % (var, vid))
+        handle = self._custom_menu_register(
+            (container, flags, vid, int(mode_mask)), before=before, after=after)
         self.custom_menu_registered.add(vid)
-        self.custom_menu_entries.append((container, flags, vid, int(mode_mask)))
+        return handle
 
-    def custom_menu_add_heading(self, container_name, str_id):
+    def custom_menu_add_heading(self, container_name, str_id, *, before=None, after=None):
         """Register a localized heading in a clinical section or custom page."""
         container = self._custom_menu_container_id(container_name)
-        self.custom_menu_entries.append((container, self.CUSTOM_MENU_FLAG_HEADING, int(str_id), 0xffffffff))
+        return self._custom_menu_register(
+            (container, self.CUSTOM_MENU_FLAG_HEADING, int(str_id), 0xffffffff),
+            before=before, after=after)
+
+    def _custom_menu_register(self, entry, *, before=None, after=None):
+        if self.custom_menu_plan is not None:
+            raise ValueError('custom menu: cannot register entries after compilation')
+        handle = self.custom_menu_builder.add(entry, before=before, after=after)
+        self.custom_menu_entries.append(entry)
+        return handle
+
+    def custom_compile_menu(self):
+        """Resolve placement and page ordinals after all features have registered."""
+        if self.custom_menu_plan is not None:
+            raise ValueError('custom menu: registry is already compiled')
+        self.custom_menu_stock = StockMenu(self.asf)
+        plan = self.custom_menu_builder.compile(
+            self.custom_menu_stock.resolve, self.asf.resolve_var_id)
+        # Validate every used call before emitting data or installing any hooks.
+        for dispatch in plan.dispatch:
+            expected = self._encode_thumb_bl(dispatch.site, self.custom_menu_stock.append)
+            if bytes(self.asf.fw[dispatch.site:dispatch.site + 4]) != expected:
+                raise ValueError('custom menu: unexpected stock append at 0x%X' % dispatch.site)
+        self.custom_menu_entries = plan.entries
+        self.custom_menu_pages = {name: plan.page_containers[container]
+                                  for name, container in self.custom_menu_pages.items()}
+        self.custom_menu_plan = plan
 
     def custom_menu_add_condition(self, var, source, mode_mask=None, *, nonzero=True):
         """Require source to be zero/nonzero for var to appear in the selected modes."""
@@ -883,17 +918,8 @@ class ASFirmwarePatches(CompiledPayloadMixin):
 
     def custom_patch_menu_hooks(self):
         """Inject the generic clinical-menu hook payload and patch its ABI slots."""
-        stock_menu_expected = (
-            b'\x02\xf0\x3a\xfd', b'\x02\xf0\x0b\xfc',
-            b'\x02\xf0\xc5\xfb', b'\x02\xf0\x9c\xfb',
-            b'\x02\xf0\xdb\xfa')
         sites_by_version = {
             'SX584-0204': {
-                'therapy': 0x39026,
-                'comfort': 0x392d8,
-                'accessories': 0x394c2,
-                'options': 0x39538,
-                'configuration': 0x396e6,
                 'clinical_capacity_site': 0x38a9e,
                 'clinical_capacity': 91,
                 'gui_block_size_site': 0x5c9ee,
@@ -907,17 +933,8 @@ class ASFirmwarePatches(CompiledPayloadMixin):
                 'page_indexed_site': 0x47512,
                 'page_activate_site': 0x474cc,
                 'page_activate_method': 0x28,
-                'menu_expected': (
-                    b'\x03\xf0\x3d\xfb', b'\x03\xf0\xe4\xf9',
-                    b'\x03\xf0\xef\xf8', b'\x03\xf0\xb4\xf8',
-                    b'\x02\xf0\xdd\xff'),
             },
             'SX584-0205': {
-                'therapy': 0x39026,
-                'comfort': 0x392d8,
-                'accessories': 0x394c2,
-                'options': 0x39538,
-                'configuration': 0x396e6,
                 'clinical_capacity_site': 0x38a9e,
                 'clinical_capacity': 91,
                 'gui_block_size_site': 0x5cc52,
@@ -931,17 +948,8 @@ class ASFirmwarePatches(CompiledPayloadMixin):
                 'page_indexed_site': 0x47512,
                 'page_activate_site': 0x474cc,
                 'page_activate_method': 0x28,
-                'menu_expected': (
-                    b'\x03\xf0\x3d\xfb', b'\x03\xf0\xe4\xf9',
-                    b'\x03\xf0\xef\xf8', b'\x03\xf0\xb4\xf8',
-                    b'\x02\xf0\xdd\xff'),
             },
             'SX567-0302': {
-                'therapy': 0x61cf4,
-                'comfort': 0x61f52,
-                'accessories': 0x61fde,
-                'options': 0x62030,
-                'configuration': 0x621b2,
                 'clinical_capacity_site': 0x6189a,
                 'clinical_capacity': 70,
                 'gui_block_size_site': 0x7b59a,
@@ -954,17 +962,8 @@ class ASFirmwarePatches(CompiledPayloadMixin):
                 'page_zero_site': 0x6dc32,
                 'page_get_site': 0x6dc48,
                 'page_activate_site': 0x6dc52,
-                'menu_expected': (
-                    b'\x02\xf0\x38\xfd', b'\x02\xf0\x09\xfc',
-                    b'\x02\xf0\xc3\xfb', b'\x02\xf0\x9a\xfb',
-                    b'\x02\xf0\xd9\xfa'),
             },
             'SX567-0305': {
-                'therapy': 0x62414,
-                'comfort': 0x62672,
-                'accessories': 0x626fe,
-                'options': 0x62750,
-                'configuration': 0x628d2,
                 'clinical_capacity_site': 0x61fba,
                 'clinical_capacity': 70,
                 'gui_block_size_site': 0x7bd12,
@@ -977,14 +976,8 @@ class ASFirmwarePatches(CompiledPayloadMixin):
                 'page_zero_site': 0x6e362,
                 'page_get_site': 0x6e378,
                 'page_activate_site': 0x6e382,
-                'menu_expected': stock_menu_expected,
             },
             'SX567-0306': {
-                'therapy': 0x62414,
-                'comfort': 0x62672,
-                'accessories': 0x626fe,
-                'options': 0x62750,
-                'configuration': 0x628d2,
                 'clinical_capacity_site': 0x61fba,
                 'clinical_capacity': 70,
                 'gui_block_size_site': 0x7bd0e,
@@ -997,14 +990,8 @@ class ASFirmwarePatches(CompiledPayloadMixin):
                 'page_zero_site': 0x6e362,
                 'page_get_site': 0x6e378,
                 'page_activate_site': 0x6e382,
-                'menu_expected': stock_menu_expected,
             },
             'SX567-0401': {
-                'therapy': 0x62414,
-                'comfort': 0x62672,
-                'accessories': 0x626fe,
-                'options': 0x62750,
-                'configuration': 0x628d2,
                 'clinical_capacity_site': 0x61fba,
                 'clinical_capacity': 70,
                 'gui_block_size_site': 0x7bd0e,
@@ -1017,14 +1004,8 @@ class ASFirmwarePatches(CompiledPayloadMixin):
                 'page_zero_site': 0x6e362,
                 'page_get_site': 0x6e378,
                 'page_activate_site': 0x6e382,
-                'menu_expected': stock_menu_expected,
             },
             'SX567-0402': {
-                'therapy': 0x62414,
-                'comfort': 0x62672,
-                'accessories': 0x626fe,
-                'options': 0x62750,
-                'configuration': 0x628d2,
                 'clinical_capacity_site': 0x61fba,
                 'clinical_capacity': 70,
                 'gui_block_size_site': 0x7bd0e,
@@ -1037,7 +1018,6 @@ class ASFirmwarePatches(CompiledPayloadMixin):
                 'page_zero_site': 0x6e362,
                 'page_get_site': 0x6e378,
                 'page_activate_site': 0x6e382,
-                'menu_expected': stock_menu_expected,
             },
         }
         sites = sites_by_version.get(self.asf.cdx_ver)
@@ -1051,11 +1031,8 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self._custom_detail(self._payload_detail('custom_menu_hooks', len(data), flash))
         registry_flash = self.asf.FLASH_BASE + self.custom_settings_registry_addr
 
-        hook_therapy = self._elf_symbol_addr(elf_path, 'custom_menu_hook_therapy')
-        hook_comfort = self._elf_symbol_addr(elf_path, 'custom_menu_hook_comfort')
-        hook_accessories = self._elf_symbol_addr(elf_path, 'custom_menu_hook_accessories')
-        hook_options = self._elf_symbol_addr(elf_path, 'custom_menu_hook_options')
-        hook_configuration = self._elf_symbol_addr(elf_path, 'custom_menu_hook_configuration')
+        append_hook = self._elf_symbol_addr(elf_path, 'custom_menu_hook_append')
+        dispatch_slot = self._elf_symbol_addr(elf_path, 'custom_menu_dispatch_addr')
         registry_addr = self._elf_symbol_addr(elf_path, 'custom_menu_registry_addr')
         visibility_handler = self._elf_symbol_addr(elf_path, 'custom_menu_apply_mode_visibility')
         error_size_hook = self._elf_symbol_addr(elf_path, 'custom_settings_error_file_size')
@@ -1110,19 +1087,22 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self._replace_bytes_checked(sites['gui_block_size_site'], b'\x80\x20',
                                     b'\x38\x20', 'custom settings GUI handle allocation')
 
-        menu_expected = sites['menu_expected']
-
-        # Replace the final stock append in each clinical menu section. Each payload
-        # hook appends that displaced item first, then its registered custom entries.
-        menu_hooks = (
-            ('therapy', hook_therapy, 'therapy menu append'),
-            ('comfort', hook_comfort, 'comfort menu append'),
-            ('accessories', hook_accessories, 'accessories menu append'),
-            ('options', hook_options, 'options menu append'),
-            ('configuration', hook_configuration, 'configuration menu append'),
-        )
-        for index, (section, target, name) in enumerate(menu_hooks):
-            detail = self._patch_thumb_bl_checked(sites[section], menu_expected[index], target, name)
+        # Each callsite supplies its return address through the shared adapter.
+        # Keep the dispatch table out of the UART registry and its reclaimed space.
+        dispatch_data = b''.join(
+            struct.pack('<I4B', self.asf.FLASH_BASE + entry.site + 4,
+                        entry.before_first, entry.before_count,
+                        entry.after_first, entry.after_count)
+            for entry in self.custom_menu_plan.dispatch)
+        if dispatch_data:
+            dispatch_data += b'\xff' * 8
+            off = self.asf.find_ccx_ff_range_backwards(len(dispatch_data), alignment=4)
+            self.asf.patch(dispatch_data, off, checkempty=True)
+            self.asf.write_u32(dispatch_slot - self.asf.FLASH_BASE, self.asf.FLASH_BASE + off)
+        for entry in self.custom_menu_plan.dispatch:
+            expected = self._encode_thumb_bl(entry.site, self.custom_menu_stock.append)
+            detail = self._patch_thumb_bl_checked(
+                entry.site, expected, append_hook, 'custom menu append')
             self._custom_detail(detail)
 
         # Replace the size query reached after config validation fails. The payload
@@ -1302,11 +1282,12 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self.custom_menu_add(
             'therapy', 'PHI',
             ivaps_mask | self.CUSTOM_MENU_MODE_KEEP_VISIBILITY,
-            self.CUSTOM_MENU_FLAG_SHOW_UNITS)
+            self.CUSTOM_MENU_FLAG_SHOW_UNITS, after=stock('PHT'))
+        previous = stock('WMV')
         for var in ('ZMV', 'ZTV', 'ZVK'):
-            self.custom_menu_add(
+            previous = self.custom_menu_add(
                 'therapy', var, ivaps_mask,
-                self.CUSTOM_MENU_FLAG_SHOW_UNITS)
+                self.CUSTOM_MENU_FLAG_SHOW_UNITS, after=previous)
         self.custom_menu_add(
             'configuration', 'IHU', self.CUSTOM_MENU_MODE_BITS)
 
@@ -1377,7 +1358,8 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self.redefine_g8_var(enable, 0x0007, callback_id, dep, label, 0,
                              2, 0, 0x00000003, self.asf.str_id_off_on_base, 0)
         self.custom_storage_add(enable)
-        self.custom_menu_add('therapy', enable, self.mop_bitmask('iVAPS'))
+        self.custom_menu_add('therapy', enable, self.mop_bitmask('iVAPS'),
+                             before=stock('EPI'))
 
         # Use the existing localized Min/Max EPAP labels and pressure format.
         # RDF/RDM already belong to the reclaimed settings storage group.
@@ -1385,12 +1367,15 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         minimum = self.asf.read_u32(pressure + self.asf.G4_MIN)
         maximum = self.asf.read_u32(pressure + self.asf.G4_MAX)
         units = self.asf.read_u16(pressure + self.asf.G4_UNITS_STR)
+        previous = stock('EPI')
         for var, name_source, default in ((lower, 'EAI', 250), (upper, 'EAX', 750)):
             name = self.asf.read_u16(self.asf.find_var(name_source) + self.asf.G4_NAME_STR)
             self.redefine_g4_var(var, 0x0007, callback_id, dep, name,
                                  default, maximum, minimum, 1, 50, 10, units)
-            self.custom_menu_add('therapy', var,
-                                 self.mop_bitmask('iVAPS') | self.CUSTOM_MENU_MODE_KEEP_VISIBILITY)
+            previous = self.custom_menu_add(
+                'therapy', var,
+                self.mop_bitmask('iVAPS') | self.CUSTOM_MENU_MODE_KEEP_VISIBILITY,
+                after=previous)
 
         for var, symbol in ((enable, 'autoepap_enable_id'),
                             (lower, 'autoepap_lower_id'), (upper, 'autoepap_upper_id')):
@@ -1561,6 +1546,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         for feature in features:
             feature()
 
+        self.custom_compile_menu()
         self.custom_emit_storage_members()
         self.custom_emit_visibility_conditions()
         self.custom_emit_registry()
