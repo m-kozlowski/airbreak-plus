@@ -72,7 +72,13 @@ def requested_jobs(args):
 
 def run_tool(tool, device, *arguments, capture=False):
     command = [sys.executable, str(PYTHON_DIR / tool), '-d', device, *arguments]
-    return subprocess.run(command, check=True, text=True, stdout=subprocess.PIPE if capture else None).stdout
+    try:
+        return subprocess.run(command, check=True, text=True, stdout=subprocess.PIPE if capture else None,
+                              stderr=subprocess.PIPE if capture else None).stdout
+    except subprocess.CalledProcessError as exc:
+        if capture:
+            raise RuntimeError(exc.stderr.strip() or str(exc)) from exc
+        raise
 
 
 def config_json(device, *arguments):
@@ -183,10 +189,11 @@ def wait_for_rpc(device, timeout, interval):
             status = rpc(device, 'get')
             if status['state'] != 'unavailable':
                 return status
-        except (subprocess.CalledProcessError, RuntimeError, KeyError, json.JSONDecodeError):
-            pass
+            last_error = 'AirbreakDownload is unavailable'
+        except (subprocess.CalledProcessError, RuntimeError, KeyError, json.JSONDecodeError) as exc:
+            last_error = str(exc)
         if time.monotonic() >= deadline:
-            raise TimeoutError('application RPC did not become ready')
+            raise TimeoutError(f'application RPC did not become ready: {last_error}')
         time.sleep(interval)
 
 
@@ -256,13 +263,19 @@ def download_queue(args):
             checkpoint(job, 'downloading')
 
         if job['state'] == 'downloading':
-            for retry in range(args.retries + 1):
+            retry = 0
+            last_stored = 0
+            while True:
                 status = wait_for_download(args.device, args.download_timeout, args.poll_interval)
-                if status['state'] != 'error' or not status.get('retryable') or retry == args.retries:
+                if status['bytesStored'] > last_stored:
+                    retry = 0
+                    last_stored = status['bytesStored']
+                if status['state'] != 'error' or not status.get('retryable') or retry >= args.retries:
                     break
                 # The provider retains the URL and committed NOR offset. Set
                 # the same URL to resume; older providers cannot do this.
-                print(f"  retry {retry + 1}/{args.retries} from {status['bytesStored']} bytes in {args.retry_delay:g}s", flush=True)
+                retry += 1
+                print(f"  retry {retry}/{args.retries} from {status['bytesStored']} bytes in {args.retry_delay:g}s", flush=True)
                 time.sleep(args.retry_delay)
                 rpc(args.device, 'set', {'url': job['url']})
             job['bytesStored'] = status['bytesStored']
@@ -287,8 +300,11 @@ def download_queue(args):
             checkpoint(job, 'dumped')
         if job['state'] == 'dumped':
             container = As11NorImage.from_file(nor_file).staged_upgrade().container
-            if job.get('incomplete'):
-                container = container[:job['bytesStored']]
+            if len(container) < job['bytesStored']:
+                raise ValueError(f"staged OTA has {len(container)} bytes, expected {job['bytesStored']}")
+            # AirbreakDownload reserves the maximum file size in NOR; only
+            # bytesStored bytes belong to the downloaded response.
+            container = container[:job['bytesStored']]
             destination = output / artifact
             temporary = destination.with_suffix('.part')
             temporary.write_bytes(container)
@@ -333,7 +349,7 @@ def main(argv=None):
     parser.add_argument('--poll-interval', type=positive_seconds, default=5, metavar='SECONDS')
     parser.add_argument('--download-timeout', type=positive_seconds, default=3600, metavar='SECONDS')
     parser.add_argument('--boot-timeout', type=positive_seconds, default=180, metavar='SECONDS')
-    parser.add_argument('--retries', type=int, default=3, help='transport retries per file; 0 disables retries (default: 3)')
+    parser.add_argument('--retries', type=int, default=3, help='consecutive transport retries without download progress; 0 disables retries (default: 3)')
     parser.add_argument('--retry-delay', type=positive_seconds, default=30, metavar='SECONDS')
     parser.add_argument('--force', action='store_true', help='replace a queued download and start the requested file from zero; active downloads are rejected')
     parser.add_argument('--dry-run', action='store_true', help='show the queue without contacting a device or writing files')
