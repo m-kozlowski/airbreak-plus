@@ -21,9 +21,10 @@ from lib.as11_nor import As11NorImage
 VARIANT_SUFFIXES = {
     1: 'CPAP', 2: 'Elite', 3: 'AutoSet',
     5: 'VAutoEU', 6: 'VAutoAmericas', 7: 'VAutoGermany',
-    8: 'VPAPSAmericas', 9: 'VPAPSGermany', 10: 'VPAPST', 12: 'AutoCSSleep',
+    8: 'VPAPSAmericas', 9: 'VPAPSGermany', 10: 'VPAPST',
+    11: 'VPAPSTAmericas', 12: 'AutoCSSleep',
 }
-KNOWN_PACKAGES = {'15.8.4.0': 'FG28.2', '16.8.5.0': 'FG29.2', '17.8.6.0': 'FG30.1', '18.8.7.0': 'FG31.0'}
+KNOWN_PACKAGES = {'15.8.4.0': 'FG28.2', '16.8.5.0': 'FG29.2', '17.8.6.0': 'FG30.1', '18.8.7.0': 'FG31.0', '19.8.8.0': 'FG32.0'}
 
 
 def requested_jobs(args):
