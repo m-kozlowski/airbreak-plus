@@ -23,7 +23,7 @@ VARIANT_SUFFIXES = {
     5: 'VAutoEU', 6: 'VAutoAmericas', 7: 'VAutoGermany',
     8: 'VPAPSAmericas', 9: 'VPAPSGermany', 10: 'VPAPST', 12: 'AutoCSSleep',
 }
-KNOWN_PACKAGES = {'15.8.4.0': 'FG28.2', '16.8.5.0': 'FG29.2', '17.8.6.0': 'FG30.1'}
+KNOWN_PACKAGES = {'15.8.4.0': 'FG28.2', '16.8.5.0': 'FG29.2', '17.8.6.0': 'FG30.1', '18.8.7.0': 'FG31.0'}
 
 
 def requested_jobs(args):
@@ -40,9 +40,9 @@ def requested_jobs(args):
         if not packages:
             known = KNOWN_PACKAGES.get(args.version)
             # Observed FG generations are data_version + 13. Revisions are
-            # independent: try .1/.2 as candidates, never as a verified map.
+            # independent: try .0/.1/.2 as candidates, never as a verified map.
             major = int(args.version.split('.')[0]) + 13
-            packages = [known] if known else [f'FG{major}.1', f'FG{major}.2']
+            packages = [known] if known else [f'FG{major}.0', f'FG{major}.1', f'FG{major}.2']
         if any(not re.fullmatch(r'FG\d+\.\d+', item) for item in packages):
             raise ValueError('--package expects FG<number>.<revision>')
         variants = args.vids or list(VARIANT_SUFFIXES)
