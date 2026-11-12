@@ -201,7 +201,7 @@ def wait_for_download(device, timeout, interval):
     deadline = time.monotonic() + timeout
     previous = None
     while True:
-        status = rpc(device, 'get')
+        status = wait_for_rpc(device, deadline - time.monotonic(), interval)
         progress = (status['state'], status['bytesStored'])
         if progress != previous:
             print(f"  {progress[0]}: {progress[1]} bytes", flush=True)
