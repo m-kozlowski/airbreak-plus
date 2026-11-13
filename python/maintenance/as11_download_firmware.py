@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 from pathlib import Path
 import re
@@ -248,19 +249,29 @@ def download_queue(args):
                 raise ValueError(f"output already exists: {job['file']}")
             status = wait_for_rpc(args.device, args.boot_timeout, args.poll_interval)
             request = {'url': job['url']}
-            if status['state'] == 'downloading':
+            joining = status['state'] == 'downloading' and not args.force
+            if joining:
+                encoded = config_json(args.device, 'get', 'CamlData')['result']['CamlData']
+                config = json.loads(base64.b64decode(encoded))
+                target = urlsplit(job['url'])
+                path = target._replace(scheme='', netloc='').geturl()
+                if (config['UPGRD_HTTPS'], config['UPGRD_HOST'].lower(), config['UPGRD_PORT'], config['UPGRD_PATH']) != (
+                        target.scheme, target.hostname, str(target.port or 80), path):
+                    raise RuntimeError('a different download is active; wait for it to finish')
+            elif status['state'] == 'downloading':
                 raise RuntimeError('download is active; wait for it to finish')
-            if args.force:
+            elif args.force:
                 request['force'] = True
             elif status['state'] not in ('idle', 'complete', 'error'):
                 raise RuntimeError(f"upgrade path is occupied: {status['state']}; use --force to replace it")
             job['attempt'] = job.get('attempt', 0) + 1
             job['fromDateTime'] = config_json(args.device, 'gettime')['result']['dateTime']
-            rpc(args.device, 'set', request)
-            if args.force:
-                for previous in queue['jobs']:
-                    if previous['state'] == 'downloading':
-                        previous['state'] = 'pending' if previous in jobs else 'cancelled'
+            if not joining:
+                rpc(args.device, 'set', request)
+                if args.force:
+                    for previous in queue['jobs']:
+                        if previous['state'] == 'downloading':
+                            previous['state'] = 'pending' if previous in jobs else 'cancelled'
             checkpoint(job, 'downloading')
 
         if job['state'] == 'downloading':
