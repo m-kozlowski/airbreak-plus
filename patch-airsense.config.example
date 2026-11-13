@@ -17,6 +17,9 @@
 # --patch-defaults y
 # --patch-fw-backlight y
 # --patch-custom-palette y
+# Single palette colors, e.g. white text and a green accent; roles: text,
+# secondary, dim, frame, background, accent, accent_dark, grey, light.
+# --palette-colors text=FFFFFF,accent=00AA66
 # --patch-past-date y
 # --patch-custom-settings y
 # --patch-uart-stream-schema y

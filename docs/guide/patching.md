@@ -86,7 +86,7 @@ All patches below are **enabled by default** unless noted.
 | Defaults | Sets firmware defaults (English, cmH2O, pillows mask, slim tube) | `--patch-defaults` |
 | Bypass integrity check | Disables firmware integrity checks that prevent boot on CRC mismatch | `--patch-integrity-check` |
 | Bypass PSU check | Disables power supply ID check at startup | `--patch-bypass-psuid` |
-| Color palette | Applies custom color scheme | `--patch-custom-palette` |
+| Color palette | Applies custom color scheme; `--palette-colors ROLE=RRGGBB,...` changes single colors (roles: text, secondary, dim, frame, background, accent, accent_dark, grey, light) | `--patch-custom-palette` |
 | [Backlight adaptation](features/backlight.md) | Continuously adjusts LCD and button brightness to ambient light | `--patch-fw-backlight` |
 | [Keep backlight](features/general.md#keep-backlight) | Hold the dial to toggle screen keep-awake | `--patch-keep-backlight` |
 | [Header clock](features/general.md#header-clock) | Adds Clock in Configuration to show time on Home and therapy screens | `--patch-header-clock` |

@@ -69,6 +69,9 @@ telnet localhost 4444
 make
 ```
 
+Prefer a window? The [patch options window](patch_gui.md) picks the patches,
+patches the image and flashes it, on Windows, Linux and WSL.
+
 ### 5. [Flash](flashing.md)
 
 OpenOCD (path B):
