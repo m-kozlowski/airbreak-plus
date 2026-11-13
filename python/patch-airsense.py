@@ -27,7 +27,7 @@ from lib.as10_firmware import ASFirmware
 from lib.compiled_payload import CompiledPayloadMixin
 from lib.custom_menu import MenuBuilder, stock, custom
 from lib.custom_menu_stock import StockMenu
-from lib.patch_config import parse_patch_args
+from lib.patch_config import parse_patch_args, str2bool
 
 
 FIRMWARE_BUILD_ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
@@ -3449,16 +3449,6 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         return PatchOutcome.ok(summary or None)
 
             
-def str2bool(v):
-    if isinstance(v, bool):
-        return v
-    if v.lower() in ('yes', 'true', 't', 'y', '1'):
-        return True
-    if v.lower() in ('no', 'false', 'f', 'n', '0'):
-        return False
-    raise argparse.ArgumentTypeError('Boolean value expected.')
-
-
 def target_rh_value(v):
     """Accept a percentage, or a boolean word selecting 85% / no patch."""
     try:

@@ -24,6 +24,16 @@ AIR10_LEGACY_OPTIONS = {
 }
 
 
+def str2bool(value):
+    if isinstance(value, bool):
+        return value
+    if value.lower() in ("yes", "y", "true", "t", "on", "1"):
+        return True
+    if value.lower() in ("no", "n", "false", "f", "off", "0"):
+        return False
+    raise argparse.ArgumentTypeError("expected y/n, yes/no, true/false, on/off or 1/0")
+
+
 def option_layers(platform):
     path = Path(__file__).absolute().parents[2] / LOCAL_FILES[platform]
     try:

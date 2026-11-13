@@ -32,7 +32,7 @@ from lib.as11_conf_discovery import (
 )
 from lib.as11_patch_versions import AS11_FGBL_PATCH_VERSIONS, AS11_PATCH_VERSIONS
 from lib.compiled_payload import CompiledPayloadMixin
-from lib.patch_config import parse_patch_args
+from lib.patch_config import parse_patch_args, str2bool
 
 
 class PatchVersionUnavailable(ValueError):
@@ -43,16 +43,6 @@ class PatchVersionUnavailable(ValueError):
 
 def crc16_ccitt_false(data, crc=0xFFFF):
     return binascii.crc_hqx(data, crc)
-
-
-def str2bool(value):
-    if isinstance(value, bool):
-        return value
-    if value.lower() in ("yes", "true", "t", "y", "1"):
-        return True
-    if value.lower() in ("no", "false", "f", "n", "0"):
-        return False
-    raise argparse.ArgumentTypeError("Boolean value expected.")
 
 
 def parse_u16(value):

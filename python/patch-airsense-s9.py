@@ -12,7 +12,7 @@ import struct
 import sys
 
 from lib.s9_firmware import S9Firmware, write_output
-from lib.patch_config import parse_patch_args
+from lib.patch_config import parse_patch_args, str2bool
 from lib.compiled_payload import elf_symbol_address, elf_text_address, elf_binary_data
 
 REPO = Path(__file__).resolve().parents[1]
@@ -111,13 +111,6 @@ PATCHES = (
 )
 PATCH_PHASES = tuple((phase, tuple(spec for spec in PATCHES if spec.phase == phase))
                      for phase in dict.fromkeys(spec.phase for spec in PATCHES))
-
-
-def str2bool(value):
-    if isinstance(value, bool): return value
-    if value.lower() in ('yes', 'y', 'true', 't', '1', 'on'): return True
-    if value.lower() in ('no', 'n', 'false', 'f', '0', 'off'): return False
-    raise argparse.ArgumentTypeError('expected y/n, true/false, or 1/0')
 
 
 class S9Patcher:
