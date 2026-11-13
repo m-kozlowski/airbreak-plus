@@ -6,9 +6,9 @@ or writing backup SRAM. It is independent of the application JSON-RPC and
 DatagramCan protocols.
 
 This document describes protocol version 2 and the implementation profile of
-service version 0.9.0. Requirements use `MUST`, `SHOULD`, and `MAY` as
+service version 0.9.1. Requirements use `MUST`, `SHOULD`, and `MAY` as
 normative terms. Text explicitly marked as an implementation profile describes
-0.9.0 rather than a general protocol requirement.
+0.9.1 rather than a general protocol requirement.
 
 ## Contents
 
@@ -95,17 +95,22 @@ packet uses a First Frame and at least one Consecutive Frame. Single Frame is
 recognized by the transport decoder but cannot contain a complete service
 packet.
 
-The 0.9.0 service advertises `BS=32`, `STmin=0` while receiving requests. A
+The 0.9.1 service advertises `BS=32`, `STmin=0` while receiving requests. A
 host MUST obey the values in each Flow Control frame rather than assume these
 constants. It MUST stop after each nonzero `BS` block and wait for another
 Continue To Send Flow Control frame.
 
 When sending a response, the service MUST follow the `BS` supplied by the
 host. `BS=0` permits sending the remainder of the packet without another Flow
-Control frame. The 0.9.0 service transmitter supports only `STmin=0`; a
+Control frame. The 0.9.1 service transmitter supports only `STmin=0`; a
 conforming host MUST advertise zero to that implementation. It accepts
 Continue To Send and Wait flow statuses and rejects Overflow or unsupported
 Flow Control values.
+
+The 0.9.1 service abandons a response after 1000 ms waiting for Flow Control.
+Wait frames do not extend this deadline. A new First Frame or Single Frame
+during this wait immediately abandons the old response and is processed as
+a new request.
 
 Flow Control frames use the same directional CAN ID as other traffic:
 
@@ -186,7 +191,7 @@ The command field is one byte:
 | `0x08` | WRITE_LZ4 |
 | `0x09..0xff` | reserved for compatible extension |
 
-A direct-CAN client MUST NOT send a reserved command or ENTER. The 0.9.0
+A direct-CAN client MUST NOT send a reserved command or ENTER. The 0.9.1
 service returns `BadCommand` for any command not listed above.
 
 ## Targets and geometry
@@ -201,7 +206,7 @@ Protocol version 2 assigns these one-byte target IDs:
 | `BKPS` | `0x03` | offset from start of backup SRAM |
 | reserved | `0x04..0xff` | none |
 
-The 0.9.0 implementation profile uses this geometry:
+The 0.9.1 implementation profile uses this geometry:
 
 | Property | `FGCB` | `SPIN` | `BKPS` |
 |----------|--------|--------|--------|
@@ -359,7 +364,7 @@ every unknown nonzero status as command failure.
 
 ## Error mapping
 
-The 0.9.0 service reports the first error reached in its validation order.
+The 0.9.1 service reports the first error reached in its validation order.
 Malformed ISO-TP or a packet too short to contain the service header and CRC
 produces no service response.
 
