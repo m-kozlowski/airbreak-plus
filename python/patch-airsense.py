@@ -1634,17 +1634,23 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         g[8] RPF/RPO/RPH/RPW are recurrence enables for Filter/Mask/Tube/Water Tub.
         g[8] RXF/RXM/RXH/RXW are their reminder-date enables. g[4] RCF/RCM/RCH/RCW
         hold recurrence periods, while RDF/RDM/RDH/RDW hold due dates.
-        g[8] RSA is the runtime acknowledgement request, without stock storage.
+        g[8] RMM selects the popup, ZRA acknowledges it, and RSA requests
+        rescheduling. g[4] RDT/RTI mirror the RTC date/time for Reminders.
         String candidates include the menu title, six message bodies and the
         shared Reminder popup heading.
         """
         sites_by_version = {
             'SX584-0204': {
                 'numeric_handler_limit': (0x458a0, b'\x40\xf2\xf1\x11', b'\x40\xf2\xf5\x11'),
+                'rti_numeric_handler': (0x458c8, b'\x40\xf2\xf1\x11\x24\xb2\x8c\x42\x0e\xda',
+                                        b'\x40\xf2\xf8\x11\x8c\x42\xec\xd0\x0e\xe0'),
                 'reminders_tick': 0xd2042,
                 'reminder_list_create': 0xd210c,
                 'reminder_state_update': 0x50988,
-                'reminder_ack_route': 0xaa536,
+                'reminder_message_source': 0x40c1a,
+                'reminder_dialog': 0x41578,
+                'message_source_limits': (21, (0x5f4f6, 0x5f50c, 0x5f52c)),
+                'reminder_rtc_copies': (0xca9c2, 0xcaa40),
                 'reminder_menu_item': 0x3953c,
                 'reminder_menu_item_end': 0x39578,
                 'reminder_menu': 0x3a8d6,
@@ -1654,10 +1660,15 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             },
             'SX584-0205': {
                 'numeric_handler_limit': (0x458a0, b'\x40\xf2\xf1\x11', b'\x40\xf2\xf5\x11'),
+                'rti_numeric_handler': (0x458c8, b'\x40\xf2\xf1\x11\x24\xb2\x8c\x42\x0e\xda',
+                                        b'\x40\xf2\xf8\x11\x8c\x42\xec\xd0\x0e\xe0'),
                 'reminders_tick': 0xd2322,
                 'reminder_list_create': 0xd23ec,
                 'reminder_state_update': 0x50988,
-                'reminder_ack_route': 0xaa816,
+                'reminder_message_source': 0x40c1a,
+                'reminder_dialog': 0x41578,
+                'message_source_limits': (21, (0x5f7d6, 0x5f7ec, 0x5f80c)),
+                'reminder_rtc_copies': (0xcaca2, 0xcad20),
                 'reminder_menu_item': 0x3953c,
                 'reminder_menu_item_end': 0x39578,
                 'reminder_menu': 0x3a8d6,
@@ -1667,10 +1678,15 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             },
             'SX567-0302': {
                 'numeric_handler_limit': (0x6c0d2, b'\xb4\xf5\xea\x7f', b'\xb4\xf5\xec\x7f'),
+                'rti_numeric_handler': (0x6c0f8, b'\xb4\xf5\xea\x7f\x0e\xda\x10\xf1\x14\x01',
+                                        b'\x40\xf2\xdb\x11\x8c\x42\xeb\xd0\x0c\xe0'),
                 'reminders_tick': 0xebace,
                 'reminder_list_create': 0xebb98,
                 'reminder_state_update': 0x758b2,
-                'reminder_ack_route': 0xd2a7e,
+                'reminder_message_source': 0x68000,
+                'reminder_dialog': 0x68572,
+                'message_source_limits': (14, (0x7fb44, 0x7fb58, 0x7fb76)),
+                'reminder_rtc_copies': (0xe4b32, 0xe4bb0),
                 'reminder_menu_item': 0x62034,
                 'reminder_menu_item_end': 0x62070,
                 'reminder_menu': 0x63058,
@@ -1680,10 +1696,15 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             },
             'SX567-0305': {
                 'numeric_handler_limit': (0x6c802, b'\xb4\xf5\xea\x7f', b'\xb4\xf5\xec\x7f'),
+                'rti_numeric_handler': (0x6c828, b'\xb4\xf5\xea\x7f\x0e\xda\x10\xf1\x14\x01',
+                                        b'\x40\xf2\xdb\x11\x8c\x42\xeb\xd0\x0c\xe0'),
                 'reminders_tick': 0xec2ca,
                 'reminder_list_create': 0xec394,
                 'reminder_state_update': 0x7601e,
-                'reminder_ack_route': 0xd326e,
+                'reminder_message_source': 0x68724,
+                'reminder_dialog': 0x68c96,
+                'message_source_limits': (14, (0x802cc, 0x802e0, 0x802fe)),
+                'reminder_rtc_copies': (0xe5322, 0xe53a0),
                 'reminder_menu_item': 0x62754,
                 'reminder_menu_item_end': 0x62790,
                 'reminder_menu': 0x63778,
@@ -1693,10 +1714,15 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             },
             'SX567-0306': {
                 'numeric_handler_limit': (0x6c806, b'\xb4\xf5\xea\x7f', b'\xb4\xf5\xec\x7f'),
+                'rti_numeric_handler': (0x6c82c, b'\xb4\xf5\xea\x7f\x0e\xda\x10\xf1\x14\x01',
+                                        b'\x40\xf2\xdb\x11\x8c\x42\xeb\xd0\x0c\xe0'),
                 'reminders_tick': 0xec1e6,
                 'reminder_list_create': 0xec2b0,
                 'reminder_state_update': 0x7601a,
-                'reminder_ack_route': 0xd3182,
+                'reminder_message_source': 0x68728,
+                'reminder_dialog': 0x68c9a,
+                'message_source_limits': (14, (0x8024c, 0x80260, 0x8027e)),
+                'reminder_rtc_copies': (0xe523e, 0xe52bc),
                 'reminder_menu_item': 0x62754,
                 'reminder_menu_item_end': 0x62790,
                 'reminder_menu': 0x63778,
@@ -1706,10 +1732,15 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             },
             'SX567-0401': {
                 'numeric_handler_limit': (0x6c806, b'\xb4\xf5\xea\x7f', b'\xb4\xf5\xec\x7f'),
+                'rti_numeric_handler': (0x6c82c, b'\xb4\xf5\xea\x7f\x0e\xda\x10\xf1\x14\x01',
+                                        b'\x40\xf2\xdb\x11\x8c\x42\xeb\xd0\x0c\xe0'),
                 'reminders_tick': 0xec446,
                 'reminder_list_create': 0xec510,
                 'reminder_state_update': 0x7601a,
-                'reminder_ack_route': 0xd33e2,
+                'reminder_message_source': 0x68728,
+                'reminder_dialog': 0x68c9a,
+                'message_source_limits': (14, (0x8024c, 0x80260, 0x8027e)),
+                'reminder_rtc_copies': (0xe549e, 0xe551c),
                 'reminder_menu_item': 0x62754,
                 'reminder_menu_item_end': 0x62790,
                 'reminder_menu': 0x63778,
@@ -1719,10 +1750,15 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             },
             'SX567-0402': {
                 'numeric_handler_limit': (0x6c806, b'\xb4\xf5\xea\x7f', b'\xb4\xf5\xec\x7f'),
+                'rti_numeric_handler': (0x6c82c, b'\xb4\xf5\xea\x7f\x0e\xda\x10\xf1\x14\x01',
+                                        b'\x40\xf2\xdb\x11\x8c\x42\xeb\xd0\x0c\xe0'),
                 'reminders_tick': 0xec6be,
                 'reminder_list_create': 0xec788,
                 'reminder_state_update': 0x7601a,
-                'reminder_ack_route': 0xd365a,
+                'reminder_message_source': 0x68728,
+                'reminder_dialog': 0x68c9a,
+                'message_source_limits': (14, (0x8024c, 0x80260, 0x8027e)),
+                'reminder_rtc_copies': (0xe5716, 0xe5794),
                 'reminder_menu_item': 0x62754,
                 'reminder_menu_item_end': 0x62790,
                 'reminder_menu': 0x63778,
@@ -1761,14 +1797,31 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             reminder_state_update, b'\xf0\xb5\xa3\xb0', b'\x70\x47',
             'reminder state updater', accept_existing=True)
 
-        # Popup acknowledgements route RMM -> ZRA -> RSA independently of the
-        # scheduler. Keep the shared GUI route, but use its no-target sentinel
-        # so acknowledging a popup cannot overwrite the reclaimed RSA value.
-        rmm, zra, rsa = (self.asf.resolve_var_id(var) for var in ('RMM', 'ZRA', 'RSA'))
+        # Both Reminders objects are last in their lists. Branch to their
+        # null-slot stores, skipping construction and the RMM/ZRA/RSA writers.
         self._replace_bytes_checked(
-            sites['reminder_ack_route'], struct.pack('<HHH', rmm, zra, rsa),
-            struct.pack('<HHH', rmm, zra, 0x7fff),
-            'reminder acknowledgement route', accept_existing=True)
+            sites['reminder_message_source'], b'\x10\x20', b'\x08\xe0',
+            'reminder message source', accept_existing=True)
+        self._replace_bytes_checked(
+            sites['reminder_dialog'], b'\x08\x20', b'\x3a\xe0',
+            'reminder dialog', accept_existing=True)
+        # Update, selection and dismissal must all omit that source. SX567
+        # dereferences each slot without a null check; SX584 permits nulls.
+        count, limits = sites['message_source_limits']
+        for site, opcode in zip(limits, (0x2e, 0x2d, 0x2e)):  # cmp r6/r5/r6,#count
+            self._replace_bytes_checked(
+                site, bytes((count, opcode)), bytes((count - 1, opcode)),
+                'reminder message source count', accept_existing=True)
+
+        # Stop RTC -> RDT/RTI copies at startup and after clock changes.
+        # Keep the shared tail used to restore UDT/UTI after a rejected write.
+        initial_copy, updated_copy = sites['reminder_rtc_copies']
+        self._replace_bytes_checked(
+            initial_copy, b'\xff\xf7\x42\xff', b'\x00\xbf\x00\xbf',  # BL -> NOP; NOP
+            'reminder initial RTC copy', accept_existing=True)
+        self._replace_bytes_checked(
+            updated_copy, b'\x04\xf1\x20\x01', b'\x10\xbd',  # pop {r4,pc}
+            'reminder updated RTC copy', accept_existing=True)
 
         item_reclaim = reminder_menu_item + 2
         item_reclaim_size = reminder_menu_item_end - item_reclaim
@@ -1794,7 +1847,8 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self.custom_settings_registry_addr = reclaim
         self.custom_settings_registry_size = reclaim_size
 
-        for var in ('RPO', 'RPH', 'RPF', 'RPW', 'RXM', 'RXH', 'RXF', 'RXW', 'RSA'):
+        for var in ('RPO', 'RPH', 'RPF', 'RPW', 'RXM', 'RXH', 'RXF', 'RXW',
+                    'RSA', 'RMM', 'ZRA'):
             self.custom_reclaim_g8_var(var)
 
         # Extend numeric handlers with mutable bounds over RDF/RDM/RDH/RDW.
@@ -1805,13 +1859,15 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self._replace_bytes_checked(
             numeric_limit, expected, replacement,
             'reclaimed reminder date handlers', accept_existing=True)
-        for var in ('RDF', 'RDM', 'RDH', 'RDW', 'RCF', 'RCM', 'RCH', 'RCW'):
-            self.custom_reclaim_g4_var(var)
+        # Reuse the unreachable boundary-label branch to route only RTI to
+        # the numeric handler: movw r1,#RTI_index; cmp r4,r1; beq numeric; b date.
+        # RTI already has bounds storage. Other date/time handlers stay intact.
+        site, expected, replacement = sites['rti_numeric_handler']
+        self._replace_bytes_checked(site, expected, replacement,
+                                    'reclaimed reminder time handler', accept_existing=True)
 
-        # RXF/RXM/RXH/RXW lost their callbacks during reclaim. Detach RDT,
-        # the last stock owner of the disabled Reminder updater.
-        rdt_callback = self.asf.find_var('RDT') + self.asf.G4_CALLBACK
-        self.asf.write_u8(rdt_callback, 0)
+        for var in ('RDF', 'RDM', 'RDH', 'RDW', 'RCF', 'RCM', 'RCH', 'RCW', 'RDT', 'RTI'):
+            self.custom_reclaim_g4_var(var)
 
         self._custom_detail("disabled stock Reminders menu item at 0x%08X" %
                             (self.asf.FLASH_BASE + reminder_menu_item))
