@@ -131,6 +131,7 @@ extern void *GuiTreatmentScreen_ctor(void *screen, void *parent, void *root, uns
 extern void GuiScroller_update_items(void *scroller);
 extern void GuiPageAction_ctor(void *action, const unsigned char *page);
 extern void GuiSwitchAction_add(void *action, unsigned int value, void *target);
+extern void *GuiDataItemSwitch_ctor(void *action, unsigned int var_id, void *fallback);
 extern int GuiMenuCentre_is_therapy_page(const unsigned char *page);
 
 typedef struct {

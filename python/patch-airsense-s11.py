@@ -333,6 +333,8 @@ AS11_SCREEN_KEEP_AWAKE_PAYLOAD = "as11_screen_keep_awake"
 AS11_SCROLL_ANIMATION_PAYLOAD = "as11_scroll_animation"
 AS11_FLOW_WAVE_PAYLOAD = "as11_flow_wave"
 AS11_BLE_OXI_FALLBACK_PAYLOAD = "as11_ble_oxi_fallback"
+AS11_THERAPY_SCREEN_STYLE_PAYLOAD = "as11_therapy_screen_style"
+TSS_AUTO = 3
 
 
 class S11Firmware(object):
@@ -1998,14 +2000,44 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         self.asf.update_descriptor_flags(row, {
             "ACT": True, "VIS": True, "MOD": True, "RPC": True, "RPW": True,
         })
-        self.asf.write_descriptor_fields(row, {"option_mask": (1 << row["n_options"]) - 1})
-        self.storage_register_members("HST", "TSS")
         menu = AS11_PATCH_VERSIONS.get(self._payload_version_key(), {}).get("therapy_screen_style")
+        options = row["n_options"]
+        if menu is not None and self._therapy_screen_style_auto(menu):
+            options = max(options, TSS_AUTO + 1)
+        self.asf.write_descriptor_fields(row, {"n_options": options, "option_mask": (1 << options) - 1})
+        self.storage_register_members("HST", "TSS")
         if menu is None:
             return PatchOutcome.warn("storage and RPC enabled; menu labels unavailable for this APPX")
-        self.custom_enum_labels("TSS", dict(enumerate(menu["option_labels"])))
+        self.custom_enum_labels("TSS", dict(enumerate(menu["option_labels"][:options])))
         self.custom_menu_add("configuration", "TSS", menu["label_id"], 0xFFFF, "enum")
-        return PatchOutcome.ok()
+        return PatchOutcome.ok("Auto follows the therapy mode" if options > TSS_AUTO else None)
+
+    def _therapy_screen_style_auto(self, anchors):
+        """Add raw TSS 3: Simple in CPAP, AutoSet and AutoSet for Her, otherwise Pressure."""
+        ver = self._payload_version_key()
+        if "pressure_bar_registration_call" not in anchors:
+            return False
+        data, _ = self._load_versioned_bin(AS11_THERAPY_SCREEN_STYLE_PAYLOAD)
+        if data is None:
+            return False
+        elf_path = self._versioned_artifact_path(AS11_THERAPY_SCREEN_STYLE_PAYLOAD, "elf", ver)
+        register_call = self.asf.ptr_to_off(anchors["pressure_bar_registration_call"])
+        read_call = self.asf.ptr_to_off(anchors["pressure_bar_style_read_call"])
+        # Native: movs r1,#1; movs r0,r4; bl GuiSwitchAction_add.
+        if (self.asf.read_thumb2_bl_target(register_call) != self._elf_symbol_addr(elf_path, "GuiSwitchAction_add") or
+                bytes(self.asf.fw[register_call - 4:register_call]) != bytes.fromhex("01212000")):
+            raise ValueError("therapy_screen_style: PressureBar registration call does not match")
+        # Native: bl DataItem_read_value_by_id; cmp r0,#1.
+        if (self.asf.read_thumb2_bl_target(read_call) != self._elf_symbol_addr(elf_path, "DataItem_read_value_by_id") or
+                bytes(self.asf.fw[read_call + 4:read_call + 6]) != bytes.fromhex("0128")):
+            raise ValueError("therapy_screen_style: PressureBar style read does not match")
+
+        self._inject_payload(AS11_THERAPY_SCREEN_STYLE_PAYLOAD, data)
+        # bl PressureBar registration -> bl wrapper that also registers Auto.
+        self.asf.write_thumb2_bl_target(register_call, self._elf_symbol_addr(elf_path, "start"))
+        # bl TSS read -> bl read that resolves Auto before the PressureBar test.
+        self.asf.write_thumb2_bl_target(read_call, self._elf_symbol_addr(elf_path, "therapy_screen_style_read"))
+        return True
 
     def therapy_screen(self):
         """Show respiratory statistics hidden from compatible therapy modes."""

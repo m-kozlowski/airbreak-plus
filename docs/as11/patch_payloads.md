@@ -177,6 +177,7 @@ table reserves space for eight objects. It extends the objects accepted by
 | `as11_rpc_dispatcher` | lets patches add custom objects readable and writable through RPC `Get` and `Set` |
 | `as11_vid_spoof` | reports a product variant matching the selected therapy mode |
 | `as11_header_clock` | shows local time and usage time in the header during therapy |
+| `as11_therapy_screen_style` | adds the `Auto` therapy view, which follows the therapy mode |
 | `as11_flow_wave` | shows breathing flow and mask-pressure history in the Flow therapy view |
 | `as11_screen_keep_awake` | toggles automatic screen dimming with a three-finger hold |
 | `as11_asv_backup_rate` | allows automatic backup breaths to be disabled in ASV and ASVAuto |

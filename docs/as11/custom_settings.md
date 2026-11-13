@@ -247,8 +247,9 @@ self.custom_menu_add("configuration", "TSS", menu["label_id"], 0xFFFF, "enum")
 ```
 
 Here `menu` is the feature's version-specific label mapping. The feature also
-sets the desired descriptor option mask and RPC flags through the generic
-descriptor API.
+sets the desired descriptor option count, option mask and RPC flags through the
+generic descriptor API. Raw values beyond the native option count need their
+own labels and a consumer that handles them; TSS adds raw value 3 (`Auto`).
 
 Adding another reclaim provider requires a verified field pool and a provider
 handler that detaches every stock writer of those fields. Version-specific

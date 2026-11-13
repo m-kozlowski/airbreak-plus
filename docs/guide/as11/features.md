@@ -29,7 +29,8 @@ tidal volume, and I:E ratio to the CPAP, AutoSet, and AutoSet for Her therapy
 screens. It also adds inspiratory time to ASV and ASVAuto.
 
 The separate `therapy-screen-style patch` adds `Therapy View` under Configuration,
-with `Simple`, `Pressure`, and `Flow` choices.
+with `Simple`, `Pressure`, `Flow`, and `Auto` choices. `Auto` shows `Simple`
+in CPAP, AutoSet, and AutoSet for Her, and `Pressure` in all other modes.
 
 With the optional FlowWave patch, `Flow` shows the last 12 seconds of breathing
 flow and mask pressure, with the current pressure in the upper-left corner.
