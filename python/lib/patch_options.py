@@ -48,6 +48,22 @@ class Parameter:
 
 
 @dataclass(frozen=True)
+class Flag:
+    """Run option without a value, such as --overwrite."""
+    option: str
+    description: str
+    short: str = None
+
+
+# Run options of every patcher: how the patcher runs, not what it patches.
+RUN_OPTIONS = (
+    Flag("overwrite", "Overwrite an existing output file."),
+    Flag("verbose", "Show per-patch details.", "v"),
+    Parameter("log-file", "Append a verbose patching transcript to this file.", Value()),
+)
+
+
+@dataclass(frozen=True)
 class Patch:
     """A patch selected by a y/n switch; its settings are its parameters."""
     option: str
@@ -77,11 +93,14 @@ class Platform:
     # Phases and patches in execution order.
     phases: tuple
     parameters: tuple = ()
+    # Run options of this patcher, after RUN_OPTIONS.
+    run_options: tuple = ()
 
     def __post_init__(self):
         patches = {patch.option for patch in self.patches()}
-        options = patches | {parameter.option for parameter in self.all_parameters()}
-        if len(options) != len(list(self.patches())) + len(list(self.all_parameters())):
+        names = [option.option for option in (*self.patches(), *self.all_parameters(),
+                                               *self.all_run_options())]
+        if len(set(names)) != len(names):
             raise ValueError("%s: duplicate option" % self.name)
         for patch in self.patches():
             for option in patch.requires:
@@ -108,6 +127,10 @@ class Platform:
         for patch in self.patches():
             yield from patch.parameters
 
+    def all_run_options(self):
+        yield from RUN_OPTIONS
+        yield from self.run_options
+
     def add_arguments(self, parser):
         """Add the patch switches and parameters to an argparse parser."""
         for patch in self.patches():
@@ -125,6 +148,18 @@ class Platform:
                 for parameter in patch.parameters:
                     add_argument(group, parameter.option, parameter.description, parameter.value,
                                  parameter.default)
+        return parser
+
+    def add_run_arguments(self, parser):
+        """Add the run options to an argparse parser."""
+        for option in self.all_run_options():
+            if isinstance(option, Flag):
+                names = ("-" + option.short,) if option.short else ()
+                parser.add_argument(*names, "--" + option.option, action="store_true",
+                                    help=option.description)
+            else:
+                add_argument(parser, option.option, option.description, option.value,
+                             option.default)
         return parser
 
     def selected(self, args, patch):

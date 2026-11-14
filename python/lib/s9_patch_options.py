@@ -1,6 +1,6 @@
 """S9 patch options."""
 
-from .patch_options import ALL_PATCHES, Patch, Phase, Platform
+from .patch_options import ALL_PATCHES, Flag, Patch, Phase, Platform
 
 
 PLATFORM = Platform('s9', phases=(
@@ -27,4 +27,6 @@ PLATFORM = Platform('s9', phases=(
     Phase('Compiled payloads', (
         Patch('patch-fw-lcd', 'Automatically select a compatible LCD driver.', False, 'lcd'),
     )),
-), parameters=(ALL_PATCHES,))
+), parameters=(ALL_PATCHES,), run_options=(
+    Flag('allow-invalid-input-crc', 'Explicitly allow a research input with invalid region CRCs.'),
+))

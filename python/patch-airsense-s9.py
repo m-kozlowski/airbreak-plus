@@ -291,11 +291,7 @@ def build_argument_parser():
     parser.add_argument('OUTFILE', help='Output patched file (unused for INFO)')
     parser.add_argument('OPERATION', choices=['INFO', 'PATCH'], help='Operation to perform')
     PATCH_OPTIONS.add_arguments(parser)
-    parser.add_argument('--overwrite', action='store_true', help='Overwrite an existing output file.')
-    parser.add_argument('--allow-invalid-input-crc', action='store_true',
-                        help='Explicitly allow a research input with invalid region CRCs.')
-    parser.add_argument('-v', '--verbose', action='store_true', help='Show per-patch details and byte changes.')
-    parser.add_argument('--log-file', help='Append a verbose patching transcript to this file.')
+    PATCH_OPTIONS.add_run_arguments(parser)
     return parser
 
 

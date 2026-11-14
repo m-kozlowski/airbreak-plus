@@ -6,7 +6,6 @@ parse_patch_args() reports errors on the command line.
 """
 
 import argparse
-from copy import copy
 from dataclasses import dataclass
 import json
 import os
@@ -33,8 +32,17 @@ class OptionsParser(argparse.ArgumentParser):
 
 
 def options_parser(platform):
-    """Parser for the patch options of a patch_options.Platform."""
+    """Parser for the patch options of a patch_options.Platform, as in presets."""
     return platform.add_arguments(OptionsParser())
+
+
+def local_options_parser(platform):
+    """Parser for the patch and run options of a patch_options.Platform.
+
+    These are the options of the local options file and of the patcher
+    command line without its paths and operation.
+    """
+    return platform.add_run_arguments(options_parser(platform))
 
 
 @dataclass(frozen=True)
@@ -78,15 +86,25 @@ def split_presets(tokens):
     return presets, options
 
 
+def preset_files(platform):
+    """Presets of a platform name by name; a user preset hides a built-in one."""
+    files = {}
+    for directory in reversed(preset_dirs(platform)):
+        for path in (REPO / directory).glob("*.config"):
+            if path.is_file():
+                files[path.stem] = path.resolve()
+    return dict(sorted(files.items()))
+
+
 def preset_path(platform, preset, directory):
     """File of a preset name, or of a path relative to directory."""
     if Path(preset).name != preset:
         return (directory / preset).resolve()
-    for presets in preset_dirs(platform):
-        path = REPO / presets / (preset + ".config")
-        if path.is_file():
-            return path.resolve()
-    raise ValueError("preset %s not found in %s" % (preset, " or ".join(preset_dirs(platform))))
+    try:
+        return preset_files(platform)[preset]
+    except KeyError:
+        raise ValueError("preset %s not found in %s" % (
+            preset, " or ".join(preset_dirs(platform)))) from None
 
 
 def check(parser, options, path):
@@ -147,20 +165,40 @@ def format_value(value, syntax):
     return str(value)
 
 
+def layer_parser(platform, layer):
+    """Parser for the options of a layer: presets hold patch options only."""
+    return options_parser(platform) if layer.source == "preset" else local_options_parser(platform)
+
+
+def effective_args(platform, layers):
+    """Parsed options of configuration layers, with defaults for options they leave out.
+
+    Each layer is validated as its source requires. The command-line layer
+    holds options only, without patcher paths and operation.
+    platform.selected() tells whether a patch runs.
+    """
+    for layer in layers:
+        check(layer_parser(platform, layer), layer.options, layer.path or layer.source)
+    return local_options_parser(platform).parse_args(
+        [option for layer in layers for option in layer.options])
+
+
 def layer_values(platform, layer):
-    """Patch option values that a preset layer sets itself.
+    """Option values that a layer sets itself, by option name.
 
     Options the layer leaves out are not filled in with defaults, so saving
-    the values with option_text() keeps what the layer's presets select.
+    the values of a preset with option_text() keeps what its presets select.
+    The local file and the command line may also set run options.
     """
-    parser = options_parser(platform)
+    parser = layer_parser(platform, layer)
     for action in parser._actions:
         action.default = argparse.SUPPRESS
     try:
         args = vars(parser.parse_args(layer.options))
     except ValueError as exc:
-        raise ValueError("%s: %s" % (layer.path, exc)) from None
-    return {action.option_strings[0][2:]: args[action.dest]
+        raise ValueError("%s: %s" % (layer.path or layer.source, exc)) from None
+    # The long option name comes last, after a short alias such as -v.
+    return {action.option_strings[-1][2:]: args[action.dest]
             for action in parser._actions if action.dest in args}
 
 
@@ -212,14 +250,9 @@ def parse_patch_args(parser, argv, platform):
         "Apply the options of a preset: NAME.config from %s, or a file. Repeatable; "
         "later presets override earlier ones, and the other command-line options "
         "override presets." % " or ".join(preset_dirs(platform.name))))
-    # Reuse the CLI actions so local options have identical types and choices.
-    local_parser = OptionsParser()
-    for action in parser._actions:
-        if action.option_strings and not isinstance(action, argparse._HelpAction):
-            local_parser._add_action(copy(action))
     try:
         args = patch_args(platform.name, sys.argv[1:] if argv is None else argv,
-                          local_parser, options_parser(platform))
+                          local_options_parser(platform), options_parser(platform))
     except (OSError, ValueError) as exc:
         parser.error(str(exc))
     return parser.parse_args(args)

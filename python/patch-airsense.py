@@ -3496,14 +3496,7 @@ def build_argument_parser():
                         help='Operation to perform')
 
     PATCH_OPTIONS.add_arguments(parser)
-    parser.add_argument('--overwrite', action='store_true',
-                        help='Overwrite output file if it already exists.')
-    parser.add_argument('--force-deprecated', action='store_true',
-                        help='Apply deprecated patches (you know what you are doing).')
-    parser.add_argument('-v', '--verbose', action='store_true',
-                        help='Show per-patch details.')
-    parser.add_argument('--log-file',
-                        help='Append a verbose patching transcript to this file.')
+    PATCH_OPTIONS.add_run_arguments(parser)
     return parser
 
 
