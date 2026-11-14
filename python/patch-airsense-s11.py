@@ -995,7 +995,8 @@ class S11FirmwarePatches(CompiledPayloadMixin):
 
     def __init__(self, asf, rpc_method_permissions=None, rpc_dataitem_permissions=None, cloud_firmware_change_mode="metadata",
                  backlight_threshold_low=10, backlight_threshold_high=19,
-                 backlight_low=20, backlight_high=100, backlight_delay_ms=3000, header_clock_usage="PPD"):
+                 backlight_low=20, backlight_high=100, backlight_delay_ms=3000, header_clock_usage="PPD",
+                 startup_logo=4):
         self.asf = asf
         self._init_compiled_payloads()
         self.mop_callback_handlers = []
@@ -1021,6 +1022,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         self.rpc_dataitem_permission_rules = DEFAULT_RPC_DATAITEM_PERMISSIONS if rpc_dataitem_permissions is None else rpc_dataitem_permissions
         self.cloud_firmware_change_mode = cloud_firmware_change_mode
         self.header_clock_usage = header_clock_usage
+        self.startup_logo_id = startup_logo
         self.backlight_settings = (backlight_threshold_low, backlight_threshold_high,
                                    backlight_low, backlight_high, backlight_delay_ms)
 
@@ -1923,13 +1925,13 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             return PatchOutcome.warn("language configuration not found")
         return PatchOutcome.ok()
 
-    def startup_logo(self, logo):
+    def startup_logo(self):
         """Select the startup bitmap through the SCY descriptor default."""
         rows = self.asf.find_descriptors("SCY", ("g5",))
         if not rows:
             return PatchOutcome.skip("SCY descriptor unavailable")
-        self.write_default_value(rows[0], logo)
-        print("  Startup logo: %d" % logo)
+        self.write_default_value(rows[0], self.startup_logo_id)
+        print("  Startup logo: %d" % self.startup_logo_id)
         return PatchOutcome.ok()
 
     def sensitivity_split_screen(self):
@@ -3256,6 +3258,7 @@ def run_patcher(args, detail_log=None):
         rpc_dataitem_permissions=rpc_dataitem_permissions,
         cloud_firmware_change_mode=args.cloud_firmware_change_mode,
         header_clock_usage=args.header_clock_usage,
+        startup_logo=args.startup_logo,
         backlight_threshold_low=args.backlight_threshold_low,
         backlight_threshold_high=args.backlight_threshold_high,
         backlight_low=args.backlight_low,

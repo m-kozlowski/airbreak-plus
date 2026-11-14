@@ -49,6 +49,15 @@ def parse_rpc_permission(value):
     return "method", target, vcid, enabled
 
 
+def format_rpc_permission(rule):
+    kind, target, selector, enabled = rule
+    if isinstance(target, int):
+        target = "0x%04X" % target
+    if kind == "method":
+        selector = "0x%04X" % selector
+    return "%s:%s:%d" % (target, selector, enabled)
+
+
 PLATFORM = Platform("air11", phases=(
     Phase("Patches", (
         Patch("patch-airbreak-info",
@@ -108,10 +117,13 @@ PLATFORM = Platform("air11", phases=(
         Patch("patch-scroll-animation",
               "Shorten menu scrolling with a 1.5x step at the native timer interval.",
               False, "scroll_animation"),
-        Patch("patch-startup-logo",
-              "Select startup logo: 0 Off, 1 AirSense 11, 2 AirCurve 11, 3 Lumis 11, "
-              "4 ResMed (default when selected).",
-              False, "startup_logo", value=Value(int, choices=range(5), nargs="?", const=4)),
+        Patch("patch-startup-logo", "Replace the startup logo with --startup-logo.",
+              False, "startup_logo", parameters=(
+                  Parameter("startup-logo",
+                            "Startup logo: 0 Off, 1 AirSense 11, 2 AirCurve 11, 3 Lumis 11, "
+                            "4 ResMed. Default: 4.",
+                            Value(int, choices=range(5)), 4),
+              )),
         Patch("patch-sensitivity-split-screen",
               "Show graphics beside supported Trigger/Cycle sensitivity selectors.",
               False, "sensitivity_split_screen"),
@@ -126,7 +138,8 @@ PLATFORM = Platform("air11", phases=(
                   Parameter("rpc-permission",
                             "Set METHOD:VCID or DATAITEM:RPC|RPW permission; repeatable. "
                             "Overrides the built-in rule for the same pair.",
-                            Value(parse_rpc_permission, "TARGET:VCID|FLAG:BOOL", repeat=True)),
+                            Value(parse_rpc_permission, "TARGET:VCID|FLAG:BOOL", repeat=True,
+                                  format=format_rpc_permission)),
               )),
         Patch("patch-cloud-firmware-change",
               "Retain cloud flow-generator firmware changes without applying them.",

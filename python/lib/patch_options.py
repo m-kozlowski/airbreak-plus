@@ -38,6 +38,8 @@ class Value:
     nargs: str = None
     const: object = None
     repeat: bool = False
+    # Text of a parsed value, where y/n for booleans and str() otherwise do not fit.
+    format: Callable = None
 
 
 @dataclass(frozen=True)
@@ -139,10 +141,6 @@ class Platform:
                                  parameter.default)
         return parser
 
-    def options_parser(self):
-        """Parser for the options alone, without patcher paths and operations."""
-        return self.add_arguments(OptionsParser())
-
     def selected(self, args, patch):
         value = getattr(args, dest(patch.option))
         if value is None and self.fallback:
@@ -160,16 +158,6 @@ class Platform:
                     errors.append("--%s requires %s" % (
                         patch.option, " and ".join("--" + option for option in missing)))
         return errors
-
-
-class OptionsParser(argparse.ArgumentParser):
-    """Options-only parser that raises ValueError for invalid options."""
-
-    def __init__(self):
-        super().__init__(add_help=False, allow_abbrev=False)
-
-    def error(self, message):
-        raise ValueError(message)
 
 
 def add_argument(parser, option, description, value, default):

@@ -1,7 +1,13 @@
-"""Local patch options and presets shared by patcher entry points and Make."""
+"""Patch options from the local options file, presets and the command line.
+
+Shared by the patcher entry points, Make and other consumers. Library
+functions raise OSError or ValueError for invalid configuration; only
+parse_patch_args() reports errors on the command line.
+"""
 
 import argparse
 from copy import copy
+from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
@@ -16,18 +22,36 @@ LOCAL_FILES = {"air10": "patch-airsense.config", "air11": "patch-airsense-s11.co
 PRESET_DIRS = ("presets/user", "presets")
 
 
+class OptionsParser(argparse.ArgumentParser):
+    """Parser for options alone that raises ValueError for invalid options."""
+
+    def __init__(self):
+        super().__init__(add_help=False, allow_abbrev=False)
+
+    def error(self, message):
+        raise ValueError(message)
+
+
+def options_parser(platform):
+    """Parser for the patch options of a patch_options.Platform."""
+    return platform.add_arguments(OptionsParser())
+
+
+@dataclass(frozen=True)
+class Layer:
+    """Options of one configuration source."""
+    # "local", "preset" or "command line".
+    source: str
+    # Local options file or preset; None for the command line.
+    path: Path
+    options: tuple
+
+
 def read_options(path):
     try:
         return shlex.split(path.read_text(encoding="utf-8"), comments=True)
     except ValueError as exc:
         raise ValueError("%s: %s" % (path, exc)) from None
-
-
-def local_options(platform):
-    try:
-        return read_options(REPO / LOCAL_FILES[platform])
-    except FileNotFoundError:
-        return []
 
 
 def preset_dirs(platform):
@@ -62,41 +86,93 @@ def preset_path(platform, preset, directory):
     raise ValueError("preset %s not found in %s" % (preset, " or ".join(preset_dirs(platform))))
 
 
-def preset_options(platform, presets, directory, parser=None, chain=()):
-    """Options of the selected presets, in order.
+def check(parser, options, path):
+    if parser is not None:
+        try:
+            parser.parse_args(options)
+        except ValueError as exc:
+            raise ValueError("%s: %s" % (path, exc)) from None
 
-    The presets that a preset selects precede its own options. A parser, when
-    given, validates the options of each preset.
-    """
-    options = []
+
+def preset_layers(platform, presets, directory, parser=None, chain=()):
+    """Layers of the selected presets, in order; the presets a preset selects precede it."""
+    layers = []
     for preset in presets:
         path = preset_path(platform, preset, directory)
         if path in chain:
             raise ValueError("preset cycle: " + " -> ".join(map(str, chain + (path,))))
-        nested, own = split_presets(read_options(path))
-        if parser is not None:
-            try:
-                parser.parse_args(own)
-            except ValueError as exc:
-                raise ValueError("%s: %s" % (path, exc)) from None
-        options += preset_options(platform, nested, path.parent, parser, chain + (path,)) + own
-    return options
+        nested, options = split_presets(read_options(path))
+        check(parser, options, path)
+        layers += preset_layers(platform, nested, path.parent, parser, chain + (path,))
+        layers.append(Layer("preset", path, tuple(options)))
+    return layers
+
+
+def config_layers(platform, argv, local_parser=None, preset_parser=None):
+    """Configuration layers of a platform name, lowest precedence first.
+
+    The local options file comes first, then the presets selected on the
+    command line, then the other command-line arguments. The presets that the
+    local file or the command line selects precede it. Parsers, when given,
+    validate the local options and the options of each preset.
+    """
+    path = REPO / LOCAL_FILES[platform]
+    try:
+        local = read_options(path)
+    except FileNotFoundError:
+        local = []
+    local_presets, local = split_presets(local)
+    check(local_parser, local, path)
+    presets, argv = split_presets(argv)
+    return (preset_layers(platform, local_presets, REPO, preset_parser)
+            + [Layer("local", path, tuple(local))]
+            + preset_layers(platform, presets, Path.cwd(), preset_parser)
+            + [Layer("command line", None, tuple(argv))])
 
 
 def patch_args(platform, argv, local_parser=None, preset_parser=None):
-    """Arguments in the order the patcher parses them.
+    """Arguments in the order the patcher parses them; see config_layers()."""
+    return [option for layer in config_layers(platform, argv, local_parser, preset_parser)
+            for option in layer.options]
 
-    The local options file comes first, then the presets selected on the
-    command line, then the other command-line arguments. The options of the
-    local file and of the command line follow the presets each selects. Parsers,
-    when given, validate the local options and the options of each preset.
+
+def format_value(value, syntax):
+    if syntax is not None and syntax.format is not None:
+        return syntax.format(value)
+    if isinstance(value, bool):
+        return "y" if value else "n"
+    return str(value)
+
+
+def option_lines(platform, values):
+    """Arguments of option values, one list per option, in declaration order.
+
+    values maps option names without -- to parsed values. None leaves an
+    option out; a repeatable option takes a list of values.
     """
-    local_presets, local = split_presets(local_options(platform))
-    if local_parser is not None:
-        local_parser.parse_args(local)
-    presets, argv = split_presets(argv)
-    return (preset_options(platform, local_presets, REPO, preset_parser) + local
-            + preset_options(platform, presets, Path.cwd(), preset_parser) + argv)
+    syntax = {patch.option: patch.value for patch in platform.patches()}
+    syntax.update((parameter.option, parameter.value) for parameter in platform.all_parameters())
+    unknown = [option for option in values if option not in syntax]
+    if unknown:
+        raise ValueError("unknown option: " + ", ".join("--" + option for option in unknown))
+    lines = []
+    for option, value_syntax in syntax.items():
+        value = values.get(option)
+        if value is None:
+            continue
+        for item in value if value_syntax is not None and value_syntax.repeat else (value,):
+            lines.append(["--" + option, format_value(item, value_syntax)])
+    return lines
+
+
+def option_args(platform, values):
+    """Command-line arguments of option values; see option_lines()."""
+    return [arg for line in option_lines(platform, values) for arg in line]
+
+
+def option_text(platform, values):
+    """Options file text of option values, one option per line; see option_lines()."""
+    return "".join(shlex.join(line) + "\n" for line in option_lines(platform, values))
 
 
 def parse_patch_args(parser, argv, platform):
@@ -104,19 +180,19 @@ def parse_patch_args(parser, argv, platform):
 
     platform is the patch_options.Platform of the patcher.
     """
-    # Listed in --help; patch_args() expands the selections before parsing.
+    # Listed in --help; config_layers() expands the selections before parsing.
     parser.add_argument("--preset", action="append", metavar="NAME|PATH", help=(
         "Apply the options of a preset: NAME.config from %s, or a file. Repeatable; "
         "later presets override earlier ones, and the other command-line options "
         "override presets." % " or ".join(preset_dirs(platform.name))))
     # Reuse the CLI actions so local options have identical types and choices.
-    options = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
+    local_parser = OptionsParser()
     for action in parser._actions:
         if action.option_strings and not isinstance(action, argparse._HelpAction):
-            options._add_action(copy(action))
+            local_parser._add_action(copy(action))
     try:
         args = patch_args(platform.name, sys.argv[1:] if argv is None else argv,
-                          options, platform.options_parser())
+                          local_parser, options_parser(platform))
     except (OSError, ValueError) as exc:
         parser.error(str(exc))
     return parser.parse_args(args)
