@@ -89,20 +89,32 @@ define announce_image
 	printf '\nBuilding image: %s\n' '$@' >> '$(MAKE_LOG)'
 endef
 
+# Image $(1) for platform $(2), patched by python/$(3) from input image $(4)
+# with the options $(5) of this image, followed by the variable named $(6).
+# The $(1).config state file records the options with those of the local
+# options file and the selected presets; a change rebuilds the image.
+.PHONY: patch-config-force
+define patch_image_rule
+$(1): $(4) $(1).config Makefile python/lib/patch_config.py python/lib/patch_options.py | $(BUILD)
+	$$(announce_image)
+	python3 python/$(3) '$(4)' '$$@' PATCH $$(PATCHER_OUTPUT_ARGS) $(5) $$($(6))
+$(1).config: patch-config-force
+	python3 python/lib/patch_config.py '$(2)' '$(4)' '$$@' $(5) $$($(6))
+endef
+
 $(BUILD):
 	mkdir -p $(BUILD)
 
+# Air 10 image $(1) with the options $(2) of this image.
+air10_image = $(eval $(call patch_image_rule,$(1),air10,patch-airsense.py,$(AIR10_FIRMWARE),$(2),AIR10_PATCH_ARGS))
+
+$(BUILD_VARIANTS): $(S10_PATCHER_DEPS) $(PAYLOAD_STAMPS) $(PAYLOAD_LAYOUT_TSVS) $(BLX_DUMP_BIN)
+
 # unlocked stock-ish
-$(BUILD)/stm32-patched.bin: $(S10_PATCHER_DEPS) $(PAYLOAD_STAMPS) $(PAYLOAD_LAYOUT_TSVS) $(BLX_DUMP_BIN)
-	$(announce_image)
-	python3 python/patch-airsense.py '$(AIR10_FIRMWARE)' $@ PATCH $(PATCHER_OUTPUT_ARGS) $(AIR10_PATCH_ARGS)
+$(call air10_image,$(BUILD)/stm32-patched.bin)
 
 # Optional therapy payloads, with their custom settings
-AIR10_PLUS_ARGS := --patch-fw-asv-wrapper y --patch-fw-vauto-wrapper y --patch-fw-squarewave y \
-	--patch-fall-time y --patch-st-ibr y --patch-autoepap y
-$(BUILD)/stm32-plus.bin: $(S10_PATCHER_DEPS) $(PAYLOAD_STAMPS) $(PAYLOAD_LAYOUT_TSVS) $(BLX_DUMP_BIN)
-	$(announce_image)
-	python3 python/patch-airsense.py '$(AIR10_FIRMWARE)' $@ PATCH $(PATCHER_OUTPUT_ARGS) $(AIR10_PLUS_ARGS) $(AIR10_PATCH_ARGS)
+$(call air10_image,$(BUILD)/stm32-plus.bin,--preset plus)
 
 binaries: $(PAYLOAD_TARGETS)
 
@@ -347,16 +359,6 @@ vid_spoof: $(call payload_bins,vid_spoof)
 
 clean:
 	$(RM) $(BUILD)/*
-
-# $(1): output image, $(2): platform, $(3): input image, $(4): options variable.
-.PHONY: patch-config-force
-define patch_config_rule
-$(1): $(3) $(1).config Makefile python/lib/patch_config.py python/lib/patch_options.py
-$(1).config: patch-config-force
-	python3 python/lib/patch_config.py '$(2)' '$(3)' '$$@' $$($(4))
-endef
-
-$(foreach image,$(BUILD_VARIANTS),$(eval $(call patch_config_rule,$(image),air10,$(AIR10_FIRMWARE),AIR10_PATCH_ARGS)))
 
 -include Makefile.s9
 -include Makefile.as11

@@ -3,6 +3,9 @@
 # Uncomment options to override built-in defaults; use y to enable, n to disable.
 # AIR10_PATCH_ARGS and CLI options take precedence.
 
+# Preset: its options come first; options below override them.
+# --preset plus
+
 # Patch selection: built-in defaults.
 # --patch-extra-modes y
 # --patch-unlock-uilimits y

@@ -238,9 +238,9 @@ as11-patched:
 	$(MAKE) --no-print-directory $(AS11_PATCHED)
 	@printf '\nFirmware image:\n  %s\n' '$(AS11_PATCHED)' | tee -a '$(MAKE_LOG)'
 
-$(AS11_PATCHED): $(AS11_PATCHER_DEPS) \
-		$(AS11_PAYLOAD_STAMPS) $(AS11_PAYLOAD_LAYOUT_TSVS) | $(BUILD)
-	$(announce_image)
-	python3 python/patch-airsense-s11.py '$(AS11_FIRMWARE)' '$@' PATCH $(PATCHER_OUTPUT_ARGS) $(AIR11_PATCH_ARGS)
+# Air11 image $(1) with the options $(2) of this image.
+air11_image = $(eval $(call patch_image_rule,$(1),air11,patch-airsense-s11.py,$(AS11_FIRMWARE),$(2),AIR11_PATCH_ARGS))
 
-$(eval $(call patch_config_rule,$(AS11_PATCHED),air11,$(AS11_FIRMWARE),AIR11_PATCH_ARGS))
+$(AS11_PATCHED): $(AS11_PATCHER_DEPS) $(AS11_PAYLOAD_STAMPS) $(AS11_PAYLOAD_LAYOUT_TSVS)
+
+$(call air11_image,$(AS11_PATCHED))

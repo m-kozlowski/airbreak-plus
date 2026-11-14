@@ -122,14 +122,4 @@ PLATFORM = Platform('air10', phases=(
         Patch('patch-fw-lcd', 'Add the universal ILI9325/ILI9328 LCD driver.',
               False, 'patch_lcd_ili9325'),
     )),
-), presets={
-    # Optional therapy payloads, with their custom settings.
-    'plus': {
-        'patch-fw-asv-wrapper': True,
-        'patch-fw-vauto-wrapper': True,
-        'patch-fw-squarewave': True,
-        'patch-fall-time': True,
-        'patch-st-ibr': True,
-        'patch-autoepap': True,
-    },
-})
+))

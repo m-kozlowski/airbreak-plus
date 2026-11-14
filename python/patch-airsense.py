@@ -3487,7 +3487,8 @@ PATCH_OPTIONS = patch_options.load('air10')
 
 
 def build_argument_parser():
-    parser = argparse.ArgumentParser(description='Patch AirSense firmware with selected updates.')
+    parser = argparse.ArgumentParser(description='Patch AirSense firmware with selected updates.',
+                                     allow_abbrev=False)
     parser.add_argument('INFILE', help='Input original binary file')
     parser.add_argument('OUTFILE', help='Output patched file')
     parser.add_argument('OPERATION', choices=['INFO', 'PATCH'],
@@ -3637,7 +3638,7 @@ def run_patcher(args, detail_log=None):
 
 def main(argv=None):
     parser = build_argument_parser()
-    args = parse_patch_args(parser, argv, "air10")
+    args = parse_patch_args(parser, argv, PATCH_OPTIONS)
 
     if args.OPERATION == 'PATCH':
         errors = PATCH_OPTIONS.dependency_errors(args)

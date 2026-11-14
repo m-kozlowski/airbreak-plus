@@ -3182,7 +3182,7 @@ class TeeStream:
 
 
 def build_arg_parser():
-    parser = argparse.ArgumentParser(description="Patch AirSense/AirCurve 11 firmware.")
+    parser = argparse.ArgumentParser(description="Patch AirSense/AirCurve 11 firmware.", allow_abbrev=False)
     parser.add_argument("INFILE", help="Input original binary file")
     parser.add_argument("OUTFILE", help="Output patched file")
     parser.add_argument("OPERATION", choices=["INFO", "PATCH"], help="Operation to perform")
@@ -3315,7 +3315,7 @@ def run_patcher(args, detail_log=None):
 
 def main(argv=None):
     parser = build_arg_parser()
-    args = parse_patch_args(parser, argv, "air11")
+    args = parse_patch_args(parser, argv, PATCH_OPTIONS)
     if args.OPERATION == "PATCH":
         errors = PATCH_OPTIONS.dependency_errors(args)
         if errors:

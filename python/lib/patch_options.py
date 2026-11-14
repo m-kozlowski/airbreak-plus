@@ -5,7 +5,7 @@ firmware image or toolchain and does not import a firmware patcher.
 """
 
 import argparse
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import importlib
 from typing import Callable
 
@@ -86,8 +86,6 @@ class Platform:
     # Phases and patches in execution order.
     phases: tuple
     parameters: tuple = ()
-    # Preset name -> {option: value}.
-    presets: dict = field(default_factory=dict)
 
     def __post_init__(self):
         patches = {patch.option for patch in self.patches()}
@@ -98,10 +96,6 @@ class Platform:
             for option in patch.requires:
                 if option not in patches:
                     raise ValueError("%s: --%s requires unknown patch --%s" % (self.name, patch.option, option))
-        for name, values in self.presets.items():
-            for option in values:
-                if option not in options:
-                    raise ValueError("%s: preset %s sets unknown option --%s" % (self.name, name, option))
 
     @property
     def fallback(self):
@@ -147,7 +141,7 @@ class Platform:
 
     def options_parser(self):
         """Parser for the options alone, without patcher paths and operations."""
-        return self.add_arguments(argparse.ArgumentParser(add_help=False, allow_abbrev=False))
+        return self.add_arguments(OptionsParser())
 
     def selected(self, args, patch):
         value = getattr(args, dest(patch.option))
@@ -166,6 +160,16 @@ class Platform:
                     errors.append("--%s requires %s" % (
                         patch.option, " and ".join("--" + option for option in missing)))
         return errors
+
+
+class OptionsParser(argparse.ArgumentParser):
+    """Options-only parser that raises ValueError for invalid options."""
+
+    def __init__(self):
+        super().__init__(add_help=False, allow_abbrev=False)
+
+    def error(self, message):
+        raise ValueError(message)
 
 
 def add_argument(parser, option, description, value, default):

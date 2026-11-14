@@ -10,6 +10,7 @@ patcher configuration.
 - [Synopsis](#synopsis)
 - [Description](#description)
 - [Files](#files)
+- [Presets](#presets)
 - [Precedence](#precedence)
 - [Make Variables](#make-variables)
 - [Examples](#examples)
@@ -37,8 +38,8 @@ patch-airsense-s9.py INPUT OUTPUT PATCH [OPTIONS]
 ## Description
 
 Configures patch selection and extended patch parameters for Python entry
-points, shell wrappers, and Make builds. Supports persistent local settings
-and one-off overrides.
+points, shell wrappers, and Make builds. Supports persistent local settings,
+presets, and one-off overrides.
 
 ## Files
 
@@ -55,11 +56,36 @@ and invalid values are errors. The `.config.example` files are templates;
 only `.config` files are loaded.
 
 Each output has a separate `.config` state file. Changing or removing local
-options or [Make variables](#make-variables) regenerates the affected image.
-Changing the input image, including selecting another `AS11_FIRMWARE` path,
-also regenerates the output.
+options, the contents of selected [presets](#presets) or
+[Make variables](#make-variables) regenerates the affected image. Changing the
+input image, including selecting another `AS11_FIRMWARE` path, also
+regenerates the output.
 
 Each patcher's `--help` lists available options and defaults.
+
+## Presets
+
+A preset is a file of patch options in the local options file syntax.
+`--preset NAME` or `--preset PATH` selects one; the option is repeatable.
+
+| Preset | File, relative to repository root |
+|--------|-----------------------------------|
+| Built-in | `presets/PLATFORM/NAME.config` |
+| User | `presets/user/PLATFORM/NAME.config`, ignored by Git |
+
+`PLATFORM` is `air10`, `air11` or `s9`. A user preset hides a built-in preset
+of the same name. A value with a directory part, such as `./night.config`,
+selects that file; a relative path is relative to the file that selects it, or
+to the working directory on the command line.
+
+Presets contain patch switches and patch parameters only; other patcher
+options, such as `--overwrite`, are errors. A preset can select other presets
+with `--preset`; selecting a preset that is already being applied, directly or
+through other presets, is an error.
+
+| Platform | Built-in preset | Options |
+|----------|-----------------|---------|
+| Air 10 | `plus` | Optional therapy payloads of `build/stm32-plus.bin` |
 
 ## Precedence
 
@@ -69,7 +95,12 @@ Lowest to highest; applies to Make builds, wrappers and Python entry points:
 |----------|--------|
 | 1 | Built-in Python defaults |
 | 2 | Local options file |
-| 3 | CLI arguments, including the options Make passes; see [Make variables](#make-variables) |
+| 3 | Presets selected on the command line, in the order given |
+| 4 | Other CLI arguments, including the options Make passes; see [Make variables](#make-variables) |
+
+Presets that the local options file or a preset selects precede the options of
+that file. Command-line options override the selected presets wherever
+`--preset` appears on the command line.
 
 Repeated scalar options use the last value. Air11 `--rpc-permission` rules
 override earlier rules for the same target/selector. See
@@ -86,10 +117,10 @@ Air11 `--all-patches` supplies the fallback for individually unset patch switche
 | `PATCH_ARGS` | Default for each variable above that is not set |
 
 Make passes the variable to the patcher as CLI arguments, after the options
-selected by the target, such as those of `build/stm32-plus.bin`. An option the
-patcher does not have is an error. Variables can be set in the environment or
-on the Make command line; command-line assignments override environment values.
-Payload dependencies are validated after applying overrides.
+selected by the target, such as the `plus` preset of `build/stm32-plus.bin`.
+An option the patcher does not have is an error. Variables can be set in the
+environment or on the Make command line; command-line assignments override
+environment values. Payload dependencies are validated after applying overrides.
 
 ## Examples
 

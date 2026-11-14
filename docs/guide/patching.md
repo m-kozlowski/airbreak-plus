@@ -31,6 +31,7 @@ This builds compiled patches and produces following images:
 | `build/stm32-plus.bin` | Custom VAuto, ASV backup-rate control, Square Wave, Fall Time, ST iBR, iVAPS AutoEPAP |
 
 The additional features in `plus` have runtime controls in the clinical menu.
+`build/stm32-plus.bin` selects them with the [`plus` preset](../patch_options.md#presets).
 
 The console shows compact patch status by default. A verbose transcript of the
 latest build is written to `make.log`; use `make V=1` to also show it on the
@@ -132,9 +133,13 @@ python3 python/patch-airsense.py stm32.bin build/stm32-custom.bin PATCH \
     --patch-fw-squarewave n
 ```
 
+`--preset NAME` applies a saved set of options, such as `--preset plus`; other
+options on the command line override it.
+
 When building through Make, options can also be passed with `AIR10_PATCH_ARGS`,
 or with `PATCH_ARGS` when `AIR10_PATCH_ARGS` is not set.
-See [patch options](../patch_options.md) for examples and saved preferences.
+See [patch options](../patch_options.md) for examples, saved preferences and
+user presets.
 
 ## Next
 

@@ -64,12 +64,10 @@ s9: $(BUILD)/stm32-s9.bin
 
 s9_lcd: $(BUILD)/stm32-s9-lcd.bin
 
-$(BUILD)/stm32-s9.bin: $(S9_PATCHER_DEPS) $(S9_PAYLOADS) | $(BUILD)
-	$(announce_image)
-	python3 python/patch-airsense-s9.py '$(S9_FIRMWARE)' $@ PATCH $(PATCHER_OUTPUT_ARGS) $(S9_PATCH_ARGS)
+# S9 image $(1) with the options $(2) of this image.
+s9_image = $(eval $(call patch_image_rule,$(1),s9,patch-airsense-s9.py,$(S9_FIRMWARE),$(2),S9_PATCH_ARGS))
 
-$(BUILD)/stm32-s9-lcd.bin: $(S9_PATCHER_DEPS) $(S9_PAYLOADS) | $(BUILD)
-	$(announce_image)
-	python3 python/patch-airsense-s9.py '$(S9_FIRMWARE)' $@ PATCH $(PATCHER_OUTPUT_ARGS) --patch-fw-lcd y $(S9_PATCH_ARGS)
+$(S9_BUILD_VARIANTS): $(S9_PATCHER_DEPS) $(S9_PAYLOADS)
 
-$(foreach image,$(S9_BUILD_VARIANTS),$(eval $(call patch_config_rule,$(image),s9,$(S9_FIRMWARE),S9_PATCH_ARGS)))
+$(call s9_image,$(BUILD)/stm32-s9.bin)
+$(call s9_image,$(BUILD)/stm32-s9-lcd.bin,--patch-fw-lcd y)
