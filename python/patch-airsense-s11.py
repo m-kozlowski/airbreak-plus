@@ -3204,11 +3204,11 @@ def print_patch_output(text, stream=None):
         print(("  " + line) if line else "", file=stream)
 
 
-def apply_reported_patch(option, method, args, detail_log=None, method_args=()):
+def apply_reported_patch(option, method, args, detail_log=None):
     output = io.StringIO()
     try:
         with redirect_stdout(output):
-            outcome = method(*method_args)
+            outcome = method()
         if not isinstance(outcome, PatchOutcome):
             outcome = PatchOutcome.ok()
     except PatchVersionUnavailable as exc:
@@ -3269,7 +3269,7 @@ def run_patcher(args, detail_log=None):
     print("\n=== Patches")
     for patch in PATCH_OPTIONS.patches():
         if PATCH_OPTIONS.selected(args, patch):
-            outcome = apply_reported_patch(patch.option, getattr(patches, patch.method), args, detail_log, patch.arguments(args))
+            outcome = apply_reported_patch(patch.option, getattr(patches, patch.method), args, detail_log)
             patches.record_patch_outcome(patch.option, outcome)
 
 

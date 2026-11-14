@@ -34,9 +34,6 @@ class Value:
     type: Callable = None
     metavar: str = None
     choices: object = None
-    # With nargs="?", the option without a value selects const.
-    nargs: str = None
-    const: object = None
     repeat: bool = False
     # Text of a parsed value, where y/n for booleans and str() otherwise do not fit.
     format: Callable = None
@@ -52,22 +49,14 @@ class Parameter:
 
 @dataclass(frozen=True)
 class Patch:
+    """A patch selected by a y/n switch; its settings are its parameters."""
     option: str
     description: str
-    default: object
+    default: bool
     method: str
-    # Value syntax of a patch that passes its value to the method; None for a y/n switch.
-    value: Value = None
     requires: tuple = ()
     deprecated: str = None
     parameters: tuple = ()
-
-    def arguments(self, args):
-        """Arguments for the patch method of a selected patch."""
-        if self.value is None:
-            return ()
-        value = getattr(args, dest(self.option))
-        return (self.value.const if value is None else value,)
 
 
 # Unset patch switches are None on platforms that declare this parameter.
@@ -122,13 +111,10 @@ class Platform:
     def add_arguments(self, parser):
         """Add the patch switches and parameters to an argparse parser."""
         for patch in self.patches():
-            if patch.value is None:
-                value = Value(str2bool, "Y/n" if patch.default else "y/N")
-                description = "%s (default: %s)" % (patch.description,
-                                                   "enabled" if patch.default else "disabled")
-            else:
-                value, description = patch.value, patch.description
-            add_argument(parser, patch.option, description, value,
+            add_argument(parser, patch.option,
+                         "%s (default: %s)" % (patch.description,
+                                               "enabled" if patch.default else "disabled"),
+                         Value(str2bool, "Y/n" if patch.default else "y/N"),
                          None if self.fallback else patch.default)
         for parameter in self.parameters:
             add_argument(parser, parameter.option, parameter.description, parameter.value,
@@ -145,8 +131,7 @@ class Platform:
         value = getattr(args, dest(patch.option))
         if value is None and self.fallback:
             value = patch.default if args.all_patches is None else args.all_patches
-        # Numeric zero is a valid patch value, not a disabled switch.
-        return value is not None and value is not False
+        return value
 
     def dependency_errors(self, args):
         errors = []
@@ -168,8 +153,6 @@ def add_argument(parser, option, description, value, default):
         kwargs["metavar"] = value.metavar
     if value.choices is not None:
         kwargs["choices"] = value.choices
-    if value.nargs is not None:
-        kwargs.update(nargs=value.nargs, const=value.const)
     if value.repeat:
         kwargs["action"] = "append"
     parser.add_argument("--" + option, **kwargs)

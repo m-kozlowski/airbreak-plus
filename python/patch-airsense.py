@@ -170,8 +170,9 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         'AFH': 11,
     }
         
-    def __init__(self, asf):
+    def __init__(self, asf, target_rh=85.0):
         self.asf = asf
+        self.target_rh_percent = target_rh
         self.applied_payloads = set()
         self.enabled_custom_settings_features = set()
         self.mop_callback_handlers = {}
@@ -2309,8 +2310,9 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self.enabled_custom_settings_features.add('ivaps')
         return PatchOutcome.ok()
 
-    def patch_target_rh(self, percent):
+    def patch_target_rh(self):
         """Set the climate model's target RH for Auto and manual humidity levels."""
+        percent = self.target_rh_percent
         getters = {
             'SX584-0204': 0xb64cc,
             'SX584-0205': 0xb67ac,
@@ -2338,7 +2340,6 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         branch[3] &= ~0x40  # BL -> B.W, same displacement.
         self._replace_bytes_checked(getter, bytes.fromhex('9f ed 7f 0a'),
                                     bytes(branch), 'target RH getter')
-        self.target_rh_percent = percent
         self.applied_payloads.add('target_rh')
         return PatchOutcome.ok('Climate model target RH: %g%% (Auto and Manual)' % percent,
                                self._payload_detail('target_rh', len(data), flash))
@@ -3522,8 +3523,7 @@ def print_patch_details(output, outcome, stream=None, include_summary=True):
         print('  ' + outcome.summary, file=stream)
 
 
-def apply_reported_patch(option, method, args, detail_log=None, deprecated=None,
-                         method_args=()):
+def apply_reported_patch(option, method, args, detail_log=None, deprecated=None):
     if deprecated and not args.force_deprecated:
         print('PATCH: %s [SKIP]' % option)
         print('  ' + deprecated)
@@ -3532,7 +3532,7 @@ def apply_reported_patch(option, method, args, detail_log=None, deprecated=None,
     output = io.StringIO()
     try:
         with redirect_stdout(output):
-            outcome = method(*method_args)
+            outcome = method()
         if not isinstance(outcome, PatchOutcome):
             raise TypeError("%s returned %s instead of PatchOutcome" %
                             (option, type(outcome).__name__))
@@ -3573,7 +3573,7 @@ def apply_patch_phases(patches, args, detail_log=None):
         print('\n=== ' + phase.name)
         for patch in selected:
             apply_reported_patch(patch.option, getattr(patches, patch.method), args,
-                                 detail_log, patch.deprecated, patch.arguments(args))
+                                 detail_log, patch.deprecated)
 
 
 def run_patcher(args, detail_log=None):
@@ -3584,7 +3584,7 @@ def run_patcher(args, detail_log=None):
 
     repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     build_identity = firmware_build_identity(repo_dir)
-    patches = ASFirmwarePatches(asf)
+    patches = ASFirmwarePatches(asf, target_rh=args.target_rh)
 
     apply_patch_phases(patches, args, detail_log)
 

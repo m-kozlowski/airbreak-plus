@@ -150,7 +150,7 @@ def option_lines(platform, values):
     values maps option names without -- to parsed values. None leaves an
     option out; a repeatable option takes a list of values.
     """
-    syntax = {patch.option: patch.value for patch in platform.patches()}
+    syntax = {patch.option: None for patch in platform.patches()}
     syntax.update((parameter.option, parameter.value) for parameter in platform.all_parameters())
     unknown = [option for option in values if option not in syntax]
     if unknown:

@@ -45,10 +45,10 @@
 # Replacement ILI9325/ILI9328 LCD.
 # --patch-fw-lcd n
 
-# Climate target relative humidity, percent; enabled at 85% by default.
-# Accepts a percentage, y for 85%, or n to disable.
+# Climate target relative humidity, percent.
 # With custom settings, initializes Target RH (%) in Accessories (70-100, step 1).
-# --patch-target-rh 85
+# --patch-target-rh y
+# --target-rh 85
 
 # Configuration reference: docs/patch_options.md
 # Feature reference: docs/guide/patching.md

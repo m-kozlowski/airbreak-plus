@@ -2,21 +2,17 @@
 
 import argparse
 
-from .patch_options import Patch, Phase, Platform, Value, str2bool
+from .patch_options import Parameter, Patch, Phase, Platform, Value
 
 
-def target_rh_value(v):
-    """Accept a percentage, or a boolean word selecting 85% / no patch."""
+def percentage(value):
     try:
-        value = float(v)
+        percent = float(value)
     except ValueError:
-        try:
-            return 85.0 if str2bool(v) else False
-        except argparse.ArgumentTypeError:
-            raise argparse.ArgumentTypeError('Percentage from 0 to 100, y or n expected.') from None
-    if not 0 <= value <= 100:
+        percent = None
+    if percent is None or not 0 <= percent <= 100:
         raise argparse.ArgumentTypeError('Percentage from 0 to 100 expected.')
-    return value
+    return percent
 
 
 # Patch order is part of the implementation. Payloads must be present before
@@ -70,8 +66,11 @@ PLATFORM = Platform('air10', phases=(
         Patch('patch-header-clock', 'Add a clock to the Home and therapy-screen headers.',
               True, 'patch_header_clock'),
         Patch('patch-target-rh',
-              'Set target RH (default: 85%, y: 85%, n: disabled); custom settings adds a 70-100% menu control.',
-              85.0, 'patch_target_rh', value=Value(target_rh_value, 'PERCENT|y|n')),
+              'Set the climate target RH to --target-rh; custom settings adds a 70-100% menu control.',
+              True, 'patch_target_rh', parameters=(
+                  Parameter('target-rh', 'Target RH, 0..100%. Default: 85.',
+                            Value(percentage, 'PERCENT'), 85.0),
+              )),
         Patch('patch-custom-palette', 'Patch the custom color palette.',
               True, 'custom_palette'),
         Patch('patch-past-date', 'Allow setting past date in the menu and over UART.',
