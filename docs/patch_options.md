@@ -2,7 +2,8 @@
 
 ## Name
 
-`patch-airsense.py`, `patch-airsense-s11.py` - Air 10 and Air11 patcher configuration.
+`patch-airsense.py`, `patch-airsense-s11.py`, `patch-airsense-s9.py` - Air 10, Air11 and S9
+patcher configuration.
 
 ## Contents
 
@@ -10,7 +11,7 @@
 - [Description](#description)
 - [Files](#files)
 - [Precedence](#precedence)
-- [Environment](#environment)
+- [Make Variables](#make-variables)
 - [Examples](#examples)
 - [See Also](#see-also)
 
@@ -19,8 +20,10 @@
 ```text
 make [TARGET] [AIR10_PATCH_ARGS='OPTIONS']
 make as11 [AIR11_PATCH_ARGS='OPTIONS']
+make s9|s9_lcd [S9_PATCH_ARGS='OPTIONS']
 patch-airsense.py INPUT OUTPUT PATCH [OPTIONS]
 patch-airsense-s11.py INPUT OUTPUT PATCH [OPTIONS]
+patch-airsense-s9.py INPUT OUTPUT PATCH [OPTIONS]
 ```
 
 | Argument | Meaning |
@@ -28,14 +31,14 @@ patch-airsense-s11.py INPUT OUTPUT PATCH [OPTIONS]
 | `INPUT` | Original firmware image |
 | `OUTPUT` | Patched firmware image |
 | `PATCH` | Literal operation name selecting firmware patching |
-| `TARGET` | Make target; default builds `build/stm32-patched.bin` and `build/stm32-plus.bin`; `as11` builds the Air11 image |
+| `TARGET` | Make target; default builds `build/stm32-patched.bin` and `build/stm32-plus.bin`; `as11` builds the Air11 image; `s9` and `s9_lcd` build `build/stm32-s9.bin` and `build/stm32-s9-lcd.bin` |
 | `OPTIONS` | Patcher options, using the same syntax as the CLI |
 
 ## Description
 
 Configures patch selection and extended patch parameters for Python entry
-points, shell wrappers, and Make builds. Supports persistent local settings,
-one-off overrides, and Air 10 legacy environment variables.
+points, shell wrappers, and Make builds. Supports persistent local settings
+and one-off overrides.
 
 ## Files
 
@@ -43,6 +46,7 @@ one-off overrides, and Air 10 legacy environment variables.
 |----------|-------------------------------------------------|---------|
 | Air 10 | `patch-airsense.config` | [Air 10 options](../patch-airsense.config.example) |
 | Air11 | `patch-airsense-s11.config` | [Air11 options](../patch-airsense-s11.config.example) |
+| S9 | `patch-airsense-s9.config` | [S9 options](../patch-airsense-s9.config.example) |
 
 Local options files are optional and ignored by Git. They are loaded from the
 repository root, independently of the working directory. Contents use CLI syntax:
@@ -51,53 +55,40 @@ and invalid values are errors. The `.config.example` files are templates;
 only `.config` files are loaded.
 
 Each output has a separate `.config` state file. Changing or removing local
-options, patch-argument variables, or Air 10 legacy variables regenerates the
-affected image. Changing the input image, including selecting another
-`AS11_FIRMWARE` path, also regenerates the output.
+options or [Make variables](#make-variables) regenerates the affected image.
+Changing the input image, including selecting another `AS11_FIRMWARE` path,
+also regenerates the output.
 
 Each patcher's `--help` lists available options and defaults.
 
 ## Precedence
 
-Lowest to highest; applies to both wrappers and Python entry points:
+Lowest to highest; applies to Make builds, wrappers and Python entry points:
 
 | Priority | Source |
 |----------|--------|
 | 1 | Built-in Python defaults |
 | 2 | Local options file |
-| 3 | Air 10 legacy environment variables |
-| 4 | `AIR10_PATCH_ARGS` or `AIR11_PATCH_ARGS` |
-| 5 | Explicit CLI arguments |
+| 3 | CLI arguments, including the options Make passes; see [Make variables](#make-variables) |
 
 Repeated scalar options use the last value. Air11 `--rpc-permission` rules
 override earlier rules for the same target/selector. See
 [RPC permission selectors](as11/rpc_protocol.md#rpc-permission-selectors).
 Air11 `--all-patches` supplies the fallback for individually unset patch switches.
 
-## Environment
+## Make Variables
 
 | Variable | Value |
 |----------|-------|
 | `AIR10_PATCH_ARGS` | Air 10 options in CLI syntax |
 | `AIR11_PATCH_ARGS` | Air11 options in CLI syntax |
+| `S9_PATCH_ARGS` | S9 options in CLI syntax |
+| `PATCH_ARGS` | Default for each variable above that is not set |
 
-Make command-line assignments override environment values.
-
-Air 10 legacy variables:
-
-| Variable | Options enabled when set to `1` |
-|----------|--------------------------------|
-| `PATCH_VAUTO_WRAPPER` | `--patch-fw-vauto-wrapper y` |
-| `PATCH_S` | `--patch-fw-squarewave y` |
-| `PATCH_ASV_TASK_WRAPPER` | `--patch-fw-asv-wrapper y` |
-| `PATCH_FALL_TIME` | `--patch-fall-time y` |
-| `PATCH_ST_IBR` | `--patch-st-ibr y` |
-| `PATCH_S10_LCD` | `--patch-fw-lcd y` |
-| `PATCH_GRAPH_KEEP_SCREEN_ON` | `--patch-graph-keep-screen-on y` |
-| `FORCE_DEPRECATED` | `--force-deprecated` |
-
-Unset variables and values other than `1` leave earlier settings unchanged.
-`PATCH_TARGET_RH` supplies `--patch-target-rh VALUE` whenever set.
+Make passes the variable to the patcher as CLI arguments, after the options
+selected by the target, such as those of `build/stm32-plus.bin`. An option the
+patcher does not have is an error. Variables can be set in the environment or
+on the Make command line; command-line assignments override environment values.
 Payload dependencies are validated after applying overrides.
 
 ## Examples
@@ -124,11 +115,13 @@ patch-airsense-s11.py --help
 patch-airsense-s11.py as11.bin build/no-clock.bin PATCH --patch-header-clock n
 ```
 
-The Air 10 option list is available through `patch-airsense.py --help`.
+The Air 10 and S9 option lists are available through `patch-airsense.py --help`
+and `patch-airsense-s9.py --help`.
 
 ## See Also
 
 [Air 10 patching guide](guide/patching.md),
 [Air11 patching guide](guide/as11/patching.md),
 [Air 10 configuration example](../patch-airsense.config.example),
-[Air11 configuration example](../patch-airsense-s11.config.example).
+[Air11 configuration example](../patch-airsense-s11.config.example),
+[S9 configuration example](../patch-airsense-s9.config.example).

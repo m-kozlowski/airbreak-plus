@@ -5,15 +5,10 @@ SRC=patches
 BUILD=build
 PATCH_STUBS=$(SRC)/stubs
 MAKE_LOG ?= make.log
-AIR10_PATCH_ARGS ?=
+AIR10_PATCH_ARGS ?= $(PATCH_ARGS)
 AIR10_FIRMWARE ?= stm32.bin
-export AIR10_PATCH_ARGS
 
-AIR10_LEGACY_ENV := PATCH_VAUTO_WRAPPER PATCH_S PATCH_ASV_TASK_WRAPPER \
-	PATCH_FALL_TIME PATCH_ST_IBR PATCH_AUTOEPAP PATCH_S10_LCD PATCH_GRAPH_KEEP_SCREEN_ON PATCH_TARGET_RH FORCE_DEPRECATED
-$(foreach name,$(AIR10_LEGACY_ENV),$(if $(filter undefined,$(origin $(name))),,$(eval export $(name))))
-
-PATCHER_OUTPUT_ARGS := --log-file '$(abspath $(MAKE_LOG))'
+PATCHER_OUTPUT_ARGS := --overwrite --log-file '$(abspath $(MAKE_LOG))'
 ifeq ($(V),1)
 PATCHER_OUTPUT_ARGS += --verbose
 endif
@@ -60,7 +55,6 @@ BUILD_VARIANTS = \
 
 # Rebuild firmware when the patcher or its helpers change
 S10_PATCHER_DEPS := \
-	patch-airsense \
 	python/patch-airsense.py \
 	python/edf_ccx_merge.py \
 	python/lib/as10_firmware.py \
@@ -100,12 +94,14 @@ $(BUILD):
 # unlocked stock-ish
 $(BUILD)/stm32-patched.bin: $(S10_PATCHER_DEPS) $(PAYLOAD_STAMPS) $(PAYLOAD_LAYOUT_TSVS) $(BLX_DUMP_BIN)
 	$(announce_image)
-	./patch-airsense '$(AIR10_FIRMWARE)' $@ $(PATCHER_OUTPUT_ARGS)
+	python3 python/patch-airsense.py '$(AIR10_FIRMWARE)' $@ PATCH $(PATCHER_OUTPUT_ARGS) $(AIR10_PATCH_ARGS)
 
 # Optional therapy payloads, with their custom settings
+AIR10_PLUS_ARGS := --patch-fw-asv-wrapper y --patch-fw-vauto-wrapper y --patch-fw-squarewave y \
+	--patch-fall-time y --patch-st-ibr y --patch-autoepap y
 $(BUILD)/stm32-plus.bin: $(S10_PATCHER_DEPS) $(PAYLOAD_STAMPS) $(PAYLOAD_LAYOUT_TSVS) $(BLX_DUMP_BIN)
 	$(announce_image)
-	PATCH_ASV_TASK_WRAPPER=1 PATCH_VAUTO_WRAPPER=1 PATCH_S=1 PATCH_FALL_TIME=1 PATCH_ST_IBR=1 PATCH_AUTOEPAP=1 ./patch-airsense '$(AIR10_FIRMWARE)' $@ $(PATCHER_OUTPUT_ARGS)
+	python3 python/patch-airsense.py '$(AIR10_FIRMWARE)' $@ PATCH $(PATCHER_OUTPUT_ARGS) $(AIR10_PLUS_ARGS) $(AIR10_PATCH_ARGS)
 
 binaries: $(PAYLOAD_TARGETS)
 
@@ -328,7 +324,7 @@ $(BUILD)/eeprom_stub_full.bin: $(BUILD)/eeprom_stub_nocrc.bin
 # S10 LCD patch - ILI9325/ILI9328 driver for AirSense 10
 #
 # Build: make s10_lcd_ili9325
-# Usage: PATCH_S10_LCD=1 ./patch-airsense stm32.bin output.bin
+# Usage: ./patch-airsense stm32.bin output.bin --patch-fw-lcd y
 
 s10_lcd_ili9325: $(call payload_bins,s10_lcd_ili9325)
 	@echo "S10 LCD patches built:"
@@ -351,15 +347,15 @@ vid_spoof: $(call payload_bins,vid_spoof)
 clean:
 	$(RM) $(BUILD)/*
 
-# $(1): output image, $(2): platform, $(3): input image.
+# $(1): output image, $(2): platform, $(3): input image, $(4): options variable.
 .PHONY: patch-config-force
 define patch_config_rule
 $(1): $(3) $(1).config Makefile python/lib/patch_config.py
 $(1).config: patch-config-force
-	python3 python/lib/patch_config.py '$(2)' '$(3)' '$$@'
+	python3 python/lib/patch_config.py '$(2)' '$(3)' '$$@' $$($(4))
 endef
 
-$(foreach image,$(BUILD_VARIANTS),$(eval $(call patch_config_rule,$(image),air10,$(AIR10_FIRMWARE))))
+$(foreach image,$(BUILD_VARIANTS),$(eval $(call patch_config_rule,$(image),air10,$(AIR10_FIRMWARE),AIR10_PATCH_ARGS)))
 
 -include Makefile.s9
 -include Makefile.as11

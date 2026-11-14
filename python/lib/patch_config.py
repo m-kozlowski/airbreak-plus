@@ -11,17 +11,6 @@ import sys
 
 LOCAL_FILES = {"air10": "patch-airsense.config", "air11": "patch-airsense-s11.config",
                "s9": "patch-airsense-s9.config"}
-AIR10_LEGACY_OPTIONS = {
-    "PATCH_VAUTO_WRAPPER": ("--patch-fw-vauto-wrapper", "y"),
-    "PATCH_S": ("--patch-fw-squarewave", "y"),
-    "PATCH_ASV_TASK_WRAPPER": ("--patch-fw-asv-wrapper", "y"),
-    "PATCH_FALL_TIME": ("--patch-fall-time", "y"),
-    "PATCH_ST_IBR": ("--patch-st-ibr", "y"),
-    "PATCH_AUTOEPAP": ("--patch-autoepap", "y"),
-    "PATCH_S10_LCD": ("--patch-fw-lcd", "y"),
-    "PATCH_GRAPH_KEEP_SCREEN_ON": ("--patch-graph-keep-screen-on", "y"),
-    "FORCE_DEPRECATED": ("--force-deprecated",),
-}
 
 
 def str2bool(value):
@@ -34,22 +23,13 @@ def str2bool(value):
     raise argparse.ArgumentTypeError("expected y/n, yes/no, true/false, on/off or 1/0")
 
 
-def option_layers(platform):
+def local_options(platform):
     path = Path(__file__).absolute().parents[2] / LOCAL_FILES[platform]
     try:
         text = path.read_text(encoding="utf-8")
     except FileNotFoundError:
-        text = ""
-    legacy = []
-    if platform == "s9" and os.environ.get("PATCH_S9_LCD") == "1":
-        legacy.extend(("--patch-fw-lcd", "y"))
-    if platform == "air10":
-        if "PATCH_TARGET_RH" in os.environ:
-            legacy.extend(("--patch-target-rh", os.environ["PATCH_TARGET_RH"]))
-        for name, options in AIR10_LEGACY_OPTIONS.items():
-            if os.environ.get(name) == "1":
-                legacy.extend(options)
-    return [shlex.split(text, comments=True), legacy, shlex.split(os.environ.get(platform.upper() + "_PATCH_ARGS", ""))]
+        return []
+    return shlex.split(text, comments=True)
 
 
 def parse_patch_args(parser, argv, platform):
@@ -59,22 +39,22 @@ def parse_patch_args(parser, argv, platform):
         if action.option_strings and not isinstance(action, argparse._HelpAction):
             options._add_action(copy(action))
     try:
-        layers = option_layers(platform)
+        local = local_options(platform)
     except (OSError, ValueError) as exc:
         parser.error(str(exc))
-    for layer in layers:
-        options.parse_args(layer)
-    return parser.parse_args([arg for layer in layers for arg in layer] + list(sys.argv[1:] if argv is None else argv))
+    options.parse_args(local)
+    return parser.parse_args(local + list(sys.argv[1:] if argv is None else argv))
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Track local patch options for Make.")
+    parser = argparse.ArgumentParser(description="Track patch options for Make.")
     parser.add_argument("platform", choices=LOCAL_FILES)
     parser.add_argument("input")
     parser.add_argument("stamp")
+    parser.add_argument("options", nargs=argparse.REMAINDER, help="options Make passes to the patcher")
     args = parser.parse_args()
     contents = json.dumps({
-        "options": option_layers(args.platform),
+        "options": [local_options(args.platform), args.options],
         "input": os.path.abspath(args.input),
     }) + "\n"
     path = Path(args.stamp)

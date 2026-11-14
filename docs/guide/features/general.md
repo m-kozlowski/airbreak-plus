@@ -166,5 +166,5 @@ damaged or unavailable.
 
 The controller is detected at startup. Devices with the original ILI9341 panel
 continue to use the stock display path, so the same patched image can support
-both the original and replacement controllers. Enable this driver when
-building with `PATCH_S10_LCD=1`.
+both the original and replacement controllers. Enable this driver with
+`--patch-fw-lcd y`.

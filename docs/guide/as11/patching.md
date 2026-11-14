@@ -125,7 +125,8 @@ python3 python/patch-airsense-s11.py \
     --patch-edf-superset y
 ```
 
-When building through Make, options can also be passed with `AIR11_PATCH_ARGS`.
+When building through Make, options can also be passed with `AIR11_PATCH_ARGS`,
+or with `PATCH_ARGS` when `AIR11_PATCH_ARGS` is not set.
 See [patch options](../../patch_options.md) for examples and saved preferences.
 
 Startup logo takes a number instead of `y/n`: `0` Off, `1` AirSense 11,

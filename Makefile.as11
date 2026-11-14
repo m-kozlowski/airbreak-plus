@@ -1,10 +1,8 @@
 AS11_FIRMWARE ?= as11.bin
 AS11_PATCHED ?= $(BUILD)/as11-patched.bin
-AIR11_PATCH_ARGS ?=
-export AIR11_PATCH_ARGS
+AIR11_PATCH_ARGS ?= $(PATCH_ARGS)
 
 AS11_PATCHER_DEPS := \
-	patch-airsense-s11 \
 	python/patch-airsense-s11.py \
 	python/as11_edf_superset.py \
 	python/lib/as11_patch_versions.py \
@@ -241,6 +239,6 @@ as11-patched:
 $(AS11_PATCHED): $(AS11_PATCHER_DEPS) \
 		$(AS11_PAYLOAD_STAMPS) $(AS11_PAYLOAD_LAYOUT_TSVS) | $(BUILD)
 	$(announce_image)
-	./patch-airsense-s11 '$(AS11_FIRMWARE)' '$@' $(PATCHER_OUTPUT_ARGS)
+	python3 python/patch-airsense-s11.py '$(AS11_FIRMWARE)' '$@' PATCH $(PATCHER_OUTPUT_ARGS) $(AIR11_PATCH_ARGS)
 
-$(eval $(call patch_config_rule,$(AS11_PATCHED),air11,$(AS11_FIRMWARE)))
+$(eval $(call patch_config_rule,$(AS11_PATCHED),air11,$(AS11_FIRMWARE),AIR11_PATCH_ARGS))

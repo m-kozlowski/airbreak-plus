@@ -1,14 +1,10 @@
-S9_PATCH_ARGS ?=
+S9_PATCH_ARGS ?= $(PATCH_ARGS)
 S9_FIRMWARE ?= stm32-s9.bin
-export S9_PATCH_ARGS
-ifneq ($(origin PATCH_S9_LCD),undefined)
-export PATCH_S9_LCD
-endif
 
 # S9 LCD patch - detect ILI9225 or retain the native display driver
 #
 # Build: make s9_lcd_driver
-# Usage: PATCH_S9_LCD=1 ./patch-airsense-s9 stm32-s9.bin output.bin
+# Usage: ./patch-airsense-s9 stm32-s9.bin output.bin --patch-fw-lcd y
 #
 # S9 is STM32F103 (Cortex-M3), different flags from S10 (Cortex-M4)
 # One binary per CDX version (stub addresses differ)
@@ -56,15 +52,15 @@ s9: $(BUILD)/stm32-s9.bin
 
 s9_lcd: $(BUILD)/stm32-s9-lcd.bin
 
-S9_PATCH_SOURCES = Makefile.s9 patch-airsense-s9 python/patch-airsense-s9.py python/lib/s9_firmware.py python/lib/compiled_payload.py
+S9_PATCH_SOURCES = Makefile.s9 python/patch-airsense-s9.py python/lib/s9_firmware.py python/lib/compiled_payload.py
 S9_PAYLOADS = $(foreach v,$(S9_VERSIONS),$(BUILD)/s9_lcd_$(v).bin)
 
 $(BUILD)/stm32-s9.bin: $(S9_PATCH_SOURCES) $(S9_PAYLOADS) | $(BUILD)
 	$(announce_image)
-	./patch-airsense-s9 '$(S9_FIRMWARE)' $@ $(PATCHER_OUTPUT_ARGS)
+	python3 python/patch-airsense-s9.py '$(S9_FIRMWARE)' $@ PATCH $(PATCHER_OUTPUT_ARGS) $(S9_PATCH_ARGS)
 
 $(BUILD)/stm32-s9-lcd.bin: $(S9_PATCH_SOURCES) $(S9_PAYLOADS) | $(BUILD)
 	$(announce_image)
-	PATCH_S9_LCD=1 ./patch-airsense-s9 '$(S9_FIRMWARE)' $@ $(PATCHER_OUTPUT_ARGS)
+	python3 python/patch-airsense-s9.py '$(S9_FIRMWARE)' $@ PATCH $(PATCHER_OUTPUT_ARGS) --patch-fw-lcd y $(S9_PATCH_ARGS)
 
-$(foreach image,$(BUILD)/stm32-s9.bin $(BUILD)/stm32-s9-lcd.bin,$(eval $(call patch_config_rule,$(image),s9,$(S9_FIRMWARE))))
+$(foreach image,$(BUILD)/stm32-s9.bin $(BUILD)/stm32-s9-lcd.bin,$(eval $(call patch_config_rule,$(image),s9,$(S9_FIRMWARE),S9_PATCH_ARGS)))

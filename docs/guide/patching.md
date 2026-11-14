@@ -38,15 +38,15 @@ console.
 
 ### Command-line patchers
 
-The compatibility command used by the Makefile is:
+`patch-airsense` runs the Python patcher with the `PATCH` operation,
+overwrites an existing output and passes further options to the patcher:
 ```
 ./patch-airsense stm32.bin build/stm32-patched.bin
 ```
 
-`patch-airsense` accepts the environment variables listed below and invokes the
-Python patcher:
+Equivalent Python command:
 ```
-./python/patch-airsense.py stm32.bin build/stm32-patched.bin PATCH
+python3 python/patch-airsense.py stm32.bin build/stm32-patched.bin PATCH --overwrite
 ```
 
 ## What each patch does
@@ -96,23 +96,20 @@ All patches below are **enabled by default** unless noted.
 
 ### Therapy modifications
 
-These optional payloads require `arm-none-eabi-gcc` and are controlled by
-environment variables.
+These optional payloads require `arm-none-eabi-gcc` and are off by default.
 
-| Env variable | What it does |
-|-------------|-------------|
-| `PATCH_S=1` | Enable [Square Wave](features/squarewave.md) pressure shaping in S, ST, T, and PAC |
-| `PATCH_ASV_TASK_WRAPPER=1` | Add [runtime control](features/asv_backup_rate.md) for stock ASV/ASVAuto backup rate |
-| `PATCH_VAUTO_WRAPPER=1` | Add [Custom VAuto](features/custom_vauto.md) pressure shaping and trigger/cycle assist |
-| `PATCH_FALL_TIME=1` | Add [Fall Time](features/general.md#fall-time) in S/ST/T/PAC/iVAPS through custom settings |
-| `PATCH_ST_IBR=1` | Add [adaptive backup timing in ST](features/general.md#st-ibr) through custom settings |
-| `PATCH_AUTOEPAP=1` | Add [iVAPS AutoEPAP](features/general.md#ivaps-autoepap); requires font repacking and expanded heap |
+| Switch | What it does |
+|--------|-------------|
+| `--patch-fw-squarewave y` | Enable [Square Wave](features/squarewave.md) pressure shaping in S, ST, T, and PAC |
+| `--patch-fw-asv-wrapper y` | Add [runtime control](features/asv_backup_rate.md) for stock ASV/ASVAuto backup rate |
+| `--patch-fw-vauto-wrapper y` | Add [Custom VAuto](features/custom_vauto.md) pressure shaping and trigger/cycle assist |
+| `--patch-fall-time y` | Add [Fall Time](features/general.md#fall-time) in S/ST/T/PAC/iVAPS through custom settings |
+| `--patch-st-ibr y` | Add [adaptive backup timing in ST](features/general.md#st-ibr) through custom settings |
+| `--patch-autoepap y` | Add [iVAPS AutoEPAP](features/general.md#ivaps-autoepap); requires font repacking and expanded heap |
 
 Example with custom VAuto:
 ```
-export PATCH_ASV_TASK_WRAPPER=1
-export PATCH_VAUTO_WRAPPER=1
-./patch-airsense stm32.bin build/stm32-custom.bin
+./patch-airsense stm32.bin build/stm32-custom.bin --patch-fw-asv-wrapper y --patch-fw-vauto-wrapper y
 ```
 
 ### Miscellaneous
@@ -123,20 +120,20 @@ export PATCH_VAUTO_WRAPPER=1
 | Repack fonts | Frees over 36 KiB of flash for patches without changing the available characters or their appearance | `--patch-font-repack` |
 | UART firmware dump | Adds the SX577-0200 / SX585-0200 bootloader command used by `resmed_flash.py --dump` | `--patch-blx-dump` |
 | UART metadata | Reports live-stream layouts and custom-settings menu metadata through `G C` | `--patch-uart-stream-schema` |
-| Replacement LCD | Adds the ILI9325/ILI9328 LCD driver | `--patch-fw-lcd` or `PATCH_S10_LCD=1` |
+| Replacement LCD | Adds the ILI9325/ILI9328 LCD driver | `--patch-fw-lcd` |
 
 ## Selecting patches
 
 Use `y` to enable a patch or `n` to disable it. For example, to disable
-Square Wave even when `PATCH_S=1` selects it:
+Square Wave even when the [local options file](../patch_options.md#files) selects it:
 
 ```bash
-PATCH_S=1 python3 python/patch-airsense.py \
-    stm32.bin build/stm32-custom.bin PATCH \
+python3 python/patch-airsense.py stm32.bin build/stm32-custom.bin PATCH \
     --patch-fw-squarewave n
 ```
 
-When building through Make, options can also be passed with `AIR10_PATCH_ARGS`.
+When building through Make, options can also be passed with `AIR10_PATCH_ARGS`,
+or with `PATCH_ARGS` when `AIR10_PATCH_ARGS` is not set.
 See [patch options](../patch_options.md) for examples and saved preferences.
 
 ## Next

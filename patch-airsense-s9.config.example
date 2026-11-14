@@ -1,7 +1,7 @@
 # Copy to patch-airsense-s9.config to use these options.
 # This .example file is not loaded automatically.
 # Uncomment options to override built-in defaults; y enables, n disables.
-# Precedence: config, PATCH_S9_LCD, S9_PATCH_ARGS, explicit CLI options.
+# S9_PATCH_ARGS and CLI options take precedence.
 
 # Bypass firmware integrity checks during startup
 # --patch-tamper y

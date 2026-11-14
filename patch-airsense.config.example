@@ -1,7 +1,7 @@
 # Copy to patch-airsense.config to use these options.
 # This .example file is not loaded automatically.
 # Uncomment options to override built-in defaults; use y to enable, n to disable.
-# Legacy environment variables, AIR10_PATCH_ARGS and CLI options take precedence.
+# AIR10_PATCH_ARGS and CLI options take precedence.
 
 # Patch selection: built-in defaults.
 # --patch-extra-modes y
@@ -27,19 +27,19 @@
 # --patch-blx-dump y
 
 # Optional payloads: built-in defaults shown below.
-# Custom VAuto (PATCH_VAUTO_WRAPPER=1).
+# Custom VAuto.
 # --patch-fw-vauto-wrapper n
 
-# Square Wave (PATCH_S=1).
+# Square Wave.
 # --patch-fw-squarewave n
 
-# ASV backup-rate runtime control (PATCH_ASV_TASK_WRAPPER=1).
+# ASV backup-rate runtime control.
 # --patch-fw-asv-wrapper n
 
 # Keep the screen awake for +Graph choices; requires --patch-therapy-screen.
 # --patch-graph-keep-screen-on n
 
-# Replacement ILI9325/ILI9328 LCD (PATCH_S10_LCD=1).
+# Replacement ILI9325/ILI9328 LCD.
 # --patch-fw-lcd n
 
 # Climate target relative humidity, percent; enabled at 85% by default.
