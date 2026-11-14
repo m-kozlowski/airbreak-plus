@@ -256,8 +256,8 @@ calling `rpc_object_register()`. Registration performs the shared dispatcher
 preflight. If the dispatcher has not been ported to the input APPX, the
 provider returns `SKIP` before modifying the image.
 
-Add the patch function to `PATCH_LIST` when it needs an independent command-line
-switch. A provider whose manifest or parameters depend on other completed
+Declare the patch function in `python/lib/as11_patch_options.py` when it needs
+an independent command-line switch. A provider whose manifest or parameters depend on other completed
 patches may defer this function to the finalization phase, as
 `AirbreakInfo` does.
 

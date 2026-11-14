@@ -27,7 +27,8 @@ from lib.as10_firmware import ASFirmware
 from lib.compiled_payload import CompiledPayloadMixin
 from lib.custom_menu import MenuBuilder, stock, custom
 from lib.custom_menu_stock import StockMenu
-from lib.patch_config import parse_patch_args, str2bool
+from lib.patch_config import parse_patch_args
+from lib import patch_options
 
 
 FIRMWARE_BUILD_ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
@@ -3448,20 +3449,6 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             summary = summary[len('EDF merge: '):]
         return PatchOutcome.ok(summary or None)
 
-            
-def target_rh_value(v):
-    """Accept a percentage, or a boolean word selecting 85% / no patch."""
-    try:
-        value = float(v)
-    except ValueError:
-        try:
-            return 85.0 if str2bool(v) else False
-        except argparse.ArgumentTypeError:
-            raise argparse.ArgumentTypeError('Percentage from 0 to 100, y or n expected.') from None
-    if not 0 <= value <= 100:
-        raise argparse.ArgumentTypeError('Percentage from 0 to 100 expected.')
-    return value
-
 
 @dataclass(frozen=True)
 class PatchOutcome:
@@ -3496,154 +3483,7 @@ class TeeStream:
             stream.flush()
 
 
-@dataclass(frozen=True)
-class PatchSpec:
-    option: str
-    description: str
-    default: object
-    method: str
-    deprecated: str = None
-    value_type: object = None
-
-
-# Patch order is part of the implementation. Payloads must be present before
-# custom settings patch their ABI slots; all MOP handlers must be registered
-# before finalization installs the shared dispatcher and expands the variable
-# callback table; CRCs are always last.
-PATCH_PHASES = (
-    ('Firmware preparation', (
-        PatchSpec('patch-font-repack', 'Reclaim flash space by compacting font bitmaps.',
-                  True, 'patch_font_repack'),
-    )),
-
-    ('Therapy unlocks', (
-        PatchSpec('patch-extra-modes', 'Add all modes.',
-                  True, 'extra_modes'),
-        PatchSpec('patch-unlock-uilimits', 'Unlock higher UI limits.',
-                  True, 'unlock_ui_limits'),
-        PatchSpec('patch-unlock-options', 'Unlock additional enum option masks.',
-                  True, 'unlock_option_masks'),
-        PatchSpec('patch-gui-config', 'Enable all editable options in the settings menu.',
-                  True, 'gui_config'),
-        PatchSpec('patch-ivaps-settings', 'Restore iVAPS clinical settings.',
-                  True, 'enable_ivaps_settings'),
-        PatchSpec('patch-asv-ps-range', 'Unlock ASV/ASVAuto pressure constraints.',
-                  True, 'asv_unlock_ps_range'),
-        PatchSpec('patch-adjustable-mcp', 'Make the ASV pressure limit adjustable.',
-                  False, 'patch_adjustable_mcp'),
-        PatchSpec('patch-ivaps-ps-range', 'Unlock iVAPS AutoEPAP pressure support constraints.',
-                  True, 'ivaps_unlock_ps_range'),
-    )),
-
-    ('Quality of life', (
-        PatchSpec('patch-integrity-check', 'Bypass firmware integrity checks.',
-                  True, 'patch_integrity_check'),
-        PatchSpec('patch-bypass-psuid', 'Bypass Power Supply check at start-up.',
-                  True, 'bypass_psucheck'),
-        PatchSpec('patch-unlock-languages', 'Unlock all built-in languages.',
-                  True, 'unlock_languages'),
-        PatchSpec('patch-language-fonts', 'Select GUI fonts for the active language.',
-                  True, 'patch_language_fonts'),
-        PatchSpec('patch-font-ua', 'Add Ukrainian glyphs to the standard GUI font.',
-                  False, 'patch_font_ua'),
-        PatchSpec('patch-therapy-screen', 'Select the therapy-screen style and graph.',
-                  True, 'patch_therapy_screen'),
-        PatchSpec('patch-defaults', 'Change firmware defaults.',
-                  True, 'patch_defaults'),
-        PatchSpec('patch-fw-backlight', 'Improve backlight adaptation to ambient light.',
-                  True, 'patch_backlight_adapt'),
-        PatchSpec('patch-keep-backlight', 'Toggle screen keep-awake by holding the encoder.',
-                  True, 'enable_keep_backlight'),
-        PatchSpec('patch-header-clock', 'Add a clock to the Home and therapy-screen headers.',
-                  True, 'patch_header_clock'),
-        PatchSpec('patch-target-rh',
-                  'Set target RH (default: 85%, y: 85%, n: disabled); custom settings adds a 70-100% menu control.',
-                  85.0, 'patch_target_rh', value_type=target_rh_value),
-        PatchSpec('patch-custom-palette', 'Patch the custom color palette.',
-                  True, 'custom_palette'),
-        PatchSpec('patch-past-date', 'Allow setting past date in the menu and over UART.',
-                  True, 'patch_past_date'),
-        PatchSpec('patch-motor-nagscreen', 'Remove the "Motor life exceeded" nag screen.',
-                  True, 'motor_nagscreen'),
-    )),
-
-    ('Therapy modifications', (
-        PatchSpec('patch-graph-keep-screen-on',
-                  'Keep the screen awake during therapy while the graph is enabled.',
-                  False, 'patch_graph_keep_screen_on'),
-        PatchSpec('patch-fw-squarewave', 'Add squarewave pressure shaping.',
-                  False, 'patch_squarewave'),
-        PatchSpec('patch-fall-time', 'Add adjustable stock S/ST/T/PAC/iVAPS fall time.',
-                  False, 'patch_fall_time'),
-        PatchSpec('patch-st-ibr', 'Add adaptive backup-rate control in ST.',
-                  False, 'patch_st_ibr'),
-        PatchSpec('patch-autoepap', 'Add adaptive EPAP control in iVAPS.',
-                  False, 'patch_autoepap'),
-        PatchSpec('patch-fw-asv-wrapper', 'Add ASV backup-rate runtime control.',
-                  False, 'patch_asv_task_wrapper'),
-        PatchSpec('patch-fw-vauto-wrapper', 'Add custom VAuto pressure shaping.',
-                  False, 'patch_wrapper_limit_max_pdiff'),
-    )),
-
-    ('Custom settings integration', (
-        PatchSpec('patch-custom-settings', 'Add persistent controls to the clinical menu.',
-                  True, 'custom_patch_settings'),
-    )),
-
-    ('Therapy data and reporting', (
-        PatchSpec('patch-uart-stream-schema',
-                  'Report live-stream layouts and custom-settings metadata over UART.',
-                  True, 'patch_uart_stream_schema'),
-        PatchSpec('patch-fw-vidspoof',
-                  'Set VID from therapy mode, using a regional variant where known.',
-                  True, 'patch_vid_spoof'),
-        PatchSpec('patch-edf-merge', 'Merge the universal EDF signal superset into CCX.',
-                  True, 'patch_edf_merge'),
-    )),
-
-    ('Miscellaneous', (
-        PatchSpec('patch-expand-heap', 'Expand runtime heap by about 13.5 KiB on SX567 firmware.',
-                  True, 'patch_expand_heap'),
-        PatchSpec('patch-blx-dump', 'Add bootloader support for firmware dumps over UART.',
-                  True, 'patch_blx_dump'),
-        PatchSpec('patch-fw-lcd', 'Add the universal ILI9325/ILI9328 LCD driver.',
-                  False, 'patch_lcd_ili9325'),
-    )),
-)
-
-
-PATCH_DEPENDENCIES = {
-    'patch-autoepap': ('patch-font-repack', 'patch-expand-heap'),
-    'patch-ivaps-settings': ('patch-custom-settings',),
-    'patch-graph-keep-screen-on': ('patch-therapy-screen',),
-}
-
-
-def iter_patch_specs():
-    for _, phase_patches in PATCH_PHASES:
-        yield from phase_patches
-
-
-def patch_option_selected(args, option):
-    value = getattr(args, option.replace('-', '_'))
-    return value is not None and value is not False
-
-
-def validate_patch_dependencies(parser, args):
-    errors = []
-    for option, dependencies in PATCH_DEPENDENCIES.items():
-        if not patch_option_selected(args, option):
-            continue
-
-        missing = [dependency for dependency in dependencies
-                   if not patch_option_selected(args, dependency)]
-        if missing:
-            errors.append('--%s requires %s' % (
-                option,
-                ' and '.join('--%s' % dependency for dependency in missing)))
-
-    if errors:
-        parser.error('; '.join(errors))
+PATCH_OPTIONS = patch_options.load('air10')
 
 
 def build_argument_parser():
@@ -3653,16 +3493,7 @@ def build_argument_parser():
     parser.add_argument('OPERATION', choices=['INFO', 'PATCH'],
                         help='Operation to perform')
 
-    for patch in iter_patch_specs():
-        state = 'enabled' if patch.default else 'disabled'
-        parser.add_argument(
-            '--' + patch.option,
-            type=patch.value_type or str2bool,
-            default=patch.default,
-            metavar='PERCENT|y|n' if patch.value_type else ('Y/n' if patch.default else 'y/N'),
-            help=(patch.description.replace('%', '%%') if patch.value_type else
-                  '%s (default: %s)' % (patch.description, state)))
-
+    PATCH_OPTIONS.add_arguments(parser)
     parser.add_argument('--overwrite', action='store_true',
                         help='Overwrite output file if it already exists.')
     parser.add_argument('--force-deprecated', action='store_true',
@@ -3733,18 +3564,15 @@ def apply_reported_patch(option, method, args, detail_log=None, deprecated=None,
 
 def apply_patch_phases(patches, args, detail_log=None):
 
-    for phase_name, phase_patches in PATCH_PHASES:
-        selected = [patch for patch in phase_patches
-                    if patch_option_selected(args, patch.option)]
+    for phase in PATCH_OPTIONS.phases:
+        selected = [patch for patch in phase.patches if PATCH_OPTIONS.selected(args, patch)]
         if not selected:
             continue
 
-        print('\n=== ' + phase_name)
+        print('\n=== ' + phase.name)
         for patch in selected:
-            method_args = ((getattr(args, patch.option.replace('-', '_')),)
-                           if patch.value_type else ())
             apply_reported_patch(patch.option, getattr(patches, patch.method), args,
-                                 detail_log, patch.deprecated, method_args)
+                                 detail_log, patch.deprecated, patch.arguments(args))
 
 
 def run_patcher(args, detail_log=None):
@@ -3812,7 +3640,9 @@ def main(argv=None):
     args = parse_patch_args(parser, argv, "air10")
 
     if args.OPERATION == 'PATCH':
-        validate_patch_dependencies(parser, args)
+        errors = PATCH_OPTIONS.dependency_errors(args)
+        if errors:
+            parser.error('; '.join(errors))
 
     if args.log_file is None:
         return run_patcher(args)

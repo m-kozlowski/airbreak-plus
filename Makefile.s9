@@ -1,5 +1,16 @@
-S9_PATCH_ARGS ?= $(PATCH_ARGS)
 S9_FIRMWARE ?= stm32-s9.bin
+S9_PATCH_ARGS ?= $(PATCH_ARGS)
+
+S9_PATCHER_DEPS := \
+	Makefile.s9 \
+	python/patch-airsense-s9.py \
+	python/lib/s9_patch_options.py \
+	python/lib/s9_firmware.py \
+	python/lib/compiled_payload.py
+
+S9_BUILD_VARIANTS := \
+	$(BUILD)/stm32-s9.bin \
+	$(BUILD)/stm32-s9-lcd.bin
 
 # S9 LCD patch - detect ILI9225 or retain the native display driver
 #
@@ -17,6 +28,7 @@ $(eval $(call compiler_config,s9,CC S9_CFLAGS))
 
 S9_LCD_OFFSET := 0x080d8000
 S9_VERSIONS := 1201 1203 1301
+S9_PAYLOADS := $(foreach v,$(S9_VERSIONS),$(BUILD)/s9_lcd_$(v).bin)
 
 $(BUILD)/s9_lcd.o: $(SRC)/s9_lcd.c Makefile Makefile.s9 $(BUILD)/s9.flags | $(BUILD)
 	$(CC) $(S9_CFLAGS) $(DEPFLAGS) -c -o $@ $<
@@ -40,9 +52,9 @@ endef
 
 $(foreach v,$(S9_VERSIONS),$(eval $(call S9_LCD_VERSION_template,$(v))))
 
-s9_lcd_driver: $(foreach v,$(S9_VERSIONS),$(BUILD)/s9_lcd_$(v).bin)
+s9_lcd_driver: $(S9_PAYLOADS)
 	@echo "S9 LCD patches built:"
-	@$(foreach v,$(S9_VERSIONS),echo "  $(BUILD)/s9_lcd_$(v).bin";)
+	@$(foreach bin,$(S9_PAYLOADS),echo "  $(bin)";)
 
 # Keep the previous build target as an alias.
 s9_lcd_ili9225: s9_lcd_driver
@@ -52,15 +64,12 @@ s9: $(BUILD)/stm32-s9.bin
 
 s9_lcd: $(BUILD)/stm32-s9-lcd.bin
 
-S9_PATCH_SOURCES = Makefile.s9 python/patch-airsense-s9.py python/lib/s9_firmware.py python/lib/compiled_payload.py
-S9_PAYLOADS = $(foreach v,$(S9_VERSIONS),$(BUILD)/s9_lcd_$(v).bin)
-
-$(BUILD)/stm32-s9.bin: $(S9_PATCH_SOURCES) $(S9_PAYLOADS) | $(BUILD)
+$(BUILD)/stm32-s9.bin: $(S9_PATCHER_DEPS) $(S9_PAYLOADS) | $(BUILD)
 	$(announce_image)
 	python3 python/patch-airsense-s9.py '$(S9_FIRMWARE)' $@ PATCH $(PATCHER_OUTPUT_ARGS) $(S9_PATCH_ARGS)
 
-$(BUILD)/stm32-s9-lcd.bin: $(S9_PATCH_SOURCES) $(S9_PAYLOADS) | $(BUILD)
+$(BUILD)/stm32-s9-lcd.bin: $(S9_PATCHER_DEPS) $(S9_PAYLOADS) | $(BUILD)
 	$(announce_image)
 	python3 python/patch-airsense-s9.py '$(S9_FIRMWARE)' $@ PATCH $(PATCHER_OUTPUT_ARGS) --patch-fw-lcd y $(S9_PATCH_ARGS)
 
-$(foreach image,$(BUILD)/stm32-s9.bin $(BUILD)/stm32-s9-lcd.bin,$(eval $(call patch_config_rule,$(image),s9,$(S9_FIRMWARE),S9_PATCH_ARGS)))
+$(foreach image,$(S9_BUILD_VARIANTS),$(eval $(call patch_config_rule,$(image),s9,$(S9_FIRMWARE),S9_PATCH_ARGS)))

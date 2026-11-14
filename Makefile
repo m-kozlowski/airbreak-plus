@@ -57,6 +57,7 @@ BUILD_VARIANTS = \
 S10_PATCHER_DEPS := \
 	python/patch-airsense.py \
 	python/edf_ccx_merge.py \
+	python/lib/as10_patch_options.py \
 	python/lib/as10_firmware.py \
 	python/lib/custom_menu.py \
 	python/lib/custom_menu_stock.py \
@@ -350,7 +351,7 @@ clean:
 # $(1): output image, $(2): platform, $(3): input image, $(4): options variable.
 .PHONY: patch-config-force
 define patch_config_rule
-$(1): $(3) $(1).config Makefile python/lib/patch_config.py
+$(1): $(3) $(1).config Makefile python/lib/patch_config.py python/lib/patch_options.py
 $(1).config: patch-config-force
 	python3 python/lib/patch_config.py '$(2)' '$(3)' '$$@' $$($(4))
 endef
