@@ -44,6 +44,9 @@ class Layer:
     source: str
     # Local options file or preset; None for the command line.
     path: Path
+    # Presets this source selects itself, as written; their layers precede it.
+    presets: tuple
+    # Options of the source without its --preset selections.
     options: tuple
 
 
@@ -104,7 +107,7 @@ def preset_layers(platform, presets, directory, parser=None, chain=()):
         nested, options = split_presets(read_options(path))
         check(parser, options, path)
         layers += preset_layers(platform, nested, path.parent, parser, chain + (path,))
-        layers.append(Layer("preset", path, tuple(options)))
+        layers.append(Layer("preset", path, tuple(nested), tuple(options)))
     return layers
 
 
@@ -125,9 +128,9 @@ def config_layers(platform, argv, local_parser=None, preset_parser=None):
     check(local_parser, local, path)
     presets, argv = split_presets(argv)
     return (preset_layers(platform, local_presets, REPO, preset_parser)
-            + [Layer("local", path, tuple(local))]
+            + [Layer("local", path, tuple(local_presets), tuple(local))]
             + preset_layers(platform, presets, Path.cwd(), preset_parser)
-            + [Layer("command line", None, tuple(argv))])
+            + [Layer("command line", None, tuple(presets), tuple(argv))])
 
 
 def patch_args(platform, argv, local_parser=None, preset_parser=None):
@@ -144,18 +147,36 @@ def format_value(value, syntax):
     return str(value)
 
 
-def option_lines(platform, values):
-    """Arguments of option values, one list per option, in declaration order.
+def layer_values(platform, layer):
+    """Patch option values that a preset layer sets itself.
+
+    Options the layer leaves out are not filled in with defaults, so saving
+    the values with option_text() keeps what the layer's presets select.
+    """
+    parser = options_parser(platform)
+    for action in parser._actions:
+        action.default = argparse.SUPPRESS
+    try:
+        args = vars(parser.parse_args(layer.options))
+    except ValueError as exc:
+        raise ValueError("%s: %s" % (layer.path, exc)) from None
+    return {action.option_strings[0][2:]: args[action.dest]
+            for action in parser._actions if action.dest in args}
+
+
+def option_lines(platform, values, presets=()):
+    """Arguments of preset selections and option values, one list per option.
 
     values maps option names without -- to parsed values. None leaves an
-    option out; a repeatable option takes a list of values.
+    option out; a repeatable option takes a list of values. Preset selections
+    come first, then the options in declaration order.
     """
     syntax = {patch.option: None for patch in platform.patches()}
     syntax.update((parameter.option, parameter.value) for parameter in platform.all_parameters())
     unknown = [option for option in values if option not in syntax]
     if unknown:
         raise ValueError("unknown option: " + ", ".join("--" + option for option in unknown))
-    lines = []
+    lines = [["--preset", preset] for preset in presets]
     for option, value_syntax in syntax.items():
         value = values.get(option)
         if value is None:
@@ -165,14 +186,20 @@ def option_lines(platform, values):
     return lines
 
 
-def option_args(platform, values):
-    """Command-line arguments of option values; see option_lines()."""
-    return [arg for line in option_lines(platform, values) for arg in line]
+def option_args(platform, values, presets=()):
+    """Command-line arguments of preset selections and option values; see option_lines()."""
+    return [arg for line in option_lines(platform, values, presets) for arg in line]
 
 
-def option_text(platform, values):
-    """Options file text of option values, one option per line; see option_lines()."""
-    return "".join(shlex.join(line) + "\n" for line in option_lines(platform, values))
+def option_text(platform, values, presets=()):
+    """Preset file text of preset selections and option values; see option_lines().
+
+    The text is semantically equivalent to its input, one option per line;
+    formatting and comments of an existing file are not kept. Relative preset
+    paths are relative to the saved file. The local options file, which may
+    hold other patcher options, is edited by hand.
+    """
+    return "".join(shlex.join(line) + "\n" for line in option_lines(platform, values, presets))
 
 
 def parse_patch_args(parser, argv, platform):
