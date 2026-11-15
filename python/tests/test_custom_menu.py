@@ -100,6 +100,44 @@ class MenuPlacementTests(unittest.TestCase):
         self.assertEqual(self.ids(), [100, 1, 2, 200, 3])
         self.assertEqual(len(self.plan().dispatch), 1)
 
+    def test_page_declaration_has_no_stock_dispatch(self):
+        self.add(100, flags=MenuBuilder.PAGE | MenuBuilder.DECLARATION)
+        self.add(1, container=0x80, flags=MenuBuilder.VIEW)
+        self.assertEqual(self.plan().dispatch, [])
+        self.assertEqual(self.plan().page_containers, {0x80: 0x80})
+
+    def test_actions_and_views_are_distinct_from_settings(self):
+        self.add(100, flags=MenuBuilder.PAGE | MenuBuilder.DECLARATION)
+        self.add(1)
+        first = self.add(1, container=0x80, flags=MenuBuilder.VIEW)
+        self.add(1, container=0x80, flags=MenuBuilder.ACTION, after=first)
+        self.add(1, container=0x80, flags=MenuBuilder.VIEW)
+        self.assertEqual(self.ids(), [100, 1, 1, 1, 1])
+        self.assertEqual(self.plan().dispatch[0].after_count, 1)
+
+    def test_duplicate_views_require_instance_reference(self):
+        self.add(1)
+        self.add(1, flags=MenuBuilder.VIEW)
+        self.add(2, after=custom(1))
+        with self.assertRaisesRegex(ValueError, 'ambiguous'):
+            self.plan()
+
+    def test_duplicate_settings_still_rejected(self):
+        self.add(1)
+        self.add(1)
+        with self.assertRaisesRegex(ValueError, 'duplicate variable'):
+            self.plan()
+
+    def test_declared_pages_reordered_without_navigation_rows(self):
+        self.add(100, container=4, flags=MenuBuilder.PAGE | MenuBuilder.DECLARATION)
+        self.add(101, flags=MenuBuilder.PAGE | MenuBuilder.DECLARATION)
+        self.add(1, container=0x80, flags=MenuBuilder.VIEW)
+        self.add(2, container=0x81, flags=MenuBuilder.VIEW)
+        plan = self.plan()
+        self.assertEqual(plan.page_containers, {0x81: 0x80, 0x80: 0x81})
+        self.assertEqual({e[2]: e[0] for e in plan.entries}, {101: 0, 100: 4, 1: 0x81, 2: 0x80})
+        self.assertEqual(plan.dispatch, [])
+
     def test_cycles_including_disconnected_and_self(self):
         for pairs in ([(1, 1)], [(1, 2), (2, 1)]):
             with self.subTest(pairs=pairs):

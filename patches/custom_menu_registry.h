@@ -28,10 +28,28 @@ typedef struct {
 	unsigned short nonzero;
 } custom_menu_condition_t;
 
+/* A write followed by optional navigation. A 0xffff write/binding is absent;
+ * destination 0 stays put, 0xff invokes the native default-page action, and
+ * 0x80+ selects an assigned page container. Labels use firmware string IDs.
+ */
+typedef struct {
+	unsigned short write_id, label_id, binding_id;
+	unsigned char destination, item;
+	int value;
+} custom_menu_action_t;
+
 #define CUSTOM_MENU_FLAG_G4_NUMERIC 0x01
 #define CUSTOM_MENU_FLAG_HEADING    0x02
 #define CUSTOM_MENU_FLAG_PAGE       0x04
 #define CUSTOM_MENU_FLAG_SHOW_UNITS 0x08
+#define CUSTOM_MENU_FLAG_DECLARATION 0x10
+#define CUSTOM_MENU_FLAG_ACTION      0x20
+#define CUSTOM_MENU_FLAG_VIEW        0x40
+#define CUSTOM_MENU_FLAG_PACKED_TIME 0x80
+/* Page-only flag; numeric rows use this bit for SHOW_UNITS. */
+#define CUSTOM_MENU_PAGE_NO_BACK     0x08
+#define CUSTOM_MENU_NON_SETTING (CUSTOM_MENU_FLAG_PAGE | CUSTOM_MENU_FLAG_HEADING | \
+                                CUSTOM_MENU_FLAG_ACTION | CUSTOM_MENU_FLAG_VIEW)
 
 #define CUSTOM_MENU_MODE_BITS            0x00000fffu
 #define CUSTOM_MENU_MODE_KEEP_VISIBILITY 0x80000000u

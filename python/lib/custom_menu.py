@@ -48,6 +48,11 @@ class MenuPlan:
 class MenuBuilder:
     PAGE = 4
     HEADING = 2
+    DECLARATION = 0x10
+    ACTION = 0x20
+    VIEW = 0x40
+    PACKED_TIME = 0x80
+    PAGE_NO_BACK = 8
     PAGE_BASE = 0x80
     LIMIT = 64
 
@@ -76,22 +81,30 @@ class MenuBuilder:
         children travel with it. All references are resolved before emitting.
         """
         variables = {}
+        settings = set()
         for i, (_, flags, item_id, _) in enumerate(self.entries):
-            if not flags & (self.PAGE | self.HEADING):
-                if item_id in variables:
-                    raise ValueError('custom menu: duplicate variable 0x%04X' % item_id)
-                variables[item_id] = i
+            if not flags & (self.PAGE | self.HEADING | self.ACTION):
+                if not flags & self.VIEW:
+                    if item_id in settings:
+                        raise ValueError('custom menu: duplicate variable 0x%04X' % item_id)
+                    settings.add(item_id)
+                variables.setdefault(item_id, []).append(i)
 
         parents = []
         children = {}
         roots = {}
-        for i, ((container, _, _, _), (target, before)) in enumerate(
+        for i, ((container, flags, _, _), (target, before)) in enumerate(
                 zip(self.entries, self.placements)):
+            if flags & self.DECLARATION and target is not None:
+                raise ValueError('custom menu: page declarations have no row placement')
             if isinstance(target, CustomRef):
                 var_id = resolve_var(target.var)
                 if var_id not in variables:
                     raise ValueError('custom menu: unregistered custom variable %s' % target.var)
-                parent = variables[var_id]
+                candidates = variables[var_id]
+                if len(candidates) != 1:
+                    raise ValueError('custom menu: ambiguous variable reference; use an item handle')
+                parent = candidates[0]
             elif isinstance(target, ItemRef):
                 if target.owner is not self or not 0 <= target.index < len(self.entries):
                     raise ValueError('custom menu: item handle belongs to another registry')
@@ -104,7 +117,9 @@ class MenuBuilder:
                     raise ValueError('custom menu: placement reference crosses containers')
                 children.setdefault((parent, before), []).append(i)
             else:
-                if container >= self.PAGE_BASE:
+                if flags & self.DECLARATION:
+                    site = None
+                elif container >= self.PAGE_BASE:
                     if isinstance(target, StockRef):
                         raise ValueError('custom menu: generated pages have no stock anchors')
                     site = None

@@ -35,6 +35,7 @@ extern void memcpy_unrolled(void *destination, const void *source,
 extern const u32 custom_menu_registry_addr;
 extern const u32 custom_menu_dispatch_addr;
 extern const u32 custom_menu_conditions_addr;
+extern const u32 custom_menu_actions_addr;
 extern const u8 custom_settings_group_index;
 extern const u8 custom_menu_stock_page_count;
 extern const u8 custom_menu_clinical_page_id;
@@ -101,10 +102,70 @@ static void *custom_menu_create_navigation(const custom_menu_entry_t *entry)
 	return gui_create_back_button(item_storage, entry->item_id, 0, action, 0x29);
 }
 
+#if defined(CDX_VER_0401)
+extern void *gui_action_write(void *, int, int);
+extern void *gui_action_default(void *);
+extern void *gui_action_sequence(void *);
+extern void gui_action_prepend(void *, void *);
+extern void *gui_create_bound_button(void *, int, int, int, void *);
+extern int snprintf(char *, unsigned, const char *, ...);
+
+static void *custom_menu_create_action(const custom_menu_entry_t *entry)
+{
+	if (!custom_menu_actions_addr || custom_menu_actions_addr == 0xffffffffu)
+		return 0;
+	const custom_menu_action_t *spec =
+		(const custom_menu_action_t *)custom_menu_actions_addr + entry->item_id;
+	void *action = 0;
+	if (spec->destination) {
+		void *storage = malloc(8);
+		if (!storage) return 0;
+		action = spec->destination == 0xff ? gui_action_default(storage) :
+			variable_0x1bc_and_0x1bd_writer_setup(storage,
+				custom_menu_stock_page_count + spec->destination - CUSTOM_MENU_PAGE_CONTAINER_BASE,
+				spec->item);
+	}
+	if (spec->write_id != 0xffff) {
+		void *storage = malloc(12);
+		if (!storage) return 0;
+		void *write = gui_action_write(storage, spec->write_id, spec->value);
+		if (action) {
+			storage = malloc(8);
+			if (!storage) return 0;
+			void *sequence = gui_action_sequence(storage);
+			/* Native insertion prepends: write executes before navigation. */
+			gui_action_prepend(sequence, action);
+			gui_action_prepend(sequence, write);
+			action = sequence;
+		} else action = write;
+	}
+	void *storage = malloc(spec->binding_id == 0xffff ? 0x14 : 0x1c);
+	if (!storage || !action) return 0;
+	return spec->binding_id == 0xffff ?
+		gui_create_back_button(storage, spec->label_id, 0, action, 0x29) :
+		gui_create_bound_button(storage, spec->label_id, 0, spec->binding_id, action);
+}
+
+static void custom_menu_format_time(void *item, char *buffer, unsigned size)
+{
+	unsigned packed = *(u32 *)((u8 *)item + 0x18);
+	if (size) snprintf(buffer, size, "%02u:%02u", (packed >> 8) & 255, packed & 255);
+}
+#endif
+
 static void *custom_menu_create_item(const custom_menu_entry_t *entry)
 {
+	if (entry->flags & CUSTOM_MENU_FLAG_DECLARATION)
+		return 0;
 	if (entry->flags & CUSTOM_MENU_FLAG_PAGE)
 		return custom_menu_create_navigation(entry);
+	if (entry->flags & CUSTOM_MENU_FLAG_ACTION) {
+#if defined(CDX_VER_0401)
+		return custom_menu_create_action(entry);
+#else
+		return 0;
+#endif
+	}
 
 	if (entry->flags & CUSTOM_MENU_FLAG_HEADING) {
 		void *storage = malloc(0x0c);
@@ -116,9 +177,21 @@ static void *custom_menu_create_item(const custom_menu_entry_t *entry)
 		void *storage = malloc(0x1c);
 		if (!storage)
 			return 0;
-		return menu_create_numeric_var(
+		void *item = menu_create_numeric_var(
 			storage, entry->item_id,
 			(entry->flags & CUSTOM_MENU_FLAG_SHOW_UNITS) != 0);
+#if defined(CDX_VER_0401)
+		if (entry->flags & CUSTOM_MENU_FLAG_PACKED_TIME) {
+			/* Keep native editing, binding and layout. Only formatting differs. */
+			u32 *methods = malloc(31 * sizeof(u32));
+			if (methods) {
+				memcpy_unrolled(methods, *(void **)item, 31 * sizeof(u32));
+				methods[25] = (u32)custom_menu_format_time;
+				*(u32 **)item = methods;
+			}
+		}
+#endif
+		return item;
 	}
 
 	return menu_create_text_or_float(entry->item_id, 0);
@@ -135,7 +208,7 @@ static unsigned custom_menu_container_size(u8 container)
 	     guard++, entry++) {
 		if (custom_menu_entry_is_end(entry))
 			break;
-		if (entry->container == container)
+		if (entry->container == container && !(entry->flags & CUSTOM_MENU_FLAG_DECLARATION))
 			count++;
 	}
 	return count;
@@ -165,7 +238,8 @@ static void *custom_menu_create_page(const custom_menu_entry_t *page,
 				     unsigned ordinal, void *context)
 {
 	u8 container = CUSTOM_MENU_PAGE_CONTAINER_BASE + ordinal;
-	unsigned capacity = custom_menu_container_size(container) + 1;
+	int has_back = !(page->flags & CUSTOM_MENU_PAGE_NO_BACK);
+	unsigned capacity = custom_menu_container_size(container) + has_back;
 	void *storage = malloc(0x2c);
 	if (!storage)
 		return 0;
@@ -173,7 +247,7 @@ static void *custom_menu_create_page(const custom_menu_entry_t *page,
 	if (!list)
 		return 0;
 
-	void *back = custom_menu_create_back(page);
+	void *back = has_back ? custom_menu_create_back(page) : 0;
 	if (back)
 		scrollbar_add_item(list, back);
 
@@ -315,7 +389,7 @@ void custom_menu_apply_mode_visibility(void)
 	     guard++, entry++) {
 		if (custom_menu_entry_is_end(entry))
 			return;
-		if (entry->flags & (CUSTOM_MENU_FLAG_HEADING | CUSTOM_MENU_FLAG_PAGE))
+		if (entry->flags & CUSTOM_MENU_NON_SETTING)
 			continue;
 		if (entry->mode_mask & CUSTOM_MENU_MODE_KEEP_VISIBILITY)
 			continue;

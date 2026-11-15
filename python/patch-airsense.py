@@ -276,6 +276,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self.custom_menu_registered = set()
         self.custom_menu_conditions = []
         self.custom_menu_conditions_addr = None
+        self.custom_menu_actions = []
         self.custom_menu_pages = {}
         self.custom_menu_page_count = 0
         self.custom_menu_clinical_page_id = None
@@ -565,7 +566,35 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self.custom_menu_page_count += 1
         return handle
 
-    def custom_menu_add(self, container_name, var, mode_mask=None, flags=0, *, before=None, after=None):
+    def custom_menu_declare_page(self, name, parent_name, title_str_id, *, back=True):
+        """Declare a page independently of any row that navigates to it."""
+        key = name.lower()
+        if key in self.CUSTOM_MENU_SECTIONS or key in self.custom_menu_pages:
+            raise ValueError('custom menu: duplicate container %s' % name)
+        parent = self._custom_menu_container_id(parent_name)
+        flags = MenuBuilder.PAGE | MenuBuilder.DECLARATION | (0 if back else MenuBuilder.PAGE_NO_BACK)
+        self._custom_menu_register((parent, flags, int(title_str_id), 0xffffffff))
+        self.custom_menu_pages[key] = self.CUSTOM_MENU_PAGE_CONTAINER_BASE + self.custom_menu_page_count
+        self.custom_menu_page_count += 1
+
+    def custom_menu_add_action(self, container_name, label, *, write=None, value=0,
+                               binding=None, page=None, item=0, before=None, after=None):
+        """Native variable write, optionally followed by page/default navigation."""
+        if self.asf.cdx_ver != 'SX567-0401':
+            raise ValueError('custom menu actions: native constructors verified only for 0401')
+        if write is None and page is None:
+            raise ValueError('custom menu action requires a write or navigation')
+        if not 0 <= item <= 255:
+            raise ValueError('custom menu action: item must fit a byte')
+        resolve = lambda var: 0xffff if var is None else self.asf.resolve_var_id(var)
+        index = len(self.custom_menu_actions)
+        self.custom_menu_actions.append((resolve(write), int(label), resolve(binding), page, item, int(value)))
+        return self._custom_menu_register(
+            (self._custom_menu_container_id(container_name), MenuBuilder.ACTION, index, 0),
+            before=before, after=after)
+
+    def custom_menu_add(self, container_name, var, mode_mask=None, flags=0, *,
+                        view=False, packed_time=False, before=None, after=None):
         """Register one variable in a clinical section or custom page."""
         container = self._custom_menu_container_id(container_name)
 
@@ -584,11 +613,19 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             raise ValueError(
                 "custom_menu_add: %s is globals[%d], only g[4]/g[8] menu settings are supported" %
                 (var, table_num))
-        if vid in self.custom_menu_registered:
+        if packed_time:
+            if table_num != 4 or self.asf.cdx_ver != 'SX567-0401':
+                raise ValueError('custom menu packed time requires a 0401 numeric variable')
+            flags |= MenuBuilder.PACKED_TIME
+        if view:
+            flags |= MenuBuilder.VIEW
+            mode_mask |= self.CUSTOM_MENU_MODE_KEEP_VISIBILITY
+        if not view and vid in self.custom_menu_registered:
             raise ValueError("custom_menu_add: duplicate variable %s (var_id 0x%04X)" % (var, vid))
         handle = self._custom_menu_register(
             (container, flags, vid, int(mode_mask)), before=before, after=after)
-        self.custom_menu_registered.add(vid)
+        if not view:
+            self.custom_menu_registered.add(vid)
         return handle
 
     def custom_menu_add_heading(self, container_name, str_id, *, before=None, after=None):
@@ -672,7 +709,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         if not self.custom_menu_conditions:
             return
         entries = {vid: mask for _, flags, vid, mask in self.custom_menu_entries
-                   if not flags & (self.CUSTOM_MENU_FLAG_HEADING | self.CUSTOM_MENU_FLAG_PAGE)}
+                   if not flags & (MenuBuilder.HEADING | MenuBuilder.PAGE | MenuBuilder.ACTION | MenuBuilder.VIEW)}
         for vid, _, _, _ in self.custom_menu_conditions:
             if vid not in entries or entries[vid] & self.CUSTOM_MENU_MODE_KEEP_VISIBILITY:
                 raise ValueError(
@@ -907,8 +944,8 @@ class ASFirmwarePatches(CompiledPayloadMixin):
     def _patch_clinical_menu_capacity(self, imm_off, stock_capacity):
         """Grow the clinical settings scrollbar capacity for generated entries."""
         custom_count = sum(
-            1 for container, _, _, _ in self.custom_menu_entries
-            if container < self.CUSTOM_MENU_PAGE_CONTAINER_BASE)
+            1 for container, flags, _, _ in self.custom_menu_entries
+            if container < self.CUSTOM_MENU_PAGE_CONTAINER_BASE and not flags & MenuBuilder.DECLARATION)
         new_capacity = stock_capacity + custom_count
         if (self.asf.read_u8(imm_off) != stock_capacity or
                 self.asf.read_u8(imm_off + 1) != 0x22):
@@ -1081,6 +1118,19 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             clinical_page_addr - self.asf.FLASH_BASE,
             self.custom_menu_clinical_page_id)
         self.asf.write_u16(back_str_addr - self.asf.FLASH_BASE, self.custom_menu_back_str_id)
+
+        if self.custom_menu_actions:
+            actions = bytearray()
+            for write, label, binding, page, item, value in self.custom_menu_actions:
+                destination = (0 if page is None else 0xff if page == 'default'
+                               else self._custom_menu_container_id(page))
+                if page not in (None, 'default') and destination < self.CUSTOM_MENU_PAGE_CONTAINER_BASE:
+                    raise ValueError('custom menu action destination must be a generated page')
+                actions.extend(struct.pack('<3H2Bi', write, label, binding, destination, item, value))
+            off = self.asf.find_ccx_ff_range_backwards(len(actions), alignment=4)
+            self.asf.patch(actions, off, checkempty=True)
+            slot = self._elf_symbol_addr(elf_path, 'custom_menu_actions_addr')
+            self.asf.write_u32(slot - self.asf.FLASH_BASE, self.asf.FLASH_BASE + off)
 
         self._patch_clinical_menu_capacity(sites['clinical_capacity_site'], sites['clinical_capacity'])
 

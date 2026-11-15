@@ -61,6 +61,11 @@ custom_menu_dispatch_addr:
 custom_menu_conditions_addr:
 	.word 0xffffffff
 
+.global custom_menu_actions_addr
+.type custom_menu_actions_addr, %object
+custom_menu_actions_addr:
+	.word 0xffffffff
+
 /* Stock page-table metadata recovered by the patcher from the verified menu
  * controller and Reminders page constructor before those sites are changed.
  */
