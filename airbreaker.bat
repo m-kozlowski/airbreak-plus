@@ -12,14 +12,24 @@ python -c "import tkinter" >nul 2>&1 && (
 rem No Windows Python: run the window with python3 in WSL (it shows through WSLg).
 where wsl.exe >nul 2>&1 || goto nopython
 wsl.exe --exec python3 -c "import tkinter" >nul 2>&1 && goto runwsl
-echo Python 3 with tkinter was not found in WSL. Installing python3, python3-tk, make and
-echo the ARM toolchain there (needs internet, takes a minute)...
-wsl.exe -u root --exec bash -c "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y python3 python3-tk make gcc-arm-none-eabi binutils-arm-none-eabi"
+echo Python 3 with tkinter was not found in WSL.
+rem apt-get only exists on Debian, Ubuntu and their derivatives.
+wsl.exe --exec sh -c "command -v apt-get" >nul 2>&1 || goto noapt
+echo AirBreaker needs these packages in WSL:
+echo     python3 python3-tk make gcc-arm-none-eabi binutils-arm-none-eabi
+echo Installing them uses sudo apt-get, needs internet and takes a minute; sudo asks
+echo for your WSL password.
+choice /C YN /M "Install them now"
+if errorlevel 2 goto nopython
+wsl.exe --exec sudo sh -c "apt-get update && apt-get install -y python3 python3-tk make gcc-arm-none-eabi binutils-arm-none-eabi"
 wsl.exe --exec python3 -c "import tkinter" >nul 2>&1 || goto nopython
 :runwsl
 powershell -NoProfile -WindowStyle Hidden -Command "Start-Process wsl.exe -WindowStyle Hidden -ArgumentList '--cd','%~dp0.','--exec','python3','python/airbreaker.py'"
 exit /b 0
 
+:noapt
+echo Your WSL distribution has no apt-get. Install python3 with tkinter, make and the
+echo ARM GCC toolchain with its own package manager (docs/guide/wsl_setup.md).
 :nopython
 echo Python 3 was not found.
 echo Install it from https://www.python.org/downloads/windows/ with

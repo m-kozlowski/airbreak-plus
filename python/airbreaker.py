@@ -194,6 +194,15 @@ WSL_TOOLS = (("make", "make"), ("arm-none-eabi-gcc", "gcc-arm-none-eabi"), ("arm
              ("python3", "python3"))   # (command, apt package) the build and the patcher need in WSL
 
 
+def wsl_has_apt():
+    """Whether the default WSL distribution has apt-get (Debian, Ubuntu and their derivatives)."""
+    try:
+        return subprocess.run([shutil.which("wsl.exe"), "--exec", "sh", "-c", "command -v apt-get"],
+                              capture_output=True, creationflags=NO_WINDOW).returncode == 0
+    except OSError:
+        return False
+
+
 def wsl_missing_packages():
     """apt packages of the WSL_TOOLS whose command is not in WSL; [] when all are there (or WSL cannot be asked)."""
     script = "for t in %s; do command -v $t >/dev/null || echo $t; done" % " ".join(t for t, _ in WSL_TOOLS)
@@ -783,17 +792,29 @@ class App(tk.Tk):
                  command, "%s built" % OUTPUT_TARGET)
 
     def ensure_wsl_tools(self):
-        """False when WSL lacks make, the ARM toolchain or python3: offers to install them (as root, so no sudo
-        password is needed) with the output in the log; click the action again when it is done."""
+        """False when WSL lacks make, the ARM toolchain or python3. Shows the command that installs them and, on a
+        WSL distribution with apt-get, offers to run it in a console window, where sudo asks for the password.
+        Nothing is installed without asking. Click the action again when it is done."""
         packages = wsl_missing_packages() if in_wsl() else []
         if not packages:
             return True
-        if messagebox.askyesno(TITLE, "WSL is missing: %s.\n\nInstall them now with apt (needs internet, takes a "
-                               "minute)?" % ", ".join(packages)):
-            self.run("Installing in WSL: %s" % " ".join(packages),
-                     [shutil.which("wsl.exe"), "-u", "root", "--exec", "bash", "-c",
-                      "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y " + " ".join(packages)],
-                     "installed; click the button again")
+        if not wsl_has_apt():
+            messagebox.showerror(TITLE, "WSL is missing: %s.\n\nInstall make, python3 and the ARM GCC toolchain "
+                                 "with the package manager of your WSL distribution (docs/guide/wsl_setup.md), "
+                                 "then click the button again." % ", ".join(packages))
+            return False
+        command = "sudo apt-get update && sudo apt-get install %s" % " ".join(packages)
+        if messagebox.askyesno(TITLE, "WSL is missing: %s.\n\nOpen a WSL console window that runs:\n\n%s\n\n"
+                               "sudo asks for your WSL password there, and apt-get asks before installing. Click "
+                               "the button again when it is done." % (", ".join(packages), command)):
+            try:
+                subprocess.Popen([shutil.which("wsl.exe"), "--exec", "bash", "-c",
+                                  command + "; echo; read -r -p 'Press Enter to close this window. '"],
+                                 creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0))
+            except OSError as exc:
+                messagebox.showerror(TITLE, "Could not start WSL: %s" % exc)
+        else:
+            self.append("To install them yourself, run in WSL: " + command, "warn")
         return False
 
     def run(self, title, command, done, flashing=False, env=None):
