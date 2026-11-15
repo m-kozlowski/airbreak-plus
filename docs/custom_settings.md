@@ -1,13 +1,11 @@
 # Custom Settings
 
 The custom settings framework exposes controls and pages for injected Air 10
-payloads in the stock clinical menu. Settings may use stock or custom storage;
-navigation and command rows do not create persistent settings. It is separate
-from the payloads themselves. A payload can run without the framework by
-recognizing unpatched ABI slots and using its built-in fallback values.
+payloads in the stock clinical menu. It is separate from the payloads
+themselves. A payload can run without the framework by recognizing unpatched
+ABI slots and using its built-in fallback values.
 
-The framework is supported on SX567-0302, SX567-0305, SX567-0306, SX567-0401,
-SX567-0402, and Lumis SX584-0204/0205.
+The framework supports SX567 and Lumis SX584 firmware.
 
 ## Assignments
 
@@ -66,10 +64,9 @@ Reminder implementation remains unchanged.
 
 ## Payload fallback contract
 
-An unpatched setting ABI slot contains `0xFFFF`. Therapy payloads that support
-operation without custom settings treat that value as a request for their
-built-in fallback. Features whose purpose is a GUI workflow, such as Learn
-Targets, require the menu framework explicitly.
+An unpatched ABI slot contains `0xFFFF`. Payload code treats that value as a
+request for its built-in fallback. The menu framework therefore configures a
+payload but is not a runtime dependency of that payload.
 
 ## Persistence
 
@@ -169,11 +166,30 @@ available.
 The text of a new ID is English for every compiled language without a supplied
 translation.
 
+## Pages and controls
+
+`custom_menu_add_page` registers a generated page and a navigation row in its
+parent. `custom_menu_declare_page(name, parent_name, title_str_id, *, back=True)`
+registers only the page. Use `back=False` when the page supplies its own return
+actions instead of the automatic Back row. Page numbers are assigned after
+placement; feature hooks must use that assignment rather than fixed numbers.
+
+`custom_menu_add_action(container, label, ...)` adds a button with a label
+string ID. Set `write` and `value` to write a variable, `page` to open a generated
+page by name, or both to write before navigation. `page='default'` selects the
+stock default page. Optional `binding` follows a variable's visibility;
+`item` selects the row on the destination page.
+
+`custom_menu_add(..., view=True)` adds another row for a variable, preserving
+its existing visibility. Numeric rows can use `packed_time=True` to display
+`(minutes << 8) | seconds` as `mm:ss`.
+
 ## Menu placement
 
-`custom_menu_add`, `custom_menu_add_heading`, and `custom_menu_add_page` accept
-an optional `before` or `after` reference and return an item handle. Placement
-is relative to another entry in the same section or generated page:
+`custom_menu_add`, `custom_menu_add_heading`, `custom_menu_add_page`, and
+`custom_menu_add_action` accept an optional `before` or `after` reference and
+return an item handle. Placement is relative to another entry in the same
+section or generated page:
 
 ```python
 from lib.custom_menu import stock, custom
@@ -186,30 +202,10 @@ self.custom_menu_add('therapy', 'ZVK', ivaps_mask, after=vt)
 
 `stock('PHT')` refers to a native row by its UART variable name.
 `custom('ZMV')` refers to a registered custom variable, including one registered
-later. Returned handles also identify headings and page links. An omitted
-placement appends to the end of the section or generated page, in registration
-order. Generated pages normally have a Back row first.
-
-`custom_menu_declare_page(name, parent, title, back=True)` declares a page
-without adding a navigation row. `custom_menu_add_page` remains the shorthand
-for a page with a link in its parent. Use `back=False` when the page supplies
-its own return actions. Page numbers are assigned after placement; feature
-hooks must use the resulting assignment rather than reserving fixed numbers.
-
-On SX567-0401, `custom_menu_add_action(container, label, write=None, value=0,
-binding=None, page=None, item=0)` adds a native action row. It writes the
-specified variable, then optionally opens a named generated page or invokes
-the native default-page action with `page='default'`. A binding uses the native
-variable-bound button's visibility. Actions accept the same placement arguments
-and return item handles. They are excluded from UART settings discovery and
-do not add storage members.
-
-`custom_menu_add(..., view=True)` creates an additional view of a variable,
-preserving its existing visibility and storage. Views are excluded from UART
-settings discovery; register a setting once if it should appear there.
-When a variable has several rows, use item handles for placement;
-`custom(var)` is rejected as ambiguous. On SX567-0401, numeric views can use
-`packed_time=True` to display `(minutes << 8) | seconds` as `mm:ss`.
+later. When a variable has several rows, use item handles: `custom(var)` is
+rejected as ambiguous. Returned handles also identify headings, page links,
+and actions. An omitted placement appends to the end of the section or
+generated page, in registration order.
 
 Entries attached to the same side of an anchor retain registration order.
 An entry and the entries attached to it stay together: if A is before a stock
@@ -260,8 +256,7 @@ typedef struct {
 An entry with container `0xFF` or item ID `0xFFFF` terminates the registry.
 Duplicate setting registrations are rejected; explicit views may share a variable ID.
 The registry holds at most 64 entries, followed by the terminator.
-Action records are defined in [custom_menu_registry.h](../patches/custom_menu_registry.h)
-and allocated separately from the menu registry.
+Action records are defined in [custom_menu_registry.h](../patches/custom_menu_registry.h).
 
 After feature registration, the patcher orders entries within each container.
 It emits containers in section and page order. The registry supplies GUI
@@ -276,8 +271,8 @@ stock list capacity by the number of entries added directly to stock sections.
 
 When the registry contains pages, the menu constructor preserves all stock page
 pointers in a larger table and appends the generated pages. Each generated page
-has its optional stock Back row followed by records assigned to its container. Page records
-may use a stock section or an earlier generated page as their parent.
+has its optional stock Back row followed by records assigned to its container.
+Page records may use a stock section or an earlier generated page as their parent.
 
 ## UART discovery
 
@@ -298,8 +293,8 @@ UART setting records.
 ## Mode visibility
 
 Clinical menu pages are constructed once. The MOP callback dispatcher calls the
-stock MOP callback first, followed by the custom visibility handler. For every
-variable entry, the handler tests the current MOP bit in `mode_mask` and updates
+stock MOP callback first, followed by the custom visibility handler. For each
+registered setting, the handler tests the current MOP bit in `mode_mask` and updates
 the variable handler's runtime VIS flag. Entries with bit 31 set retain the
 visibility selected by stock firmware callbacks. Existing menu refresh code
 then shows or hides the variable item. Static headings and page links are

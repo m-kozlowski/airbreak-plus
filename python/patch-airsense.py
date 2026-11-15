@@ -131,6 +131,14 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         'SX567-0401': (0x8282c, 0xeaa28),
         'SX567-0402': (0x8282c, 0xeaca0),
     }
+    # Page getter, default-page load, and the two inactivity-filter calls.
+    LEARN_TARGETS_HOOK_SITES = {
+        'SX567-0302': (0x6dbc6, 0x63534, (0x6d8d2, 0x6d8dc)),
+        'SX567-0305': (0x6e2f6, 0x63c58, (0x6e002, 0x6e00c)),
+        'SX567-0306': (0x6e2f6, 0x63c58, (0x6e002, 0x6e00c)),
+        'SX567-0401': (0x6e2f6, 0x63c58, (0x6e002, 0x6e00c)),
+        'SX567-0402': (0x6e2f6, 0x63c58, (0x6e002, 0x6e00c)),
+    }
     BUTTON_EVENTS = {
         'start_stop': 1,
         'start_stop_hold': 2,
@@ -567,7 +575,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         return handle
 
     def custom_menu_declare_page(self, name, parent_name, title_str_id, *, back=True):
-        """Declare a page independently of any row that navigates to it."""
+        """Register a page without adding a navigation row."""
         key = name.lower()
         if key in self.CUSTOM_MENU_SECTIONS or key in self.custom_menu_pages:
             raise ValueError('custom menu: duplicate container %s' % name)
@@ -579,9 +587,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
 
     def custom_menu_add_action(self, container_name, label, *, write=None, value=0,
                                binding=None, page=None, item=0, before=None, after=None):
-        """Native variable write, optionally followed by page/default navigation."""
-        if self.asf.cdx_ver != 'SX567-0401':
-            raise ValueError('custom menu actions: native constructors verified only for 0401')
+        """Add a button that writes a variable, changes page, or both."""
         if write is None and page is None:
             raise ValueError('custom menu action requires a write or navigation')
         if not 0 <= item <= 255:
@@ -614,8 +620,8 @@ class ASFirmwarePatches(CompiledPayloadMixin):
                 "custom_menu_add: %s is globals[%d], only g[4]/g[8] menu settings are supported" %
                 (var, table_num))
         if packed_time:
-            if table_num != 4 or self.asf.cdx_ver != 'SX567-0401':
-                raise ValueError('custom menu packed time requires a 0401 numeric variable')
+            if table_num != 4:
+                raise ValueError('custom menu packed time requires a numeric variable')
             flags |= MenuBuilder.PACKED_TIME
         if view:
             flags |= MenuBuilder.VIEW
@@ -1065,8 +1071,21 @@ class ASFirmwarePatches(CompiledPayloadMixin):
                 "custom_patch_menu_hooks: unsupported CDX version %s" %
                 self.asf.cdx_ver)
 
+        abi = {}
+        if self.custom_menu_actions:
+            actions = bytearray()
+            for write, label, binding, page, item, value in self.custom_menu_actions:
+                destination = (0 if page is None else 0xff if page == 'default'
+                               else self._custom_menu_container_id(page))
+                if page not in (None, 'default') and destination < self.CUSTOM_MENU_PAGE_CONTAINER_BASE:
+                    raise ValueError('custom menu action destination must be a generated page')
+                actions.extend(struct.pack('<3H2Bi', write, label, binding, destination, item, value))
+            off = self.asf.find_ccx_ff_range_backwards(len(actions), alignment=4)
+            self.asf.patch(actions, off, checkempty=True)
+            abi['custom_menu_actions_addr'] = struct.pack('<I', self.asf.FLASH_BASE + off)
+
         data, _, elf_path = self._load_versioned_payload('custom_menu_hooks')
-        flash, _ = self._inject_payload('custom_menu_hooks', data)
+        flash, _ = self._inject_payload('custom_menu_hooks', data, abi=abi)
         self._custom_detail(self._payload_detail('custom_menu_hooks', len(data), flash))
         registry_flash = self.asf.FLASH_BASE + self.custom_settings_registry_addr
 
@@ -1118,19 +1137,6 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             clinical_page_addr - self.asf.FLASH_BASE,
             self.custom_menu_clinical_page_id)
         self.asf.write_u16(back_str_addr - self.asf.FLASH_BASE, self.custom_menu_back_str_id)
-
-        if self.custom_menu_actions:
-            actions = bytearray()
-            for write, label, binding, page, item, value in self.custom_menu_actions:
-                destination = (0 if page is None else 0xff if page == 'default'
-                               else self._custom_menu_container_id(page))
-                if page not in (None, 'default') and destination < self.CUSTOM_MENU_PAGE_CONTAINER_BASE:
-                    raise ValueError('custom menu action destination must be a generated page')
-                actions.extend(struct.pack('<3H2Bi', write, label, binding, destination, item, value))
-            off = self.asf.find_ccx_ff_range_backwards(len(actions), alignment=4)
-            self.asf.patch(actions, off, checkempty=True)
-            slot = self._elf_symbol_addr(elf_path, 'custom_menu_actions_addr')
-            self.asf.write_u32(slot - self.asf.FLASH_BASE, self.asf.FLASH_BASE + off)
 
         self._patch_clinical_menu_capacity(sites['clinical_capacity_site'], sites['clinical_capacity'])
 
@@ -1353,6 +1359,90 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             "iVAPS height: PHT/PHI active, PHI added with firmware-managed visibility")
         self._custom_detail("iVAPS height units: IHU active in Configuration")
         self._custom_detail("iVAPS calculated values: ZMV/ZTV/ZVK active and read-only")
+
+    def enable_learn_targets(self):
+        if self.asf.cdx_ver not in self.LEARN_TARGETS_HOOK_SITES:
+            raise ValueError('Learn Targets is unsupported on %s' % self.asf.cdx_ver)
+        mop = self.asf.find_var('MOP')
+        if not self.asf.read_u32(mop + self.asf.G8_BITMASK) & self.mop_bitmask('iVAPS'):
+            raise ValueError('Learn Targets requires iVAPS in the target mode permissions')
+        self.enabled_custom_settings_features.add('learn_targets')
+        return PatchOutcome.ok('native iVAPS learning interface')
+
+    def custom_patch_settings_learn_targets(self):
+        """Activate Learn Targets variables and register its menu pages."""
+        # QXK/ZTT are updated through dependencies and do not need ACT.
+        # IVP supplies a fixed bound; reading it does not require ACT.
+        required = {
+            4: 'ZIT ZIC ZLR ZLV ZLP ZDS ZLN ZSU PHT PHI EPI WPM WPA IBR WMV IVS AAV ITX ITN',
+            6: 'ZPK',
+            8: 'ILE ZLS ZLC ZRM ROP ZUI ZUM SPM IHU VTS VCS MSK MOP',
+        }
+        for table, names in required.items():
+            for name in names.split():
+                if self.asf.find_var_table_number(name) != table:
+                    raise ValueError('Learn Targets: unexpected descriptor table for %s' % name)
+                rec = self.asf.find_var(name)
+                self.asf.write_u16(rec, self.asf.read_u16(rec) | 1)
+        rec = self.asf.find_var('ZRM')
+        self.asf.write_u32(rec + self.asf.G8_BITMASK,
+                           self.asf.read_u32(rec + self.asf.G8_BITMASK) | (1 << 9))
+
+        stop = self.redefine_fw_string(-1, {0: 'Stop Learning'}, 'learn_targets_stop')
+        results = self.redefine_fw_string(-1, {0: 'Targets Learnt'}, 'learn_targets_results')
+        # Stock string IDs: page title 6, Learn Targets 37, Cancel 95, Accept 102.
+        self.custom_menu_declare_page('learn_targets', 'therapy', 6)
+        self.custom_menu_declare_page('learnt_targets', 'therapy', 6, back=False)
+        self.custom_menu_add_action('therapy', 37, write='ILE', value=1, binding='ILE',
+                                    page='learn_targets', item=1, after=stock('MSK'))
+        units = self.CUSTOM_MENU_FLAG_SHOW_UNITS
+        for name in ('ZIT', 'ZIC'):
+            self.custom_menu_add('learn_targets', name, view=True, packed_time=True)
+        for name in ('PHT', 'PHI', 'EPI', 'ZLP'):
+            self.custom_menu_add('learn_targets', name, view=True,
+                                 flags=units if name in ('PHT', 'PHI') else 0)
+        self.custom_menu_add_action('learn_targets', stop, write='ZUI', value=4)
+        for name in ('WPM', 'WPA', 'ITX', 'ITN', 'VTS', 'VCS', 'MSK'):
+            self.custom_menu_add('learn_targets', name, view=True,
+                                 flags=units if name in ('ITX', 'ITN') else 0)
+        self.custom_menu_add_heading('learnt_targets', results)
+        self.custom_menu_add_action('learnt_targets', 102, write='ZLC', value=1, page='default')
+        for name in ('PHT', 'PHI', 'ZLR', 'ZLV'):
+            self.custom_menu_add('learnt_targets', name, view=True,
+                                 flags=units if name != 'ZLR' else 0)
+        self.custom_menu_add_action('learnt_targets', 95, write='ZUI', value=4)
+        if 'autoepap' in self.applied_payloads:
+            self.variable_callback_add('ILE', 'autoepap', 'autoepap_apply_mode_visibility')
+
+    def custom_patch_learn_targets_hooks(self):
+        data, _, elf = self._load_versioned_payload('learn_targets')
+        menu_elf = self._require_versioned_artifact('custom_menu_hooks', 'elf')
+        slot = self._elf_symbol_addr(menu_elf, 'custom_menu_stock_page_count')
+        stock_count = self.asf.read_u8(slot - self.asf.FLASH_BASE)
+        abi = {}
+        for name, symbol in (('learn_targets', 'learn_targets_page'),
+                             ('learnt_targets', 'learn_targets_results_page')):
+            page = stock_count + self.custom_menu_pages[name] - self.CUSTOM_MENU_PAGE_CONTAINER_BASE
+            abi[symbol] = struct.pack('<B', page)
+        abi['learn_targets_prompt_index'] = struct.pack('<H', self.asf.find_var_table_index(6, 'ZPK'))
+        flash, _ = self._inject_payload('learn_targets', data, abi=abi)
+        self.applied_payloads.add('learn_targets')
+        self._custom_detail(self._payload_detail('learn_targets', len(data), flash))
+        self.button_hook_add('start_stop', 'learn_targets', 'learn_targets_stop_button', consume=True)
+        page_site, default_site, timer_sites = self.LEARN_TARGETS_HOOK_SITES[self.asf.cdx_ver]
+        getter = self._elf_symbol_addr(elf, 'variable_get_by_id') & ~1
+        inactivity = self._elf_symbol_addr(elf, 'gui_inactivity_filter') & ~1
+        self._custom_detail(self._patch_thumb_bl_checked(
+            page_site, self._encode_thumb_bl(page_site, getter),
+            self._elf_symbol_addr(elf, 'learn_targets_page_hook'), 'learning page selection'))
+        self._custom_detail(self._patch_thumb_bl_checked(
+            default_site, bytes.fromhex('90f82010'),
+            self._elf_symbol_addr(elf, 'learn_targets_default_hook'), 'learning default page'))
+        for site in timer_sites:
+            self._custom_detail(self._patch_thumb_bl_checked(
+                site, self._encode_thumb_bl(site, inactivity),
+                self._elf_symbol_addr(elf, 'learn_targets_inactivity'),
+                'learning inactivity filter'))
 
     def custom_patch_settings_squarewave(self):
         """Expose the squarewave runtime switch and pass its var_id to the payload."""
@@ -1607,6 +1697,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             ('backlight_adapt', self.custom_patch_settings_backlight),
             ('target_rh', self.custom_patch_settings_target_rh),
             ('header_clock', self.custom_patch_settings_header_clock),
+            ('learn_targets', self.custom_patch_settings_learn_targets),
         )
         active = self.applied_payloads | self.enabled_custom_settings_features
         return [feature for source, feature in feature_patches if source in active]
@@ -1632,6 +1723,8 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self.custom_emit_visibility_conditions()
         self.custom_emit_registry()
         self.custom_patch_menu_hooks()
+        if 'learn_targets' in self.enabled_custom_settings_features:
+            self.custom_patch_learn_targets_hooks()
         return PatchOutcome.ok(None, *self.custom_settings_details)
 
     @staticmethod

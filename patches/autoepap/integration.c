@@ -97,7 +97,8 @@ void autoepap_apply_mode_visibility(void) {
     if (autoepap_enable_id == 0xffff || autoepap_lower_id == 0xffff || autoepap_upper_id == 0xffff)
         return;
     int ivaps = variable_get_by_id(VAR_ID_MOP) == 9;
-    int enabled = variable_get_by_id(autoepap_enable_id) != 0;
+    int enabled = variable_get_by_id(autoepap_enable_id) != 0 &&
+                  variable_get_by_id(VAR_ID_ILE) == 0;
     autoepap_set_visible(VAR_ID_EPI, ivaps && !enabled);
     autoepap_set_visible(autoepap_lower_id, ivaps && enabled);
     autoepap_set_visible(autoepap_upper_id, ivaps && enabled);
@@ -170,7 +171,7 @@ static void autoepap_stop(therapy_worker *node) {
 void *autoepap_epap_ref(float **output, int index) {
     Autoepap *s = autoepap_find();
     int profile = *iref(0x12);
-    if (s && (profile == 6 || profile == 7))
+    if (s && profile == 6)
         *output = autoepap_active(s) ? s->results + 7 : &s->lower;
     else therapy_variable_get_float(output, index);
     return output;

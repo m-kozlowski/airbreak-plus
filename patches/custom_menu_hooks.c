@@ -4,6 +4,7 @@ typedef unsigned int u32;
 
 #include "s10_vars.h"
 #include "custom_menu_registry.h"
+#include "custom_menu_native.h"
 
 /* Registry entries are emitted by patch-airsense into reclaimed firmware space.
  * container selects a clinical menu section or a generated page; flags carries
@@ -102,12 +103,10 @@ static void *custom_menu_create_navigation(const custom_menu_entry_t *entry)
 	return gui_create_back_button(item_storage, entry->item_id, 0, action, 0x29);
 }
 
-#if defined(CDX_VER_0401)
 extern void *gui_action_write(void *, int, int);
 extern void *gui_action_default(void *);
 extern void *gui_action_sequence(void *);
 extern void gui_action_prepend(void *, void *);
-extern void *gui_create_bound_button(void *, int, int, int, void *);
 extern int snprintf(char *, unsigned, const char *, ...);
 
 static void *custom_menu_create_action(const custom_menu_entry_t *entry)
@@ -133,17 +132,17 @@ static void *custom_menu_create_action(const custom_menu_entry_t *entry)
 			storage = malloc(8);
 			if (!storage) return 0;
 			void *sequence = gui_action_sequence(storage);
-			/* Native insertion prepends: write executes before navigation. */
+			/* Prepending runs the write before navigation. */
 			gui_action_prepend(sequence, action);
 			gui_action_prepend(sequence, write);
 			action = sequence;
 		} else action = write;
 	}
-	void *storage = malloc(spec->binding_id == 0xffff ? 0x14 : 0x1c);
+	void *storage = malloc(spec->binding_id == 0xffff ? 0x14 : CUSTOM_MENU_BOUND_BUTTON_SIZE);
 	if (!storage || !action) return 0;
 	return spec->binding_id == 0xffff ?
 		gui_create_back_button(storage, spec->label_id, 0, action, 0x29) :
-		gui_create_bound_button(storage, spec->label_id, 0, spec->binding_id, action);
+		custom_menu_bound_button(storage, spec->label_id, spec->binding_id, action);
 }
 
 static void custom_menu_format_time(void *item, char *buffer, unsigned size)
@@ -151,7 +150,6 @@ static void custom_menu_format_time(void *item, char *buffer, unsigned size)
 	unsigned packed = *(u32 *)((u8 *)item + 0x18);
 	if (size) snprintf(buffer, size, "%02u:%02u", (packed >> 8) & 255, packed & 255);
 }
-#endif
 
 static void *custom_menu_create_item(const custom_menu_entry_t *entry)
 {
@@ -159,13 +157,8 @@ static void *custom_menu_create_item(const custom_menu_entry_t *entry)
 		return 0;
 	if (entry->flags & CUSTOM_MENU_FLAG_PAGE)
 		return custom_menu_create_navigation(entry);
-	if (entry->flags & CUSTOM_MENU_FLAG_ACTION) {
-#if defined(CDX_VER_0401)
+	if (entry->flags & CUSTOM_MENU_FLAG_ACTION)
 		return custom_menu_create_action(entry);
-#else
-		return 0;
-#endif
-	}
 
 	if (entry->flags & CUSTOM_MENU_FLAG_HEADING) {
 		void *storage = malloc(0x0c);
@@ -180,17 +173,15 @@ static void *custom_menu_create_item(const custom_menu_entry_t *entry)
 		void *item = menu_create_numeric_var(
 			storage, entry->item_id,
 			(entry->flags & CUSTOM_MENU_FLAG_SHOW_UNITS) != 0);
-#if defined(CDX_VER_0401)
 		if (entry->flags & CUSTOM_MENU_FLAG_PACKED_TIME) {
-			/* Keep native editing, binding and layout. Only formatting differs. */
-			u32 *methods = malloc(31 * sizeof(u32));
+			u32 *methods = malloc(CUSTOM_MENU_NUMERIC_METHODS * sizeof(u32));
 			if (methods) {
-				memcpy_unrolled(methods, *(void **)item, 31 * sizeof(u32));
-				methods[25] = (u32)custom_menu_format_time;
+				memcpy_unrolled(methods, *(void **)item,
+						CUSTOM_MENU_NUMERIC_METHODS * sizeof(u32));
+				methods[CUSTOM_MENU_NUMERIC_FORMAT] = (u32)custom_menu_format_time;
 				*(u32 **)item = methods;
 			}
 		}
-#endif
 		return item;
 	}
 

@@ -62,6 +62,7 @@ All patches below are **enabled by default** unless noted.
 | Unlock options | Enables all built-in tube and ramp choices, including the 3m tube and Auto ramp | `--patch-unlock-options` |
 | Unlock settings | Makes the clinical settings used by unlocked modes available and editable | `--patch-gui-config` |
 | iVAPS settings | Restores height controls and calculated MV, Vt, and Vt/kg IBW values | `--patch-ivaps-settings` |
+| [Learn Targets](features/general.md#learn-targets) | Calculates iVAPS therapy targets from breathing. Requires custom settings. Off by default. | `--patch-learn-targets` |
 | Unlock pressure range | Expands standard pressure settings to 1.0-30.0 cmH2O | `--patch-unlock-uilimits` |
 | Unlock ASV PS range | Expands ASV/ASVAuto pressure support to 0-25 cmH2O, allows Max PS below Min PS + 5, and raises fixed ASV EPAP to the device pressure limit | `--patch-asv-ps-range` |
 | Adjustable ASV pressure limit | Allows setting the limit from 10 cmH2O to the factory maximum. Off by default. | `--patch-adjustable-mcp` |

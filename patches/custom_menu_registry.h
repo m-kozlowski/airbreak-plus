@@ -28,9 +28,9 @@ typedef struct {
 	unsigned short nonzero;
 } custom_menu_condition_t;
 
-/* A write followed by optional navigation. A 0xffff write/binding is absent;
- * destination 0 stays put, 0xff invokes the native default-page action, and
- * 0x80+ selects an assigned page container. Labels use firmware string IDs.
+/* write_id and binding_id use 0xffff for absent values. destination is 0 for
+ * no navigation, 0xff for the default page, or 0x80+ for a generated page.
+ * label_id is a firmware string ID.
  */
 typedef struct {
 	unsigned short write_id, label_id, binding_id;
