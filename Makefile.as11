@@ -1,12 +1,12 @@
 AS11_FIRMWARE ?= as11.bin
 AS11_PATCHED ?= $(BUILD)/as11-patched.bin
-AIR11_PATCH_ARGS ?=
-export AIR11_PATCH_ARGS
+AIR11_PATCH_ARGS ?= $(PATCH_ARGS)
 
 AS11_PATCHER_DEPS := \
-	patch-airsense-s11 \
+	Makefile.as11 \
 	python/patch-airsense-s11.py \
 	python/as11_edf_superset.py \
+	python/lib/as11_patch_options.py \
 	python/lib/as11_patch_versions.py \
 	python/lib/compiled_payload.py
 
@@ -14,7 +14,7 @@ AS11_PATCHER_DEPS := \
 AS11_PAYLOAD_LAYOUT_VERSIONS := 8_0_1 8_3_0 8_4_0 8_5_0 8_6_0 8_7_0 8_8_0
 AS11_PAYLOADS_8_0_1 := as11_mop_callback_dispatcher as11_rpc_dispatcher as11_vid_spoof as11_header_clock as11_airbreak_info as11_scroll_animation
 AS11_PAYLOADS_8_3_0 := $(AS11_PAYLOADS_8_0_1) as11_asv_backup_rate as11_custom_settings
-AS11_PAYLOADS_8_4_0 := $(AS11_PAYLOADS_8_3_0) as11_screen_keep_awake
+AS11_PAYLOADS_8_4_0 := $(AS11_PAYLOADS_8_3_0) as11_screen_keep_awake as11_therapy_screen_style
 AS11_PAYLOADS_8_5_0 := $(AS11_PAYLOADS_8_4_0)
 AS11_PAYLOADS_8_6_0 := $(AS11_PAYLOADS_8_5_0) as11_cellular_download as11_ble_oxi_fallback as11_flow_wave
 AS11_PAYLOADS_8_7_0 := $(AS11_PAYLOADS_8_6_0)
@@ -91,6 +91,9 @@ AS11_NOR_READER_CFLAGS := \
 	-Wno-unused-parameter \
 	-Wno-unused-variable
 
+$(eval $(call compiler_config,as11,CC AS AS11_CFLAGS $(sort $(filter AS11_PAYLOAD_CFLAGS_%,$(.VARIABLES)))))
+$(eval $(call compiler_config,as11-nor,CC AS11_NOR_READER_CFLAGS))
+
 # Probe sizes feed the code-cave allocator for each region and version.
 # $(1): default region, $(2): version, $(3): output stem, $(4): payload list
 define AS11_PAYLOAD_LAYOUT_template
@@ -124,31 +127,23 @@ $(foreach v,$(AS11_PAYLOAD_LAYOUT_VERSIONS),\
 $(foreach v,$(AS11_FGBL_PAYLOAD_VERSIONS),\
 	$(eval $(call AS11_PAYLOAD_LAYOUT_template,fgbl,$(v),as11_fgbl,$(AS11_FGBL_PAYLOADS_$(v)))))
 
-$(BUILD)/as11_stubs_%.o: $(SRC)/as11/stubs_%.S Makefile Makefile.as11 | $(BUILD)
-	$(AS) $(AS11_CFLAGS) -DAPPX_VER_$* -DFGBL_VER_$* -c -o $@ $<
+$(BUILD)/as11_stubs_%.o: $(SRC)/as11/stubs_%.S Makefile Makefile.as11 $(BUILD)/as11.flags | $(BUILD)
+	$(AS) $(AS11_CFLAGS) $(DEPFLAGS) -DAPPX_VER_$* -DFGBL_VER_$* -c -o $@ $<
 
-$(BUILD)/as11_fgbl_stubs_%.o: $(SRC)/as11/fgbl_stubs_%.S Makefile Makefile.as11 | $(BUILD)
-	$(AS) $(AS11_CFLAGS) -DAPPX_VER_$* -DFGBL_VER_$* -c -o $@ $<
+$(BUILD)/as11_fgbl_stubs_%.o: $(SRC)/as11/fgbl_stubs_%.S Makefile Makefile.as11 $(BUILD)/as11.flags | $(BUILD)
+	$(AS) $(AS11_CFLAGS) $(DEPFLAGS) -DAPPX_VER_$* -DFGBL_VER_$* -c -o $@ $<
 
 # APPL and FGBL payloads share one versioned object rule.
 define AS11_VERSIONED_OBJECTS_template
-$$(BUILD)/as11_%_$(1).o: $$(SRC)/as11/%.c $$(SRC)/as11/stubs.h \
-		$$(SRC)/as11/rpc_object.h $$(SRC)/as11/custom_settings.h $$(SRC)/as11/vars.h \
-		$$(wildcard $$(SRC)/as11/vars_$(1).h) \
-		Makefile Makefile.as11 | $$(BUILD)
-	$$(CC) $$(AS11_CFLAGS) $$(AS11_PAYLOAD_CFLAGS_as11_$$*) \
+$$(BUILD)/as11_%_$(1).o: $$(SRC)/as11/%.c Makefile Makefile.as11 $$(BUILD)/as11.flags | $$(BUILD)
+	$$(CC) $$(AS11_CFLAGS) $$(AS11_PAYLOAD_CFLAGS_as11_$$*) $$(DEPFLAGS) \
 		-DAPPX_VER_$(1) -DFGBL_VER_$(1) -c -o $$@ $$<
 
-$$(BUILD)/as11_%_$(1).o: $$(SRC)/as11/%.S $$(SRC)/as11/stubs.h \
-		$$(SRC)/as11/vars.h $$(wildcard $$(SRC)/as11/vars_$(1).h) \
-		Makefile Makefile.as11 | $$(BUILD)
-	$$(AS) $$(AS11_CFLAGS) -DAPPX_VER_$(1) -DFGBL_VER_$(1) -c -o $$@ $$<
+$$(BUILD)/as11_%_$(1).o: $$(SRC)/as11/%.S Makefile Makefile.as11 $$(BUILD)/as11.flags | $$(BUILD)
+	$$(AS) $$(AS11_CFLAGS) $$(DEPFLAGS) -DAPPX_VER_$(1) -DFGBL_VER_$(1) -c -o $$@ $$<
 endef
 
 $(foreach v,$(AS11_PAYLOAD_VERSIONS),$(eval $(call AS11_VERSIONED_OBJECTS_template,$(v))))
-
-$(BUILD)/as11_fgbl_lz4_%.o: \
-		$(SRC)/as11/lz4/lz4.c $(SRC)/as11/lz4/lz4.h
 
 # Probe links derive runtime addresses from storage mappings; final links use
 # the allocator-selected runtime address and must retain the probed size.
@@ -223,8 +218,8 @@ as11:
 
 as11-binaries: $(AS11_PAYLOAD_STAMPS) $(AS11_PAYLOAD_LAYOUT_TSVS)
 
-$(AS11_NOR_READER_ELF): $(AS11_NOR_READER_SRC) Makefile Makefile.as11 | $(BUILD)
-	$(CC) $(AS11_NOR_READER_CFLAGS) \
+$(AS11_NOR_READER_ELF): $(AS11_NOR_READER_SRC) Makefile Makefile.as11 $(BUILD)/as11-nor.flags | $(BUILD)
+	$(CC) $(AS11_NOR_READER_CFLAGS) $(DEPFLAGS) \
 		-Wl,-Ttext=0x24000000 \
 		-Wl,-e,_start \
 		-Wl,--build-id=none \
@@ -243,9 +238,9 @@ as11-patched:
 	$(MAKE) --no-print-directory $(AS11_PATCHED)
 	@printf '\nFirmware image:\n  %s\n' '$(AS11_PATCHED)' | tee -a '$(MAKE_LOG)'
 
-$(AS11_PATCHED): $(AS11_PATCHER_DEPS) \
-		$(AS11_PAYLOAD_STAMPS) $(AS11_PAYLOAD_LAYOUT_TSVS) | $(BUILD)
-	$(announce_image)
-	./patch-airsense-s11 '$(AS11_FIRMWARE)' '$@' $(PATCHER_OUTPUT_ARGS)
+# Air11 image $(1) with the options $(2) of this image.
+air11_image = $(eval $(call patch_image_rule,$(1),air11,patch-airsense-s11.py,$(AS11_FIRMWARE),$(2),AIR11_PATCH_ARGS))
 
-$(eval $(call patch_config_rule,$(AS11_PATCHED),air11,$(AS11_FIRMWARE)))
+$(AS11_PATCHED): $(AS11_PATCHER_DEPS) $(AS11_PAYLOAD_STAMPS) $(AS11_PAYLOAD_LAYOUT_TSVS)
+
+$(call air11_image,$(AS11_PATCHED))

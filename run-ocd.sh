@@ -1,11 +1,12 @@
 #!/bin/bash
 
 usage() {
-    echo "Usage: $0 [-s SERIAL] [--interface stlink|jlink] [--jlink] [config]"
+    echo "Usage: $0 [-s SERIAL] [--interface stlink|jlink] [--jlink] [-c \"COMMAND ARGS\"]... [config]"
 }
 
 adapter_serial=
 interface=stlink
+commands=()
 positional=()
 while (( $# > 0 )); do
     case "$1" in
@@ -23,6 +24,11 @@ while (( $# > 0 )); do
             interface=jlink
             shift
             ;;
+        -c)
+            (( $# >= 2 )) || { usage >&2; exit 2; }
+            commands+=(-c "$2")
+            shift 2
+            ;;
         -h)
             usage
             exit 0
@@ -39,6 +45,7 @@ while (( $# > 0 )); do
 done
 (( ${#positional[@]} <= 1 )) || { usage >&2; exit 2; }
 cfg=${positional[0]:-airsense}
+[[ -f "tcl/${cfg}.cfg" ]] || { echo "No configuration tcl/${cfg}.cfg" >&2; usage >&2; exit 2; }
 
 case "$interface" in
     stlink|jlink) ;;
@@ -75,6 +82,6 @@ esac
 if [[ -n "$adapter_serial" ]]; then
     openocd_args+=(-c "adapter serial $adapter_serial")
 fi
-openocd_args+=(-f "tcl/${cfg}.cfg")
+openocd_args+=(-f "tcl/${cfg}.cfg" "${commands[@]}")
 
 openocd "${openocd_args[@]}"

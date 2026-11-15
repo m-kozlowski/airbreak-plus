@@ -1,15 +1,13 @@
 #include "../s10_vars.h"
+#include "../therapy_worker.h"
 
-typedef struct Node Node;
-typedef void (*Method)(Node *);
-struct Node { const Method *methods; Node *next; u32 enabled; };
 #define SLOT(type, size) union { type data; u32 storage[(size) / 4]; }
 /* One allocation owns both scheduler nodes, analysis scratch and persistent
  * histories. Reserved object spans keep the audited state layout intact.
  * Only the fast/slow prefixes are registered with the stock worker manager.
  */
 typedef struct {
-    Node fast, slow;
+    therapy_worker fast, slow;
     int configured;
     float lower, upper;
     u32 fast_events, slow_events;
@@ -32,9 +30,7 @@ _Static_assert(sizeof(EventHistory) <= 224, "event history source span");
 
 extern void therapy_variable_get_float(float **, int);
 extern void *therapy_variable_get(int **, int);
-extern void *therapy_manager_get(void);
 extern void *malloc(unsigned);
-extern void therapy_worker_append(Node *, int);
 extern int variable_get_by_id(int);
 extern void variable_set_by_id(int, int);
 extern int system_tick_get(void);
@@ -45,7 +41,7 @@ extern void therapy_mode67_pressure_waveform_worker_update(void *);
 extern const volatile unsigned short autoepap_enable_id, autoepap_lower_id, autoepap_upper_id;
 extern int (*const volatile autoepap_effective_fall)(int, int);
 extern float *const stock_flow_samples;
-static const Method fast_methods[7], slow_methods[7];
+static const therapy_worker_method fast_methods[7], slow_methods[7];
 
 static float *fref(int index) { float *p; therapy_variable_get_float(&p, index); return p; }
 static int *iref(int index) { int *p; therapy_variable_get(&p, index); return p; }
@@ -54,9 +50,7 @@ static float *flow_samples(void) { return stock_flow_samples; }
 Autoepap *autoepap_find(void) {
     /* Group 2 owns the fast node. Its vtable identifies our state without
      * reserving a writable global or borrowing another worker's RAM. */
-    Node *node = *(Node **)((unsigned char *)therapy_manager_get() + 0x10);
-    while (node && node->methods != fast_methods) node = node->next;
-    return (Autoepap *)node;
+    return (Autoepap *)therapy_worker_find(2, fast_methods);
 }
 
 int autoepap_active(const Autoepap *s) {
@@ -134,7 +128,7 @@ static void clear_bytes(void *memory, unsigned size) {
 
 /* Profile callbacks reset histories even for 6 -> 6. Ordinary settings reload
  * does not call this method. Detector and observer state have narrower resets. */
-void autoepap_mode(Node *node) {
+void autoepap_mode(therapy_worker *node) {
     Autoepap *s = (Autoepap *)node;
     int previous = s->fast.enabled;
     if (!previous) {
@@ -166,7 +160,7 @@ void autoepap_mode(Node *node) {
         clear_bytes(flow_samples(), 4000);
 }
 
-static void autoepap_stop(Node *node) {
+static void autoepap_stop(therapy_worker *node) {
     Autoepap *s = (Autoepap *)node;
     s->fast.enabled = s->slow.enabled = 0;
 }
@@ -183,12 +177,12 @@ void *autoepap_epap_ref(float **output, int index) {
 }
 
 /* Composite nodes own lifetime storage; their prefix destructors do not free it. */
-static void lifecycle_noop(Node *node) { (void)node; }
+static void lifecycle_noop(therapy_worker *node) { (void)node; }
 static void detector_noop(void *ctx, int time) { (void)ctx; (void)time; }
 static void detector_duration(void *ctx, int duration) { ((Autoepap *)ctx)->capture_slots[7] = duration; }
 static void detector_event(void *ctx, unsigned event) { ((Autoepap *)ctx)->fast_events |= 1u << event; }
 
-void autoepap_fast(Node *node) {
+void autoepap_fast(therapy_worker *node) {
     Autoepap *s = (Autoepap *)node;
     s->fast_events = 0;
     s->control[0] = autoepap_active(s);
@@ -214,7 +208,7 @@ static Span span_between(int start, int end) {
     return span;
 }
 
-void autoepap_slow(Node *node) {
+void autoepap_slow(therapy_worker *node) {
     Autoepap *s = (Autoepap *)((unsigned char *)node - __builtin_offsetof(Autoepap, slow));
     s->slow_events = 0;
     if (!autoepap_active(s)) {
@@ -269,11 +263,11 @@ void autoepap_waveform_hook(void *ctx) {
     if (active) *fref(0x28) = s->results[7];
 }
 
-static const Method fast_methods[7] = {
+static const therapy_worker_method fast_methods[7] = {
     lifecycle_noop, lifecycle_noop, autoepap_stop, autoepap_mode,
     autoepap_mode, autoepap_stop, autoepap_fast
 };
-static const Method slow_methods[7] = {
+static const therapy_worker_method slow_methods[7] = {
     lifecycle_noop, lifecycle_noop, lifecycle_noop, lifecycle_noop,
     lifecycle_noop, lifecycle_noop, autoepap_slow
 };

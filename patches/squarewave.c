@@ -1,5 +1,6 @@
 #include "stubs.h"
 #include "common_code.h"
+#include "breath_tracking.h"
 
 const float EPS_FIXED_TIME = 1.2f;
 
@@ -22,7 +23,6 @@ STATIC void squarewave_call_original(int param_1) {
   }
 }
 
-// This is where the real magic starts
 // The entry point. All other functions **must** be marked INLINE or STATIC
 void MAIN start(int param_1) {
   if (!squarewave_enabled()) {
@@ -30,20 +30,17 @@ void MAIN start(int param_1) {
     return;
   }
 
-  // It's updated in `wrapper_limit_max_pdiff` which always runs
-  tracking_t *tr = get_tracking();
+  // The two tracking workers have already consumed this tick's flow and phase events.
+  const breath_tracking_t *tracking = breath_tracking_find();
+  if (!tracking) {
+    squarewave_call_original(param_1);
+    return;
+  }
+  const tracking_t *tr = &tracking->tr;
 
   const float s_eps = 0.8f;                // (cmH2O)
   const float s_rise_time = s_rise_time_f; // (s)
   const float s_fall_time = 0.8f;          // (s)
-
-  // Binary toggle if IPAP ends in 0.2 or 0.8
-  const float a = (s_ipap - (int)s_ipap);
-  const int8 toggle = (((a >= 0.1f) && (a <= 0.3f)) || ((a >= 0.7f) && (a <= 0.9f)));
-
-  const float delta = 0.010f; // It's 10+-0.01ms, basically constant
-  const float flow = *flow_compensated / 60.0f; // (L/s)
-
 
   // Set the commanded PS and EPAP values based on our target
   *cmd_epap = s_epap;
@@ -70,10 +67,8 @@ void MAIN start(int param_1) {
     *cmd_ps = ips_mult * tr->final_ps - (1.0f - ips_mult) * eps_mult * s_eps;
   }
   
-  // Safeguards against going cray cray
+  // Limit support to the configured PS and maximum exhale relief.
   *cmd_ps = clamp(*cmd_ps, -s_eps, s_ips);
-  *cmd_epap = clamp(*cmd_epap, s_epap, s_epap);
-  *cmd_ipap = *cmd_epap + *cmd_ps;
 
   return;
 }

@@ -106,6 +106,8 @@ VAR_DESC = {
     'HTX': 'Tube Temp Enable',
     'IBR': 'iVAPS Target Rate',
     'IHU': 'Height Units',
+    'IMN': 'iVAPS Min EPAP',
+    'IMX': 'iVAPS Max EPAP',
     'IPC': 'CPAP Set Pressure',
     'IPP': 'Bilevel IPAP',
     'ITN': 'Ti Min',
@@ -113,10 +115,15 @@ VAR_DESC = {
     'ITX': 'Ti Max',
     'IVS': 'iVAPS Start EPAP',
     'LAN': 'Language',
+    'LBH': 'Button Backlight High',
+    'LBL': 'Button Backlight Low',
     'LCA': 'LCD Text Active',
     'LCT': 'LCD Text',
+    'LLH': 'LCD Backlight High',
+    'LLL': 'LCD Backlight Low',
     'LMA': 'Low MV Alarm',
     'LNC': 'Language Config Bitmask',
+    'MCP': 'ASV Upper Pressure Limit',
     'MFT': 'Mask Fitting Mode',
     'MNE': 'VAuto Min EPAP',
     'MNS': 'ASV Min PS',
@@ -170,6 +177,9 @@ VAR_DESC = {
     'WMV': 'iVAPS Target Va',
     'WPA': 'iVAPS Max PS',
     'WPM': 'iVAPS Min PS',
+    'ZMV': 'iVAPS Minute Ventilation [L/min]',
+    'ZTV': 'iVAPS Tidal Volume [mL]',
+    'ZVK': 'iVAPS Tidal Volume per kg IBW [mL/kg]',
 
     'BID': 'Bootloader ID',
     'CID': 'Config Software ID',
@@ -378,10 +388,9 @@ VAR_DESC = {
     'ZSE': 'Saved System Error',
 }
 
-# Variable scaling metadata from ResScan protocol definition (M36)
+# Variable scaling metadata from ResScan and firmware descriptors.
 # Format: (scale_divisor, decimal_places, unit_string)
 # Raw value ÷ scale_divisor = display value.  decimal_places for formatting.
-# Only includes variables with non-trivial scaling.
 VAR_SCALE = {
     # Pressures: raw value / 50
     'IPC': (50, 1, 'cmH2O'), 'STP': (50, 1, 'cmH2O'), 'MPA': (50, 1, 'cmH2O'),
@@ -392,7 +401,8 @@ VAR_SCALE = {
     'EPI': (50, 1, 'cmH2O'), 'WPM': (50, 1, 'cmH2O'), 'WPA': (50, 1, 'cmH2O'),
     'MXI': (50, 1, 'cmH2O'), 'MNE': (50, 1, 'cmH2O'), 'SPT': (50, 1, 'cmH2O'),
     'EAS': (50, 1, 'cmH2O'), 'STE': (50, 1, 'cmH2O'), 'STV': (50, 1, 'cmH2O'),
-    'IVS': (50, 1, 'cmH2O'),
+    'IVS': (50, 1, 'cmH2O'), 'MCP': (50, 1, 'cmH2O'),
+    'IMN': (50, 1, 'cmH2O'), 'IMX': (50, 1, 'cmH2O'),
     'MKP': (50, 1, 'cmH2O'), 'MKF': (50, 1, 'cmH2O'), 'MKI': (50, 1, 'cmH2O'),
     'MKE': (50, 1, 'cmH2O'), 'MAP': (50, 1, 'cmH2O'), 'SPP': (50, 1, 'cmH2O'),
     'TEP': (50, 1, 'cmH2O'), 'TIP': (50, 1, 'cmH2O'), 'ATP': (50, 1, 'cmH2O'),
@@ -426,6 +436,7 @@ VAR_SCALE = {
     # Resp rate: raw / 5
     'RR1': (5, 1, 'bpm'), 'RR9': (5, 1, 'bpm'), 'RRA': (5, 1, 'bpm'),
     'RRM': (5, 1, 'bpm'), 'RRR': (5, 0, 'bpm'),
+    'RRT': (5, 1, 'bpm'), 'IBR': (5, 1, 'bpm'),
     # Tidal volume: raw / 50
     'ATI': (50, 2, 'L'), 'TDD': (50, 2, 'L'), 'TID': (50, 2, 'L'),
     'TV9': (50, 2, 'L'), 'TVA': (50, 2, 'L'), 'TVM': (50, 2, 'L'),
@@ -442,11 +453,17 @@ VAR_SCALE = {
     # Insp/exp timing (bilevel): raw / 50 = seconds
     'INT': (50, 1, 's'), 'EXT': (50, 1, 's'), 'IN5': (50, 1, 's'), 'EX5': (50, 1, 's'),
     'ISM': (50, 1, 's'), 'IS9': (50, 1, 's'), 'ISA': (50, 1, 's'), 'MIS': (50, 1, 's'),
+    'ITT': (50, 1, 's'), 'ITN': (50, 1, 's'), 'ITX': (50, 1, 's'),
+    # Rise time, ramp time, and height use whole units.
+    'RST': (1, 0, 'ms'), 'RMT': (1, 0, 'min'),
+    'PHT': (1, 0, 'cm'), 'PHI': (1, 0, 'in'),
     # Spont cycle ratio: raw / 2 = %
     'VCR': (2, 1, '%'),
     # Target ventilation (ASV): raw / 8 = L/min
     'TGT': (8, 1, 'L/min'), 'MTT': (8, 1, 'L/min'),
     'VA9': (8, 1, 'L/min'), 'VAA': (8, 1, 'L/min'), 'VAM': (8, 1, 'L/min'),
+    # Target alveolar ventilation (iVAPS): raw / 10 = L/min
+    'WMV': (10, 1, 'L/min'),
 }
 
 # Live layouts from the ResScan MetaData_M*_V*.txt G C &TAG records. The
@@ -1147,25 +1164,23 @@ def _parse_custom_variable_common(parts):
     }
 
 
-def _parse_sized_units(value):
+def _parse_sized_text(value, field):
     if len(value) < 3 or value[2] != ':':
-        raise ValueError("invalid units field")
-    length = _parse_fixed_hex(value[:2], 2, 'units length')
+        raise ValueError(f"invalid {field} field")
+    length = _parse_fixed_hex(value[:2], 2, f'{field} length')
     text = value[3:]
     if len(text) < length:
-        raise ValueError("truncated units field")
-    units = text[:length]
+        raise ValueError(f"truncated {field} field")
     remainder = text[length:]
     if remainder:
         if remainder[0] != ' ':
-            raise ValueError("invalid units/label separator")
+            raise ValueError(f"invalid separator after {field}")
         remainder = remainder[1:]
-    return units, remainder
+    return text[:length].encode('latin-1').decode('utf-8', errors='replace'), remainder
 
 
-def parse_custom_settings_entry(value):
+def parse_custom_settings_entry(value, version=1):
     """Parse one indexed G C &CSG registry record."""
-    value = value.rstrip()
     if value.startswith('V4 '):
         parts = value.split(' ', 7)
         if len(parts) != 8:
@@ -1176,18 +1191,25 @@ def parse_custom_settings_entry(value):
             'step': _parse_signed_hex(parts[5], 4, 'step'),
             'decimals': _parse_fixed_hex(parts[6], 2, 'decimal places'),
         })
-        entry['units'], entry['label'] = _parse_sized_units(parts[7])
-        return entry
-
-    if value.startswith('V8 '):
+        entry['units'], tail = _parse_sized_text(parts[7], 'units')
+    elif value.startswith('V8 '):
         parts = value.split(' ', 4)
         if len(parts) < 4:
             raise ValueError("invalid V8 field count")
         entry = _parse_custom_variable_common(parts)
-        entry['label'] = parts[4] if len(parts) == 5 else ''
-        return entry
+        tail = parts[4] if len(parts) == 5 else ''
+    else:
+        raise ValueError("unknown custom-settings record type")
 
-    raise ValueError("unknown custom-settings record type")
+    groups = []
+    if version == 2:
+        count, _, tail = tail.partition(' ')
+        for _ in range(_parse_fixed_hex(count, 2, 'group count')):
+            group, tail = _parse_sized_text(tail, 'group')
+            groups.append(group)
+    entry['groups'] = groups
+    entry['label'] = tail.encode('latin-1').decode('utf-8', errors='replace').rstrip()
+    return entry
 
 
 def _get_gc_value(ser, command):
@@ -1195,9 +1217,10 @@ def _get_gc_value(ser, command):
     for response in responses:
         if response['type'] != 'R':
             continue
+        # Keep one character per wire byte until length-prefixed fields are split.
         payload = response['payload'].decode('latin-1')
         if '=' in payload:
-            return payload.split('=', 1)[1].strip()
+            return payload.split('=', 1)[1].lstrip(' ')
     return None
 
 
@@ -1207,7 +1230,7 @@ def get_custom_settings_registry(ser):
     if value is None:
         return None
     version, count = parse_custom_settings_header(value)
-    if version != 1:
+    if version not in (1, 2):
         raise RuntimeError(f"unsupported custom settings protocol version {version}")
     entries = []
     for index in range(count):
@@ -1215,7 +1238,7 @@ def get_custom_settings_registry(ser):
         if value is None:
             raise RuntimeError(f"custom settings record {index:02X}: no response")
         try:
-            entry = parse_custom_settings_entry(value)
+            entry = parse_custom_settings_entry(value, version)
             entries.append(entry)
         except ValueError as exc:
             raise RuntimeError(
@@ -1911,12 +1934,13 @@ def cmd_custom_settings(ser):
         category = entry['category']
         category_name = CUSTOM_MENU_CONTAINERS.get(
             category, f'category 0x{category:02X}')
+        location = ' > '.join([category_name, *entry['groups']])
 
         frame_type, current = get_var(ser, entry['name'])
         current_text = current if frame_type == 'R' else '?'
         caps_type, caps = get_var_caps(ser, entry['name'])
         caps_text = caps if caps_type == 'R' else '?'
-        common = (f"  [{index:02X}] {kind} {category_name}: {entry['name']} "
+        common = (f"  [{index:02X}] {kind} {location}: {entry['name']} "
                   f"= {current_text}  {entry['label']}  "
                   f"modes=0x{entry['mop_mask']:08X} caps={caps_text}")
         if kind == 'V8':

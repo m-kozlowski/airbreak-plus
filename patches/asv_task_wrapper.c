@@ -1,9 +1,9 @@
 // Author: noombs @ Discord
 
-extern int isNotBreathingPtr;
-extern float breathPercentagePtr;
+extern int asv_low_flow_state;
+extern float asv_phase_estimate;
 extern int variable_get_by_id(int var_id);
-extern void asv_task_function(void *ctx);
+extern void asv_publish_target_ventilation_and_pressure(void *ctx);
 extern const unsigned short asv_task_wrapper_backup_rate_var_id;
 
 static int backup_rate_enabled(void)
@@ -17,10 +17,9 @@ static int backup_rate_enabled(void)
 void start(void *ctx) {
     // Clamp the trigger point unless the runtime setting requests stock behavior.
     if (!backup_rate_enabled() &&
-        isNotBreathingPtr == 1 && breathPercentagePtr > 0.98f) {
-        breathPercentagePtr = 0.98f;
+        asv_low_flow_state == 1 && asv_phase_estimate > 0.98f) {
+        asv_phase_estimate = 0.98f;
     }
 
-    // Execute the ASV task
-    asv_task_function(ctx);
+    asv_publish_target_ventilation_and_pressure(ctx);
 }

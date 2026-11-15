@@ -40,9 +40,9 @@ NSTUB(0x0803EF4D, variable_set_visible_from_handler)
 NSTUB(0x080A1691, file_get_size)
 
 // ASV backup rate: integer state 0x3c and float phase 0x5b.
-NSTUB_VAR(0x20009738, isNotBreathingPtr)
-NSTUB_VAR(0x20009A04, breathPercentagePtr)
-NSTUB(0x080C8C5D, asv_task_function)
+NSTUB_VAR(0x20009738, asv_low_flow_state)
+NSTUB_VAR(0x20009A04, asv_phase_estimate)
+NSTUB(0x080C8C5D, asv_publish_target_ventilation_and_pressure)
 
 // Backlight
 NSTUB(0x080546AF, backlight_state_machine)

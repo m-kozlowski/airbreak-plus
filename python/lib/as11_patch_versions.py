@@ -253,7 +253,9 @@ AS11_PATCH_VERSIONS = {
         },
         "therapy_screen_style": {
             "label_id": 0x00AF,
-            "option_labels": (0x01F4, 0x0099, 0x0208),
+            "option_labels": (0x01F4, 0x0099, 0x0208, 0x00BB),
+            "pressure_bar_registration_call": 0x0805896C,
+            "pressure_bar_style_read_call": 0x08071906,
         },
         "custom_settings": {
             "rpc_enum_symbols": 0x081070A0,
@@ -352,7 +354,9 @@ AS11_PATCH_VERSIONS = {
         },
         "therapy_screen_style": {
             "label_id": 0x00B4,
-            "option_labels": (0x01FA, 0x009C, 0x020E),
+            "option_labels": (0x01FA, 0x009C, 0x020E, 0x00C0),
+            "pressure_bar_registration_call": 0x080589A6,
+            "pressure_bar_style_read_call": 0x08071ECA,
         },
         "custom_settings": {
             "rpc_enum_symbols": 0x08107BA8,
@@ -469,7 +473,9 @@ AS11_PATCH_VERSIONS = {
         },
         "therapy_screen_style": {
             "label_id": 0x00B4,
-            "option_labels": (0x01FB, 0x009C, 0x020F),
+            "option_labels": (0x01FB, 0x009C, 0x020F, 0x00C0),
+            "pressure_bar_registration_call": 0x08058ED4,
+            "pressure_bar_style_read_call": 0x0807253C,
         },
         "custom_settings": {
             "rpc_enum_symbols": 0x08108398,
@@ -633,7 +639,11 @@ AS11_PATCH_VERSIONS = {
         },
         "therapy_screen_style": {
             "label_id": 0x00B5,
-            "option_labels": (0x01FE, 0x009D, 0x0212),
+            "option_labels": (0x01FE, 0x009D, 0x0212, 0x00C1),
+            # BL GuiSwitchAction_add(TSS switch, 1, PressureBar action).
+            "pressure_bar_registration_call": 0x080593C0,
+            # BL DataItem_read_value_by_id(TSS) followed by cmp r0,#1.
+            "pressure_bar_style_read_call": 0x08072E0C,
         },
         "flow_wave": {
             "gui_update_call": 0x080938A6,
@@ -772,7 +782,9 @@ AS11_PATCH_VERSIONS = {
         },
         "therapy_screen_style": {
             "label_id": 0x00B5,
-            "option_labels": (0x01FE, 0x009D, 0x0212),
+            "option_labels": (0x01FE, 0x009D, 0x0212, 0x00C1),
+            "pressure_bar_registration_call": 0x080593C0,
+            "pressure_bar_style_read_call": 0x08072E08,
         },
     },
 }

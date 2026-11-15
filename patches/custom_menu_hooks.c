@@ -33,6 +33,7 @@ extern void memcpy_unrolled(void *destination, const void *source,
 			    unsigned size);
 
 extern const u32 custom_menu_registry_addr;
+extern const u32 custom_menu_dispatch_addr;
 extern const u32 custom_menu_conditions_addr;
 extern const u8 custom_settings_group_index;
 extern const u8 custom_menu_stock_page_count;
@@ -238,38 +239,44 @@ void custom_menu_create_pages(void *menu, void *context)
 	*(void ***)inline_pages = pages;
 }
 
-/* All section-specific assembly stubs tail-call here after replacing one stock
- * scrollbar_add_item(list, item) call. We first perform that original append,
- * then append any custom entries registered for the same section.
- */
-void custom_menu_hook_common(void *list, void *item, unsigned section)
+static void custom_menu_append_range(void *list, unsigned first, unsigned count)
 {
-	scrollbar_add_item(list, item);
-
-	if (!list)
+	const custom_menu_entry_t *registry = custom_menu_registry();
+	if (!list || !registry || first + count > CUSTOM_MENU_REGISTRY_LIMIT)
 		return;
-
-	/* The patcher fills this ABI slot with the flash address of the generated
-	 * registry. The erased value is kept as a defensive no-registry state.
-	 */
-	const custom_menu_entry_t *entry = custom_menu_registry();
-	if (!entry)
-		return;
-
-	/* The registry should be sentinel-terminated, but keep a hard limit so a bad
-	 * image cannot walk arbitrary flash if the terminator is missing.
-	 */
-	for (unsigned guard = 0; guard < CUSTOM_MENU_REGISTRY_LIMIT;
-	     guard++, entry++) {
+	const custom_menu_entry_t *entry = registry + first;
+	for (unsigned i = 0; i < count; i++, entry++) {
 		if (custom_menu_entry_is_end(entry))
 			return;
-		if (entry->container != section)
-			continue;
-
 		void *custom = custom_menu_create_item(entry);
 		if (custom)
 			scrollbar_add_item(list, custom);
 	}
+}
+
+/* Perform the displaced append exactly once, between its two custom ranges.
+ * VIS affects subsequent rendering; it does not skip the native append hook.
+ */
+void custom_menu_hook_common(void *list, void *item, unsigned return_pc)
+{
+	const custom_menu_dispatch_t *dispatch =
+		(const custom_menu_dispatch_t *)custom_menu_dispatch_addr;
+	if (dispatch && custom_menu_dispatch_addr != 0xffffffffu) {
+		for (unsigned guard = 0; guard < CUSTOM_MENU_REGISTRY_LIMIT;
+		     guard++, dispatch++) {
+			if (dispatch->return_pc == 0xffffffffu)
+				break;
+			if (dispatch->return_pc != (return_pc & ~1u))
+				continue;
+			custom_menu_append_range(list, dispatch->before_first,
+						 dispatch->before_count);
+			scrollbar_add_item(list, item);
+			custom_menu_append_range(list, dispatch->after_first,
+						 dispatch->after_count);
+			return;
+		}
+	}
+	scrollbar_add_item(list, item);
 }
 
 static void custom_menu_set_visible(u16 var_id, int visible)

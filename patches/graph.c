@@ -1,45 +1,56 @@
-/*
- * This replaces the normal pressure gauge code in the ROM.
- */
+/* Graph rendering for the therapy-screen payload. */
 #include "stubs.h"
 #include "common_code.h"
-
-#define DRAW_PRESSURE 1
-#define DRAW_FLOW 0
+#include "therapy_screen.h"
 
 typedef struct {
+	uint32 vtable;
+	uint32 hwin;
+	int position;
 	int last_pos_x;
-} graph_state_t;
+} graph_widget_t;
 
-typedef int (*graph_draw_t)(int *obj);
-typedef int (*graph_update_t)(int *obj, int new_position);
+typedef int (*graph_draw_t)(graph_widget_t *obj);
+typedef int (*graph_update_t)(graph_widget_t *obj, int new_position);
 typedef void (*graph_header_update_t)(void *obj);
 typedef void (*graph_numbers_update_t)(void *obj, int left_var, int right_var);
 
-extern int variable_get_by_id(int var_id);
-extern const unsigned short graph_enable_var_id;
 extern const uint32 graph_draw_original;
 extern const uint32 graph_update_original;
 extern const uint32 graph_header_update_original;
 extern const uint32 graph_numbers_update_original;
+extern const uint32 graph_simple_draw_original;
+extern const uint32 graph_simple_update_original;
+extern int gui_base_window_y0(void *obj);
+extern int gui_base_window_height(void *obj);
 extern void gui_invalidate_window(void *obj);
 extern void gui_method_fc104_setup_and_invalidate(
 	uint32 hwin, int left, int top, int right, int bottom);
 extern void memcpy_unrolled(void *destination, const void *source,
 			    unsigned size);
 
-STATIC void init_graph_state(graph_state_t *state) {
-	state->last_pos_x = -1;
-}
-
-STATIC graph_state_t *get_graph_state(void) {
-	return GET_PTR(PTR_GRAPH_DATA, graph_state_t, init_graph_state);
+/* The stock constructor initializes the first 12 bytes after allocation. */
+graph_widget_t *MAIN graph_widget_alloc(void) {
+	graph_widget_t *obj = malloc(sizeof(*obj));
+	if (obj)
+		obj->last_pos_x = -1;
+	return obj;
 }
 
 STATIC bool graph_enabled(void) {
-	if (graph_enable_var_id == 0xffffu)
-		return true;
-	return variable_get_by_id(graph_enable_var_id) != 0;
+	return therapy_screen_has_graph(therapy_screen_get_choice());
+}
+
+/* The native round gauge occupies the first 124 bytes. */
+typedef struct {
+	uint8 native[124];
+	int last_pos_x, top;
+} graph_simple_t;
+
+graph_simple_t *MAIN graph_simple_alloc(void) {
+	graph_simple_t *obj = malloc(sizeof(*obj));
+	if (obj) { obj->last_pos_x = -1; obj->top = -1; }
+	return obj;
 }
 
 /* The optional keep-screen-on patch registers this with keep_backlight. */
@@ -92,20 +103,18 @@ STATIC bool bytes_changed(const uint8 *before, const uint8 *after,
 	return false;
 }
 
-STATIC int graph_draw_current_column(bool only_if_new) {
-	graph_state_t *state = get_graph_state();
-
+STATIC int graph_draw_column(int *last_pos_x, bool only_if_new, int top, int bottom) {
 	// don't do anything if we are not in an active therapy mode
 	if (*therapy_mode == 0) {
-		state->last_pos_x = -1;
+		*last_pos_x = -1;
 		return 0;
 	}
 
 	const unsigned pos_x = (*pap_timer / 15) % 240; // ~6.66px per second (unit of timer is 10ms)
-	if (only_if_new && state->last_pos_x == (int)pos_x) return 0;
-	state->last_pos_x = pos_x;
+	if (only_if_new && *last_pos_x == (int)pos_x) return 0;
+	*last_pos_x = pos_x;
 
-	// break out of the current clipping so we can drawon the entire screen
+	// Draw within the graph strip, outside the native widget's rectangle.
 	unsigned * const color_ptr = (unsigned*)(gui_context + 60);
 	short * const clip = (short*)(gui_context + 8);
 	short * const xOff = (short*)(gui_context + 76);
@@ -118,23 +127,18 @@ STATIC int graph_draw_current_column(bool only_if_new) {
 	const short old_yOff = *yOff;
 	const unsigned old_color = *color_ptr;
 	clip[0] = 0;
-	clip[1] = 0;
-	clip[2] = 0x1000;
-	clip[3] = 0x1000;
+	clip[1] = top - 1;
+	clip[2] = 239;
+	clip[3] = bottom + 1;
 	*xOff = 0;
 	*yOff = 0;
 
 	// Draw a strip chart
-	const int width = 240;
-	const int top = 155; // 150--230
-	const int bottom = 235;
-	const int height = bottom - top;
+	const int height_pres = (bottom - top) / 2;
+	const int height_flow = bottom - top - height_pres;
 
-	#define HEIGHT_PRES 40
-	#define HEIGHT_FLOW 40
-
-	int command = p_command * 2.0f;
-	int error = -p_error * 6.0f;
+	int command = p_command * height_pres / 20.0f;
+	int error = -p_error * height_pres * 0.15f;
 
 	GUI_SetColor(0x000000);
 	LCD_FillRect(pos_x, top - 1, pos_x + 11, bottom + 1);
@@ -143,38 +147,32 @@ STATIC int graph_draw_current_column(bool only_if_new) {
 		LCD_FillRect(pos_x, top - 1, pos_x + 1, bottom + 1);
 	}
 
-	float g_top = top + HEIGHT_FLOW;
-	float g_bottom = top + HEIGHT_FLOW + HEIGHT_PRES;
+	float g_bottom = bottom;
 
-	#if HEIGHT_PRES > 0
-		GUI_SetColor(0x202020);
-		for(int i=1; i<=4; i++) { // draw 0, 5, 10, 15, 20 very faintly
-			LCD_FillRect_Alt(pos_x, g_bottom - i*10, 2, 1);
-		}
-		// draw amplified pressure error with respect to the commanded pressure
-		GUI_SetColor(0x000080);
-		LCD_FillRect2(pos_x, g_bottom - command, pos_x + 1, g_bottom - command + error);
-		// draw the current commanded pressure
-		GUI_SetColor(0x00FF88);
-		LCD_FillRect_Alt(pos_x, g_bottom - command, 2, 1);
-	#endif
+	GUI_SetColor(0x202020);
+	for(int i=1; i<=4; i++) { // draw 0, 5, 10, 15, 20 very faintly
+		LCD_FillRect_Alt(pos_x, g_bottom - i*height_pres/4, 2, 1);
+	}
+	// draw amplified pressure error with respect to the commanded pressure
+	GUI_SetColor(0x000080);
+	LCD_FillRect2(pos_x, g_bottom - command, pos_x + 1, g_bottom - command + error);
+	// draw the current commanded pressure
+	GUI_SetColor(0x00FF88);
+	LCD_FillRect_Alt(pos_x, g_bottom - command, 2, 1);
 
-	g_top = top;
-	g_bottom = top + HEIGHT_FLOW;
+	float g_top = top;
 
-	#if HEIGHT_FLOW > 0
-		// Draw the leak-compensated flow variable as solid bars
-		GUI_SetColor(0xFF8800);
-		const int g_center = g_top + HEIGHT_FLOW/2;
-		LCD_FillRect2(pos_x, g_center, pos_x+1, g_center - clamp(*flow_compensated / 2, -HEIGHT_FLOW/2, HEIGHT_FLOW/2));
-		GUI_SetColor(0x000000);
-		LCD_FillRect_Alt(pos_x, g_top + HEIGHT_FLOW/2, 2, 1);
-	#endif
+	// Draw the leak-compensated flow variable as solid bars
+	GUI_SetColor(0xFF8800);
+	const int g_center = g_top + height_flow/2;
+	LCD_FillRect2(pos_x, g_center, pos_x+1, g_center - clamp(*flow_compensated * height_flow / 80, -height_flow/2, height_flow/2));
+	GUI_SetColor(0x000000);
+	LCD_FillRect_Alt(pos_x, g_top + height_flow/2, 2, 1);
 
 	GUI_SetColor(0x666666);
 	LCD_FillRect_Alt(pos_x, top, 4, 1);
-	LCD_FillRect_Alt(pos_x, top + HEIGHT_FLOW, 4, 1);
-	LCD_FillRect_Alt(pos_x, top + HEIGHT_FLOW + HEIGHT_PRES, 4, 1);
+	LCD_FillRect_Alt(pos_x, top + height_flow, 4, 1);
+	LCD_FillRect_Alt(pos_x, bottom, 4, 1);
 
 	// restore the old clipping rectangle
 	clip[0] = old_x0;
@@ -188,25 +186,48 @@ STATIC int graph_draw_current_column(bool only_if_new) {
 	return 1;
 }
 
-// Replaces the stock bar draw method.
-int MAIN start(int *obj) {
+// Keep the pressure bar visible alongside the graph below it.
+int MAIN graph_widget_draw(graph_widget_t *obj) {
+	int result = ((graph_draw_t)graph_draw_original)(obj);
 	if (!graph_enabled()) {
-		get_graph_state()->last_pos_x = -1;
-		return ((graph_draw_t)graph_draw_original)(obj);
+		obj->last_pos_x = -1;
+		return result;
 	}
-	if (!graph_widget_is_invalidated()) return 0;
-	return graph_draw_current_column(false);
+	if (graph_widget_is_invalidated())
+		graph_draw_column(&obj->last_pos_x, false, 155, 235);
+	return result;
 }
 
 // The stock update method only redraws when the quantized bar position changes.
-// Preserve its state, but drive the time-based graph directly on each new column.
-int MAIN graph_widget_update(int *obj, int new_position) {
+// Keep that invalidation and advance the graph independently on each new column.
+int MAIN graph_widget_update(graph_widget_t *obj, int new_position) {
+	int result = ((graph_update_t)graph_update_original)(obj, new_position);
 	if (!graph_enabled()) {
-		get_graph_state()->last_pos_x = -1;
-		return ((graph_update_t)graph_update_original)(obj, new_position);
+		obj->last_pos_x = -1;
+		return result;
 	}
-	obj[2] = new_position;
-	return graph_draw_current_column(true);
+	graph_draw_column(&obj->last_pos_x, true, 155, 235);
+	return result;
+}
+
+STATIC void graph_simple_column(graph_simple_t *obj, bool only_if_new) {
+	if (!graph_enabled()) { obj->last_pos_x = -1; return; }
+	/* Use the gap below the round gauge; leave the 41-pixel footer intact. */
+	int top = gui_base_window_y0(obj) + gui_base_window_height(obj) + 1;
+	if (top < 198) top = 198;
+	if (top >= 276) return;
+	if (top != obj->top) { obj->top = top; obj->last_pos_x = -1; }
+	graph_draw_column(&obj->last_pos_x, only_if_new, top, 277);
+}
+
+void MAIN graph_simple_draw(graph_simple_t *obj) {
+	((void (*)(void *))graph_simple_draw_original)(obj);
+	graph_simple_column(obj, false);
+}
+
+void MAIN graph_simple_update(graph_simple_t *obj) {
+	((void (*)(void *))graph_simple_update_original)(obj);
+	graph_simple_column(obj, true);
 }
 
 /* The stock header updater invalidates on every raw MOP or PSP change, even
@@ -259,32 +280,3 @@ void MAIN graph_numbers_update(void *obj, int left_var, int right_var) {
 		gui_method_fc104_setup_and_invalidate(
 			saved_hwin, 6, 0x19, 0xd6, 0x2d);
 }
-
-
-// Causes the device to crash and reboot
-/*
-#if 0
-	GUI_SetColor(0x8);
-	GUI_FillRect(0, 130, 200, 160);
-
-	GUI_SetColor(0xFF0000);
-	GUI_SetFont(font_16); // Causes device to crash and reboot
-	//static const char __attribute__((__section__(".text"))) msg[] = "Hello, world!";
-	//static const char __attribute__((__section__(".text"))) fmt[] = "%d.%02d";
-	GUI_DispStringAt("Hello, world", 10, 130);
-	char buf[16];
-	int flow = fvars[1] * 100;
-	snprintf(buf, sizeof(buf), "%d.%02d", flow / 100, flow % 100);
-	GUI_SetColor(0x00FF00);
-	GUI_DispStringAt(buf, 40, 150);
-#endif
-
-// Also tried:
-GUI_SetColor(0xFFFF00);
-GUI_SetTextMode(2);
-GUI_SetTextAlign(0);
-GUI_SetFont_default();
-GUI_DispStringAt("Hello, world", 20, top + HEIGHT_FLOW + 20);
-// No luck, displays nothing. Changing params of GUI_DispStringAt to short or unsigned short does nothing too.
-
-*/
