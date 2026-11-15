@@ -207,7 +207,7 @@ def make_command(path, preset, verbose):
     return tool_command(args + (["V=1"] if verbose else []) + [OUTPUT_TARGET])
 
 
-WSL_TOOLS_HINT = "WSL needs openocd and usbutils: sudo apt install openocd usbutils (docs/guide/wsl_setup.md)."
+WSL_TOOLS_HINT = "WSL needs openocd and lsusb (usbutils); see docs/guide/wsl_setup.md."
 LOG_HINTS = (   # output -> what to do about it, shown when the command ends
     ("openocd: command not found", WSL_TOOLS_HINT),
     ("lsusb: command not found", WSL_TOOLS_HINT),
@@ -220,21 +220,25 @@ def wsl_path(path):
     """The WSL path of a Windows path, or None when WSL cannot translate it."""
     path = os.path.realpath(path)   # also expands 8.3 names such as MICHIE~1, which WSL does not know
     try:
-        result = subprocess.run([shutil.which("wsl.exe") or "wsl.exe", "--exec", "wslpath", "-a",
+        result = subprocess.run([wsl_exe() or "wsl.exe", "--exec", "wslpath", "-a",
                                  path.replace("\\", "/")], capture_output=True, text=True, creationflags=NO_WINDOW)
     except OSError:
         return None
     return result.stdout.strip() if result.returncode == 0 and result.stdout.strip() else None
 
 
+# The one list of what the build needs in WSL; airbreaker.bat installs only what opens the window.
 WSL_TOOLS = (("make", "make"), ("arm-none-eabi-gcc", "gcc-arm-none-eabi"), ("arm-none-eabi-nm", "binutils-arm-none-eabi"),
              ("python3", "python3"))   # (command, apt package) the build and the patcher need in WSL
 
 
 def wsl_has_apt():
     """Whether the default WSL distribution has apt-get (Debian, Ubuntu and their derivatives)."""
+    wsl = wsl_exe()
+    if not wsl:
+        return False
     try:
-        return subprocess.run([shutil.which("wsl.exe"), "--exec", "sh", "-c", "command -v apt-get"],
+        return subprocess.run([wsl, "--exec", "sh", "-c", "command -v apt-get"],
                               capture_output=True, creationflags=NO_WINDOW).returncode == 0
     except OSError:
         return False
@@ -243,8 +247,11 @@ def wsl_has_apt():
 def wsl_missing_packages():
     """apt packages of the WSL_TOOLS whose command is not in WSL; [] when all are there (or WSL cannot be asked)."""
     script = "for t in %s; do command -v $t >/dev/null || echo $t; done" % " ".join(t for t, _ in WSL_TOOLS)
+    wsl = wsl_exe()
+    if not wsl:
+        return []
     try:
-        result = subprocess.run([shutil.which("wsl.exe"), "--exec", "bash", "-c", script], capture_output=True,
+        result = subprocess.run([wsl, "--exec", "bash", "-c", script], capture_output=True,
                                 text=True, creationflags=NO_WINDOW)
     except OSError:
         return []
@@ -819,6 +826,10 @@ class App(tk.Tk):
         if os.path.realpath(infile) == os.path.realpath(OUTPUT):
             messagebox.showerror(TITLE, "%s is what make builds; choose the original firmware image." % OUTPUT_TARGET)
             return
+        if in_wsl() and not wsl_exe():
+            messagebox.showerror(TITLE, "wsl.exe was not found. make runs in WSL on Windows; see "
+                                 "docs/guide/wsl_setup.md.")
+            return
         if not self.ensure_wsl_tools():
             return
         if self.dirty() and not self.save():
@@ -826,10 +837,6 @@ class App(tk.Tk):
         if not preset_path(self.name).is_file() and not self.save():   # make reads the preset from its file
             return
         self.save_settings()
-        if in_wsl() and not shutil.which("wsl.exe"):
-            messagebox.showerror(TITLE, "wsl.exe was not found. make runs in WSL on Windows; see "
-                                 "docs/guide/wsl_setup.md.")
-            return
         path = make_input(infile)
         if path is None:   # make cannot take the path (spaces, special characters): work from a copy
             copy = os.path.join(REPO, "build", INPUT_COPY)
@@ -867,7 +874,7 @@ class App(tk.Tk):
                                "sudo asks for your WSL password there, and apt-get asks before installing. Click "
                                "the button again when it is done." % (", ".join(packages), command)):
             try:
-                subprocess.Popen([shutil.which("wsl.exe"), "--exec", "bash", "-c",
+                subprocess.Popen([wsl_exe(), "--exec", "bash", "-c",
                                   command + "; echo; read -r -p 'Press Enter to close this window. '"],
                                  creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0))
             except OSError as exc:

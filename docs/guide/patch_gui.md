@@ -46,11 +46,12 @@ Run it from the repository folder. Pick your platform:
    On Windows the window runs `make` and `run-ocd.sh` in WSL.
 3. Double-click `airbreaker.bat` in the repository folder. It opens the
    window without a console. Without Windows Python it runs the window with
-   `python3` in WSL instead (shown through WSLg). When `python3-tk`, `make` or
-   the ARM toolchain are missing there, it lists them and asks before installing
-   them with `sudo apt-get`; sudo asks for your WSL password in the console. On a
-   WSL distribution without `apt-get` it asks you to install them yourself. If
-   neither Python is available, the batch file tells you what to install.
+   `python3` in WSL instead (shown through WSLg). When `python3-tk` is missing
+   there, it asks before installing it with `sudo apt-get`; sudo asks for your
+   WSL password in the console. The window itself offers to install `make` and
+   the ARM toolchain when a build needs them. On a WSL distribution without
+   `apt-get` you install them yourself. If neither Python is available, the
+   batch file tells you what to install.
 
 Without the batch file: `python python\airbreaker.py` in a terminal
 shows the same window, with error output in the terminal.

@@ -15,13 +15,12 @@ wsl.exe --exec python3 -c "import tkinter" >nul 2>&1 && goto runwsl
 echo Python 3 with tkinter was not found in WSL.
 rem apt-get only exists on Debian, Ubuntu and their derivatives.
 wsl.exe --exec sh -c "command -v apt-get" >nul 2>&1 || goto noapt
-echo AirBreaker needs these packages in WSL:
-echo     python3 python3-tk make gcc-arm-none-eabi binutils-arm-none-eabi
-echo Installing them uses sudo apt-get, needs internet and takes a minute; sudo asks
-echo for your WSL password.
+echo The window needs python3 and python3-tk in WSL. Installing them uses
+echo sudo apt-get and needs internet; sudo asks for your WSL password and apt-get
+echo asks before installing. The window offers the build tools when it needs them.
 choice /C YN /M "Install them now"
 if errorlevel 2 goto nopython
-wsl.exe --exec sudo sh -c "apt-get update && apt-get install -y python3 python3-tk make gcc-arm-none-eabi binutils-arm-none-eabi"
+wsl.exe --exec sudo sh -c "apt-get update && apt-get install python3 python3-tk"
 wsl.exe --exec python3 -c "import tkinter" >nul 2>&1 || goto installfailed
 :runwsl
 powershell -NoProfile -WindowStyle Hidden -Command "Start-Process wsl.exe -WindowStyle Hidden -ArgumentList '--cd','%~dp0.','--exec','python3','python/airbreaker.py'"
