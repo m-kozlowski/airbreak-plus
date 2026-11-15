@@ -27,20 +27,22 @@ See the [AirBreaker guide](patch_gui.md) for setup on Windows, Linux and WSL.
 
 The Flash device section of `airbreaker.bat` (or
 `python python/airbreaker.py`) runs the same commands without a telnet
-session. Each button starts OpenOCD with `tcl/airsense.cfg`, runs one command
-and exits:
+session. Each button runs `run-ocd.sh` once with the chosen adapter (and
+`-s SERIAL` when given), one command of `tcl/airsense.cfg` and `shutdown`;
+the exit code tells whether it worked:
 
-| Button | OpenOCD command |
-|--------|-----------------|
+| Button | Command |
+|--------|---------|
 | Check device | none; the config reports stock or patched firmware |
 | Dump backup | `dump BACKUP` |
 | Flash | `flash_new FIRMWARE` |
-| Verify | `flash verify_bank 0 FIRMWARE 0` |
+| Verify | `verify FIRMWARE` |
 | Reset | `reset run` |
 
-OpenOCD runs either as a Windows `openocd.exe` or through `run-ocd.sh` in WSL,
-which also attaches the adapter with usbipd. Flash asks for confirmation and
-warns when no backup exists.
+For example, Verify runs
+`./run-ocd.sh --interface stlink -c "verify {build/stm32-patched.bin}" -c shutdown`.
+On Windows it runs in WSL, where `run-ocd.sh` also attaches the adapter with
+usbipd. Flash asks for confirmation and warns when no backup exists.
 
 ## Method 2: UART
 

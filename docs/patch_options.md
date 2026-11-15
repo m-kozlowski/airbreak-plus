@@ -89,27 +89,15 @@ through other presets, is an error.
 
 ### Graphical editor
 
-A step-by-step guide for Windows, Linux and WSL is in the
-[AirBreaker guide](guide/patch_gui.md).
-
 `airbreaker.bat` (Windows, no console) or `python python/airbreaker.py`
-opens AirBreaker, a window for the Air 10 `patch-airsense.config`. Patches are grouped by
-phase and read from `patch-airsense.py`, so the list always matches the patcher.
-The Plus preset button selects the patches of `build/stm32-plus.bin`.
-Ticking a patch also ticks the patches it requires; unticking one unticks the
-patches that depend on it. Options that differ from the built-in default are
-shown bold. Save writes only those options; other patcher options already in
-the file are kept, but comments are not. Hovering a patch shows its entry from the
-[patching guide](guide/patching.md), its dependencies and the custom settings menu
-items it adds. A counter shows how many of the menu slots reclaimed from the stock
-Reminders menu (9 on/off, 8 value; see [Custom settings](custom_settings.md)) and
-new labels the selection uses. The Patch firmware section saves the
-options and runs the patcher on a chosen image, showing its output. Its Build
-payloads button runs `make binaries`, through WSL on Windows (see
-[WSL2 setup](guide/wsl_setup.md)), which the compiled payloads need first. The
-Flash device section dumps, flashes and verifies over SWD with OpenOCD; see
-[Flashing](guide/flashing.md#from-airbreaker). The window itself
-needs only Python with tkinter.
+opens AirBreaker, a window that edits an Air 10 user preset in
+`presets/user/air10`, optionally based on another preset such as `plus`. The
+patches, their descriptions, defaults, parameters and dependencies come from the
+same declarations as the patcher's options, and the preset is read, validated
+and written with the same configuration code; the local options file is left
+to be edited by hand. Build runs
+`make AIR10_FIRMWARE=INPUT PATCH_ARGS='--preset NAME' build/stm32-patched.bin`.
+See the [AirBreaker guide](guide/patch_gui.md).
 
 ## Precedence
 
