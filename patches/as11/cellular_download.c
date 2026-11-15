@@ -472,7 +472,7 @@ static int cellular_download_apply_value(
     if (control == 0 || !parse_request(value, &request))
         return 0;
     state = current_state(control->config);
-    if (state == DOWNLOAD_QUEUED || state == DOWNLOAD_ACTIVE)
+    if (state == DOWNLOAD_ACTIVE || (state == DOWNLOAD_QUEUED && !request.force))
         return 0;
     /* The native task sets started when dispatching a fetch and clears it
      * during cellular task reset. Replace external metadata only after reset.
@@ -482,7 +482,7 @@ static int cellular_download_apply_value(
 
     uint_to_text(port, request.port);
     uint_to_text(size, MAX_UPGRADE_PAYLOAD_SIZE);
-    resume = state == DOWNLOAD_ERROR &&
+    resume = !request.force && state == DOWNLOAD_ERROR &&
              config_equals(control->config, key_port, port) &&
              config_equals(control->config, key_path, request.url + request.path_start);
     host_separator = request.url[request.host_end];
@@ -570,24 +570,25 @@ void cellular_download_set_state(void *executor, unsigned int state)
         state = 5u;
     }
     if (local_state >= DOWNLOAD_QUEUED && local_state <= DOWNLOAD_ERROR) {
-        /* Replace CheckFile or Error with a local Done transition. Result 5
-         * completes Done without posting to a cloud status URI.
-         */
         if (state == 3u) {
             uint_to_text(size, (unsigned int)config_get_int(
                 config, key_bytes_stored));
             config_set(config, key_size, size);
             config_set(config, key_status, marker_complete);
             finish_local_request(config);
-            upgrade_command_executor_set_result(executor, 5u);
-            state = 6u;
         } else if (state == 5u) {
             config_set(config, key_status, marker_error);
             /* Keep the URL only when a transport retry can resume this file. */
             if (!config_equals(config, key_state, marker_retryable))
                 finish_local_request(config);
-            upgrade_command_executor_set_result(executor, 5u);
-            state = 6u;
+        }
+        if (state == 3u || state == 5u) {
+            /* Native success arms ApplyUpgrade. Release FileFetcher through
+             * its failure callback; the local result is already in CamlData.
+             */
+            upgrade_command_executor_reset(executor);
+            upgrade_command_executor_notify_result(executor, 1u);
+            return;
         }
     }
     stock_set_state(executor, state);

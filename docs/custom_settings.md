@@ -12,6 +12,7 @@ SX567-0402, and Lumis SX584-0204/0205.
 
 Settings are assigned when their corresponding patch or payload is active.
 `Storage` names the globals[16] persistence group used by the patched image.
+`PHT` is a stock variable with a native menu row; the iVAPS patch activates it.
 
 | Feature | Setting | UART | Table | Storage |
 |---------|---------|------|-------|---------|
@@ -24,9 +25,11 @@ Settings are assigned when their corresponding patch or payload is active.
 | [Custom VAuto](guide/features/custom_vauto.md) | Custom VAuto | RPO | g[8] | CSG |
 | [Custom VAuto](guide/features/custom_vauto.md) | ASV Max | RCM | g[4] | CSG |
 | [Custom VAuto](guide/features/custom_vauto.md) | ASV Sens | RXM | g[8] | CSG |
+| [Custom VAuto](guide/features/custom_vauto.md) | EPS | RDH | g[4] | CSG |
+| [Custom VAuto](guide/features/custom_vauto.md) | Exh. Shape | RDW | g[4] | CSG |
 | [Custom VAuto](guide/features/custom_vauto.md) | Custom T/C | RPH | g[8] | CSG |
 | [ASV backup-rate control](guide/features/asv_backup_rate.md) | Backup Rate | RPW | g[8] | CSG |
-| Therapy graph | Monitoring | RXH | g[8] | CSG |
+| [Therapy screen](guide/features/general.md#therapy-screen) | Therapy scr. | RXH | g[8] | CSG |
 | [Header clock](guide/features/general.md#header-clock) | Clock | RXF | g[8] | CSG |
 | [Square Wave](guide/features/squarewave.md) | Square Wave | RPF | g[8] | CSG |
 | [Fall Time](guide/features/general.md#fall-time) | Fall Time | RCW | g[4] | CSG |
@@ -53,8 +56,8 @@ requests custom settings:
 3. reclaim selected Reminder variables and string IDs
 4. let each active feature activate or redefine its variables
 5. extend the CSG member list with any additional persistent firmware variables
-6. emit the custom menu registry into reclaimed CDX space
-7. inject the clinical menu hooks
+6. resolve menu placement and emit the custom menu registry into reclaimed CDX space
+7. emit the dispatch table and inject the required clinical menu hooks
 8. register mode visibility with the MOP callback dispatcher
 
 If no active feature requests settings, the framework is skipped and the stock
@@ -94,7 +97,8 @@ The reclaim pass disables:
 - periodic Reminder processing
 - the hardcoded `RX*` to `RC*` state updater
 - construction of the Reminder record list
-- forwarding popup acknowledgements to `RSA`
+- construction of the Reminder popup and its message source
+- copying the RTC date and time into `RDT/RTI`
 - the Reminders row in clinical Options
 - construction of the Reminders page
 
@@ -108,8 +112,16 @@ It then makes these variables available in typed pools:
 | g[8] | RPF, RPO, RPH, RPW | recurrence enable for Filter, Mask, Tube, and Water Tub |
 | g[8] | RXF, RXM, RXH, RXW | reminder-date enable for Filter, Mask, Tube, and Water Tub |
 | g[8] | RSA | runtime reminder acknowledgement request |
+| g[8] | RMM, ZRA | Reminder popup selector and acknowledgement |
+| g[8] | LET | `CAL=0x0008` placeholder service variable, registered but not processed |
 | g[4] | RCF, RCM, RCH, RCW | recurrence period in months |
 | g[4] | RDF, RDM, RDH, RDW | reminder due date |
+| g[4] | RDT, RTI | Reminder date and time mirrors |
+| g[4] | LEF | `CAL=0x0008` placeholder service variable, registered but not processed |
+
+`RSA`, `RMM`, `ZRA`, `RDT`, `RTI`, `LET`, and `LEF` do not belong to a stock
+storage group. A feature that stores one of them adds it to `CSG` and links
+its descriptor to the group tracker.
 
 Reclaiming a descriptor clears its stock callback and replaces its name, option,
 and units string references with the firmware empty-string ID. The old string
@@ -130,21 +142,71 @@ Feature labels are indexed by ResMed language ID. The patcher updates only the
 languages compiled into the current CCX. A missing translation points to the
 English string.
 
-String replacement follows this allocation order:
+`redefine_fw_string(-1, strings, owner)` allocates a string ID in this order:
 
-1. use the requested string ID, or allocate one from the reclaimed pool
-2. reuse the existing raw string storage when the new text fits
-3. otherwise scan backward through erased CCX space for the required bytes
-4. update locale pointers and the g[2] maximum length
+1. an unused ID from the reclaimed pool
+2. a new ID after the last firmware string ID
 
 Supplying an explicit string ID requests replacement of that firmware string.
 Pool membership is required only for automatic allocation.
+
+Patches only record the text. The `firmware-strings` finalization step runs
+after all other patches and rebuilds the language tables once, from the
+current image and the recorded strings. It writes the g[2] maximum lengths,
+removes text that no longer has a reference, and keeps data that other patches
+placed in the language area. The result is checked by reading every string
+back.
+
+g[2] has no room for further records in the stock image. The first new ID
+therefore moves the g[2] table into the CCX language area, ends it with a zero
+record, and updates the `globals[2]` pointer. The stock table is erased. The
+firmware locates g[2] only through that pointer and does not check ID bounds.
+String IDs are signed 16-bit values in firmware, so IDs up to `0x7FFF` are
+available.
+
+The text of a new ID is English for every compiled language without a supplied
+translation.
+
+## Menu placement
+
+`custom_menu_add`, `custom_menu_add_heading`, and `custom_menu_add_page` accept
+an optional `before` or `after` reference and return an item handle. Placement
+is relative to another entry in the same section or generated page:
+
+```python
+from lib.custom_menu import stock, custom
+
+self.custom_menu_add('therapy', 'PHI', height_mask, after=stock('PHT'))
+mv = self.custom_menu_add('therapy', 'ZMV', ivaps_mask, after=stock('WMV'))
+vt = self.custom_menu_add('therapy', 'ZTV', ivaps_mask, after=mv)
+self.custom_menu_add('therapy', 'ZVK', ivaps_mask, after=vt)
+```
+
+`stock('PHT')` refers to a native row by its UART variable name.
+`custom('ZMV')` refers to a registered custom variable, including one registered
+later. Returned handles also identify headings and page links. An omitted
+placement appends to the end of the section or generated page, in registration
+order. Generated pages retain their Back row first.
+
+Entries attached to the same side of an anchor retain registration order.
+An entry and the entries attached to it stay together: if A is before a stock
+row, B placed after A is still before that stock row. References cannot cross
+containers. Both placement arguments together, cycles, missing custom entries,
+and missing or ambiguous stock anchors stop patching.
+
+Stock anchors are the append sites in the five clinical sections listed per
+firmware version in [custom_menu_stock.py](../python/lib/custom_menu_stock.py).
+The patcher checks their UART bindings and original append instructions.
+Hidden rows can be used as anchors.
+A combined widget is one anchor: either of its unique variable names refers
+to the whole widget. For example, `HTX` occurs in two stock rows; use `HTS`
+or `HTF` to distinguish them.
 
 ## Menu registry
 
 Feature settings and generated pages use one shared registry. Containers 0
 through 4 represent the five stock clinical menu sections. Containers starting
-at `0x80` represent generated pages in declaration order.
+at `0x80` represent generated pages in page order after placement.
 
 The patcher emits sentinel-terminated 8-byte records:
 
@@ -170,11 +232,18 @@ typedef struct {
 
 An entry with container `0xFF` or item ID `0xFFFF` terminates the registry.
 Duplicate variable IDs are rejected before registry emission.
+The registry holds at most 64 entries, followed by the terminator.
 
-The payload hooks the final stock append operation in each clinical section.
-It first appends the displaced stock item, then appends matching variable,
-heading, and page-link records. The patcher increases the stock menu item
-capacity only for records added directly to stock sections.
+After feature registration, the patcher orders entries within each container.
+It emits containers in section and page order. The registry supplies GUI
+construction and UART group paths.
+
+A separate dispatch table maps the return address of each hooked append call
+to ranges of registry entries to insert before and after the stock item.
+Only used anchors are hooked. The shared payload inserts those entries and
+performs the stock append once.
+The dispatch table uses the shared CCX allocator. The patcher increases the
+stock list capacity by the number of entries added directly to stock sections.
 
 When the registry contains pages, the menu constructor preserves all stock page
 pointers in a larger table and appends the generated pages. Each generated page
@@ -244,5 +313,6 @@ Firmware-stable variables used directly by compiled code belong in the
 versioned `s10_vars` headers. Reclaimed assignments and other patch-time choices
 belong in ABI slots. See [Patch payloads](patch_payloads.md).
 
-The patcher prints unused reclaimed variables and string IDs after patching.
+The patcher prints unused reclaimed variables and string IDs after patching,
+and the new string IDs with their owners.
 This summary is the authoritative resource count for the selected feature set.

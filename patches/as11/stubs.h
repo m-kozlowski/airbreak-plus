@@ -31,6 +31,8 @@ extern int json_encoder_write_raw_span(
 /* Native cellular FileFetcher and flow-generator upgrade state machine. */
 extern int gfile_fetcher_control_can_start(void *control);
 extern void upgrade_command_executor_set_result(void *executor, unsigned int result);
+extern void upgrade_command_executor_reset(void *executor);
+extern void upgrade_command_executor_notify_result(void *executor, unsigned int result);
 extern void upgrade_command_executor_set_state_after_hook(void);
 extern void GuiTextValueFormatter_ctor(void *formatter);
 extern void GuiTextValueFormatter_dtor(void *formatter);
@@ -129,6 +131,7 @@ extern void *GuiTreatmentScreen_ctor(void *screen, void *parent, void *root, uns
 extern void GuiScroller_update_items(void *scroller);
 extern void GuiPageAction_ctor(void *action, const unsigned char *page);
 extern void GuiSwitchAction_add(void *action, unsigned int value, void *target);
+extern void *GuiDataItemSwitch_ctor(void *action, unsigned int var_id, void *fallback);
 extern int GuiMenuCentre_is_therapy_page(const unsigned char *page);
 
 typedef struct {

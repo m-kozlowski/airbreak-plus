@@ -392,6 +392,10 @@ SPOOL_LEGENDS: dict[str, dict] = {
             25: "DataSendFailed",
             27: "DataSpoolReadFailed",
             33: "CellularInitializerStarted",
+            39: "FirmwareDownloadStarted",
+            40: "FirmwareDownloadSucceeded",
+            42: "FirmwareApplyStarted",
+            44: "FirmwareApplyFailed",
             60: "MobileNetworkCode",
             61: "MobileCountryCode",
             62: "HttpResponseTimeout",
@@ -425,6 +429,10 @@ SPOOL_LEGENDS: dict[str, dict] = {
         },
         "log_error_ids": {
             32: "RpcResponseInvalid",
+        },
+        "log_error_details": {
+            (20, 0): "FirmwareServerConnectWarn",
+            (20, 1): "FirmwareServerBadResponseWarn",
         },
     },
 }
@@ -2211,10 +2219,14 @@ def _decode_event_extra(spool_type: str, event_type: int, field: int,
             and field == 14 and wire == 0):
         packed = int(value)
         error_id = (packed >> 12) & 0xFFF
+        detail_id = packed & 0xFFF
+        error_name = legend.get("log_error_details", {}).get((error_id, detail_id))
+        if error_name is None:
+            error_name = legend.get("log_error_ids", {}).get(error_id)
         out["value"] = {
             "errorId": error_id,
-            "errorName": legend.get("log_error_ids", {}).get(error_id),
-            "detailId": packed & 0xFFF,
+            "errorName": error_name,
+            "detailId": detail_id,
         }
     elif wire == 0:
         enum_name = legend.get("extra_enums", {}).get(

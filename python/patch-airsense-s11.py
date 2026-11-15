@@ -33,6 +33,8 @@ from lib.as11_conf_discovery import (
 from lib.as11_patch_versions import AS11_FGBL_PATCH_VERSIONS, AS11_PATCH_VERSIONS
 from lib.compiled_payload import CompiledPayloadMixin
 from lib.patch_config import parse_patch_args
+from lib import patch_options
+from lib.as11_patch_options import RPC_DATAITEM_PERMISSION_FLAGS
 
 
 class PatchVersionUnavailable(ValueError):
@@ -43,56 +45,6 @@ class PatchVersionUnavailable(ValueError):
 
 def crc16_ccitt_false(data, crc=0xFFFF):
     return binascii.crc_hqx(data, crc)
-
-
-def str2bool(value):
-    if isinstance(value, bool):
-        return value
-    if value.lower() in ("yes", "true", "t", "y", "1"):
-        return True
-    if value.lower() in ("no", "false", "f", "n", "0"):
-        return False
-    raise argparse.ArgumentTypeError("Boolean value expected.")
-
-
-def parse_u16(value):
-    try:
-        out = int(value, 0)
-    except ValueError:
-        raise argparse.ArgumentTypeError("expected integer or hex value") from None
-    if out < 0 or out > 0xFFFF:
-        raise argparse.ArgumentTypeError("expected 16-bit value")
-    return out
-
-
-def parse_rpc_permission(value):
-    parts = [part.strip() for part in value.split(":")]
-    if len(parts) != 3 or not parts[0]:
-        raise argparse.ArgumentTypeError(
-            "expected METHOD:VCID:BOOL or DATAITEM:FLAG:BOOL"
-        )
-    target, selector, enabled_text = parts
-    try:
-        enabled = str2bool(enabled_text)
-    except argparse.ArgumentTypeError as exc:
-        raise argparse.ArgumentTypeError(
-            "invalid RPC permission %r: %s" % (value, exc)
-        ) from None
-
-    flag = selector.upper()
-    if flag in RPC_DATAITEM_PERMISSION_FLAGS:
-        if re.fullmatch(r"(?:0[xX][0-9a-fA-F]+|[0-9]+)", target):
-            target = parse_u16(target)
-        return "dataitem", target, flag, enabled
-
-    try:
-        vcid = parse_u16(selector)
-    except argparse.ArgumentTypeError:
-        raise argparse.ArgumentTypeError(
-            "invalid RPC permission %r: selector must be a VCID, RPC, or RPW" %
-            value
-        ) from None
-    return "method", target, vcid, enabled
 
 
 def airbreak_version():
@@ -225,7 +177,6 @@ DATAITEM_FLAG_MASKS = {
     "RPW": 0x0400,
     "PST": 0x0800,
 }
-RPC_DATAITEM_PERMISSION_FLAGS = frozenset(("RPC", "RPW"))
 
 # Known RPC permission selector values
 KNOWN_RPC_PERMISSION_VCIDS = (
@@ -333,6 +284,8 @@ AS11_SCREEN_KEEP_AWAKE_PAYLOAD = "as11_screen_keep_awake"
 AS11_SCROLL_ANIMATION_PAYLOAD = "as11_scroll_animation"
 AS11_FLOW_WAVE_PAYLOAD = "as11_flow_wave"
 AS11_BLE_OXI_FALLBACK_PAYLOAD = "as11_ble_oxi_fallback"
+AS11_THERAPY_SCREEN_STYLE_PAYLOAD = "as11_therapy_screen_style"
+TSS_AUTO = 3
 
 
 class S11Firmware(object):
@@ -1042,7 +995,8 @@ class S11FirmwarePatches(CompiledPayloadMixin):
 
     def __init__(self, asf, rpc_method_permissions=None, rpc_dataitem_permissions=None, cloud_firmware_change_mode="metadata",
                  backlight_threshold_low=10, backlight_threshold_high=19,
-                 backlight_low=20, backlight_high=100, backlight_delay_ms=3000, header_clock_usage="PPD"):
+                 backlight_low=20, backlight_high=100, backlight_delay_ms=3000, header_clock_usage="PPD",
+                 startup_logo=4):
         self.asf = asf
         self._init_compiled_payloads()
         self.mop_callback_handlers = []
@@ -1068,6 +1022,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         self.rpc_dataitem_permission_rules = DEFAULT_RPC_DATAITEM_PERMISSIONS if rpc_dataitem_permissions is None else rpc_dataitem_permissions
         self.cloud_firmware_change_mode = cloud_firmware_change_mode
         self.header_clock_usage = header_clock_usage
+        self.startup_logo_id = startup_logo
         self.backlight_settings = (backlight_threshold_low, backlight_threshold_high,
                                    backlight_low, backlight_high, backlight_delay_ms)
 
@@ -1970,13 +1925,13 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             return PatchOutcome.warn("language configuration not found")
         return PatchOutcome.ok()
 
-    def startup_logo(self, logo):
+    def startup_logo(self):
         """Select the startup bitmap through the SCY descriptor default."""
         rows = self.asf.find_descriptors("SCY", ("g5",))
         if not rows:
             return PatchOutcome.skip("SCY descriptor unavailable")
-        self.write_default_value(rows[0], logo)
-        print("  Startup logo: %d" % logo)
+        self.write_default_value(rows[0], self.startup_logo_id)
+        print("  Startup logo: %d" % self.startup_logo_id)
         return PatchOutcome.ok()
 
     def sensitivity_split_screen(self):
@@ -1998,14 +1953,44 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         self.asf.update_descriptor_flags(row, {
             "ACT": True, "VIS": True, "MOD": True, "RPC": True, "RPW": True,
         })
-        self.asf.write_descriptor_fields(row, {"option_mask": (1 << row["n_options"]) - 1})
-        self.storage_register_members("HST", "TSS")
         menu = AS11_PATCH_VERSIONS.get(self._payload_version_key(), {}).get("therapy_screen_style")
+        options = row["n_options"]
+        if menu is not None and self._therapy_screen_style_auto(menu):
+            options = max(options, TSS_AUTO + 1)
+        self.asf.write_descriptor_fields(row, {"n_options": options, "option_mask": (1 << options) - 1})
+        self.storage_register_members("HST", "TSS")
         if menu is None:
             return PatchOutcome.warn("storage and RPC enabled; menu labels unavailable for this APPX")
-        self.custom_enum_labels("TSS", dict(enumerate(menu["option_labels"])))
+        self.custom_enum_labels("TSS", dict(enumerate(menu["option_labels"][:options])))
         self.custom_menu_add("configuration", "TSS", menu["label_id"], 0xFFFF, "enum")
-        return PatchOutcome.ok()
+        return PatchOutcome.ok("Auto follows the therapy mode" if options > TSS_AUTO else None)
+
+    def _therapy_screen_style_auto(self, anchors):
+        """Add raw TSS 3: Simple in CPAP, AutoSet and AutoSet for Her, otherwise Pressure."""
+        ver = self._payload_version_key()
+        if "pressure_bar_registration_call" not in anchors:
+            return False
+        data, _ = self._load_versioned_bin(AS11_THERAPY_SCREEN_STYLE_PAYLOAD)
+        if data is None:
+            return False
+        elf_path = self._versioned_artifact_path(AS11_THERAPY_SCREEN_STYLE_PAYLOAD, "elf", ver)
+        register_call = self.asf.ptr_to_off(anchors["pressure_bar_registration_call"])
+        read_call = self.asf.ptr_to_off(anchors["pressure_bar_style_read_call"])
+        # Native: movs r1,#1; movs r0,r4; bl GuiSwitchAction_add.
+        if (self.asf.read_thumb2_bl_target(register_call) != self._elf_symbol_addr(elf_path, "GuiSwitchAction_add") or
+                bytes(self.asf.fw[register_call - 4:register_call]) != bytes.fromhex("01212000")):
+            raise ValueError("therapy_screen_style: PressureBar registration call does not match")
+        # Native: bl DataItem_read_value_by_id; cmp r0,#1.
+        if (self.asf.read_thumb2_bl_target(read_call) != self._elf_symbol_addr(elf_path, "DataItem_read_value_by_id") or
+                bytes(self.asf.fw[read_call + 4:read_call + 6]) != bytes.fromhex("0128")):
+            raise ValueError("therapy_screen_style: PressureBar style read does not match")
+
+        self._inject_payload(AS11_THERAPY_SCREEN_STYLE_PAYLOAD, data)
+        # bl PressureBar registration -> bl wrapper that also registers Auto.
+        self.asf.write_thumb2_bl_target(register_call, self._elf_symbol_addr(elf_path, "start"))
+        # bl TSS read -> bl read that resolves Auto before the PressureBar test.
+        self.asf.write_thumb2_bl_target(read_call, self._elf_symbol_addr(elf_path, "therapy_screen_style_read"))
+        return True
 
     def therapy_screen(self):
         """Show respiratory statistics hidden from compatible therapy modes."""
@@ -3163,173 +3148,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         return PatchOutcome.ok("Get AirbreakInfo")
 
 
-PATCH_LIST = [
-    {
-        "arg": "patch-airbreak-info",
-        "desc": "Expose Airbreak version and applied patch metadata through RPC Get.",
-        "default": True,
-        "function": "enable_airbreak_info",
-    },
-    {
-        "arg": "patch-fgbl-service",
-        "desc": "Add bootloader support for firmware dump and restore over CAN.",
-        "default": True,
-        "function": "patch_fgbl_service",
-    },
-    {
-        "arg": "patch-unlock-features",
-        "desc": "Unlock supported therapy modes, related settings, and GUI editability.",
-        "default": True,
-        "function": "unlock_features",
-    },
-    {
-        "arg": "patch-unlock-languages",
-        "desc": "Unlock all configured language choices.",
-        "default": True,
-        "function": "unlock_languages",
-    },
-    {
-        "arg": "patch-defaults",
-        "desc": "Patch firmware defaults for selected settings.",
-        "default": True,
-        "function": "patch_defaults",
-    },
-    {
-        "arg": "patch-rpc-json-profile-visibility",
-        "desc": "Expose supported therapy/feature profile nodes in RPC JSON.",
-        "default": True,
-        "function": "rpc_json_profile_visibility",
-    },
-    {
-        "arg": "patch-edf-superset",
-        "desc": "Expose the official S11 EDF schema superset.",
-        "default": True,
-        "function": "patch_edf_superset",
-    },
-    {
-        "arg": "patch-asv-ps-range",
-        "desc": "Unlock ASV/ASVAuto pressure support range.",
-        "default": True,
-        "function": "asv_pressure_support_range",
-    },
-    {
-        "arg": "patch-therapy-screen",
-        "desc": "Show additional respiratory statistics in compatible therapy modes.",
-        "default": True,
-        "function": "therapy_screen",
-    },
-    {
-        "arg": "patch-therapy-screen-style",
-        "desc": "Enable persistent therapy-screen style selection.",
-        "default": True,
-        "function": "therapy_screen_style",
-    },
-    {
-        "arg": "patch-header-clock",
-        "desc": "Show local time and usage time in the header during therapy.",
-        "default": True,
-        "function": "header_clock",
-    },
-    {
-        "arg": "patch-custom-settings",
-        "desc": "Expose settings requested by active feature patches.",
-        "default": True,
-        "function": "enable_custom_settings",
-    },
-    {
-        "arg": "patch-flow-wave",
-        "desc": "Show live flow and pressure waveforms in the Flow therapy view.",
-        "default": False,
-        "function": "flow_wave",
-    },
-    {
-        "arg": "patch-screen-keep-awake",
-        "desc": "Toggle LCD inactivity suppression with a three-finger hold.",
-        "default": True,
-        "function": "screen_keep_awake",
-    },
-    {
-        "arg": "patch-backlight",
-        "desc": "Set ambient-light thresholds, LCD brightness levels, and response delay.",
-        "default": False,
-        "function": "backlight",
-    },
-    {
-        "arg": "patch-scroll-animation",
-        "desc": "Shorten menu scrolling with a 1.5x step at the native timer interval.",
-        "default": False,
-        "function": "scroll_animation",
-    },
-    {
-        "arg": "patch-startup-logo",
-        "desc": "Select startup logo: 0 Off, 1 AirSense 11, 2 AirCurve 11, 3 Lumis 11, 4 ResMed (default when selected).",
-        "default": False,
-        "function": "startup_logo",
-        "value_type": int,
-        "choices": range(5),
-        "const": 4,
-    },
-    {
-        "arg": "patch-sensitivity-split-screen",
-        "desc": "Show graphics beside supported Trigger/Cycle sensitivity selectors.",
-        "default": False,
-        "function": "sensitivity_split_screen",
-    },
-    {
-        "arg": "patch-asv-backup-rate",
-        "desc": "Add ASV/ASVAuto backup-rate suppression and control.",
-        "default": True,
-        "function": "asv_backup_rate",
-    },
-    {
-        "arg": "patch-airplane-reminder",
-        "desc": "Suppress the standby airplane-mode reminder.",
-        "default": True,
-        "function": "airplane_reminder",
-    },
-    {
-        "arg": "patch-motor-nagscreen",
-        "desc": "Remove \"Motor life exceeded\" nag screen.",
-        "default": True,
-        "function": "motor_nagscreen",
-    },
-    {
-        "arg": "patch-rpc-permissions",
-        "desc": "Apply configured RPC method and DataItem permissions.",
-        "default": True,
-        "function": "rpc_permissions",
-    },
-    {
-        "arg": "patch-cloud-firmware-change",
-        "desc": "Retain cloud flow-generator firmware changes without applying them.",
-        "default": False,
-        "function": "cloud_firmware_change",
-    },
-    {
-        "arg": "patch-cellular-download",
-        "desc": "Download an HTTP resource to upgrade storage through the cellular modem.",
-        "default": False,
-        "function": "cellular_download",
-    },
-    {
-        "arg": "patch-ble-oxi-fallback",
-        "desc": "Work around pairing and measurement-status incompatibilities in Bluetooth PLX pulse oximeters (experimental).",
-        "default": False,
-        "function": "ble_oxi_fallback",
-    },
-    {
-        "arg": "patch-timezone-write",
-        "desc": "Allow time-zone changes after summary history exists.",
-        "default": True,
-        "function": "timezone_write",
-    },
-    {
-        "arg": "patch-vid-spoof",
-        "desc": "Install runtime MOP-based software variant spoofing.",
-        "default": True,
-        "function": "vid_spoof",
-    },
-]
+PATCH_OPTIONS = patch_options.load("air11")
 
 
 @dataclass(frozen=True)
@@ -3364,72 +3183,13 @@ class TeeStream:
             stream.flush()
 
 
-def add_patch_switch(parser, patch):
-    if patch.get("value_type"):
-        parser.add_argument("--" + patch["arg"], type=patch["value_type"],
-                            nargs="?", const=patch["const"], choices=patch["choices"],
-                            default=None, help=patch["desc"])
-        return
-    parser.add_argument(
-        "--" + patch["arg"],
-        metavar="Y/n" if patch["default"] else "y/N",
-        default=None,
-        type=str2bool,
-        help=patch["desc"],
-    )
-
-
 def build_arg_parser():
-    parser = argparse.ArgumentParser(description="Patch AirSense/AirCurve 11 firmware.")
+    parser = argparse.ArgumentParser(description="Patch AirSense/AirCurve 11 firmware.", allow_abbrev=False)
     parser.add_argument("INFILE", help="Input original binary file")
     parser.add_argument("OUTFILE", help="Output patched file")
     parser.add_argument("OPERATION", choices=["INFO", "PATCH"], help="Operation to perform")
-
-    for patch in PATCH_LIST:
-        add_patch_switch(parser, patch)
-
-    parser.add_argument(
-        "--all-patches",
-        metavar="y/n",
-        default=None,
-        type=str2bool,
-        help="Default state for patch switches not explicitly set. Default: built-in patch defaults.",
-    )
-    parser.add_argument("--overwrite", action="store_true", help="Overwrite output file if it exists already.")
-    parser.add_argument("-v", "--verbose", action="store_true",
-                        help="Show detailed patch output.")
-    parser.add_argument("--log-file",
-                        help="Append a verbose patching transcript to this file.")
-    parser.add_argument(
-        "--rpc-permission",
-        action="append",
-        type=parse_rpc_permission,
-        metavar="TARGET:VCID|FLAG:BOOL",
-        default=None,
-        help=("Set METHOD:VCID or DATAITEM:RPC|RPW permission; repeatable. "
-              "Overrides the built-in rule for the same pair."),
-    )
-    parser.add_argument(
-        "--cloud-firmware-change-mode",
-        choices=("metadata", "stage"),
-        default="metadata",
-        help=("Behavior of patch-cloud-firmware-change: retain download "
-              "metadata only, or stage and verify the file without applying it. "
-              "Default: metadata."),
-    )
-    backlight = parser.add_argument_group("patch-backlight parameters")
-    backlight.add_argument("--backlight-threshold-low", type=int, default=10, metavar="VALUE",
-                           help="Dim mode below this AmbientLight value, 0..255. Default: 10.")
-    backlight.add_argument("--backlight-threshold-high", type=int, default=19, metavar="VALUE",
-                           help="Bright mode at or above this AmbientLight value, 0..255. Default: 19.")
-    backlight.add_argument("--backlight-low", type=int, default=20, metavar="PERCENT",
-                           help="Dim LCD brightness, 0..100, no higher than --backlight-high. Default: 20.")
-    backlight.add_argument("--backlight-high", type=int, default=100, metavar="PERCENT",
-                           help="Bright LCD brightness, 0..100. Default: 100.")
-    backlight.add_argument("--backlight-delay-ms", type=int, default=3000, metavar="MS",
-                           help="Ambient-mode change delay, 0..65534 ms. Default: 3000.")
-    parser.add_argument("--header-clock-usage", type=str.upper, choices=("PPD", "PUD"), default="PPD",
-                        help="Usage shown during therapy: PPD for the therapy day (default), PUD for the current mask-on interval.")
+    PATCH_OPTIONS.add_arguments(parser)
+    PATCH_OPTIONS.add_run_arguments(parser)
     return parser
 
 
@@ -3440,11 +3200,11 @@ def print_patch_output(text, stream=None):
         print(("  " + line) if line else "", file=stream)
 
 
-def apply_reported_patch(option, method, args, detail_log=None, method_args=()):
+def apply_reported_patch(option, method, args, detail_log=None):
     output = io.StringIO()
     try:
         with redirect_stdout(output):
-            outcome = method(*method_args)
+            outcome = method()
         if not isinstance(outcome, PatchOutcome):
             outcome = PatchOutcome.ok()
     except PatchVersionUnavailable as exc:
@@ -3494,6 +3254,7 @@ def run_patcher(args, detail_log=None):
         rpc_dataitem_permissions=rpc_dataitem_permissions,
         cloud_firmware_change_mode=args.cloud_firmware_change_mode,
         header_clock_usage=args.header_clock_usage,
+        startup_logo=args.startup_logo,
         backlight_threshold_low=args.backlight_threshold_low,
         backlight_threshold_high=args.backlight_threshold_high,
         backlight_low=args.backlight_low,
@@ -3502,22 +3263,10 @@ def run_patcher(args, detail_log=None):
     )
 
     print("\n=== Patches")
-    for patch in PATCH_LIST:
-        value = getattr(args, patch["arg"].replace("-", "_"))
-        enabled = value
-        method_args = ()
-        if patch.get("value_type"):
-            # Zero is a valid patch parameter, not a disabled switch.
-            enabled = True if value is not None else None
-            method_args = (patch["const"] if value is None else value,)
-        if enabled is None:
-            if args.all_patches is None:
-                enabled = patch["default"]
-            else:
-                enabled = args.all_patches
-        if enabled:
-            outcome = apply_reported_patch(patch["arg"], getattr(patches, patch["function"]), args, detail_log, method_args)
-            patches.record_patch_outcome(patch["arg"], outcome)
+    for patch in PATCH_OPTIONS.patches():
+        if PATCH_OPTIONS.selected(args, patch):
+            outcome = apply_reported_patch(patch.option, getattr(patches, patch.method), args, detail_log)
+            patches.record_patch_outcome(patch.option, outcome)
 
 
     print("\n=== Finalization")
@@ -3565,7 +3314,11 @@ def run_patcher(args, detail_log=None):
 
 def main(argv=None):
     parser = build_arg_parser()
-    args = parse_patch_args(parser, argv, "air11")
+    args = parse_patch_args(parser, argv, PATCH_OPTIONS)
+    if args.OPERATION == "PATCH":
+        errors = PATCH_OPTIONS.dependency_errors(args)
+        if errors:
+            parser.error("; ".join(errors))
 
     if args.log_file is None:
         return run_patcher(args)

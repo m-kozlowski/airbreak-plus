@@ -99,7 +99,7 @@ This patch lets users adjust humidification above or below the stock
 Lower targets reduce the requested moisture; higher targets increase it.
 Manual humidity levels remain available and work alongside this setting.
 
-With custom settings, **Target RH (%)** appears in clinical **Accessories**:
+With custom settings, **Target RH (%)** appears in clinical **Comfort**:
 70-100%, in steps of 1 percentage point. The setting is saved across restarts
 and is also available over UART as `RCH`. The default is 85%, unless a different
 value is selected when building the image.
@@ -110,9 +110,17 @@ Without this patch, the stock 85% target remains unchanged.
 The percentage is a target, not a measurement of humidity at the mask.
 Higher targets increase condensation risk; 100% targets saturation.
 
+## Therapy Screen
+
+Choose a round pressure indicator (**Simple**) or a pressure bar (**Bar**) under
+**Therapy scr.** in clinical **Options**. **Auto** selects the style according
+to the therapy mode.
+
+The **+Graph** variants add live flow and pressure traces. Bar is the default.
+
 ## Header Clock
 
-Enable **Clock** in clinical **Configuration** to replace the Home and active
+Enable **Clock** in clinical **Options** to replace the Home and active
 therapy-screen titles with the device time in 24-hour `HH:MM` format.
 
 ## Keep Backlight
@@ -158,5 +166,5 @@ damaged or unavailable.
 
 The controller is detected at startup. Devices with the original ILI9341 panel
 continue to use the stock display path, so the same patched image can support
-both the original and replacement controllers. Enable this driver when
-building with `PATCH_S10_LCD=1`.
+both the original and replacement controllers. Enable this driver with
+`--patch-fw-lcd y`.

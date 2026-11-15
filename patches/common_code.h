@@ -30,14 +30,9 @@ static float *cmd_ipap = &fvars[0x2a]; // Final pressure command throughout the 
 
 static float *cmd_epap_ramp = &fvars[0x2d]; // Ramped pressure reference (cmH2O)
 
-static const float *leak_basal = &fvars[0x23]; // Reference leak flow before pressure adjustment (L/min)
-static const float *leak = &fvars[0x24]; // Unintentional leak (L/min) - this is what flow_compensated incorporates
-
 static const float *flow_raw = &fvars[0x3]; // (L/min)
 static const float *flow_patient = &fvars[0x0]; // (L/min)
 static const float *flow_compensated = &fvars[0x25]; // (L/min)
-#define flow_unfucked (*flow_patient - *leak_basal) // Doesn't include the waveform-shape-distorting within-breath leak detection
-// const float *flow_delayed = &fvars[0x26]; // Slightly delayed 0x25 ?
 
 static const float *actual_pressure = &fvars[1]; // (cmH2O) Actual current pressure in the circuit
 
@@ -63,9 +58,9 @@ static const   int *pap_timer = &ivars[0];
 
 #define p_error (p_actual - p_command) // Positive when above target
 
-// These seem to be universal across modes, e.g. S, VAuto, etc.
+// Configured flow-trigger and cycle thresholds.
 #define sens_trigger fvars[0x7] // (L/min). Possible values: 13.2, 8.1, 4.8, 3.3, 1.8
-#define sens_cycle fvars[0x8] // (%). Possible values: 0.5, 0.35, 0.25, 0.15, 0.08
+#define sens_cycle fvars[0x8] // Fraction of peak inspiratory flow; values depend on mode
 
 // S mode configuration
 #define s_ipap fvars[0xe]
@@ -85,18 +80,6 @@ static const   int *pap_timer = &ivars[0];
 
 #define ti_min (ivars[0x5]*10) // (ms) integer
 #define ti_max (ivars[0x6]*10) // (ms) integer
-
-// I believe these are the reported EPAP and IPAP written to EDF files.
-// However, they're probably written somewhere else(before end of inspiration), which needs to be debugged to write them
-// Or used to figure out how to add extra signals..?
-// float *report_epap = &fvars[0xC5];
-// float *report_ipap = &fvars[0xC4];
-// b9, be might be TV, ba, bb might be MV 
-
-// const float *asv_epap_min = &fvars[0x11];
-// const float *asv_epap_max = &fvars[0x10];
-// const float *asv_ips_min  = &fvars[0x14];
-// const float *asv_ips_max  = &fvars[0x13];
 
 // Utility functions
 #define min(a,b) ({ \
@@ -118,7 +101,7 @@ static const   int *pap_timer = &ivars[0];
   _a > __max ? __max : (_a < __min ? __min : _a); \
 })
 
-#define clamp01(a) ({ clamp(a, 0.0f, 1.0f) })
+#define clamp01(a) ({ clamp(a, 0.0f, 1.0f); })
 
 #define absf(a) __builtin_fabsf(a)
 
@@ -128,112 +111,26 @@ static const   int *pap_timer = &ivars[0];
   *_ptr = fn(*_ptr, args); \
 })
 
-#define GET_PTR(index, type, init_fn) ({ \
-  get_pointer(index, sizeof(type), (void (*)(void*))&init_fn);\
-})
+static inline float remap01(float s, float start, float end) {
+  return (s - start)/(end-start);
+}
 
-//////////////////////////////////////
-// Functions implemented in .c file //
+static inline float remap01c(float s, float start, float end) {
+  return clamp(remap01(s, start, end), 0.0f, 1.0f);
+}
 
-float remap(float s, float start, float end, float new_start, float new_end);
-float remapc(float s, float start, float end, float new_start, float new_end); // Clamped to new_start-new_end
-float remap01(float s, float start, float end);
-float remap01c(float s, float start, float end); // Version that clamps to 0-1
-float lerp(float from, float to, float coeff);
+// Keep argument rounding separate from the fused multiply-add inside remap.
+static __attribute__((noinline, unused)) float remap(float s, float start, float end, float new_start, float new_end) {
+  return new_start + remap01(s, start, end) * (new_end - new_start);
+}
 
+static inline float remapc(float s, float start, float end, float new_start, float new_end) {
+  return new_start + remap01c(s, start, end) * (new_end - new_start);
+}
 
-typedef enum {
-  PTR_HISTORY,
-  PTR_SQUAREWAVE_DATA,
-  PTR_TRACKING,
-  PTR_ASV_DATA,
-  PTR_FEATURES,
-  PTR_TRIGGERCYCLE,
-  PTR_GRAPH_DATA,
+static inline float lerp(float from, float to, float coeff) {
+  return from + (to - from) * coeff;
+}
 
-  __PTR_LAST,
-} ptr_index;
-
-void *get_pointer(ptr_index index, int size, void (*init_fn)(void*));
-
-
-///////////////////////////
-// History functionality //
-
-#define HISTORY_LENGTH 16
-
-// TODO: Expand history, make graph.c use it
-typedef struct {
-  int tick;
-  float last_time;
-  float16 flow[HISTORY_LENGTH];
-  float16 cmd_ipap[HISTORY_LENGTH];
-  // float16 pressure[HISTORY_LENGTH];
-} history_t;
-
-void init_history(history_t *hist);
-void update_history(history_t *hist);
-history_t *get_history();
-
-float get_delta_flow(history_t *hist, int bin_size); // Get the rate of change of the flow curve
-bool is_cmd_ipap_constant(history_t *hist); // Test if cmd_ipap is currently unchanging
-
-///////////////////////////////
-// All-purpose tracking code //
-
-// Setup storage for important data
-typedef struct {
-  float volume;
-  float volume_max;
-
-  // New stuff
-  float exh_maxflow;
-  float inh_maxflow;
-  int16 t; // (10ms ticks)
-  float ti; // (s)
-  float te; // (s)
-} breath_t;
-
-void init_breath(breath_t *breath);
-
-// Necessary to monitor actual setting changes despite the memory address being overwritten
-typedef struct {
-  float last_trigger;
-  float real_trigger;
-  float last_cycle;
-  float real_cycle;
-} settings_proxy_t;
-
-void init_settings(settings_proxy_t *sett);
-
-#define tr_coeff 0.025f
-
-typedef struct {
-  float last_progress;
-  uint32 last_time;
-  uint32 breath_count;
-  uint32 tick;
-
-  bool st_inhaling : 1;
-  bool st_just_started : 1; // Whether the inhale/exhale portion started this tick
-  bool st_valid_breath : 1; // Was the last breath valid(e.g. not a super-short pseudo-inhale)?
-  uint8 st_pre_trigger ;  // "early trigger", e.g. flow will cross trigger threshold in amount of time similar to blower response, eliminating delay
-  uint8 st_pre_cycle ;    // Low-flow counter used by Custom T/C and the squarewave PS ramp-down
-
-  settings_proxy_t settings;
-
-  breath_t recent; // Tracks recent breath parameters to compare against.
-  breath_t last;
-  breath_t current;
-
-  float final_ps; // PS at the end of the last inhale or exhale phase
-} tracking_t;
-
-void init_tracking(tracking_t *tr);
-tracking_t* get_tracking();
-void update_tracking(tracking_t *tr, history_t *hist, float configured_trigger, float configured_cycle);
-
-#include "my_asv.h"
-#include "feat_triggercycle.h"
 
 #endif

@@ -10,6 +10,19 @@
 	name = addr
 .text
 
+// Therapy page construction and lifetime
+NSTUB(0x0806754F, gui_scrollable_layout_items)
+NSTUB(0x08069D09, heap_free)
+NSTUB(0x0806D27D, gui_window_registry_remove)
+NSTUB(0x080742F7, WM__DeleteWindow)
+NSTUB(0x0806E103, gui_task_group_get)
+NSTUB(0x0806E2E9, gui_menu_system_update_selected_page)
+NSTUB(0x0806D483, gui_base_window_y0)
+NSTUB(0x08062C6F, gui_therapy_simple_body)
+NSTUB(0x08062EDF, gui_therapy_bar_body)
+NSTUB(0x0806317D, gui_therapy_data_body)
+NSTUB_VAR(0x6800BB60, gui_therapy_pages)
+
 // Front-panel input singleton
 NSTUB(0x080824FF, front_panel_input_init)
 
@@ -18,6 +31,9 @@ NSTUB(0x080A8469, breath_progress_worker_reset)
 NSTUB(0x080A8495, breath_progress_worker_update_mode)
 NSTUB(0x080A853F, breath_progress_worker_disable)
 NSTUB(0x080A8545, breath_progress_worker_update)
+NSTUB(0x080A890B, breath_progress_worker_register)
+NSTUB(0x080AB5DB, breath_timing_progress_worker_register)
+NSTUB(0x080A177D, breath_phase_ramp_worker_update)
 
 // Stock bilevel and iVAPS pressure waveforms
 NSTUB(0x080A0A71, therapy_variable_get)
@@ -99,11 +115,10 @@ NSTUB(0x0809E4A9, file_get_size)
 NSTUB(0x080BCBC3, pressure_limit_max_difference)
 NSTUB_VAR(0x2000E954, fvars)
 NSTUB_VAR(0x2000E75C, ivars)
-NSTUB_VAR(0x2000E814, isNotBreathingPtr)
-NSTUB_VAR(0x2000EAA8, breathPercentagePtr)
-NSTUB(0x080E36DD, asv_task_function)
+NSTUB_VAR(0x2000E814, asv_low_flow_state)
+NSTUB_VAR(0x2000EAA8, asv_phase_estimate)
+NSTUB(0x080E36DD, asv_publish_target_ventilation_and_pressure)
 
-NSTUB_VAR(0x20000BE0, magic_ptr)
 
 // Variable system
 NSTUB(0x08066E7E, variable_set_by_id)

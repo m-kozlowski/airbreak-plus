@@ -28,9 +28,10 @@ This builds compiled patches and produces following images:
 | Output | Content |
 |--------|---------|
 | `build/stm32-patched.bin` | unlocked stock-ish |
-| `build/stm32-plus.bin` | graph, Custom VAuto, ASV backup-rate control, Square Wave, Fall Time, ST iBR, iVAPS AutoEPAP |
+| `build/stm32-plus.bin` | Custom VAuto, ASV backup-rate control, Square Wave, Fall Time, ST iBR, iVAPS AutoEPAP |
 
 The additional features in `plus` have runtime controls in the clinical menu.
+`build/stm32-plus.bin` selects them with the [`plus` preset](../patch_options.md#presets).
 
 The console shows compact patch status by default. A verbose transcript of the
 latest build is written to `make.log`; use `make V=1` to also show it on the
@@ -38,15 +39,15 @@ console.
 
 ### Command-line patchers
 
-The compatibility command used by the Makefile is:
+`patch-airsense` runs the Python patcher with the `PATCH` operation,
+overwrites an existing output and passes further options to the patcher:
 ```
 ./patch-airsense stm32.bin build/stm32-patched.bin
 ```
 
-`patch-airsense` accepts the environment variables listed below and invokes the
-Python patcher:
+Equivalent Python command:
 ```
-./python/patch-airsense.py stm32.bin build/stm32-patched.bin PATCH
+python3 python/patch-airsense.py stm32.bin build/stm32-patched.bin PATCH --overwrite
 ```
 
 ## What each patch does
@@ -63,6 +64,7 @@ All patches below are **enabled by default** unless noted.
 | iVAPS settings | Restores height controls and calculated MV, Vt, and Vt/kg IBW values | `--patch-ivaps-settings` |
 | Unlock pressure range | Expands standard pressure settings to 1.0-30.0 cmH2O | `--patch-unlock-uilimits` |
 | Unlock ASV PS range | Expands ASV/ASVAuto pressure support to 0-25 cmH2O, allows Max PS below Min PS + 5, and raises fixed ASV EPAP to the device pressure limit | `--patch-asv-ps-range` |
+| Adjustable ASV pressure limit | Allows setting the limit from 10 cmH2O to the factory maximum. Off by default. | `--patch-adjustable-mcp` |
 | Unlock iVAPS PS range | Clears ZLL, removing the additional 8 cmH2O Max PS minimum with AutoEPAP; skipped when ZLL is absent | `--patch-ivaps-ps-range` |
 
 ### Therapy data and reporting
@@ -81,47 +83,34 @@ All patches below are **enabled by default** unless noted.
 | Unlock languages | Enables all built-in languages | `--patch-unlock-languages` |
 | Language fonts | Selects the correct font for each language, including the language selection list | `--patch-language-fonts` |
 | Ukrainian font (opt-in) | Adds missing Ukrainian letters to the standard font; does not add translations or change the language list | `--patch-font-ua Y` |
-| Therapy screen | Enables additional information on the therapy screen | `--patch-therapy-screen` |
+| [Therapy screen](features/general.md#therapy-screen) | Adds selectable therapy screen styles and live graphs | `--patch-therapy-screen` |
 | Defaults | Sets firmware defaults (English, cmH2O, pillows mask, slim tube) | `--patch-defaults` |
 | Bypass integrity check | Disables firmware integrity checks that prevent boot on CRC mismatch | `--patch-integrity-check` |
 | Bypass PSU check | Disables power supply ID check at startup | `--patch-bypass-psuid` |
-| Color palette | Applies custom color scheme; `--palette-colors ROLE=RRGGBB,...` changes single colors (roles: text, secondary, dim, frame, background, accent, accent_dark, grey, light) | `--patch-custom-palette` |
+| Color palette | Applies custom color scheme | `--patch-custom-palette` |
 | [Backlight adaptation](features/backlight.md) | Continuously adjusts LCD and button brightness to ambient light | `--patch-fw-backlight` |
 | [Keep backlight](features/general.md#keep-backlight) | Hold the dial to toggle screen keep-awake | `--patch-keep-backlight` |
 | [Header clock](features/general.md#header-clock) | Adds Clock in Configuration to show time on Home and therapy screens | `--patch-header-clock` |
 | [Custom settings](../custom_settings.md) | Exposes menu settings for active compiled payloads and optional features | `--patch-custom-settings` |
-| [Target humidity](features/general.md#target-humidity) | Adjusts target humidity in Auto and Manual; adds a menu control with custom settings | `--patch-target-rh PERCENT\|y\|n` (default / `y`: 85%, `n`: disabled) |
+| [Target humidity](features/general.md#target-humidity) | Adjusts target humidity in Auto and Manual; adds a menu control with custom settings | `--patch-target-rh`, with `--target-rh PERCENT` (default 85) |
 
 
 ### Therapy modifications
 
-These optional payloads require `arm-none-eabi-gcc` and are controlled by
-environment variables.
+These optional payloads require `arm-none-eabi-gcc` and are off by default.
 
-| Env variable | What it does |
-|-------------|-------------|
-| `PATCH_CODE=1` | Add the therapy graph overlay and its shared code |
-| `PATCH_S=1` | Enable [Square Wave](features/squarewave.md) pressure shaping in S, ST, T, and PAC; requires `PATCH_VAUTO_WRAPPER=1` |
-| `PATCH_ASV_TASK_WRAPPER=1` | Add [runtime control](features/asv_backup_rate.md) for stock ASV/ASVAuto backup rate |
-| `PATCH_VAUTO_WRAPPER=1` | Add [Custom VAuto](features/custom_vauto.md) pressure shaping and trigger/cycle assist, including its shared code |
-| `PATCH_FALL_TIME=1` | Add [Fall Time](features/general.md#fall-time) in S/ST/T/PAC/iVAPS through custom settings |
-| `PATCH_ST_IBR=1` | Add [adaptive backup timing in ST](features/general.md#st-ibr) through custom settings |
-| `PATCH_AUTOEPAP=1` | Add [iVAPS AutoEPAP](features/general.md#ivaps-autoepap); requires font repacking and expanded heap |
-
-With custom settings, `Monitoring` in clinical Options enables or disables the
-flow and pressure graph. Without custom settings, the graph remains enabled.
-
-Optionally enable `--patch-graph-keep-screen-on Y` (or
-`PATCH_GRAPH_KEEP_SCREEN_ON=1`) to keep the screen awake during therapy while
-Monitoring is On. This option requires the graph patch, includes the
-[dial shortcut](features/general.md#keep-backlight), and is off by default.
+| Switch | What it does |
+|--------|-------------|
+| `--patch-fw-squarewave y` | Enable [Square Wave](features/squarewave.md) pressure shaping in S, ST, T, and PAC |
+| `--patch-fw-asv-wrapper y` | Add [runtime control](features/asv_backup_rate.md) for stock ASV/ASVAuto backup rate |
+| `--patch-fw-vauto-wrapper y` | Add [Custom VAuto](features/custom_vauto.md) pressure shaping and trigger/cycle assist |
+| `--patch-fall-time y` | Add [Fall Time](features/general.md#fall-time) in S/ST/T/PAC/iVAPS through custom settings |
+| `--patch-st-ibr y` | Add [adaptive backup timing in ST](features/general.md#st-ibr) through custom settings |
+| `--patch-autoepap y` | Add [iVAPS AutoEPAP](features/general.md#ivaps-autoepap); requires font repacking and expanded heap |
 
 Example with custom VAuto:
 ```
-export PATCH_CODE=1
-export PATCH_ASV_TASK_WRAPPER=1
-export PATCH_VAUTO_WRAPPER=1
-./patch-airsense stm32.bin build/stm32-custom.bin
+./patch-airsense stm32.bin build/stm32-custom.bin --patch-fw-asv-wrapper y --patch-fw-vauto-wrapper y
 ```
 
 ### Miscellaneous
@@ -129,24 +118,28 @@ export PATCH_VAUTO_WRAPPER=1
 | Patch | What it does | Switch |
 |-------|-------------|--------|
 | Expand heap | Adds about 13.5 KiB of runtime allocation space on SX567 firmware | `--patch-expand-heap` |
-| Repack fonts | Frees about 17 KiB of flash for patches without changing the available characters or their appearance | `--patch-font-repack` |
+| Repack fonts | Frees over 36 KiB of flash for patches without changing the available characters or their appearance | `--patch-font-repack` |
 | UART firmware dump | Adds the SX577-0200 / SX585-0200 bootloader command used by `resmed_flash.py --dump` | `--patch-blx-dump` |
 | UART metadata | Reports live-stream layouts and custom-settings menu metadata through `G C` | `--patch-uart-stream-schema` |
-| Replacement LCD | Adds the ILI9325/ILI9328 LCD driver | `--patch-fw-lcd` or `PATCH_S10_LCD=1` |
+| Replacement LCD | Adds the ILI9325/ILI9328 LCD driver | `--patch-fw-lcd` |
 
 ## Selecting patches
 
-Use `y` to enable a patch or `n` to disable it. For example, to disable the
-graph even when `PATCH_CODE=1` selects it:
+Use `y` to enable a patch or `n` to disable it. For example, to disable
+Square Wave even when the [local options file](../patch_options.md#files) selects it:
 
 ```bash
-PATCH_CODE=1 python3 python/patch-airsense.py \
-    stm32.bin build/stm32-custom.bin PATCH \
-    --patch-fw-graph n
+python3 python/patch-airsense.py stm32.bin build/stm32-custom.bin PATCH \
+    --patch-fw-squarewave n
 ```
 
-When building through Make, options can also be passed with `AIR10_PATCH_ARGS`.
-See [patch options](../patch_options.md) for examples and saved preferences.
+`--preset NAME` applies a saved set of options, such as `--preset plus`; other
+options on the command line override it.
+
+When building through Make, options can also be passed with `AIR10_PATCH_ARGS`,
+or with `PATCH_ARGS` when `AIR10_PATCH_ARGS` is not set.
+See [patch options](../patch_options.md) for examples, saved preferences and
+user presets.
 
 ## Next
 

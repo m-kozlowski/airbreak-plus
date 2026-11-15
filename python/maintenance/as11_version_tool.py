@@ -155,6 +155,7 @@ class PortCandidates:
     flow_wave: dict[str, AddressResult] | None
     airplane_reminder: AddressResult | None
     backlight: dict[str, AddressResult] | None
+    therapy_screen_style_sites: dict[str, AddressResult]
 
 
 @dataclass(frozen=True)
@@ -608,6 +609,28 @@ def thumb2_movw_immediate(
         | (((second >> 12) & 7) << 8)
         | (second & 0x00FF)
     )
+
+
+def thumb2_mov_immediate(
+        data: bytes, address: int, register: int | None = None) -> int | None:
+    """Decode a Thumb-2 MOVW or MOV.W immediate, optionally for one register."""
+    value = thumb2_movw_immediate(data, address, register)
+    off = address - FLASH_BASE
+    if value is not None or off < 0 or off + 4 > len(data):
+        return value
+    first, second = struct.unpack_from("<HH", data, off)
+    # MOV.W T2 with Rn = PC: 11110 i 0 0010 S 1111 | 0 imm3 Rd imm8.
+    if (first & 0xFBEF) != 0xF04F or second & 0x8000:
+        return None
+    if register is not None and (second >> 8) & 0x0F != register:
+        return None
+    imm12 = (((first >> 10) & 1) << 11) | (((second >> 12) & 7) << 8) | (second & 0xFF)
+    imm8 = imm12 & 0xFF
+    if imm12 >> 10 == 0:
+        return (imm8, imm8 * 0x00010001, imm8 * 0x01000100, imm8 * 0x01010101)[(imm12 >> 8) & 3]
+    rotation = imm12 >> 7
+    unrotated = 0x80 | (imm12 & 0x7F)
+    return ((unrotated >> rotation) | (unrotated << (32 - rotation))) & 0xFFFFFFFF
 
 
 def thumb2_bw_target(data: bytes, address: int) -> int | None:
@@ -1128,6 +1151,62 @@ def resolve_ble_oxi_fallback_candidates(
     return sites
 
 
+def tss_switch_pointers(firmware: AS11Firmware, stubs: dict[str, AddressResult]) -> list[int]:
+    """Return literals holding the TSS DataItem-switch object address."""
+    # The constructor call loads R1 with the TSS var ID and R0 from a literal
+    # containing the switch object address.
+    data = firmware.data
+    tss = firmware._resolve_var_ident("TSS")
+    switch_ctor = stubs["GuiDataItemSwitch_ctor"]
+    pointers = []
+    if tss is not None and switch_ctor.address is not None:
+        for call in thumb2_bl_calls_to(data, switch_ctor.address):
+            if thumb2_mov_immediate(data, call - 8, register=1) != tss:
+                continue
+            first, second = struct.unpack_from("<HH", data, call - 4 - FLASH_BASE)
+            if first == 0xF8DF and second >> 12 == 0:
+                pointers.append((call & ~3) + (second & 0xFFF))
+    return pointers
+
+
+def resolve_therapy_screen_style_sites(
+        firmware: AS11Firmware, stubs: dict[str, AddressResult],
+        reference: dict) -> dict[str, AddressResult]:
+    """Locate the native PressureBar registration and TSS==1 consumer calls."""
+    data = firmware.data
+    tss = firmware._resolve_var_ident("TSS")
+    pointers = tss_switch_pointers(firmware, stubs)
+    switch = struct.unpack_from("<I", data, pointers[0] - FLASH_BASE)[0] if len(pointers) == 1 else None
+    registrations = []
+    add = stubs["GuiSwitchAction_add"]
+    if switch is not None and add.address is not None:
+        for call in thumb2_bl_calls_to(data, add.address):
+            # ldr r4,[pc,#imm] (switch); movs r1,#1; movs r0,r4; bl add.
+            load = struct.unpack_from("<H", data, call - 6 - FLASH_BASE)[0]
+            literal = ((call - 2) & ~3) + (load & 0xFF) * 4
+            if (data[call - 4 - FLASH_BASE:call - FLASH_BASE] == bytes.fromhex("01212000") and
+                    load & 0xFF00 == 0x4C00 and
+                    struct.unpack_from("<I", data, literal - FLASH_BASE)[0] == switch):
+                registrations.append(call)
+    reads = []
+    read = stubs["DataItem_read_value_by_id"]
+    if tss is not None and read.address is not None:
+        # movw/mov.w r0,#TSS; bl read; cmp r0,#1. The switch constructor uses R1.
+        reads = [call for call in thumb2_bl_calls_to(data, read.address)
+                 if thumb2_mov_immediate(data, call - 4, register=0) == tss and
+                 data[call + 4 - FLASH_BASE:call + 6 - FLASH_BASE] == b"\x01\x28"]
+    sites = {}
+    for name, calls, evidence in (
+            ("pressure_bar_registration_call", registrations, "TSS switch value-1 registrations"),
+            ("pressure_bar_style_read_call", reads, "TSS reads compared with PressureBar")):
+        sites[name] = AddressResult(
+            reference.get(name, 0), calls[0] if len(calls) == 1 else None,
+            "strong" if len(calls) == 1 else "missing", "%s: %d" % (evidence, len(calls)),
+            tuple(calls) if len(calls) != 1 else (),
+        )
+    return sites
+
+
 def resolve_flow_wave_candidates(
         firmware: AS11Firmware, matcher: AddressMatcher, stubs: dict[str, AddressResult],
         reference: dict) -> dict[str, AddressResult]:
@@ -1156,18 +1235,7 @@ def resolve_flow_wave_candidates(
     for site in ("therapy_page_state_call", "therapy_page_policy_call"):
         sites[site] = resolve_callsite(data, sites[site], stubs[name], name)
 
-    # TSS selects a DataItem switch. Its constructor loads R1 with the var ID
-    # and R0 from a literal containing the switch object address.
-    tss = firmware._resolve_var_ident("TSS")
-    switch_ctor = stubs["GuiDataItemSwitch_ctor"]
-    pointers = []
-    if tss is not None and switch_ctor.address is not None:
-        for call in thumb2_bl_calls_to(data, switch_ctor.address):
-            if thumb2_movw_immediate(data, call - 8, register=1) != tss:
-                continue
-            first, second = struct.unpack_from("<HH", data, call - 4 - FLASH_BASE)
-            if first == 0xF8DF and second >> 12 == 0:
-                pointers.append((call & ~3) + (second & 0xFFF))
+    pointers = tss_switch_pointers(firmware, stubs)
     sites["tss_switch_pointer"] = AddressResult(
         reference["tss_switch_pointer"], pointers[0] if len(pointers) == 1 else None,
         "strong" if len(pointers) == 1 else "missing",
@@ -1817,9 +1885,12 @@ def resolve_port_candidates(
     # the reviewed mapping. Missing labels remain TODOs in the bundle.
     therapy_screen_style = {}
     for name, text in (("label_id", "Therapy View"), ("simple", "Simple"),
-                       ("pressure", "Pressure"), ("flow", "Flow")):
+                       ("pressure", "Pressure"), ("flow", "Flow"), ("auto", "Auto")):
         matches = exact_gui_text_ids(target_fw, text)
         therapy_screen_style[name] = matches[0] if matches else None
+    therapy_screen_style_sites = resolve_therapy_screen_style_sites(
+        target_fw, stubs, reference.get("therapy_screen_style") or {}
+    )
     asv = resolve_asv_candidates(
         target_fw, reference_fw, stubs, reference["asv_backup_rate"]
     )
@@ -1853,7 +1924,8 @@ def resolve_port_candidates(
     return PortCandidates(
         stubs, cloud_firmware_change, cellular_download, rpc_dispatcher, mop,
         timezone_write, header_clock, screen_keep_awake, custom_settings, therapy_screen_style, asv,
-        ota_compatibility, ble_oxi_fallback, scroll_animation, flow_wave, airplane_reminder, backlight
+        ota_compatibility, ble_oxi_fallback, scroll_animation, flow_wave, airplane_reminder, backlight,
+        therapy_screen_style_sites
     )
 
 
@@ -2370,7 +2442,7 @@ def self_check_candidates(
 
     style_expected = expected_version.get("therapy_screen_style")
     if style_expected is not None:
-        expected_labels = dict(zip(("simple", "pressure", "flow"), style_expected["option_labels"]))
+        expected_labels = dict(zip(("simple", "pressure", "flow", "auto"), style_expected["option_labels"]))
         expected_labels["label_id"] = style_expected["label_id"]
         for name, expected in expected_labels.items():
             value = candidates.therapy_screen_style[name]
@@ -2378,6 +2450,10 @@ def self_check_candidates(
                 "therapy_screen_style." + name, expected,
                 CandidateValue(value, "strong" if value is not None else "missing", "exact GUI text"),
             ))
+        for name, result in candidates.therapy_screen_style_sites.items():
+            if name in style_expected:
+                checks.append(compare_candidate("therapy_screen_style." + name, style_expected[name],
+                    CandidateValue(result.address, result.quality, result.evidence)))
     return checks
 
 
@@ -2534,6 +2610,10 @@ def prepare(args) -> int:
     address_rows.extend(
         ("flow_wave", name, result)
         for name, result in (candidates.flow_wave or {}).items()
+    )
+    address_rows.extend(
+        ("therapy_screen_style", name, result)
+        for name, result in candidates.therapy_screen_style_sites.items()
     )
     address_rows.extend((
         ("custom_settings", "row_constructor", row_ctor_result),
@@ -2841,8 +2921,10 @@ def prepare(args) -> int:
         "    \"therapy_screen_style\": {",
         "        \"label_id\": %s," % format_text_id(candidates.therapy_screen_style["label_id"]),
         "        \"option_labels\": (%s)," % ", ".join(
-            format_text_id(candidates.therapy_screen_style[name]) for name in ("simple", "pressure", "flow")
+            format_text_id(candidates.therapy_screen_style[name]) for name in ("simple", "pressure", "flow", "auto")
         ),
+        *("        \"%s\": %s," % (name, format_address(result.address))
+          for name, result in candidates.therapy_screen_style_sites.items()),
         "    },",
         "},",
         "",

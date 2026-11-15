@@ -13,6 +13,7 @@ import sys
 
 from lib.s9_firmware import S9Firmware, write_output
 from lib.patch_config import parse_patch_args
+from lib import patch_options
 from lib.compiled_payload import elf_symbol_address, elf_text_address, elf_binary_data
 
 REPO = Path(__file__).resolve().parents[1]
@@ -61,15 +62,6 @@ PS_CONSTRAINTS = {
 
 
 @dataclass(frozen=True)
-class PatchSpec:
-    option: str
-    method: str
-    default: bool
-    description: str
-    phase: str = 'Configuration'
-
-
-@dataclass(frozen=True)
 class PatchOutcome:
     status: str = 'OK'
     summary: str = ''
@@ -97,27 +89,7 @@ class TeeStream:
             stream.flush()
 
 
-PATCHES = (
-    PatchSpec('patch-tamper', 'tamper', True, 'Patch bootloader integrity calls.', 'Bootloader'),
-    PatchSpec('patch-extra-modes', 'extra_modes', True, 'Enable declared therapy mode options.'),
-    PatchSpec('patch-respiratory-events', 'respiratory_events', True, 'Enable CEN, respiratory statistics, EVE recording.'),
-    PatchSpec('patch-gui-config', 'gui_config', True, 'Activate named clinical settings.'),
-    PatchSpec('patch-defaults', 'patch_defaults', True, 'Set AutoSet, cmH2O, Pillows, SlimLine, Full access and Patient control defaults.'),
-    PatchSpec('patch-unlock-uilimits', 'ui_limits', True, 'Extend pressure UI ranges and set Ti Min/Max to 0.1..4 s.'),
-    PatchSpec('patch-asv-ps-range', 'ps_ranges', True, 'Unlock ASV/ASVAuto PS ranges and fixed separation.'),
-    PatchSpec('patch-motor-nagscreen', 'motor', True, 'Extend motor life warning threshold.'),
-    PatchSpec('patch-alarm-board', 'no_alarm_board', True, 'Set AOA.default=0 and hide HLE when present; skip images without AOA.'),
-    PatchSpec('patch-fw-lcd', 'lcd', False, 'Automatically select a compatible LCD driver.', 'Compiled payloads'),
-)
-PATCH_PHASES = tuple((phase, tuple(spec for spec in PATCHES if spec.phase == phase))
-                     for phase in dict.fromkeys(spec.phase for spec in PATCHES))
-
-
-def str2bool(value):
-    if isinstance(value, bool): return value
-    if value.lower() in ('yes', 'y', 'true', 't', '1', 'on'): return True
-    if value.lower() in ('no', 'n', 'false', 'f', '0', 'off'): return False
-    raise argparse.ArgumentTypeError('expected y/n, true/false, or 1/0')
+PATCH_OPTIONS = patch_options.load('s9')
 
 
 class S9Patcher:
@@ -318,23 +290,9 @@ def build_argument_parser():
     parser.add_argument('INFILE', help='Input original binary file')
     parser.add_argument('OUTFILE', help='Output patched file (unused for INFO)')
     parser.add_argument('OPERATION', choices=['INFO', 'PATCH'], help='Operation to perform')
-    for spec in PATCHES:
-        state = 'enabled' if spec.default else 'disabled'
-        parser.add_argument('--' + spec.option, type=str2bool, default=None, metavar='BOOL',
-                            help=f'{spec.description} (default: {state})')
-    parser.add_argument('--all-patches', type=str2bool, default=None, metavar='BOOL',
-                        help='Fallback for individually unset switches; otherwise use built-in defaults.')
-    parser.add_argument('--overwrite', action='store_true', help='Overwrite an existing output file.')
-    parser.add_argument('--allow-invalid-input-crc', action='store_true',
-                        help='Explicitly allow a research input with invalid region CRCs.')
-    parser.add_argument('-v', '--verbose', action='store_true', help='Show per-patch details and byte changes.')
-    parser.add_argument('--log-file', help='Append a verbose patching transcript to this file.')
+    PATCH_OPTIONS.add_arguments(parser)
+    PATCH_OPTIONS.add_run_arguments(parser)
     return parser
-
-
-def patch_option_selected(args, spec):
-    selected = getattr(args, spec.option.replace('-', '_'))
-    return selected if selected is not None else args.all_patches if args.all_patches is not None else spec.default
 
 
 def print_patch_details(lines, args, detail_log):
@@ -374,8 +332,8 @@ def run_patcher(args, detail_log=None):
     invalid = firmware.invalid_crcs()
     if args.OPERATION == 'INFO':
         print('Input CRCs: ' + (', '.join(invalid) + ' invalid' if invalid else 'OK'))
-        for spec in PATCHES:
-            print(f'{spec.option}: {patch_option_selected(args, spec)}')
+        for spec in PATCH_OPTIONS.patches():
+            print(f'{spec.option}: {PATCH_OPTIONS.selected(args, spec)}')
         return 0
     if invalid:
         if not args.allow_invalid_input_crc:
@@ -389,11 +347,11 @@ def run_patcher(args, detail_log=None):
     if firmware.cdx_version == 'SX474-1301' and firmware.fl.bytes(0x61DC8, 4) == bytes.fromhex('704700bf'):
         raise ValueError('input contains the old shared-fault bypass; use the original ST-A image')
     patcher = S9Patcher(firmware)
-    for phase, specs in PATCH_PHASES:
-        selected = [spec for spec in specs if patch_option_selected(args, spec)]
+    for phase in PATCH_OPTIONS.phases:
+        selected = [spec for spec in phase.patches if PATCH_OPTIONS.selected(args, spec)]
         if not selected:
             continue
-        print('\n=== ' + phase)
+        print('\n=== ' + phase.name)
         for spec in selected:
             apply_reported_patch(spec, patcher, args, detail_log)
     print('\n=== Finalization')
@@ -420,7 +378,11 @@ def run_handled(args, detail_log=None):
 
 def main(argv=None):
     parser = build_argument_parser()
-    args = parse_patch_args(parser, argv, 's9')
+    args = parse_patch_args(parser, argv, PATCH_OPTIONS)
+    if args.OPERATION == 'PATCH':
+        errors = PATCH_OPTIONS.dependency_errors(args)
+        if errors:
+            parser.error('; '.join(errors))
     if args.log_file is None:
         return run_handled(args)
     try:

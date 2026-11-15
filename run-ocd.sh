@@ -1,13 +1,13 @@
 #!/bin/bash
 
 usage() {
-    echo "Usage: $0 [-s SERIAL] [--interface stlink|jlink] [--jlink] [-c COMMAND]... [config]"
+    echo "Usage: $0 [-s SERIAL] [--interface stlink|jlink] [--jlink] [-c \"COMMAND ARGS\"]... [config]"
 }
 
 adapter_serial=
 interface=stlink
+commands=()
 positional=()
-commands=()   # -c: OpenOCD commands run after the config, e.g. -c 'dump' -c shutdown
 while (( $# > 0 )); do
     case "$1" in
         -s)
@@ -45,6 +45,7 @@ while (( $# > 0 )); do
 done
 (( ${#positional[@]} <= 1 )) || { usage >&2; exit 2; }
 cfg=${positional[0]:-airsense}
+[[ -f "tcl/${cfg}.cfg" ]] || { echo "No configuration tcl/${cfg}.cfg" >&2; usage >&2; exit 2; }
 
 case "$interface" in
     stlink|jlink) ;;
@@ -81,7 +82,6 @@ esac
 if [[ -n "$adapter_serial" ]]; then
     openocd_args+=(-c "adapter serial $adapter_serial")
 fi
-openocd_args+=(-f "tcl/${cfg}.cfg")
-openocd_args+=("${commands[@]}")
+openocd_args+=(-f "tcl/${cfg}.cfg" "${commands[@]}")
 
 openocd "${openocd_args[@]}"

@@ -80,7 +80,7 @@ void *autoepap_flow_ref_impl(float **output, int index, int replacement) {
 }
 
 typedef struct {
-    Node node;
+    therapy_worker node;
     float adaptation[4], activity[4];
     int interval;
     unsigned char negative, padding[3];
@@ -113,7 +113,7 @@ static void transition_event(void *ctx, unsigned event) {
     therapy_feedback_item_phase1_init(item, event - 10);
     therapy_manager_set_feedback_item(item);
 }
-typedef struct { Node node; int pending; float positive, negative; } Transition;
+typedef struct { therapy_worker node; int pending; float positive, negative; } Transition;
 
 void autoepap_transition(Transition *worker) {
     if (!autoepap_on()) { breath_transition_detector_update(worker); return; }
@@ -129,7 +129,7 @@ void autoepap_transition(Transition *worker) {
 }
 
 typedef struct {
-    Node node;
+    therapy_worker node;
     int inhale_ring[5], exhale_ring[5], inhale_start, exhale_start, last_inhale;
 } Timing;
 

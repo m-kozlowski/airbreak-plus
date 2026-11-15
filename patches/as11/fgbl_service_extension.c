@@ -29,6 +29,7 @@ extern int LZ4_decompress_safe(
 extern void sram_updater_run_staged_upgrade_flow(void *context);
 extern u16 sram_updater_crc16_ccitt(const void *data, u32 length);
 extern void sram_writer_wrapper_service(void *wrapper);
+extern u32 sram_updater_get_tick(void);
 
 /* Native SPI-NOR job API retained in the copied SRAM updater. */
 extern void *sram_nor_read_job_get(int index);
@@ -215,7 +216,7 @@ extern int sram_flash_writer_flush_partial(void *writer);
     (FDCAN_RX_FIFO0_WORD + FDCAN_RX_FIFO0_ELEMENTS * FDCAN_ELEMENT_WORDS)
 #define FDCAN_MESSAGE_RAM_WORDS (FDCAN_TX_BUFFER_WORD + FDCAN_ELEMENT_WORDS)
 
-#define FDCAN_WAIT_LIMIT 20000000u
+#define FDCAN_TIMEOUT_MS 1000u
 #define FLASH_WAIT_LIMIT 20000000u
 #define FDCAN_NBTP_VALUE(brp, sjw, tseg1, tseg2) \
     ((((sjw) - 1u) << 25) | (((brp) - 1u) << 16) | \
@@ -315,10 +316,10 @@ static u8 target_range_status(u8 target, u32 offset, u32 length)
 
 static int wait_register(u32 offset, u32 mask, u32 expected)
 {
-    u32 limit = FDCAN_WAIT_LIMIT;
+    u32 started = sram_updater_get_tick();
 
     while ((REG32(FDCAN1_BASE + offset) & mask) != expected) {
-        if (--limit == 0u) {
+        if ((u32)(sram_updater_get_tick() - started) >= FDCAN_TIMEOUT_MS) {
             return -1;
         }
         watchdog_refresh();
@@ -408,7 +409,7 @@ static int fdcan_init(void)
     return 0;
 }
 
-static int fdcan_receive(u8 *data, u8 *length)
+static int fdcan_receive(u8 *data, u8 *length, int keep_request)
 {
     volatile u32 *element;
     u32 status = REG32(FDCAN1_BASE + FDCAN_RXF0S);
@@ -438,6 +439,12 @@ static int fdcan_receive(u8 *data, u8 *length)
         data[i] = ((volatile u8 *)(element + 2))[i];
     }
     *length = (u8)dlc;
+    /* Leave a new request in FIFO0 until the old response has unwound. */
+    if (keep_request && dlc != 0u &&
+        ((data[0] & ISOTP_TYPE_MASK) == ISOTP_FIRST_FRAME ||
+         (data[0] & ISOTP_TYPE_MASK) == ISOTP_SINGLE_FRAME)) {
+        return 2;
+    }
     REG32(FDCAN1_BASE + FDCAN_RXF0A) = index;
     return 1;
 }
@@ -573,15 +580,18 @@ static int receive_isotp(struct rx_packet *packet, const u8 *frame, u8 length)
 
 static int wait_flow_control(u8 *block_size)
 {
-    u32 limit = FDCAN_WAIT_LIMIT;
+    u32 started = sram_updater_get_tick();
     u8 frame[8];
     u8 length;
 
-    while (limit-- != 0u) {
+    while ((u32)(sram_updater_get_tick() - started) < FDCAN_TIMEOUT_MS) {
         int result;
 
         service_housekeeping();
-        result = fdcan_receive(frame, &length);
+        result = fdcan_receive(frame, &length, 1);
+        if (result == 2) {
+            return -1;
+        }
         if (result <= 0) {
             continue;
         }
@@ -1306,7 +1316,7 @@ static void handle_packet(struct rx_packet *packet)
         }
         info[0] = 0u;
         info[1] = 9u;
-        info[2] = 0u;
+        info[2] = 1u;
         for (i = 0; i != sizeof(fgbl_bid); ++i) {
             info[3 + i] = fgbl_bid[i];
         }
@@ -1372,7 +1382,7 @@ static void service_loop(void)
 
     for (;;) {
         service_housekeeping();
-        result = fdcan_receive(frame, &frame_length);
+        result = fdcan_receive(frame, &frame_length, 0);
         if (result <= 0) {
             continue;
         }

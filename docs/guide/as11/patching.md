@@ -98,7 +98,7 @@ instead of producing that reduced result.
 | Header clock | Shows local time and usage time in the header during therapy | `--patch-header-clock` |
 | Screen keep-awake | Uses a three-finger hold to toggle whether inactivity turns off the display | `--patch-screen-keep-awake` |
 | Backlight (optional) | Sets ambient-light thresholds, LCD brightness levels, and response delay at build time | `--patch-backlight` |
-| Startup logo (optional) | Selects the logo shown when the device starts | `--patch-startup-logo [0..4]` |
+| Startup logo (optional) | Selects the logo shown when the device starts | `--patch-startup-logo` |
 | Sensitivity split screen (optional) | Shows a graphic beside Trigger/Cycle sensitivity choices in supported modes | `--patch-sensitivity-split-screen` |
 | Motor nag removal | Removes the design-life warning while preserving the runtime counter | `--patch-motor-nagscreen` |
 | Airplane-mode reminder | Removes the automatic airplane-mode reminder | `--patch-airplane-reminder` |
@@ -125,17 +125,17 @@ python3 python/patch-airsense-s11.py \
     --patch-edf-superset y
 ```
 
-When building through Make, options can also be passed with `AIR11_PATCH_ARGS`.
+When building through Make, options can also be passed with `AIR11_PATCH_ARGS`,
+or with `PATCH_ARGS` when `AIR11_PATCH_ARGS` is not set.
 See [patch options](../../patch_options.md) for examples and saved preferences.
 
-Startup logo takes a number instead of `y/n`: `0` Off, `1` AirSense 11,
-`2` AirCurve 11, `3` Lumis 11, or `4` ResMed. Using `--patch-startup-logo`
-without a number selects ResMed; omitting the switch preserves the stock logo.
+`--startup-logo` selects the logo of `--patch-startup-logo`: `0` Off,
+`1` AirSense 11, `2` AirCurve 11, `3` Lumis 11, or `4` ResMed (default).
 
 For example, add both optional patches to the standard build:
 
 ```bash
-make as11 AIR11_PATCH_ARGS='--patch-startup-logo 4 --patch-sensitivity-split-screen y'
+make as11 AIR11_PATCH_ARGS='--patch-startup-logo y --patch-sensitivity-split-screen y'
 ```
 
 ## Backlight
