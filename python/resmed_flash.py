@@ -100,9 +100,9 @@ EEPROM_SIZE = 0x40000
 EEPROM_PAGE_SIZE = 256
 EEPROM_MODULE_LIMIT = 0x8000
 EEPROM_WRITE_BUFFER = 0x8000
-EEPROM_INFO = b'AEEP' + struct.pack('<BIHI', 3, EEPROM_SIZE, EEPROM_PAGE_SIZE, EEPROM_WRITE_BUFFER)
+EEPROM_INFO = b'AEEP' + struct.pack('<BIHI', 4, EEPROM_SIZE, EEPROM_PAGE_SIZE, EEPROM_WRITE_BUFFER)
 EEPROM_ERRORS = {
-    1: 'invalid EEPROM request or range',
+    1: 'invalid transfer request, range or sequence',
     2: 'SPI transfer timeout',
     3: 'EEPROM busy timeout (check the EEPROM connection)',
     4: 'EEPROM block protection is enabled',
@@ -192,7 +192,7 @@ def read_frame(ser, timeout=1.0):
     if not hasattr(ser, '_resmed_rx'):
         ser._resmed_rx = bytearray()
     data = ser._resmed_rx
-    deadline = time.monotonic() + timeout
+    deadline = None if timeout is None else time.monotonic() + timeout
     try:
         while True:
             needed = 5
@@ -235,10 +235,10 @@ def read_frame(ser, timeout=1.0):
                     'crc_ok': stored_crc == crc16_ccitt(raw[:-4]),
                     'raw': raw,
                 }
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
+            remaining = None if deadline is None else deadline - time.monotonic()
+            if remaining is not None and remaining <= 0:
                 return None
-            ser.timeout = min(0.02, remaining)
+            ser.timeout = 0.02 if remaining is None else min(0.02, remaining)
             # Serial.read waits for the requested byte count or its timeout.
             # Read only the header/remainder, so a complete short frame returns
             # immediately on serial ports as well as TCP sockets.
@@ -247,19 +247,23 @@ def read_frame(ser, timeout=1.0):
         ser.timeout = old_timeout
 
 
-def read_blx_reply(ser, timeout=1.0):
+def read_blx_reply(ser, timeout=1.0, strict=False):
     """Read a complete O reply with a valid CRC and declared payload length."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        frame = read_frame(ser, timeout=deadline - time.monotonic())
+    deadline = None if timeout is None else time.monotonic() + timeout
+    while deadline is None or time.monotonic() < deadline:
+        frame = read_frame(ser, timeout=None if deadline is None else deadline - time.monotonic())
         if frame is None:
             return None
         payload = frame['payload']
         if not frame['crc_ok'] or frame['type'] != DUMP_FRAME_TYPE or len(payload) < 7:
+            if strict:
+                raise RuntimeError('invalid BLX stream frame or CRC')
             continue
         offset, n = struct.unpack_from('<IH', payload, 1)
         if len(payload) == 7 + n:
             return payload[:1], offset, payload[7:]
+        if strict:
+            raise RuntimeError('invalid BLX stream frame length')
     return None
 
 
@@ -351,35 +355,55 @@ def read_memory(ser, command, size):
     yield from read_memory_range(ser, command, 0, size)
 
 
-def read_memory_range(ser, command, start, end, retries=3):
-    """Yield a verified contiguous range; drain to completion before resuming gaps."""
+def read_memory_range(ser, command, start, end):
+    """Acknowledge consumed data within a bounded sliding window of frames."""
     limits = {b'D': FULL_IMAGE_SIZE, b'R': EEPROM_SIZE}
     if command not in limits or not 0 <= start < end <= limits[command]:
         raise ValueError('invalid memory read command or range')
-    offset = start
-    for _ in range(retries):
-        # If only the end marker was lost, re-read the last byte to establish
-        # completion without returning duplicate data to the caller.
-        resume = min(offset, end - 1)
-        send_blx_request(ser, b'X' + struct.pack('<IH', resume, 0) + command + struct.pack('<I', end))
+    # Budget wire bytes, including worst-case escaping, not just payload bytes.
+    # Direct serial uses a conservative 4 KiB receive buffer. TCP advertises its
+    # actual queue; a legacy/raw bridge permits only one outstanding frame.
+    window = min(128, getattr(ser, 'reply_buffer', 4096) // 511)
+    if window < 1:
+        raise RuntimeError('receive buffer cannot hold one BLX frame')
+    acknowledge_every = max(1, window // 2) * DUMP_CHUNK_SIZE
+    offset = acknowledged = start
+    complete = False
+    send_blx_request(ser, b'X' + struct.pack('<IH', start, window) + command + struct.pack('<I', end))
+    try:
         while True:
-            reply = read_blx_reply(ser)
+            reply = read_blx_reply(ser, timeout=None, strict=True)
             if reply is None:
-                break
+                raise RuntimeError('memory stream timed out at 0x%05X' % offset)
             op, reply_offset, data = reply
-            if not resume <= reply_offset <= end:
+            if reply_offset < start:
                 continue
             check_blx_error(command, op, reply_offset, data)
-            if op != command.lower():
-                continue
-            if reply_offset == end and not data:
-                if offset == end:
-                    return
-                break
-            if reply_offset == offset and len(data) == min(DUMP_CHUNK_SIZE, end - offset) and data:
-                yield offset, data
-                offset += len(data)
-    raise RuntimeError('memory stream incomplete at 0x%05X (end 0x%05X)' % (offset, end))
+            if op != command.lower() or reply_offset != offset:
+                raise RuntimeError('unexpected memory stream reply at 0x%05X (expected 0x%05X)' %
+                                   (reply_offset, offset))
+            if offset == end and not data:
+                complete = True
+                return
+            if not data or len(data) != min(DUMP_CHUNK_SIZE, end - offset):
+                raise RuntimeError('incomplete memory stream at 0x%05X' % offset)
+            yield offset, data
+            offset += len(data)
+            # Yield first: a slow file writer or comparison must also stop BLX.
+            if offset == end or offset - acknowledged >= acknowledge_every:
+                frame = build_frame(DUMP_FRAME_TYPE, b'A' + struct.pack('<IH', offset, 0))
+                write_transfer_frame(ser, frame, 'memory read acknowledgement')
+                ser.flush()
+                acknowledged = offset
+    finally:
+        if not complete:
+            # An invalid ACK cancels the module's wait and restores borrowed SPI.
+            # Do not mask the original failure if the transport has gone away.
+            try:
+                ser.write(build_frame(DUMP_FRAME_TYPE, b'A' + struct.pack('<IH', offset, 1)))
+                ser.flush()
+            except OSError:
+                pass
 
 
 def write_eeprom_range(ser, data):
@@ -1273,7 +1297,7 @@ Examples:
             return 0
 
     if args.port.startswith('tcp:'):
-        ser = open_tcp(args.port, args.tcp_mode, timeout=1.0)
+        ser = open_tcp(args.port, args.tcp_mode, timeout=1.0, hold=bool(eeprom or args.dump))
     else:
         ser = serial.Serial(args.port, 57600, timeout=1.0)
 

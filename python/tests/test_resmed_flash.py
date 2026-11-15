@@ -11,6 +11,7 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import resmed_flash as flash
+import tcp_serial
 
 
 class Serial:
@@ -48,90 +49,153 @@ def request_payloads(wire):
         wire = wire[length:]
 
 
+class TcpFlowControlTests(unittest.TestCase):
+    def test_hold_and_reply_capacity_are_confirmed_by_bridge(self):
+        sock = Mock()
+        with patch.object(tcp_serial.socket, 'socket', return_value=sock), \
+                patch.object(tcp_serial.TcpSerial, '_read_line', side_effect=[
+                    'AirBridge', 'OK: entering transparent mode idle_timeout=0 reply_buffer=8192']):
+            ser = tcp_serial.TcpSerial('bridge', hold=True)
+        sock.sendall.assert_called_once_with(b'$TRANSPARENT HOLD\n')
+        self.assertEqual(ser.reply_buffer, 8192)
+        sock.close.assert_not_called()
+
+    def test_unconfirmed_hold_or_invalid_capacity_closes_connection(self):
+        for response in ('ERR: unknown command', 'OK: reply_buffer=8192',
+                         'OK: idle_timeout=5 reply_buffer=8192',
+                         'OK: idle_timeout=0 reply_buffer=0',
+                         'OK: idle_timeout=0 reply_buffer=oops'):
+            sock = Mock()
+            with self.subTest(response=response), \
+                    patch.object(tcp_serial.socket, 'socket', return_value=sock), \
+                    patch.object(tcp_serial.TcpSerial, '_read_line', side_effect=['AirBridge', response]), \
+                    self.assertRaises(ConnectionError):
+                tcp_serial.TcpSerial('bridge', hold=True)
+            sock.close.assert_called_once()
+
+    def test_ordinary_legacy_session_uses_one_frame_budget(self):
+        with patch.object(tcp_serial.socket, 'socket'), \
+                patch.object(tcp_serial.TcpSerial, '_read_line', side_effect=['AirBridge', 'OK: transparent']):
+            ser = tcp_serial.TcpSerial('bridge')
+        self.assertEqual(ser.reply_buffer, 512)
+
+
 class StreamReadTests(unittest.TestCase):
-    def test_full_dump_with_escaped_data_and_short_last_frame(self):
+    def stream(self, command, data, budget=8192):
+        sent = acknowledged = 0
+        window = None
+        def respond(wire, _):
+            nonlocal sent, acknowledged, window
+            payload, = request_payloads(wire)
+            at, n = struct.unpack_from('<IH', payload, 1)
+            if payload[:1] == b'X':
+                self.assertIsNone(window, 'only one range request')
+                self.assertEqual(payload[7:8], command)
+                self.assertEqual(struct.unpack_from('<I', payload, 8)[0], len(data))
+                self.assertEqual(n, min(128, budget // 511))
+                window = n * 240
+            else:
+                self.assertEqual(payload[:1], b'A')
+                if n:  # cancellation on generator close/failure
+                    return b''
+                self.assertGreater(at, acknowledged)
+                self.assertLessEqual(at, sent)
+                acknowledged = at
+                if at == len(data):
+                    return reply(command.lower(), at, b'')
+            frames = []
+            while sent < len(data) and sent - acknowledged < window:
+                chunk = data[sent:sent + 240]
+                frames.append(reply(command.lower(), sent, chunk))
+                sent += len(chunk)
+            self.assertLessEqual(len(ser.buffer) + sum(map(len, frames)), budget,
+                                 'unconsumed wire bytes exceed receiver capacity')
+            return b''.join(frames)
+        ser = Serial(respond)
+        ser.reply_buffer = budget
+        return ser
+
+    def test_full_dumps_fit_wire_budget_even_with_all_bytes_escaped(self):
         for command in (b'D', b'R'):
             data = b'U' * (0x100000 if command == b'D' else flash.EEPROM_SIZE)
-            def respond(wire, _):
-                frames = []
-                for payload in request_payloads(wire):
-                    offset, size = struct.unpack_from('<IH', payload, 1)
-                    self.assertEqual(payload[0:1], b'X')
-                    self.assertEqual(size, 0)
-                    self.assertEqual(payload[7:8], command)
-                    end, = struct.unpack_from('<I', payload, 8)
-                    frames.extend(reply(command.lower(), i, data[i:min(i + 240, end)])
-                                  for i in range(offset, end, 240))
-                    frames.append(reply(command.lower(), end, b''))
-                return b''.join(frames)
-            ser = Serial(respond)
+            ser = self.stream(command, data)
             with self.subTest(command=command):
                 chunks = list(flash.read_memory(ser, command, len(data)))
                 self.assertEqual(b''.join(chunk for _, chunk in chunks), data)
                 self.assertEqual([offset for offset, _ in chunks], list(range(0, len(data), 240)))
-                self.assertEqual(len(ser.requests), 1)
-                self.assertTrue(all(len(wire) <= 511 for wire in ser.requests))
+                self.assertEqual(len(ser.requests), 1 + (len(data) + 1919) // 1920)
 
-    def test_missing_or_damaged_frame_resumes_after_draining_stream(self):
+    def test_small_and_odd_receive_budgets_and_window_limit(self):
+        for budget in (512, 1024, 1533, 4096, 65536, 1000000):
+            with self.subTest(budget=budget):
+                data = b'U' * 7777
+                ser = self.stream(b'R', data, budget)
+                self.assertEqual(b''.join(chunk for _, chunk in flash.read_memory(ser, b'R', len(data))), data)
+
+    def test_slow_consumer_does_not_grant_more_credit_and_close_cancels(self):
+        ser = self.stream(b'R', b'U' * 10000)
+        chunks = flash.read_memory(ser, b'R', 10000)
+        for _ in range(8):
+            next(chunks)
+        self.assertEqual(len(ser.requests), 1, 'ACK must follow consumption, not precede yield')
+        buffered = len(ser.buffer)
+        next(chunks)
+        self.assertEqual(len(ser.requests), 2)
+        self.assertGreater(len(ser.buffer), buffered)
+        chunks.close()
+        payload, = request_payloads(ser.requests[-1])
+        self.assertEqual(payload[:1], b'A')
+        self.assertEqual(struct.unpack_from('<H', payload, 5)[0], 1)
+
+    def test_missing_or_damaged_data_aborts_without_acknowledging_gap(self):
         good = reply(b'r', 240, b'b' * 240)
         damaged = good[:-1] + (b'0' if good[-1:] != b'0' else b'1')
         for gap in (b'', damaged):
-            def respond(wire, attempt):
-                # A lost middle frame must not cause the later frame to be
-                # accepted in its place, nor a second request before the end.
-                self.assertFalse(ser.buffer)
-                if attempt == 1:
-                    return reply(b'r', 0, b'a' * 240) + gap + reply(b'r', 480, b'c') + reply(b'r', 481, b'')
-                self.assertEqual(list(request_payloads(wire)),
-                                 [b'X' + struct.pack('<IH', 240, 0) + b'R' + struct.pack('<I', 481)])
-                return good + reply(b'r', 480, b'c') + reply(b'r', 481, b'')
-            ser = Serial(respond)
-            with self.subTest(gap=bool(gap)):
-                self.assertEqual(list(flash.read_memory_range(ser, b'R', 0, 481)),
-                                 [(0, b'a' * 240), (240, b'b' * 240), (480, b'c')])
-                self.assertEqual(len(ser.requests), 2)
+            ser = Serial(lambda wire, count: (reply(b'r', 0, b'a' * 240) + gap +
+                         reply(b'r', 480, b'c')) if count == 1 else b'')
+            with self.subTest(gap=bool(gap)), self.assertRaisesRegex(RuntimeError, 'expected 0x000F0|CRC'):
+                list(flash.read_memory_range(ser, b'R', 0, 481))
+            self.assertEqual(len(ser.requests), 2)
+            self.assertEqual(list(request_payloads(ser.requests[-1])), [b'A' + struct.pack('<IH', 240, 1)])
 
     def test_device_error_in_stream_is_fatal(self):
         ser = Serial(lambda *_: reply(b'r', 0, b'a' * 240) + reply(b'e', 240, b'\x02'))
         with self.assertRaisesRegex(RuntimeError, 'EEPROM at 0x000F0'):
             list(flash.read_memory_range(ser, b'R', 0, 481))
-        self.assertEqual(len(ser.requests), 1)
 
-    def test_invalid_range_rejected_before_transmission(self):
-        ser = Mock()
+    def test_invalid_range_or_buffer_rejected_before_transmission(self):
+        ser = self.stream(b'R', b'!')
         with self.assertRaisesRegex(ValueError, 'range'):
             list(flash.read_memory_range(ser, b'R', 0, 262145))
-        ser.write.assert_not_called()
+        ser.reply_buffer = 510
+        with self.assertRaisesRegex(RuntimeError, 'buffer'):
+            list(flash.read_memory_range(ser, b'R', 0, 1))
+        self.assertEqual(ser.requests, [])
 
-    def test_lost_completion_is_retried_without_duplicate_output(self):
+    def test_lost_completion_cannot_report_success(self):
         ser = Serial(lambda *_: b'')
-        with patch.object(flash, 'read_blx_reply', side_effect=[
-                (b'r', 85, b'U'), None, (b'r', 85, b'U'), (b'r', 86, b'')]):
-            self.assertEqual(list(flash.read_memory_range(ser, b'R', 85, 86)), [(85, b'U')])
-        self.assertEqual(len(ser.requests), 2)
+        with patch.object(flash, 'read_blx_reply', side_effect=[(b'r', 85, b'U'), None]), \
+                self.assertRaisesRegex(RuntimeError, 'timed out'):
+            list(flash.read_memory_range(ser, b'R', 85, 86))
+        self.assertEqual(len(ser.requests), 3)  # range, final data ACK, cancel
 
-    def test_early_completion_never_accepts_a_hole_and_retries_are_bounded(self):
+    def test_early_completion_never_accepts_a_hole(self):
         ser = Serial(lambda *_: reply(b'r', 480, b''))
-        with self.assertRaisesRegex(RuntimeError, 'incomplete at 0x00000'):
+        with self.assertRaisesRegex(RuntimeError, 'expected 0x00000'):
             list(flash.read_memory_range(ser, b'R', 0, 480))
-        self.assertEqual(len(ser.requests), 3)
 
     def test_stream_timeout_is_per_reply_not_whole_range(self):
-        ser = Serial(lambda *_: b'')
+        ser = self.stream(b'R', b'U' * 3840)
         elapsed = 0.0
-        offsets = iter(range(17))
+        original = flash.read_frame
         def read_frame(ser, timeout):
             nonlocal elapsed
             elapsed += 0.09
-            offset = next(offsets) * 240
-            content = b'U' * 240 if offset < 3840 else b''
-            return {'type': 'O', 'crc_ok': True,
-                    'payload': b'r' + struct.pack('<IH', offset, len(content)) + content}
+            return original(ser, timeout)
         with patch.object(flash.time, 'monotonic', side_effect=lambda: elapsed), \
                 patch.object(flash, 'read_frame', side_effect=read_frame):
             result = list(flash.read_memory_range(ser, b'R', 0, 3840))
         self.assertEqual(b''.join(chunk for _, chunk in result), b'U' * 3840)
-        self.assertEqual(len(ser.requests), 1)
         self.assertGreater(elapsed, 1.0)
 
     def test_serial_read_does_not_wait_past_end_of_frame(self):
@@ -142,11 +206,29 @@ class StreamReadTests(unittest.TestCase):
         def read(n):
             self.assertLessEqual(n, len(ser.buffer), 'read would wait for serial timeout')
             return original_read(n)
-        with patch.object(ser, 'read', side_effect=read):
-            frame = flash.read_frame(ser)
+        ser.read = read
+        frame = flash.read_frame(ser)
         self.assertEqual(frame['raw'], wire)
         self.assertTrue(frame['crc_ok'])
         self.assertEqual(ser.timeout, 1)
+
+    def test_stalled_read_can_resume_after_a_long_pause(self):
+        ser = Serial(lambda *_: b'')
+        elapsed = 0
+        wire = reply(b'r', 0, b'!')
+        original = ser.read
+        def read(n):
+            nonlocal elapsed
+            if elapsed == 0:
+                elapsed = 60
+                return b''
+            if elapsed == 60:
+                ser.buffer.extend(wire)
+                elapsed += 1
+            return original(n)
+        ser.read = read
+        with patch.object(flash.time, 'monotonic', side_effect=lambda: elapsed):
+            self.assertEqual(flash.read_blx_reply(ser, timeout=None, strict=True), (b'r', 0, b'!'))
 
 
 class StreamWriteTests(unittest.TestCase):
@@ -363,17 +445,12 @@ class EEPROMTests(unittest.TestCase):
 
 class SharedTransferTests(unittest.TestCase):
     def test_dump_ignores_stale_error_and_damaged_response(self):
-        for command in (b'D', b'R'):
-            valid = reply(command.lower(), 240, b'U' * 240)
-            damaged = valid[:-1] + (b'0' if valid[-1:] != b'0' else b'1')
-            stale = reply(b'E', 0, b'')
-            ser = Serial(lambda *_: stale + damaged + valid + reply(b'r', 480, b''))
-            with self.subTest(command=command):
-                if command == b'D':
-                    self.assertEqual(flash.request_blx_chunk(ser, command, 240, 240), b'U' * 240)
-                else:
-                    self.assertEqual(list(flash.read_memory_range(ser, b'R', 240, 480)), [(240, b'U' * 240)])
-                self.assertEqual(len(ser.requests), 1)
+        valid = reply(b'd', 240, b'U' * 240)
+        damaged = valid[:-1] + (b'0' if valid[-1:] != b'0' else b'1')
+        stale = reply(b'E', 0, b'')
+        ser = Serial(lambda *_: stale + damaged + valid)
+        self.assertEqual(flash.request_blx_chunk(ser, b'D', 240, 240), b'U' * 240)
+        self.assertEqual(len(ser.requests), 1)
 
     def test_flash_dump_rejection_is_fatal(self):
         ser = Serial(lambda *_: reply(b'E', 0x100000, b''))
