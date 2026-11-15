@@ -141,12 +141,29 @@ def in_wsl():
     return os.name == "nt"
 
 
+NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+WSL_PIDFILE = "/tmp/airbreaker-%d.pid" % os.getpid()   # process group of the command running in WSL
+
+
 def tool_command(args):
-    """A command run in the repository, through WSL on Windows; None when WSL is not installed."""
+    """A command run in the repository, through WSL on Windows; None when WSL is not installed. In WSL it runs
+    in its own process group, recorded in WSL_PIDFILE, so that stop_in_wsl() can end the whole command."""
     if not in_wsl():
         return list(args)
     wsl = shutil.which("wsl.exe")
-    return [wsl, "--cd", REPO, "--exec"] + list(args) if wsl else None
+    if not wsl:
+        return None
+    return [wsl, "--cd", REPO, "--exec", "setsid", "bash", "-c", 'echo $$ > "$0"; exec "$@"', WSL_PIDFILE] + list(args)
+
+
+def stop_in_wsl():
+    """Ends the command tool_command() started in WSL. Ending wsl.exe alone does not stop what runs inside."""
+    try:
+        subprocess.run([shutil.which("wsl.exe") or "wsl.exe", "--exec", "sh", "-c",
+                        'kill -TERM -- "-$(cat "$0")" 2>/dev/null; rm -f "$0"', WSL_PIDFILE],
+                       capture_output=True, creationflags=NO_WINDOW, timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        pass
 
 
 def make_command(firmware, preset, verbose):
@@ -174,9 +191,6 @@ LOG_HINTS = (   # output -> what to do about it, shown when the command ends
     ("Error: open failed", "OpenOCD found no adapter: check the programmer's USB cable and driver, or in WSL "
      "that usbipd shares it (docs/guide/openocd.md)."),
 )
-
-
-NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
 def wsl_path(path):
@@ -844,6 +858,8 @@ class App(tk.Tk):
                     TITLE, "Flashing is in progress. Stopping now can leave the device without working firmware "
                     "until it is flashed again over SWD.\n\nStop anyway?", icon="warning"):
                 return
+            if in_wsl():
+                stop_in_wsl()
             self.proc.terminate()
 
     def tcl_path(self, path):
