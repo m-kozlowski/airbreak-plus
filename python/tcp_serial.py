@@ -32,7 +32,8 @@ class TcpSerial:
             self._read_line(0.5)  # consume banner
             self._sock.sendall(b'$TRANSPARENT\n')
             resp = self._read_line(1.0)
-            if 'OK' not in resp and 'transparent' not in resp.lower():
+            if not resp.startswith('OK:'):
+                self._sock.close()
                 raise ConnectionError(f"Failed to enter transparent mode: {resp}")
         elif mode == 'text':
             self._read_line(0.5)  # consume banner
