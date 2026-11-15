@@ -1560,17 +1560,16 @@ class ASFirmwarePatches(CompiledPayloadMixin):
 
     def custom_patch_settings_humid_start(self):
         """Expose the Humid Start switch, Min Tube and coupling in Accessories."""
-        # Runs after the fixed-name features and uses what they leave: a label
-        # string for each setting and, for the switch, a free on/off slot. The
-        # switch comes first, then Min Tube, then the coupling.
+        # Runs after the fixed-name features and uses what they leave: a free
+        # on/off slot for the switch and a free value slot for each of Min Tube
+        # and the coupling. Label strings are never short; once the reclaimed
+        # pool is empty, new string IDs are allocated. The switch comes first,
+        # then Min Tube, then the coupling.
         dep = self.asf.find_var_table_index(4, 'RGT')
-        hint = 'build without e.g. --patch-st-ibr to add it'
-        enable = None
-        if self.custom_string_pool:
-            enable = self.custom_claim_free_g8_var(
-                self.FREE_SWITCH_SLOTS, 'humid_start_enable')
+        enable = self.custom_claim_free_g8_var(
+            self.FREE_SWITCH_SLOTS, 'humid_start_enable')
         if enable is None:
-            self._custom_detail('Humid Start switch: no free label string or on/off slot; ' + hint)
+            self._custom_detail('Humid Start switch: no free on/off slot')
         else:
             label = self.redefine_fw_string(-1, {0: 'Humid Start'}, 'humid_start_enable_label')
             self.redefine_g8_var(enable, 0x0007, 0, dep, label, 1,
@@ -1581,11 +1580,11 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             self._custom_detail('Humid Start: %s var_id=0x%04X at 0x%08X' % (enable, vid, addr))
 
         # Minimum tube temperature: raw value is whole degC, 16-30, default 16
-        # (no minimum beyond the lowest tube setting). Needs only a label string.
-        if not self.custom_string_pool:
-            self._custom_detail('Min Tube: no free label string; ' + hint)
+        # (no minimum beyond the lowest tube setting).
+        min_tube = self.custom_claim_free_g4_var(self.FREE_VALUE_SLOTS, 'humid_start_min_tube')
+        if min_tube is None:
+            self._custom_detail('Min Tube: no free value slot')
         else:
-            min_tube = self.custom_claim_g4_var('RDH', 'humid_start_min_tube')
             label = self.redefine_fw_string(-1, {0: 'Min Tube (C)'}, 'humid_start_min_tube_label')
             self.redefine_g4_var(min_tube, 0x0007, 0, dep, label,
                                  16, 30, 16, 0, 1, 1, self.asf.str_id_empty)
@@ -1595,11 +1594,11 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             self._custom_detail('Min Tube: %s var_id=0x%04X at 0x%08X' % (min_tube, vid, addr))
 
         # Plate coupling: raw value is the coupling * 100, 0.10-1.00 in steps
-        # of 0.05, default 0.25. Needs only a label string.
-        if not self.custom_string_pool:
-            self._custom_detail('Start Coupling: no free label string; ' + hint)
+        # of 0.05, default 0.25.
+        coupling = self.custom_claim_free_g4_var(self.FREE_VALUE_SLOTS, 'humid_start_coupling')
+        if coupling is None:
+            self._custom_detail('Start Coupling: no free value slot')
             return
-        coupling = self.custom_claim_g4_var('RDW', 'humid_start_coupling')
         label = self.redefine_fw_string(-1, {0: 'Start Coupling'}, 'humid_start_coupling_label')
         self.redefine_g4_var(coupling, 0x0007, 0, dep, label,
                              25, 100, 10, 2, 100, 5, self.asf.str_id_empty)
