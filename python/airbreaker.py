@@ -1,27 +1,22 @@
-"""Window for the Air 10 patch options in patch-airsense.config: tick patches, set parameters, save, patch.
+"""AirBreaker: a window for the Air 10 patch options, patching and flashing.
 
-The patches, their groups, defaults and dependencies are read from patch-airsense.py itself, so new patches
-show up here without changes. Ticking a patch also ticks the patches it requires; unticking one unticks the
-patches that require it. Options that differ from the built-in default are shown bold, and only those are
-written by Save (see docs/patch_options.md). Other patcher options found in the file (--force-deprecated,
-...) are kept as they are.
-Hovering a patch shows its entry from docs/guide/patching.md and the linked feature page, its dependencies
-and the custom settings menu items it adds. The counter above the patches shows how many of the reclaimed
-Reminder variables (the menu slots) and labels the selected patches use; both are read from the patcher.
-Patch saves the config and runs patch-airsense.py INPUT OUTPUT PATCH --overwrite, with its output in the
-log; on Windows it runs in WSL unless arm-none-eabi-nm is on the Windows PATH, since the patcher reads the
-payload ELFs with the ARM binutils. Build payloads runs make binaries (through WSL on Windows) to compile the payloads the patcher loads
-from build/. Flash device does over SWD what docs/guide/flashing.md does in the OpenOCD telnet console: each
-button runs OpenOCD once with tcl/airsense.cfg and one of its commands (dump, flash_new, ...), either a
-Windows openocd.exe or run-ocd.sh in WSL. The paths and choices are remembered in ~/.airbreak_patch_gui.json.
-Needs only Python with tkinter (included in the Windows installer). Start it with airbreaker.bat
-(no console) or python python/airbreaker.py.
+The patches, their phases, descriptions, defaults, parameters and dependencies come from the shared option
+declarations (python/lib/as10_patch_options.py through patch_options.load("air10")). Presets and option files
+are read, validated and written with python/lib/patch_config.py, the code the patcher and make use too.
+The window edits a user preset, presets/user/air10/NAME.config, which can build on another preset such as the
+built-in plus. Ticking a patch also ticks the patches it requires; unticking one unticks the patches that
+require it. Options the preset sets itself are shown bold, and Save writes only those. The local options file
+patch-airsense.config is edited by hand and applies under every preset, so the window shows what it sets.
+Patch runs patch-airsense.py INPUT OUTPUT PATCH --preset NAME --overwrite, with its output in the log; on
+Windows it runs in WSL unless arm-none-eabi-nm is on the Windows PATH, since the patcher reads the payload
+ELFs with the ARM binutils. Build payloads runs make binaries (through WSL on Windows) to compile the payloads
+the patcher loads from build/. Flash device does over SWD what docs/guide/flashing.md does in the OpenOCD
+telnet console: each button runs OpenOCD once with tcl/airsense.cfg and one of its commands (dump,
+flash_new, ...), either a Windows openocd.exe or run-ocd.sh in WSL. The paths and choices are remembered in
+~/.airbreak_patch_gui.json. Needs only Python with tkinter (included in the Windows installer). Start it with
+airbreaker.bat (no console) or python python/airbreaker.py.
 """
-import argparse
-from copy import copy
 import glob
-import importlib.util
-import inspect
 import json
 import os
 import queue
@@ -33,22 +28,25 @@ import sys
 import textwrap
 import threading
 import tkinter as tk
-from tkinter import colorchooser, filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 from tkinter import font as tkfont
 import traceback
 
 HERE = os.path.dirname(os.path.abspath(__file__))   # <repo>/python
 REPO = os.path.dirname(HERE)
 PATCHER = os.path.join(HERE, "patch-airsense.py")
-sys.path.insert(0, HERE)   # patch-airsense.py imports lib.*
-from lib.patch_config import AIR10_LEGACY_OPTIONS, LOCAL_FILES  # noqa: E402
+sys.path.insert(0, HERE)
+from lib import patch_config, patch_options  # noqa: E402
 
 TITLE = "AirBreaker"
-CONFIG_FILE = os.path.join(REPO, LOCAL_FILES["air10"])
+PLATFORM = patch_options.load("air10")
+LOCAL_FILE = patch_config.REPO / patch_config.LOCAL_FILES[PLATFORM.name]
+USER_PRESETS = patch_config.REPO / patch_config.preset_dirs(PLATFORM.name)[0]   # presets/user/air10
+DEFAULT_PRESET = "airbreaker"
+PRESET_NAME = re.compile(r"[A-Za-z0-9_.-]+$")   # also passed to make in PATCH_ARGS, so no spaces or quotes
+HEADER = "# Written by AirBreaker (python/airbreaker.py): the options this preset sets itself."
+NO_BASE = "(none)"
 SETTINGS_FILE = os.path.join(os.path.expanduser("~"), ".airbreak_patch_gui.json")
-HEADER = "# Written by python/airbreaker.py: only options that differ from the built-in defaults."
-# Files written before the rename (python/patch_config_gui.py) are ours too.
-OLD_HEADER = "# Written by python/patch_config_gui.py: only options that differ from the built-in defaults."
 DEFAULT_OUTPUT = os.path.join(REPO, "build", "stm32-patched.bin")
 DEFAULT_BACKUP = os.path.join(REPO, "stm32.bin")   # where docs/guide/openocd.md has the stock dump
 FLASH_SIZE = 0x100000   # flash_new and dump work on the whole 1 MB flash
@@ -61,117 +59,41 @@ OPENOCD_GLOBS = (   # Windows installs of OpenOCD, newest version first within e
     r"C:\Program Files*\Cypress\*\openocd\bin\openocd.exe",
     r"C:\Program Files*\Infineon\*\openocd\bin\openocd.exe",
 )
-GUIDE_DIR = os.path.join(REPO, "docs", "guide")
-PATCHING_DOC = os.path.join(GUIDE_DIR, "patching.md")
-P = None   # patch-airsense.py, loaded by main()
-SLOTS = (("g8", "On/off settings"), ("g4", "Value settings"), ("labels", "New labels"))
-PLUS_ENV = ("PATCH_CODE", "PATCH_ASV_TASK_WRAPPER", "PATCH_VAUTO_WRAPPER", "PATCH_S", "PATCH_FALL_TIME",
-            "PATCH_ST_IBR", "PATCH_AUTOEPAP")   # what the plus target in the Makefile sets
-PALETTE_OPTION = "patch-custom-palette"   # its colors are set with --palette-colors
 STEPS = (("choose", "1 Choose patches"), ("save", "2 Save"), ("build", "3 Build payloads"), ("patch", "4 Patch"),
          ("backup", "5 Dump backup"), ("flash", "6 Flash"))   # the checklist above the options
 
 
-def load_patcher():
-    """patch-airsense.py has a hyphen in its name, so it is loaded from its path."""
-    spec = importlib.util.spec_from_file_location("patch_airsense", PATCHER)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module   # inspect.getsource looks the module up by name
-    spec.loader.exec_module(module)
-    return module
+def parameter_items(patch):
+    return [(parameter, patch) for parameter in patch.parameters]
 
 
-def plain(text):
-    """Markdown inline markup to plain text: links, code, emphasis and escaped pipes."""
-    text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)
-    return re.sub(r"[`*]", "", text).replace("\\|", "|").strip()
+PARAMETERS = [item for patch in PLATFORM.patches() for item in parameter_items(patch)]   # (parameter, patch)
+OPTIONS = [patch.option for patch in PLATFORM.patches()] + [parameter.option for parameter, _ in PARAMETERS]
 
 
-def doc_section(path, anchor):
-    """First prose paragraph below the heading with this anchor, or below the title without one."""
-    try:
-        with open(path, encoding="utf-8") as f:
-            lines = f.read().splitlines()
-    except OSError:
+def value_text(value, syntax=None):
+    """A parsed option value as the window shows it: on/off, '' for an unset parameter, 85 rather than 85.0."""
+    if value is None:
         return ""
-    start = 0
-    for i, line in enumerate(lines):
-        if line.startswith("#") and (not anchor or re.sub(r"[^a-z0-9 -]", "", line.lstrip("#").strip().lower())
-                                     .replace(" ", "-") == anchor):
-            start = i + 1
-            break
-    else:
-        if anchor:
-            return ""
-    paragraph = []
-    for line in lines[start:]:
-        if line.startswith("#"):
-            break
-        if not line.strip() or line.lstrip().startswith(("<", "!", "|", "-", "```")):
-            if paragraph:
-                break
-            continue
-        paragraph.append(line.strip())
-    return plain(" ".join(paragraph))
+    if isinstance(value, bool):
+        return "on" if value else "off"
+    if syntax is not None and syntax.repeat:
+        return shlex.join(patch_config.format_value(item, syntax) for item in value)
+    if isinstance(value, float) and (syntax is None or syntax.format is None):
+        return "%g" % value
+    return patch_config.format_value(value, syntax)
 
 
-def patch_docs():
-    """option -> (what it does, linked feature page or None, first paragraph of that page) from patching.md.
-    The Therapy modifications table lists environment variables; they map to the last option they set."""
-    try:
-        with open(PATCHING_DOC, encoding="utf-8") as f:
-            text = f.read()
-    except OSError:
-        return {}
-    rows = [line for line in text.splitlines() if line.startswith("|")]
-    docs = {}
-    for row in rows:
-        cells = [c.strip() for c in re.split(r"(?<!\\)\|", row.strip().strip("|"))]
-        if len(cells) < 2:
-            continue
-        options = re.findall(r"--(patch-[a-z0-9-]+)", cells[-1])
-        env = re.match(r"`(\w+)=1`", cells[0])
-        if env and env.group(1) in AIR10_LEGACY_OPTIONS:
-            options = [o[2:] for o in AIR10_LEGACY_OPTIONS[env.group(1)] if o.startswith("--patch-")][-1:]
-        what = cells[1] if len(cells) > 2 else cells[-1]
-        link = re.search(r"\]\(([^)#]+)(?:#([^)]+))?\)", row)
-        page = os.path.normpath(os.path.join(GUIDE_DIR, link.group(1))) if link else None
-        for option in options:
-            docs.setdefault(option, (plain(what), page, doc_section(page, link.group(2)) if link else ""))
-    for paragraph in re.split(r"\n\s*\n", text):   # options described only in prose, like keep-screen-on
-        if paragraph.lstrip().startswith(("|", "#", "```", "<", "-")):
-            continue
-        for option in re.findall(r"--(patch-[a-z0-9-]+)", paragraph):
-            docs.setdefault(option, (plain(" ".join(paragraph.split())), None, ""))
-    return docs
+def user_presets():
+    return sorted(path.stem for path in USER_PRESETS.glob("*.config") if path.is_file())
 
 
-def menu_resources():
-    """Which custom settings menu resources each patch uses, read from the patcher source:
-    {option: {"g8": [vars], "g4": [vars], "labels": [texts], "free_g8": (candidates, labels) or None}} and the
-    pool size of each resource. free_g8 is a setting that takes the first unclaimed on/off variable of the
-    candidates, if any is left; the labels after that claim are only used with it."""
-    patches = P.ASFirmwarePatches
-    pools = {"labels": None}   # reclaimed string IDs: the count depends on the firmware
-    reclaim = inspect.getsource(patches.custom_patch_settings_reclaim_reminders)
-    for names, table in re.findall(r"for var in \(([^)]*)\):\s*self\.custom_reclaim_g(\d)_var", reclaim):
-        pools["g" + table] = len(re.findall(r"'\w+'", names))
-    collect = inspect.getsource(patches.custom_patch_settings_collect_features)
-    resources = {}
-    for source, method in re.findall(r"\('(\w+)', self\.(\w+)\)", collect):
-        body = inspect.getsource(getattr(patches, method))
-        free = re.search(r"custom_claim_free_g8_var\(\s*\(([^)]*)\)", body)
-        fixed, optional = (body[:free.start()], body[free.start():]) if free else (body, "")
-        label = r"redefine_fw_string\(-1, \{0: '([^']*)'"
-        used = {"g8": re.findall(r"custom_claim_g8_var\('(\w+)'", fixed),
-                "g4": re.findall(r"custom_claim_g4_var\('(\w+)'", body),
-                "labels": re.findall(label, fixed),
-                "free_g8": (re.findall(r"'(\w+)'", free.group(1)), re.findall(label, optional)) if free else None}
-        for spec in P.iter_patch_specs():   # the patch that activates this feature
-            if spec.method == "patch_" + source or "add('%s')" % source in inspect.getsource(getattr(patches, spec.method)):
-                resources[spec.option] = used
-                break
-    return resources, pools
+def preset_path(name):
+    return USER_PRESETS / (name + ".config")
+
+
+def layer_label(layer):
+    return LOCAL_FILE.name if layer.source == "local" else "preset " + layer.path.stem
 
 
 class Tooltip:
@@ -210,46 +132,8 @@ class Tooltip:
             self.tip = None
 
 
-class OptionsParser(argparse.ArgumentParser):
-    """Raises instead of printing and exiting: there is no console under pythonw."""
-    def error(self, message):
-        raise ValueError(message)
-
-
-def options_parser():
-    """Only the options of the patcher's CLI, with identical types (as parse_patch_args in lib/patch_config.py)."""
-    options = OptionsParser(add_help=False, allow_abbrev=False)
-    for action in P.build_argument_parser()._actions:
-        if action.option_strings and not isinstance(action, argparse._HelpAction):
-            options._add_action(copy(action))
-    return options
-
-
-def dest(option):
-    return option.replace("-", "_")
-
-
-def option_text(value):
-    """A patch value as written on the command line: y, n or a number (85, 72.5)."""
-    if value is True:
-        return "y"
-    if value is False:
-        return "n"
-    return "%g" % value
-
-
 def wrap_lines(text):
     return textwrap.fill(text, 90)
-
-
-def env_overrides():
-    """Environment variables that override patch-airsense.config when patching (docs/patch_options.md)."""
-    names = [name for name in AIR10_LEGACY_OPTIONS if os.environ.get(name) == "1"]
-    if "PATCH_TARGET_RH" in os.environ:
-        names.append("PATCH_TARGET_RH")
-    if os.environ.get("AIR10_PATCH_ARGS", "").strip():
-        names.append("AIR10_PATCH_ARGS")
-    return names
 
 
 def load_settings():
@@ -327,20 +211,17 @@ def wsl_missing_packages():
     return [pkg for tool, pkg in WSL_TOOLS if tool in missing]
 
 
-def patch_command(infile, outfile, verbose):
-    """patch-airsense.py INPUT OUTPUT PATCH --overwrite and the extra environment it needs: Windows Python, or
-    python3 in WSL (use_wsl) with the paths translated and the override variables passed through WSLENV. None
-    when WSL cannot reach a file."""
-    args = ["PATCH", "--overwrite"] + (["-v"] if verbose else [])
+def patch_command(infile, outfile, preset, verbose):
+    """patch-airsense.py INPUT OUTPUT PATCH --preset PRESET --overwrite: Windows Python, or python3 in WSL
+    (use_wsl) with the paths translated. None when WSL cannot reach a file."""
+    args = ["PATCH", "--preset", preset, "--overwrite"] + (["-v"] if verbose else [])
     if not use_wsl():
-        return [python_exe(), "-u", PATCHER, infile, outfile] + args, {}
+        return [python_exe(), "-u", PATCHER, infile, outfile] + args
     paths = [wsl_path(infile), wsl_path(outfile)]
     if None in paths:
         return None
-    passed = [name for name in list(AIR10_LEGACY_OPTIONS) + ["PATCH_TARGET_RH", "AIR10_PATCH_ARGS"]
-              if name in os.environ]
-    env = {"WSLENV": ":".join(filter(None, [os.environ.get("WSLENV", "")] + passed))} if passed else {}
-    return [shutil.which("wsl.exe"), "--cd", REPO, "--exec", "python3", "-u", "python/patch-airsense.py"] +         paths + args, env
+    return [shutil.which("wsl.exe"), "--cd", REPO, "--exec", "python3", "-u", "python/patch-airsense.py"] + \
+        paths + args
 
 
 def python_exe():
@@ -355,26 +236,27 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.geometry("1280x900")
-        self.parser = options_parser()
-        self.specs = {spec.option: spec for spec in P.iter_patch_specs()}
-        self.docs = patch_docs()
-        self.resources, self.pools = menu_resources()
-        self.enabled = {}   # option -> BooleanVar: patch selected
-        self.values = {}    # option -> StringVar: parameter of a patch with a value (target RH)
-        self.spins = {}     # option -> Spinbox of that parameter, disabled while the patch is unticked
-        self.checks = {}    # option -> Checkbutton, bold when not at the built-in default
-        self.palette = {}   # palette role -> StringVar with its RRGGBB color (--palette-colors)
-        self.swatches = {}  # palette role -> swatch Label showing that color
-        self.palette_frame = None
-        self.extra = []     # other patcher options found in the config file, written back unchanged
-        self.foreign = False      # the config file was not written by this window: ask before replacing it
-        self.saved_tokens = None  # options in the config file, None when it could not be read
+        self.settings = load_settings()
+        self.enabled = {}   # patch option -> BooleanVar: patch selected
+        self.params = {}    # parameter option -> StringVar with its value as typed
+        self.param_widgets = {}   # parameter option -> its entry or combobox, disabled while the patch is off
+        self.checks = {}    # patch option -> Checkbutton, bold when this preset sets it
+        self.required_by = {patch.option: [other.option for other in PLATFORM.patches()
+                                           if patch.option in other.requires] for patch in PLATFORM.patches()}
+        self.name = ""          # the preset shown, presets/user/air10/NAME.config
+        self.base = []          # presets this preset selects (--preset); they apply under it
+        self.underlying = {}    # option -> value from the local options file and the base presets
+        self.sources = {}       # option -> the file under this preset that sets it
+        self.local_options = ()   # what patch-airsense.config sets, shown as a note
+        self.foreign = False      # the preset file was not written by this window: ask before replacing it
+        self.saved_text = None    # the preset file as last loaded or saved; None when it could not be read
         self.loading = False
         self.proc = None
         self.done = ""          # log text when the running command succeeds
         self.flashing = False   # the running command writes the device flash: ask before stopping it
         self.hints = []         # LOG_HINTS matched by the running command's output
         self.lines = queue.Queue()
+        self.error = ""         # why shown() found an invalid value
 
         bold = tkfont.nametofont("TkDefaultFont").copy()
         bold.configure(weight="bold")
@@ -423,56 +305,62 @@ class App(tk.Tk):
         for sequence in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
             self.bind_all(sequence, wheel)
 
-        usage = ttk.LabelFrame(inner, text="Custom settings menu", padding=(8, 4))   # the counter
-        usage.grid(row=0, column=0, columnspan=2, sticky="we", pady=(0, 8), padx=(0, 4))
-        self.usage = {}
-        for key, _ in SLOTS:
-            self.usage[key] = ttk.Label(usage)
-            self.usage[key].pack(side="left", padx=(0, 24))
-            Tooltip(self.usage[key], lambda k=key: self.usage_text(k))
-        self.usage_note = ttk.Label(usage, foreground="#b36b00")   # settings dropped for lack of a free slot
-        self.usage_note.pack(side="left")
-        Tooltip(self.usage_note, lambda: wrap_lines(
-            "These settings need a free on/off variable or a free label string, and the patcher adds each one "
-            "only while one is left. Tick Verbose and patch to see which were added. Free some by unticking "
-            "patches with menu settings, for example ST iBR or iVAPS AutoEPAP."))
-        Tooltip(usage, lambda: self.usage_text(None))
-
         columns = [ttk.Frame(inner) for _ in range(2)]   # one LabelFrame per patch phase, in two columns
         for i, column in enumerate(columns):
             column.grid(row=1, column=i, sticky="nwe", padx=(0, 8) if i == 0 else (0, 4))
             inner.columnconfigure(i, weight=1, uniform="column")
         rows = [0, 0]
-        for phase, specs in P.PATCH_PHASES:
+        for phase in PLATFORM.phases:
             i = rows.index(min(rows))
-            rows[i] += len(specs) + 2
-            frame = ttk.LabelFrame(columns[i], text=phase, padding=8)
+            rows[i] += len(phase.patches) + sum(len(p.parameters) for p in phase.patches) + 2
+            frame = ttk.LabelFrame(columns[i], text=phase.name, padding=8)
             frame.pack(fill="x", pady=(0, 8))
             frame.columnconfigure(0, weight=1)
-            for spec in specs:
-                self.add_option(frame, spec)
+            for patch in phase.patches:
+                self.add_option(frame, patch)
 
         bar = ttk.Frame(top)
         bar.pack(fill="x", pady=(8, 0))
-        ttk.Button(bar, text="Save", command=self.save).pack(side="left")
+        ttk.Label(bar, text="Preset:").pack(side="left")
+        self.preset_var = tk.StringVar()
+        self.preset_box = ttk.Combobox(bar, textvariable=self.preset_var, width=18)
+        self.preset_box.pack(side="left", padx=(4, 0))
+        self.preset_box.bind("<<ComboboxSelected>>", lambda _: self.switch_preset(self.preset_var.get()))
+        self.preset_box.bind("<Return>", lambda _: self.switch_preset(self.preset_var.get()))
+        Tooltip(self.preset_box, lambda: wrap_lines(
+            "The user preset this window edits: %s/NAME.config. Pick one, or type a new name and press Enter. "
+            "Save writes it; a changed name saves a copy under that name."
+            % os.path.relpath(USER_PRESETS, REPO).replace(os.sep, "/")))
+        ttk.Label(bar, text="Based on:").pack(side="left", padx=(12, 0))
+        self.base_var = tk.StringVar()
+        self.base_box = ttk.Combobox(bar, textvariable=self.base_var, state="readonly", width=14)
+        self.base_box.pack(side="left", padx=(4, 0))
+        self.base_box.bind("<<ComboboxSelected>>", lambda _: self.base_changed())
+        Tooltip(self.base_box, lambda: wrap_lines(
+            "A preset this one builds on, such as plus (the patches of build/stm32-plus.bin). Its options apply "
+            "first; this preset only stores what differs from it."))
+        ttk.Button(bar, text="Save", command=self.save).pack(side="left", padx=(12, 0))
         ttk.Button(bar, text="Reload", command=self.reload).pack(side="left", padx=(6, 0))
-        ttk.Button(bar, text="Reset to defaults", command=self.reset).pack(side="left", padx=(6, 0))
-        plus = ttk.Button(bar, text="Plus preset", command=self.preset_plus)
-        plus.pack(side="left", padx=(6, 0))
-        Tooltip(plus, lambda: wrap_lines(
-            "Selects the patches of build/stm32-plus.bin: graph, Custom VAuto, ASV backup-rate control, Square "
-            "Wave, Fall Time, ST iBR and iVAPS AutoEPAP, with their custom settings. All other options go back to "
-            "their defaults. Save writes the choice."))
+        clear = ttk.Button(bar, text="Clear own options", command=self.clear)
+        clear.pack(side="left", padx=(6, 0))
+        Tooltip(clear, lambda: wrap_lines(
+            "Removes the options this preset sets itself, so it shows its base preset (or the built-in "
+            "defaults). Save writes the choice."))
         self.status = ttk.Label(bar, text="")
         self.status.pack(side="left", padx=12)
+        self.local_note = ttk.Label(top, foreground="#b36b00", wraplength=1200, justify="left")
+        self.local_note.pack(fill="x", pady=(6, 0))
+        Tooltip(self.local_note, lambda: wrap_lines(
+            "The local options file %s applies under every preset, also for make. It is edited by hand; see "
+            "docs/patch_options.md." % LOCAL_FILE.name))
         line = ttk.Frame(top)
         line.pack(fill="x", pady=(6, 0))
-        ttk.Label(line, text="Command line:").pack(side="left")
-        self.cmdline = tk.StringVar()   # the saved options in CLI syntax, e.g. for AIR10_PATCH_ARGS
+        ttk.Label(line, text="Preset file:").pack(side="left")
+        self.cmdline = tk.StringVar()   # the preset's options in CLI syntax
         ttk.Entry(line, textvariable=self.cmdline, state="readonly", font=("Consolas", 9)).pack(
             side="left", fill="x", expand=True, padx=(6, 0))
 
-        settings = load_settings()
+        settings = self.settings
         sections = ttk.Frame(bottom)   # left: patch an image, right: flash it to the device
         sections.pack(fill="x")
         patch = ttk.LabelFrame(sections, text="Patch firmware", padding=8)
@@ -560,237 +448,146 @@ class App(tk.Tk):
         self.log.tag_configure("warn", foreground="#b36b00")
         self.log.tag_configure("pass", foreground="#1b7f2a")
 
+
         for var in (self.outfile, self.backup):
             var.trace_add("write", lambda *_: self.update_steps())
-        self.load()
-        overrides = env_overrides()
-        if overrides:
-            self.append("Note: %s set in the environment override %s when patching"
-                        % (", ".join(overrides), os.path.basename(CONFIG_FILE)), "warn")
+        self.load_preset(self.settings.get("preset") or DEFAULT_PRESET)
         self.after(100, self.pump)
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
-    def add_option(self, frame, spec):
-        """A checkbox with the patch description and its option name; a patch with a value also gets a spinbox."""
+    def add_option(self, frame, patch):
+        """A checkbox with the patch description and its option name, then one field per parameter."""
         row = frame.grid_size()[1]
-        text, _, hint = spec.description.partition(";")
-        if spec.deprecated:
-            hint = "deprecated, only applied with --force-deprecated: " + spec.deprecated
-        self.enabled[spec.option] = tk.BooleanVar()
-        check = ttk.Checkbutton(frame, text=text, variable=self.enabled[spec.option],
-                                command=lambda: self.toggled(spec.option))
+        self.enabled[patch.option] = tk.BooleanVar()
+        check = ttk.Checkbutton(frame, text=patch.description.rstrip("."), variable=self.enabled[patch.option],
+                                command=lambda: self.toggled(patch.option))
         check.grid(row=row, column=0, sticky="w")
-        name = ttk.Label(frame, text="--" + spec.option, foreground="#888888", font=("Consolas", 9))
+        name = ttk.Label(frame, text="--" + patch.option, foreground="#888888", font=("Consolas", 9))
         name.grid(row=row, column=1, sticky="e", padx=(8, 0))
         for widget in (check, name):
-            Tooltip(widget, lambda: self.tooltip_text(spec))
-        self.checks[spec.option] = check
-        if spec.option == PALETTE_OPTION:
-            self.add_palette(frame, row + 1)
-        if not spec.value_type and not hint:
-            return
-        sub = ttk.Frame(frame)
-        sub.grid(row=row + 1, column=0, columnspan=2, sticky="w", padx=(22, 0), pady=(0, 2))
-        if spec.value_type:   # only percentages today (patch-target-rh)
-            self.values[spec.option] = tk.StringVar()
-            self.values[spec.option].trace_add("write", self.refresh)
-            self.spins[spec.option] = ttk.Spinbox(sub, from_=0, to=100, increment=1, width=6,
-                                                  textvariable=self.values[spec.option])
-            self.spins[spec.option].pack(side="left")
-            ttk.Label(sub, text="%").pack(side="left", padx=(2, 8))
-        if hint:
-            ttk.Label(sub, text=hint.strip(), foreground="#666666").pack(side="left")
-
-    def add_palette(self, frame, row):
-        """One color swatch per palette role; a click opens a color picker."""
-        box = ttk.Frame(frame)
-        box.grid(row=row, column=0, columnspan=2, sticky="w", padx=(22, 0), pady=(0, 4))
-        self.palette_frame = box
-        for i, (key, label, _, custom, stock) in enumerate(P.PALETTE_ROLES):
-            var = self.palette[key] = tk.StringVar(value=custom)
+            Tooltip(widget, lambda: self.tooltip_text(patch))
+        self.checks[patch.option] = check
+        if patch.deprecated:
+            ttk.Label(frame, text="Deprecated, only applied with --force-deprecated: " + patch.deprecated,
+                      foreground="#666666").grid(row=row + 1, column=0, columnspan=2, sticky="w", padx=(22, 0))
+        for parameter in patch.parameters:
+            sub = ttk.Frame(frame)
+            sub.grid(row=frame.grid_size()[1], column=0, columnspan=2, sticky="w", padx=(22, 0), pady=(0, 2))
+            ttk.Label(sub, text="--%s" % parameter.option, font=("Consolas", 9)).pack(side="left")
+            var = self.params[parameter.option] = tk.StringVar()
             var.trace_add("write", self.refresh)
-            cell = ttk.Frame(box)
-            cell.grid(row=i // 3, column=i % 3, sticky="w", padx=(0, 12), pady=1)
-            swatch = tk.Label(cell, width=3, relief="solid", borderwidth=1, cursor="hand2", background="#" + custom)
-            swatch.pack(side="left")
-            name = ttk.Label(cell, text=label, cursor="hand2")
-            name.pack(side="left", padx=(4, 0))
-            for widget in (swatch, name):
-                widget.bind("<Button-1>", lambda _, k=key: self.pick_color(k))
-                Tooltip(widget, lambda k=key, s=stock, c=custom: "%s: #%s\nBuilt-in custom palette: #%s\n"
-                        "Stock ResMed: #%s\nClick to choose a color." % (k, self.palette[k].get(), c, s))
-            self.swatches[key] = swatch
-        buttons = ttk.Frame(box)
-        buttons.grid(row=(len(P.PALETTE_ROLES) + 2) // 3, column=0, columnspan=3, sticky="w", pady=(4, 0))
-        ttk.Button(buttons, text="Custom palette colors",
-                   command=lambda: self.set_palette({k: c for k, _, _, c, _ in P.PALETTE_ROLES})).pack(side="left")
-        ttk.Button(buttons, text="Stock ResMed colors",
-                   command=lambda: self.set_palette({k: s for k, _, _, _, s in P.PALETTE_ROLES})).pack(
-            side="left", padx=(6, 0))
+            if parameter.value.choices is not None:
+                widget = ttk.Combobox(sub, textvariable=var, width=12, state="readonly",
+                                      values=[value_text(choice, parameter.value) for choice in parameter.value.choices])
+            else:
+                widget = ttk.Entry(sub, textvariable=var, width=24 if parameter.value.repeat else 12)
+            widget.pack(side="left", padx=(6, 6))
+            if parameter.value.metavar:
+                ttk.Label(sub, text=parameter.value.metavar, foreground="#666666").pack(side="left")
+            Tooltip(widget, lambda p=parameter: wrap_lines(p.description +
+                    (" Several values are separated by spaces." if p.value.repeat else "")))
+            self.param_widgets[parameter.option] = widget
 
-    def pick_color(self, key):
-        if not self.enabled[PALETTE_OPTION].get():
-            return
-        label = next(role[1] for role in P.PALETTE_ROLES if role[0] == key)
-        _, color = colorchooser.askcolor(color="#" + self.palette[key].get(), parent=self,
-                                         title="%s - %s" % (TITLE, label))
-        if color:
-            self.palette[key].set(color.lstrip("#").upper())
-
-    def set_palette(self, colors):
-        """Sets every role from colors (role -> RRGGBB), refreshing once."""
-        self.loading = True
-        for key, var in self.palette.items():
-            var.set(colors[key])
-        self.loading = False
-        self.refresh()
-
-    def palette_text(self):
-        """--palette-colors value: the roles that differ from the built-in custom palette, '' when none."""
-        if not self.palette or not self.enabled[PALETTE_OPTION].get():
-            return ""
-        changed = ",".join("%s=%s" % (key, self.palette[key].get()) for key, _, _, custom, _ in P.PALETTE_ROLES
-                           if self.palette[key].get().upper() != custom)
-        return P.palette_colors_value(changed) if changed else ""
-
-    def tooltip_text(self, spec):
-        """Extended information on a patch: docs, default, dependencies and the menu items it adds."""
-        wrap = wrap_lines
-        what, page, more = self.docs.get(spec.option, ("", None, ""))
-        parts = ["--%s (default: %s)" % (spec.option, "off" if spec.default is False else
-                                         "on" if spec.default is True else option_text(spec.default))]
-        parts += [wrap(text) for text in (what, more) if text]
-        needs = P.PATCH_DEPENDENCIES.get(spec.option, ())
-        needed_by = [other for other, deps in P.PATCH_DEPENDENCIES.items() if spec.option in deps]
-        if needs:
-            parts.append("Requires: " + ", ".join("--" + o for o in needs))
-        if needed_by:
-            parts.append("Required by: " + ", ".join("--" + o for o in needed_by))
-        used = self.resources.get(spec.option)
-        if used:
-            counts = ", ".join("%s: %d" % (label.lower(), len(used[key])) for key, label in SLOTS if used[key])
-            parts.append(wrap("Custom settings menu (with --patch-custom-settings): %s%s" % (
-                "uses " + counts if counts else "shows stock menu items, uses no reclaimed slots",
-                "; adds " + ", ".join(used["labels"]) if used["labels"] else "")))
-            if used["free_g8"]:
-                candidates, labels = used["free_g8"]
-                parts.append(wrap("%s takes a free on/off setting (%s) left by the other patches, and is left out "
-                                  "when none is free." % (", ".join(labels) or "One setting", ", ".join(candidates))))
-        if page:
-            parts.append("More: " + os.path.relpath(page, REPO).replace(os.sep, "/"))
+    def tooltip_text(self, patch):
+        """The patch's declaration: description, default, parameters, dependencies, and what sets it now."""
+        parts = ["--%s (default: %s)" % (patch.option, "on" if patch.default else "off"),
+                 wrap_lines(patch.description)]
+        for parameter in patch.parameters:
+            parts.append(wrap_lines("--%s: %s" % (parameter.option, parameter.description)))
+        if patch.requires:
+            parts.append("Requires: " + ", ".join("--" + o for o in patch.requires))
+        if self.required_by[patch.option]:
+            parts.append("Required by: " + ", ".join("--" + o for o in self.required_by[patch.option]))
+        if patch.deprecated:
+            parts.append(wrap_lines("Deprecated: " + patch.deprecated))
+        values = self.shown()
+        own = self.own_values(values) if values is not None else {}
+        if patch.option in own:
+            parts.append("Set by this preset")
+        elif patch.option in self.sources:
+            parts.append("Set by " + self.sources[patch.option])
         return "\n\n".join(parts)
 
-    def menu_usage(self, values):
-        """Reclaimed slots and labels used by the selected patches, plus the labels of settings left out for lack
-        of a free on/off variable; None without custom settings. Free claims follow the fixed ones, like in the
-        patcher, where those features run last."""
-        if not values.get("patch-custom-settings"):
-            return None
-        used = {key: [] for key, _ in SLOTS}
-        used["omitted"] = []
-        selected = [resources for option, resources in self.resources.items() if values.get(option) is not False]
-        for resources in selected:
-            for key, _ in SLOTS:
-                used[key] += resources[key]
-        for resources in selected:
-            if resources["free_g8"]:
-                candidates, labels = resources["free_g8"]
-                free = [var for var in candidates if var not in used["g8"]]
-                if free:
-                    used["g8"].append(free[0])
-                    used["labels"] += labels
-                else:
-                    used["omitted"] += labels
-        return used
+    # Values: dicts from option name to the parsed value, as patch_config.layer_values() returns them.
 
-    def usage_text(self, key):
-        if key == "labels":
-            return wrap_lines(
-                "Menu labels are stored in string IDs reclaimed from the stock Reminders menu: its title and "
-                "message strings plus the now unused names of the reclaimed variables. How many are free "
-                "depends on the firmware; tick Verbose and patch to see 'free reclaimed str_id' in the log.")
-        if key:
-            table = {"g8": "g[8]", "g4": "g[4]"}[key]
-            return wrap_lines(
-                "%s variables reclaimed from the stock Reminders menu, one per added menu setting. Each feature "
-                "claims fixed variables, so two features cannot share one. Free after patching: see "
-                "'unused reclaimed %s vars' in the verbose log." % (table, table))
-        return wrap_lines(
-            "Patches with menu controls share the resources freed by removing the stock Reminders menu "
-            "(docs/custom_settings.md). Counted only while --patch-custom-settings is ticked.")
+    def layers(self, base):
+        """Configuration layers under this preset, as the patcher builds them for make PATCH_ARGS='--preset
+        NAME': the local options file (and the presets it selects), then the base presets."""
+        preset_parser = patch_config.options_parser(PLATFORM)
+        layers = patch_config.config_layers(PLATFORM.name, [], patch_config.local_options_parser(PLATFORM),
+                                            preset_parser)[:-1]   # the empty command line
+        layers += patch_config.preset_layers(PLATFORM.name, base, USER_PRESETS, preset_parser)
+        if preset_path(self.name).resolve() in [layer.path for layer in layers]:
+            raise ValueError("preset %s selects itself through %s" % (self.name, " + ".join(base)))
+        return layers
 
-    def update_usage(self, values):
-        used = self.menu_usage(values)
-        for key, label in SLOTS:
-            if used is None:
-                self.usage[key].config(text="%s: -" % label, foreground="#888888")
-                continue
-            pool = self.pools.get(key)
-            over = pool is not None and len(used[key]) > pool
-            self.usage[key].config(text="%s: %d%s" % (label, len(used[key]), " / %d" % pool if pool else ""),
-                                   foreground="#b00020" if over else "")
-        omitted = used["omitted"] if used else []
-        self.usage_note.config(text="May be left out, no free on/off setting or label: " + ", ".join(omitted)
-                               if omitted else "")
+    def set_base(self, base):
+        """Reads what applies under this preset with these base presets. Raises OSError or ValueError."""
+        layers = self.layers(base)
+        args = vars(patch_config.effective_args(PLATFORM, layers))
+        self.underlying = {option: args[patch_options.dest(option)] for option in OPTIONS}
+        self.sources = {}
+        for layer in layers:
+            for option in patch_config.layer_values(PLATFORM, layer):
+                if option in OPTIONS:
+                    self.sources[option] = layer_label(layer)
+        local = [layer for layer in layers if layer.source == "local"][0]
+        self.local_options = tuple("--preset " + preset for preset in local.presets) + local.options
+        self.base = list(base)
 
-    def current(self):
-        """option -> value as the patcher takes it: True/False, or the percentage of a patch with a value.
-        Raises argparse.ArgumentTypeError for a value the patcher would refuse."""
-        result = {}
-        for option, spec in self.specs.items():
-            on = self.enabled[option].get()
-            result[option] = spec.value_type(self.values[option].get().strip()) if spec.value_type and on else on
-        return result
-
-    def tokens(self, values):
-        """The options that differ from the built-in defaults, in CLI syntax, followed by the kept other options."""
-        out = []
-        for option, value in values.items():
-            if value != self.specs[option].default:
-                out += ["--" + option, option_text(value)]
-        palette = self.palette_text()
-        if palette:
-            out += ["--palette-colors", palette]
-        return out + self.extra
-
-    def extra_tokens(self, ns):
-        """Non-patch options set in the config file (--force-deprecated, --log-file, ...)."""
+    def shown(self):
+        """option -> value of every patch and parameter as shown, parsed by the patcher's own option parser;
+        a parameter of an unticked patch keeps the value under this preset. None for an invalid value."""
         tokens = []
-        for action in self.parser._actions:
-            if action.dest in map(dest, self.specs) or action.dest == "palette_colors":
-                continue
-            value = getattr(ns, action.dest)
-            if value != action.default:
-                name = max(action.option_strings, key=len)
-                tokens += [name] if action.nargs == 0 else [name, str(value)]
-        return tokens
+        for patch in PLATFORM.patches():
+            tokens += ["--" + patch.option, "y" if self.enabled[patch.option].get() else "n"]
+        typed = set()
+        for parameter, patch in PARAMETERS:
+            text = self.params[parameter.option].get().strip()
+            if self.enabled[patch.option].get() and text:
+                typed.add(parameter.option)
+                for item in shlex.split(text) if parameter.value.repeat else [text]:
+                    tokens += ["--" + parameter.option, item]
+        try:
+            args = vars(patch_config.options_parser(PLATFORM).parse_args(tokens))
+        except ValueError as exc:
+            self.error = str(exc)
+            return None
+        values = {option: args[patch_options.dest(option)] for option in OPTIONS}
+        for parameter, patch in PARAMETERS:
+            if parameter.option not in typed and not self.enabled[patch.option].get():
+                values[parameter.option] = self.underlying[parameter.option]
+        return values
 
-    def apply(self, values, palette=""):
-        """Shows values (option -> value) and palette (a --palette-colors value) in the window."""
+    def own_values(self, values):
+        """The options that differ from what applies under this preset: what the preset file stores."""
+        return {option: value for option, value in values.items() if value != self.underlying[option]}
+
+    def preset_text(self, own):
+        return HEADER + "\n" + patch_config.option_text(PLATFORM, own, self.base)
+
+    def apply(self, own):
+        """Shows own (the options this preset sets) over what applies under it."""
         self.loading = True
-        chosen = dict(item.split("=") for item in palette.split(",") if item)
-        for key, _, _, custom, _ in P.PALETTE_ROLES:
-            self.palette[key].set(chosen.get(key, custom))
-        for option, spec in self.specs.items():
-            value = values[option]
-            self.enabled[option].set(value is not False)
-            if spec.value_type:   # an unticked patch keeps showing the default value
-                self.values[option].set(option_text(value if value is not False else spec.default))
+        for patch in PLATFORM.patches():
+            self.enabled[patch.option].set(bool(own.get(patch.option, self.underlying[patch.option])))
+        for parameter, _ in PARAMETERS:
+            self.params[parameter.option].set(value_text(own.get(parameter.option, self.underlying[parameter.option]),
+                                                         parameter.value))
+        self.base_var.set(" + ".join(self.base) or NO_BASE)
         self.loading = False
         self.refresh()
 
     def dirty(self):
-        try:
-            return self.tokens(self.current()) != self.saved_tokens
-        except argparse.ArgumentTypeError:
-            return True
+        values = self.shown()
+        return values is None or self.preset_text(self.own_values(values)) != self.saved_text
 
     def update_steps(self):
         """Ticks the checklist from what exists on disk and what this window has done."""
         if self.loading or not hasattr(self, "backup"):
             return
         done = {
-            "save": os.path.isfile(CONFIG_FILE) and not self.dirty(),
+            "save": preset_path(self.name).is_file() and not self.dirty(),
             "build": bool(glob.glob(os.path.join(REPO, "build", "*.elf"))),
             "patch": os.path.isfile(self.outfile.get().strip()),
             "backup": os.path.isfile(self.backup.get().strip()),
@@ -805,32 +602,23 @@ class App(tk.Tk):
                              foreground="#1b7f2a" if done[key] else "#888888")
 
     def refresh(self, *_):
-        """Spinbox states, bold for options off their default, the command line and the title."""
-        if self.loading:
+        """Parameter states, bold for options this preset sets, the preset file line and the title."""
+        if self.loading or not self.name:
             return
-        for option, spin in self.spins.items():
-            spin.config(state="normal" if self.enabled[option].get() else "disabled")
-        if self.palette:
-            on = self.enabled[PALETTE_OPTION].get()
-            for key, swatch in self.swatches.items():
-                swatch.config(background="#" + self.palette[key].get() if on else "#d9d9d9")
-            for cell in self.palette_frame.winfo_children():
-                for widget in (cell, *cell.winfo_children()):
-                    if isinstance(widget, (ttk.Label, ttk.Button)):
-                        widget.state(["!disabled"] if on else ["disabled"])
-        try:
-            values = self.current()
-        except argparse.ArgumentTypeError as exc:
-            self.cmdline.set("Invalid value: %s" % exc)
+        for parameter, patch in PARAMETERS:
+            self.param_widgets[parameter.option].state(
+                ["!disabled"] if self.enabled[patch.option].get() else ["disabled"])
+        values = self.shown()
+        if values is None:
+            self.cmdline.set("Invalid value: %s" % self.error)
             return
-        self.update_usage(values)
-        for option, value in values.items():
-            changed = value != self.specs[option].default
-            self.checks[option].config(style="Changed.TCheckbutton" if changed else "TCheckbutton")
-        tokens = self.tokens(values)
-        self.cmdline.set(" ".join(shlex.quote(t) for t in tokens))
-        self.title("%s - %s%s" % (TITLE, os.path.basename(CONFIG_FILE),
-                                  " *" if tokens != self.saved_tokens else ""))
+        own = self.own_values(values)
+        for patch in PLATFORM.patches():
+            self.checks[patch.option].config(style="Changed.TCheckbutton" if patch.option in own else "TCheckbutton")
+        self.cmdline.set(shlex.join(patch_config.option_args(PLATFORM, own, self.base)))
+        self.local_note.config(text="%s also applies under this preset: %s" % (
+            LOCAL_FILE.name, shlex.join(self.local_options)) if self.local_options else "")
+        self.title("%s - preset %s%s" % (TITLE, self.name, " *" if self.dirty() else ""))
         self.update_steps()
 
     def toggled(self, option):
@@ -843,102 +631,135 @@ class App(tk.Tk):
 
     def follow(self, option, on, changed):
         """Ticking a patch ticks what it requires; unticking one unticks the patches that require it."""
-        if on:
-            related = P.PATCH_DEPENDENCIES.get(option, ())
-        else:
-            related = [other for other, needs in P.PATCH_DEPENDENCIES.items() if option in needs]
+        related = PLATFORM.patch(option).requires if on else self.required_by[option]
         for other in related:
             if self.enabled[other].get() != on:
                 self.enabled[other].set(on)
                 changed.append(other)
                 self.follow(other, on, changed)
 
-    def load(self):
-        """Reads patch-airsense.config with the patcher's own option types; no file means the built-in defaults."""
-        values = {option: spec.default for option, spec in self.specs.items()}
-        palette = ""
-        self.extra, self.foreign, self.saved_tokens = [], False, []
+    def load_preset(self, name):
+        """Shows a user preset; a name without a file starts a new preset on the built-in defaults."""
+        self.name = name
+        self.preset_box.config(values=user_presets())
+        self.preset_var.set(name)
+        self.base_box.config(values=[NO_BASE] + [p for p in patch_config.preset_files(PLATFORM.name) if p != name])
+        path = preset_path(name)
+        base, own, self.foreign = [], {}, False
         try:
-            with open(CONFIG_FILE, encoding="utf-8") as f:
-                text = f.read()
-        except FileNotFoundError:
-            text = None
-            self.status.config(text="No %s yet: built-in defaults shown" % os.path.basename(CONFIG_FILE))
-        except OSError as exc:
-            text = ""
-            self.saved_tokens, self.foreign = None, True
-            messagebox.showerror(TITLE, "%s could not be read:\n\n%s" % (CONFIG_FILE, exc))
-        if text:
-            self.foreign = not text.startswith((HEADER, OLD_HEADER))
-            try:
-                ns = self.parser.parse_args(shlex.split(text, comments=True))
-                values = {option: getattr(ns, dest(option)) for option in self.specs}
-                palette = ns.palette_colors
-                self.extra = self.extra_tokens(ns)
-                self.status.config(text="Loaded %s" % CONFIG_FILE)
-            except ValueError as exc:
-                self.saved_tokens, self.foreign = None, True
-                messagebox.showerror(TITLE, "%s could not be read:\n\n%s\n\nThe built-in defaults are shown; "
-                                     "Save replaces the file." % (CONFIG_FILE, exc))
-                self.status.config(text="Could not read %s" % os.path.basename(CONFIG_FILE))
-        self.apply(values, palette)
-        if self.saved_tokens is not None:
-            self.saved_tokens = self.tokens(values)
-        self.refresh()
+            if path.is_file():
+                text = path.read_text(encoding="utf-8")
+                self.foreign = not text.startswith(HEADER)
+                base, options = patch_config.split_presets(patch_config.read_options(path))
+                own = patch_config.layer_values(PLATFORM, patch_config.Layer("preset", path, tuple(base),
+                                                                             tuple(options)))
+                status = "Loaded %s" % path
+            else:
+                status = "New preset %s: Save writes %s" % (name, path)
+            self.set_base(base)
+        except (OSError, ValueError) as exc:
+            messagebox.showerror(TITLE, "%s could not be read:\n\n%s\n\nThe built-in defaults are shown; Save "
+                                 "replaces the preset." % (path, exc))
+            self.base, own, self.foreign = [], {}, True
+            self.underlying = vars(patch_config.options_parser(PLATFORM).parse_args([]))
+            self.underlying = {option: self.underlying[patch_options.dest(option)] for option in OPTIONS}
+            self.sources, self.local_options = {}, ()
+            status = "Could not read %s" % path.name
+        own = {option: value for option, value in own.items() if value != self.underlying[option]}
+        # an untouched new preset is not a change; one that could not be read always is
+        self.saved_text = None if status.startswith("Could") else self.preset_text(own)
+        self.status.config(text=status)
+        self.apply(own)
+
+    def switch_preset(self, name):
+        name = name.strip()
+        if name == self.name:
+            return
+        if not PRESET_NAME.match(name):
+            messagebox.showerror(TITLE, "A preset name uses letters, digits, '.', '_' and '-' only.")
+            self.preset_var.set(self.name)
+            return
+        if self.dirty():
+            answer = messagebox.askyesnocancel(TITLE, "Save the changes to preset %s first?" % self.name)
+            if answer is None or (answer and not self.save(self.name)):
+                self.preset_var.set(self.name)
+                return
+        self.load_preset(name)
+        self.save_settings()
+
+    def base_changed(self):
+        """Shows the new base preset with the options this preset sets itself on top."""
+        values = self.shown()
+        if values is None:
+            messagebox.showerror(TITLE, "Fix the invalid value first:\n\n%s" % self.error)
+            self.base_var.set(" + ".join(self.base) or NO_BASE)
+            return
+        own = self.own_values(values)
+        choice = self.base_var.get()
+        old = self.base
+        try:
+            self.set_base([] if choice == NO_BASE else [choice])
+        except (OSError, ValueError) as exc:
+            messagebox.showerror(TITLE, "Preset %s could not be used:\n\n%s" % (choice, exc))
+            self.set_base(old)
+        self.apply({option: value for option, value in own.items() if value != self.underlying[option]})
 
     def reload(self):
         if self.dirty() and not messagebox.askyesno(TITLE, "Discard the unsaved changes?"):
             return
-        self.load()
+        self.load_preset(self.name)
 
-    def reset(self):
-        self.apply({option: spec.default for option, spec in self.specs.items()})
-        self.status.config(text="Built-in defaults shown; Save writes them")
+    def clear(self):
+        self.apply({})
+        self.status.config(text="Only the base preset shown; Save writes it")
 
-    def preset_plus(self):
-        """The patches of the plus image (make builds build/stm32-plus.bin with them), the rest at the defaults."""
-        values = {option: spec.default for option, spec in self.specs.items()}
-        for name in PLUS_ENV:
-            flags = AIR10_LEGACY_OPTIONS[name]
-            for flag in flags[::2]:
-                if flag[2:] in values:
-                    values[flag[2:]] = True
-        self.apply(values)
-        self.status.config(text="Plus image patches shown; Save writes them")
-
-    def save(self):
-        """Writes the options that differ from the built-in defaults, grouped by phase. False when not saved."""
+    def save(self, name=None):
+        """Writes the preset: its base presets and the options it sets itself. False when not saved."""
+        name = (name or self.preset_var.get()).strip()
+        if not PRESET_NAME.match(name):
+            messagebox.showerror(TITLE, "Not saved: a preset name uses letters, digits, '.', '_' and '-' only.")
+            return False
+        values = self.shown()
+        if values is None:
+            messagebox.showerror(TITLE, "Not saved:\n\n%s" % self.error)
+            return False
+        own = self.own_values(values)
+        path = preset_path(name)
+        try:   # validate the whole configuration as the patcher will see it
+            layer = patch_config.Layer("preset", path, tuple(self.base),
+                                       tuple(patch_config.option_args(PLATFORM, own)))
+            errors = PLATFORM.dependency_errors(
+                patch_config.effective_args(PLATFORM, self.layers(self.base) + [layer]))
+        except (OSError, ValueError) as exc:
+            errors = [str(exc)]
+        if errors:
+            messagebox.showerror(TITLE, "Not saved:\n\n%s" % "\n".join(errors))
+            return False
+        if name in patch_config.preset_files(PLATFORM.name) and not path.is_file() and not messagebox.askyesno(
+                TITLE, "A user preset named %s replaces the built-in preset %s, also for make.\n\nSave anyway?"
+                % (name, name)):
+            return False
+        if (self.foreign or name != self.name) and path.is_file() and not messagebox.askyesno(
+                TITLE, "%s %s. Its comments and layout will be replaced.\n\nSave anyway?" % (
+                    path, "was not written by this window" if name == self.name else "already exists")):
+            return False
+        text = self.preset_text(own)
         try:
-            values = self.current()
-            tokens = self.tokens(values)
-            ns = self.parser.parse_args(tokens)   # the patcher's own checks, as a last line of defence
-            P.validate_patch_dependencies(self.parser, ns)
-        except (argparse.ArgumentTypeError, ValueError) as exc:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(text)
+        except OSError as exc:
             messagebox.showerror(TITLE, "Not saved:\n\n%s" % exc)
             return False
-        if self.foreign and os.path.exists(CONFIG_FILE) and not messagebox.askyesno(
-                TITLE, "%s was not written by this window. Its comments and layout will be replaced.\n\n"
-                "Save anyway?" % CONFIG_FILE):
-            return False
-        lines = [HEADER, "# Defaults: python/patch-airsense.py --help. Reference: docs/patch_options.md", ""]
-        for phase, specs in P.PATCH_PHASES:
-            group = [spec for spec in specs if values[spec.option] != spec.default]
-            if group:
-                lines.append("# " + phase)
-                lines += ["--%s %s" % (spec.option, option_text(values[spec.option])) for spec in group]
-                lines.append("")
-        palette = self.palette_text()
-        if palette:
-            lines += ["# Custom palette colors", "--palette-colors " + palette, ""]
-        if self.extra:
-            lines += ["# Other options", " ".join(shlex.quote(t) for t in self.extra), ""]
-        if not tokens:
-            lines += ["# All options at their built-in defaults.", ""]
-        with open(CONFIG_FILE, "w", encoding="utf-8", newline="\n") as f:
-            f.write("\n".join(lines))
+        if name != self.name:
+            self.name = name
+            self.preset_box.config(values=user_presets())
+            self.base_box.config(values=[NO_BASE] + [p for p in patch_config.preset_files(PLATFORM.name)
+                                                     if p != name])
+            self.save_settings()
         self.foreign = False
-        self.saved_tokens = tokens
-        self.status.config(text="Saved %s" % CONFIG_FILE)
+        self.saved_text = text
+        self.status.config(text="Saved %s" % path)
         self.refresh()
         return True
 
@@ -956,7 +777,8 @@ class App(tk.Tk):
                 json.dump({"input": self.infile.get(), "output": self.outfile.get(),
                            "verbose": self.verbose.get(), "ocd_mode": self.ocd_mode.get(),
                            "ocd_path": self.ocd_path.get(), "ocd_interface": self.ocd_interface.get(),
-                           "flash_file": self.flash_file.get(), "backup": self.backup.get()}, f, indent=2)
+                           "flash_file": self.flash_file.get(), "backup": self.backup.get(),
+                           "preset": self.name}, f, indent=2)
         except OSError:
             pass
 
@@ -971,7 +793,7 @@ class App(tk.Tk):
         self.log.config(state="disabled")
 
     def patch(self):
-        """Saves the options, then runs patch-airsense.py, which reads them from patch-airsense.config."""
+        """Saves the preset, then runs patch-airsense.py with it."""
         infile, outfile = self.infile.get().strip(), self.outfile.get().strip()
         if not os.path.isfile(infile):
             messagebox.showerror(TITLE, "Choose the original firmware image to patch.")
@@ -988,15 +810,14 @@ class App(tk.Tk):
             return
         self.save_settings()
         os.makedirs(os.path.dirname(os.path.abspath(outfile)), exist_ok=True)
-        command = patch_command(infile, outfile, self.verbose.get())
+        command = patch_command(infile, outfile, self.name, self.verbose.get())
         if command is None:
             messagebox.showerror(TITLE, "WSL cannot reach the firmware image or the output file. Move them to a "
                                  "local drive, or put the ARM toolchain (arm-none-eabi-nm) on the Windows PATH.")
             return
-        self.run("Patching %s -> %s%s" % (infile, outfile, " (in WSL)" if use_wsl() else ""), command[0],
-                 "%s written" % outfile, env=command[1])
-        for name in env_overrides():
-            self.append("Note: %s from the environment overrides %s" % (name, os.path.basename(CONFIG_FILE)), "warn")
+        self.run("Patching %s -> %s with preset %s%s" % (infile, outfile, self.name,
+                                                          " (in WSL)" if use_wsl() else ""),
+                 command, "%s written" % outfile)
 
     def ensure_wsl_tools(self):
         """False when WSL lacks make, the ARM toolchain or python3: offers to install them (as root, so no sudo
@@ -1209,7 +1030,7 @@ class App(tk.Tk):
 
     def on_close(self):
         if self.dirty():
-            answer = messagebox.askyesnocancel(TITLE, "Save the changes to %s?" % os.path.basename(CONFIG_FILE))
+            answer = messagebox.askyesnocancel(TITLE, "Save the changes to preset %s?" % self.name)
             if answer is None or (answer and not self.save()):
                 return
         if self.flashing and not messagebox.askyesno(
@@ -1226,17 +1047,10 @@ class App(tk.Tk):
 
 
 def main():
-    global P
-    try:
-        P = load_patcher()
-    except Exception:
-        root = tk.Tk()
-        root.withdraw()
-        messagebox.showerror(TITLE, "Could not load %s:\n\n%s" % (PATCHER, traceback.format_exc()))
-        return 1
     App().mainloop()
     return 0
 
 
 if __name__ == "__main__":
     sys.exit(main())
+
