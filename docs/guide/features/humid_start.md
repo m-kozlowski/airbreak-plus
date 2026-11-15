@@ -199,5 +199,5 @@ make build/stm32-plus.bin AIR10_PATCH_ARGS='--patch-st-ibr n --patch-autoepap n 
 The switch is added first, then Min Tube, then Start Coupling. When no label is
 left for a setting it is skipped: without the switch Humid Start stays on. The build log reports what was added.
 
-Enable it with `--patch-humid-start y` or `PATCH_HUMID_START=1`. It is off by
+Enable it with `--patch-humid-start y`. It is off by
 default and requires font repacking (on by default).
