@@ -7,10 +7,9 @@ The window edits a user preset, presets/user/air10/NAME.config, which can build 
 built-in plus. Ticking a patch also ticks the patches it requires; unticking one unticks the patches that
 require it. Options the preset sets itself are shown bold, and Save writes only those. The local options file
 patch-airsense.config is edited by hand and applies under every preset, so the window shows what it sets.
-Patch runs patch-airsense.py INPUT OUTPUT PATCH --preset NAME --overwrite, with its output in the log; on
-Windows it runs in WSL unless arm-none-eabi-nm is on the Windows PATH, since the patcher reads the payload
-ELFs with the ARM binutils. Build payloads runs make binaries (through WSL on Windows) to compile the payloads
-the patcher loads from build/. Flash device does over SWD what docs/guide/flashing.md does in the OpenOCD
+Build runs make AIR10_FIRMWARE=INPUT PATCH_ARGS='--preset NAME' build/stm32-patched.bin, with its output in
+the log: make builds the payloads, patches the image and tracks the options and the input image in the image's
+.config state file. On Windows make and every tool it runs go through WSL. Flash device does over SWD what docs/guide/flashing.md does in the OpenOCD
 telnet console: each button runs OpenOCD once with tcl/airsense.cfg and one of its commands (dump,
 flash_new, ...), either a Windows openocd.exe or run-ocd.sh in WSL. The paths and choices are remembered in
 ~/.airbreak_patch_gui.json. Needs only Python with tkinter (included in the Windows installer). Start it with
@@ -34,7 +33,6 @@ import traceback
 
 HERE = os.path.dirname(os.path.abspath(__file__))   # <repo>/python
 REPO = os.path.dirname(HERE)
-PATCHER = os.path.join(HERE, "patch-airsense.py")
 sys.path.insert(0, HERE)
 from lib import patch_config, patch_options  # noqa: E402
 
@@ -47,7 +45,9 @@ PRESET_NAME = re.compile(r"[A-Za-z0-9_.-]+$")   # also passed to make in PATCH_A
 HEADER = "# Written by AirBreaker (python/airbreaker.py): the options this preset sets itself."
 NO_BASE = "(none)"
 SETTINGS_FILE = os.path.join(os.path.expanduser("~"), ".airbreak_patch_gui.json")
-DEFAULT_OUTPUT = os.path.join(REPO, "build", "stm32-patched.bin")
+OUTPUT_TARGET = "build/stm32-patched.bin"   # the Makefile image the window builds
+OUTPUT = os.path.join(REPO, *OUTPUT_TARGET.split("/"))
+MAKE_JOBS = 2   # parallel payload builds; more needs more memory
 DEFAULT_BACKUP = os.path.join(REPO, "stm32.bin")   # where docs/guide/openocd.md has the stock dump
 FLASH_SIZE = 0x100000   # flash_new and dump work on the whole 1 MB flash
 OPENOCD_GLOBS = (   # Windows installs of OpenOCD, newest version first within each
@@ -59,8 +59,8 @@ OPENOCD_GLOBS = (   # Windows installs of OpenOCD, newest version first within e
     r"C:\Program Files*\Cypress\*\openocd\bin\openocd.exe",
     r"C:\Program Files*\Infineon\*\openocd\bin\openocd.exe",
 )
-STEPS = (("choose", "1 Choose patches"), ("save", "2 Save"), ("build", "3 Build payloads"), ("patch", "4 Patch"),
-         ("backup", "5 Dump backup"), ("flash", "6 Flash"))   # the checklist above the options
+STEPS = (("choose", "1 Choose patches"), ("save", "2 Save"), ("patch", "3 Build"), ("backup", "4 Dump backup"),
+         ("flash", "5 Flash"))   # the checklist above the options
 
 
 def parameter_items(patch):
@@ -144,17 +144,40 @@ def load_settings():
         return {}
 
 
-def build_command():
-    """make binaries, through WSL on Windows (docs/guide/wsl_setup.md); None when make is not available."""
-    if os.name == "nt":
-        wsl = shutil.which("wsl.exe")
-        return [wsl, "--cd", REPO, "--", "make", "binaries"] if wsl else None
-    return ["make", "binaries"] if shutil.which("make") else None
+def in_wsl():
+    """The one toolchain rule: on Windows, make and the tools it runs (the ARM toolchain, the patcher, OpenOCD)
+    run in WSL (docs/guide/wsl_setup.md); elsewhere they run on this system."""
+    return os.name == "nt"
+
+
+def tool_command(args):
+    """A command run in the repository, through WSL on Windows; None when WSL is not installed."""
+    if not in_wsl():
+        return list(args)
+    wsl = shutil.which("wsl.exe")
+    return [wsl, "--cd", REPO, "--exec"] + list(args) if wsl else None
+
+
+def make_command(firmware, preset, verbose):
+    """make building OUTPUT_TARGET from firmware with the preset; the Makefile tracks the options and the
+    input in its .config state file. None when the firmware cannot be passed to make."""
+    path = os.path.realpath(firmware)
+    try:
+        rel = os.path.relpath(path, REPO)
+    except ValueError:   # another drive
+        rel = os.pardir
+    if not rel.startswith(os.pardir):
+        path = rel.replace(os.sep, "/")
+    elif in_wsl():
+        path = wsl_path(path)
+    if path is None or any(c.isspace() or c in "'\"$#:;=%" for c in path):
+        return None
+    args = ["make", "-j%d" % MAKE_JOBS, "AIR10_FIRMWARE=" + path, "PATCH_ARGS=--preset " + preset]
+    return tool_command(args + (["V=1"] if verbose else []) + [OUTPUT_TARGET])
 
 
 WSL_TOOLS_HINT = "WSL needs openocd and usbutils: sudo apt install openocd usbutils (docs/guide/wsl_setup.md)."
 LOG_HINTS = (   # output -> what to do about it, shown when the command ends
-    ("run make binaries", "Click 'Build payloads' to run make binaries, then Patch again."),
     ("openocd: command not found", WSL_TOOLS_HINT),
     ("lsusb: command not found", WSL_TOOLS_HINT),
     ("Error: open failed", "OpenOCD found no adapter: check the programmer's USB cable and driver, or in WSL "
@@ -176,12 +199,6 @@ def find_openocd():
 
 
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-
-
-def use_wsl():
-    """Windows without the ARM toolchain: make and the patcher (which runs arm-none-eabi-nm, objdump and objcopy
-    on the payload ELFs) run in WSL, where docs/guide/wsl_setup.md installs them."""
-    return os.name == "nt" and not shutil.which("arm-none-eabi-nm") and bool(shutil.which("wsl.exe"))
 
 
 def wsl_path(path):
@@ -209,27 +226,6 @@ def wsl_missing_packages():
         return []
     missing = result.stdout.split()
     return [pkg for tool, pkg in WSL_TOOLS if tool in missing]
-
-
-def patch_command(infile, outfile, preset, verbose):
-    """patch-airsense.py INPUT OUTPUT PATCH --preset PRESET --overwrite: Windows Python, or python3 in WSL
-    (use_wsl) with the paths translated. None when WSL cannot reach a file."""
-    args = ["PATCH", "--preset", preset, "--overwrite"] + (["-v"] if verbose else [])
-    if not use_wsl():
-        return [python_exe(), "-u", PATCHER, infile, outfile] + args
-    paths = [wsl_path(infile), wsl_path(outfile)]
-    if None in paths:
-        return None
-    return [shutil.which("wsl.exe"), "--cd", REPO, "--exec", "python3", "-u", "python/patch-airsense.py"] + \
-        paths + args
-
-
-def python_exe():
-    """python.exe, also when started through pythonw.exe, so the child has a console-less pipe-friendly stdout."""
-    exe = sys.executable
-    if os.path.basename(exe).lower() == "pythonw.exe":
-        exe = os.path.join(os.path.dirname(exe), "python.exe")
-    return exe
 
 
 class App(tk.Tk):
@@ -363,30 +359,31 @@ class App(tk.Tk):
         settings = self.settings
         sections = ttk.Frame(bottom)   # left: patch an image, right: flash it to the device
         sections.pack(fill="x")
-        patch = ttk.LabelFrame(sections, text="Patch firmware", padding=8)
+        patch = ttk.LabelFrame(sections, text="Build firmware (make)", padding=8)
         patch.pack(side="left", fill="both", expand=True)
         patch.columnconfigure(1, weight=1)
         self.infile = tk.StringVar(value=settings.get("input", ""))
-        self.outfile = tk.StringVar(value=settings.get("output") or DEFAULT_OUTPUT)
+        self.outfile = tk.StringVar(value=OUTPUT)   # the Makefile target; make keeps it in step with its inputs
         self.verbose = tk.BooleanVar(value=settings.get("verbose", False))
-        for row, (label, var, saving) in enumerate((("Input firmware:", self.infile, False),
-                                                    ("Output firmware:", self.outfile, True))):
-            ttk.Label(patch, text=label).grid(row=row, column=0, sticky="w", pady=(0, 4))
-            ttk.Entry(patch, textvariable=var).grid(row=row, column=1, sticky="we", padx=6, pady=(0, 4))
-            ttk.Button(patch, text="Browse...", command=lambda v=var, s=saving: self.browse(v, s)).grid(
-                row=row, column=2, pady=(0, 4))
+        ttk.Label(patch, text="Input firmware:").grid(row=0, column=0, sticky="w", pady=(0, 4))
+        ttk.Entry(patch, textvariable=self.infile).grid(row=0, column=1, sticky="we", padx=6, pady=(0, 4))
+        ttk.Button(patch, text="Browse...", command=lambda: self.browse(self.infile, False)).grid(
+            row=0, column=2, pady=(0, 4))
+        ttk.Label(patch, text="Output firmware:").grid(row=1, column=0, sticky="w", pady=(0, 4))
+        ttk.Entry(patch, textvariable=self.outfile, state="readonly").grid(
+            row=1, column=1, columnspan=2, sticky="we", padx=6, pady=(0, 4))
         actions = ttk.Frame(patch)
         actions.grid(row=2, column=0, columnspan=3, sticky="w", pady=(8, 0))
-        self.patch_btn = ttk.Button(actions, text="Patch", command=self.patch)
+        self.patch_btn = ttk.Button(actions, text="Build", command=self.patch)
         self.patch_btn.pack(side="left")
-        self.build_btn = ttk.Button(actions, text="Build payloads (make binaries)", command=self.build)
-        self.build_btn.pack(side="left", padx=(6, 0))
-        Tooltip(self.build_btn, lambda: wrap_lines(
-            "Compiles the payloads the patcher loads from build/ (graph, Custom VAuto, ...). Needed "
-            "once, and again after changing patches/. Runs: %s" % " ".join(build_command() or ["make", "binaries"])))
+        Tooltip(self.patch_btn, lambda: wrap_lines(
+            "Saves the preset, then builds %s with make: the payloads (needed once, and again after changing "
+            "patches/), then the patched image. Runs%s: make -j%d AIR10_FIRMWARE=INPUT PATCH_ARGS='--preset %s' %s"
+            % (OUTPUT_TARGET, " in WSL" if in_wsl() else "", MAKE_JOBS, self.name, OUTPUT_TARGET)))
         self.stop_btn = ttk.Button(actions, text="Stop", command=self.stop, state="disabled")
         self.stop_btn.pack(side="left", padx=(6, 0))
-        ttk.Checkbutton(actions, text="Verbose (per-patch details)", variable=self.verbose).pack(side="left", padx=12)
+        ttk.Checkbutton(actions, text="Verbose (per-patch details, V=1)", variable=self.verbose).pack(
+            side="left", padx=12)
 
         flash = ttk.LabelFrame(sections, text="Flash device (SWD, OpenOCD)", padding=8)
         flash.pack(side="left", fill="both", expand=True, padx=(8, 0))
@@ -398,7 +395,7 @@ class App(tk.Tk):
         self.ocd_mode = tk.StringVar(value=mode)
         self.ocd_path = tk.StringVar(value=settings.get("ocd_path") or found)
         self.ocd_interface = tk.StringVar(value=settings.get("ocd_interface") or "stlink")
-        self.flash_file = tk.StringVar(value=settings.get("flash_file") or self.outfile.get())
+        self.flash_file = tk.StringVar(value=settings.get("flash_file") or OUTPUT)
         self.backup = tk.StringVar(value=settings.get("backup") or DEFAULT_BACKUP)
         ttk.Label(flash, text="OpenOCD:").grid(row=0, column=0, sticky="w", pady=(0, 4))
         choices = (("local", "Windows openocd.exe"), ("wsl", "WSL (run-ocd.sh)")) if os.name == "nt" else (
@@ -588,7 +585,6 @@ class App(tk.Tk):
             return
         done = {
             "save": preset_path(self.name).is_file() and not self.dirty(),
-            "build": bool(glob.glob(os.path.join(REPO, "build", "*.elf"))),
             "patch": os.path.isfile(self.outfile.get().strip()),
             "backup": os.path.isfile(self.backup.get().strip()),
             "flash": self.flashed,
@@ -774,7 +770,7 @@ class App(tk.Tk):
     def save_settings(self):
         try:
             with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
-                json.dump({"input": self.infile.get(), "output": self.outfile.get(),
+                json.dump({"input": self.infile.get(),
                            "verbose": self.verbose.get(), "ocd_mode": self.ocd_mode.get(),
                            "ocd_path": self.ocd_path.get(), "ocd_interface": self.ocd_interface.get(),
                            "flash_file": self.flash_file.get(), "backup": self.backup.get(),
@@ -793,36 +789,36 @@ class App(tk.Tk):
         self.log.config(state="disabled")
 
     def patch(self):
-        """Saves the preset, then runs patch-airsense.py with it."""
-        infile, outfile = self.infile.get().strip(), self.outfile.get().strip()
+        """Saves the preset, then builds OUTPUT_TARGET from the input firmware with make."""
+        infile = self.infile.get().strip()
         if not os.path.isfile(infile):
             messagebox.showerror(TITLE, "Choose the original firmware image to patch.")
             return
-        if not outfile:
-            messagebox.showerror(TITLE, "Choose where the patched image is written.")
-            return
-        if os.path.abspath(infile) == os.path.abspath(outfile):
-            messagebox.showerror(TITLE, "The output would overwrite the original firmware image.")
+        if os.path.realpath(infile) == os.path.realpath(OUTPUT):
+            messagebox.showerror(TITLE, "%s is what make builds; choose the original firmware image." % OUTPUT_TARGET)
             return
         if not self.ensure_wsl_tools():
             return
         if self.dirty() and not self.save():
             return
-        self.save_settings()
-        os.makedirs(os.path.dirname(os.path.abspath(outfile)), exist_ok=True)
-        command = patch_command(infile, outfile, self.name, self.verbose.get())
-        if command is None:
-            messagebox.showerror(TITLE, "WSL cannot reach the firmware image or the output file. Move them to a "
-                                 "local drive, or put the ARM toolchain (arm-none-eabi-nm) on the Windows PATH.")
+        if not preset_path(self.name).is_file() and not self.save():   # make reads the preset from its file
             return
-        self.run("Patching %s -> %s with preset %s%s" % (infile, outfile, self.name,
-                                                          " (in WSL)" if use_wsl() else ""),
-                 command, "%s written" % outfile)
+        self.save_settings()
+        command = make_command(infile, self.name, self.verbose.get())
+        if command is None:
+            messagebox.showerror(TITLE, "make cannot read %s: %s. Copy it into the repository folder, for example "
+                                 "as stm32.bin." % (infile, "WSL is not installed" if in_wsl() and not
+                                                    shutil.which("wsl.exe") else "WSL cannot reach it or its path "
+                                                    "has spaces or special characters"))
+            return
+        self.run("Building %s from %s with preset %s%s" % (OUTPUT_TARGET, infile, self.name,
+                                                           " (in WSL)" if in_wsl() else ""),
+                 command, "%s built" % OUTPUT_TARGET)
 
     def ensure_wsl_tools(self):
         """False when WSL lacks make, the ARM toolchain or python3: offers to install them (as root, so no sudo
         password is needed) with the output in the log; click the action again when it is done."""
-        packages = wsl_missing_packages() if use_wsl() else []
+        packages = wsl_missing_packages() if in_wsl() else []
         if not packages:
             return True
         if messagebox.askyesno(TITLE, "WSL is missing: %s.\n\nInstall them now with apt (needs internet, takes a "
@@ -833,22 +829,11 @@ class App(tk.Tk):
                      "installed; click the button again")
         return False
 
-    def build(self):
-        """Builds the compiled payloads the patcher loads from build/ (make binaries)."""
-        if not self.ensure_wsl_tools():
-            return
-        command = build_command()
-        if command is None:
-            messagebox.showerror(TITLE, "make was not found. On Windows the payloads are built in WSL with make and "
-                                 "arm-none-eabi-gcc; see docs/guide/wsl_setup.md.")
-            return
-        self.run("Building payloads: %s" % " ".join(command[command.index("make"):]), command, "payloads built")
-
     def run(self, title, command, done, flashing=False, env=None):
         """Runs a command with its output in the log; one at a time, all action buttons disabled meanwhile."""
         self.append("=== %s ===" % title)
         self.done, self.flashing, self.hints, self.running = done, flashing, [], title
-        if title.startswith("Patching"):
+        if title.startswith("Building"):
             self.flashed = False   # the device no longer has the newest patched image
         try:
             self.proc = subprocess.Popen(
@@ -863,7 +848,7 @@ class App(tk.Tk):
         self.stop_btn.config(state="normal")
 
     def action_buttons(self):
-        return [self.patch_btn, self.build_btn] + self.ocd_buttons
+        return [self.patch_btn] + self.ocd_buttons
 
     def stop(self, ask=True):
         if self.proc and self.proc.poll() is None:
