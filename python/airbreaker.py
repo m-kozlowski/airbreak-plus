@@ -22,6 +22,7 @@ import queue
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import textwrap
@@ -145,6 +146,18 @@ def in_wsl():
 
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 WSL_PIDFILE = "/tmp/airbreaker-%d.pid" % os.getpid()   # process group of the command running in WSL
+# In WSL: a new session (-w: setsid waits and passes on the exit code; without it setsid forks when it is
+# already a group leader, as under wsl --exec, and returns 0 at once), whose process group id goes to the pid
+# file for stop_in_wsl(). The pid file is removed when the command ends by itself.
+WSL_WRAPPER = ["setsid", "-w", "bash", "-c", 'echo $$ > "$0"; "$@"; code=$?; rm -f "$0"; exit $code', WSL_PIDFILE]
+# Waits briefly for the pid file of a command that has only just started, then ends its process group.
+WSL_STOP = ('for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$0" ] && break; sleep 0.2; done; '
+            '[ -s "$0" ] && kill -s TERM -- "-$(cat "$0")"; rm -f "$0"')
+
+
+def wsl_exe():
+    """Path of wsl.exe, or None when WSL is not installed."""
+    return shutil.which("wsl.exe")
 
 
 def tool_command(args):
@@ -152,18 +165,20 @@ def tool_command(args):
     in its own process group, recorded in WSL_PIDFILE, so that stop_in_wsl() can end the whole command."""
     if not in_wsl():
         return list(args)
-    wsl = shutil.which("wsl.exe")
+    wsl = wsl_exe()
     if not wsl:
         return None
-    return [wsl, "--cd", REPO, "--exec", "setsid", "bash", "-c", 'echo $$ > "$0"; exec "$@"', WSL_PIDFILE] + list(args)
+    return [wsl, "--cd", REPO, "--exec"] + WSL_WRAPPER + list(args)
 
 
 def stop_in_wsl():
     """Ends the command tool_command() started in WSL. Ending wsl.exe alone does not stop what runs inside."""
+    wsl = wsl_exe()
+    if not wsl:
+        return
     try:
-        subprocess.run([shutil.which("wsl.exe") or "wsl.exe", "--exec", "sh", "-c",
-                        'kill -TERM -- "-$(cat "$0")" 2>/dev/null; rm -f "$0"', WSL_PIDFILE],
-                       capture_output=True, creationflags=NO_WINDOW, timeout=15)
+        subprocess.run([wsl, "--exec", "sh", "-c", WSL_STOP, WSL_PIDFILE], capture_output=True,
+                       creationflags=NO_WINDOW, timeout=15)
     except (OSError, subprocess.SubprocessError):
         pass
 
@@ -870,7 +885,8 @@ class App(tk.Tk):
         try:
             self.proc = subprocess.Popen(
                 command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=REPO,
-                env={**os.environ, "PYTHONIOENCODING": "utf-8", **(env or {})}, creationflags=NO_WINDOW)
+                env={**os.environ, "PYTHONIOENCODING": "utf-8", **(env or {})}, creationflags=NO_WINDOW,
+                start_new_session=not in_wsl())   # its own process group, which stop() ends as a whole
         except OSError as exc:
             self.append("Could not start %s: %s" % (command[0], exc), "fail")
             return
@@ -891,7 +907,12 @@ class App(tk.Tk):
                 return
             if in_wsl():
                 stop_in_wsl()
-            self.proc.terminate()
+                self.proc.terminate()
+            else:   # make or run-ocd.sh and everything they started, such as the patcher or openocd
+                try:
+                    os.killpg(self.proc.pid, signal.SIGTERM)
+                except OSError:
+                    pass
 
     def tcl_path(self, path):
         """A file argument for the airsense.cfg commands: relative to the repo (OpenOCD runs there) when inside
