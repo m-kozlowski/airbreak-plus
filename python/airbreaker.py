@@ -41,7 +41,7 @@ PLATFORM = patch_options.load("air10")
 LOCAL_FILE = patch_config.REPO / patch_config.LOCAL_FILES[PLATFORM.name]
 USER_PRESETS = patch_config.REPO / patch_config.preset_dirs(PLATFORM.name)[0]   # presets/user/air10
 DEFAULT_PRESET = "airbreaker"
-PRESET_NAME = re.compile(r"[A-Za-z0-9_.-]+$")   # also passed to make in PATCH_ARGS, so no spaces or quotes
+PRESET_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*\Z")   # also in make PATCH_ARGS: no spaces, quotes, leading dash
 HEADER = "# Written by AirBreaker (python/airbreaker.py): the options this preset sets itself."
 NO_BASE = "(none)"
 SETTINGS_FILE = os.path.join(os.path.expanduser("~"), ".airbreak_patch_gui.json")
@@ -49,9 +49,9 @@ SETTINGS_FILE = os.path.join(os.path.expanduser("~"), ".airbreak_patch_gui.json"
 # PATCH_ARGS (documented in docs/patch_options.md). Its options and input are tracked by make, not here.
 OUTPUT_TARGET = "build/stm32-patched.bin"
 OUTPUT = os.path.join(REPO, *OUTPUT_TARGET.split("/"))
+INPUT_COPY = "airbreaker-input.bin"   # copy of an input firmware whose path make cannot take
 MAKE_JOBS = 2   # parallel payload builds; more needs more memory
 DEFAULT_BACKUP = os.path.join(REPO, "stm32.bin")   # where docs/guide/openocd.md has the stock dump
-FLASH_SIZE = 0x100000   # flash_new and dump work on the whole 1 MB flash
 STEPS = (("choose", "1 Choose patches"), ("save", "2 Save"), ("patch", "3 Build"), ("backup", "4 Dump backup"),
          ("flash", "5 Flash"))   # the checklist above the options
 
@@ -168,9 +168,9 @@ def stop_in_wsl():
         pass
 
 
-def make_command(firmware, preset, verbose):
-    """make building OUTPUT_TARGET from firmware with the preset; the Makefile tracks the options and the
-    input in its .config state file. None when the firmware cannot be passed to make."""
+def make_input(firmware):
+    """The firmware as make gets it in AIR10_FIRMWARE (repo-relative inside the repository, else a WSL or
+    absolute path); None when the path cannot be passed to make."""
     path = os.path.realpath(firmware)
     try:
         rel = os.path.relpath(path, REPO)
@@ -182,6 +182,12 @@ def make_command(firmware, preset, verbose):
         path = wsl_path(path)
     if path is None or any(c.isspace() or c in "'\"$#:;=%" for c in path):
         return None
+    return path
+
+
+def make_command(path, preset, verbose):
+    """make building OUTPUT_TARGET from the input path (see make_input) with the preset; the Makefile tracks
+    the options and the input in its .config state file."""
     args = ["make", "-j%d" % MAKE_JOBS, "AIR10_FIRMWARE=" + path, "PATCH_ARGS=--preset " + preset]
     return tool_command(args + (["V=1"] if verbose else []) + [OUTPUT_TARGET])
 
@@ -500,15 +506,17 @@ class App(tk.Tk):
 
     # Values: dicts from option name to the parsed value, as patch_config.layer_values() returns them.
 
-    def layers(self, base):
+    def layers(self, base, name=None):
         """Configuration layers under this preset, as the patcher builds them for make PATCH_ARGS='--preset
         NAME': the local options file (and the presets it selects), then the base presets."""
         preset_parser = patch_config.options_parser(PLATFORM)
-        layers = patch_config.config_layers(PLATFORM.name, [], patch_config.local_options_parser(PLATFORM),
-                                            preset_parser)[:-1]   # the empty command line
+        layers = [layer for layer in patch_config.config_layers(
+            PLATFORM.name, [], patch_config.local_options_parser(PLATFORM), preset_parser)
+            if layer.source != "command line"]
         layers += patch_config.preset_layers(PLATFORM.name, base, USER_PRESETS, preset_parser)
-        if preset_path(self.name).resolve() in [layer.path for layer in layers]:
-            raise ValueError("preset %s selects itself through %s" % (self.name, " + ".join(base)))
+        name = name or self.name
+        if name in base or preset_path(name).resolve() in [layer.path for layer in layers]:
+            raise ValueError("preset %s selects itself through %s" % (name, " + ".join(base)))
         return layers
 
     def set_base(self, base):
@@ -536,7 +544,12 @@ class App(tk.Tk):
             text = self.params[parameter.option].get().strip()
             if self.enabled[patch.option].get() and text:
                 typed.add(parameter.option)
-                for item in shlex.split(text) if parameter.value.repeat else [text]:
+                try:
+                    items = shlex.split(text) if parameter.value.repeat else [text]
+                except ValueError as exc:
+                    self.error = "--%s: %s" % (parameter.option, exc)
+                    return None
+                for item in items:
                     tokens += ["--" + parameter.option, item]
         try:
             args = vars(patch_config.options_parser(PLATFORM).parse_args(tokens))
@@ -666,7 +679,7 @@ class App(tk.Tk):
         if name == self.name:
             return
         if not PRESET_NAME.match(name):
-            messagebox.showerror(TITLE, "A preset name uses letters, digits, '.', '_' and '-' only.")
+            messagebox.showerror(TITLE, "A preset name starts with a letter or digit and uses letters, digits, '.', '_' and '-' only.")
             self.preset_var.set(self.name)
             return
         if self.dirty():
@@ -707,7 +720,7 @@ class App(tk.Tk):
         """Writes the preset: its base presets and the options it sets itself. False when not saved."""
         name = (name or self.preset_var.get()).strip()
         if not PRESET_NAME.match(name):
-            messagebox.showerror(TITLE, "Not saved: a preset name uses letters, digits, '.', '_' and '-' only.")
+            messagebox.showerror(TITLE, "Not saved: a preset name starts with a letter or digit and uses letters, digits, '.', '_' and '-' only.")
             return False
         values = self.shown()
         if values is None:
@@ -719,7 +732,7 @@ class App(tk.Tk):
             layer = patch_config.Layer("preset", path, tuple(self.base),
                                        tuple(patch_config.option_args(PLATFORM, own)))
             errors = PLATFORM.dependency_errors(
-                patch_config.effective_args(PLATFORM, self.layers(self.base) + [layer]))
+                patch_config.effective_args(PLATFORM, self.layers(self.base, name) + [layer]))
         except (OSError, ValueError) as exc:
             errors = [str(exc)]
         if errors:
@@ -798,13 +811,26 @@ class App(tk.Tk):
         if not preset_path(self.name).is_file() and not self.save():   # make reads the preset from its file
             return
         self.save_settings()
-        command = make_command(infile, self.name, self.verbose.get())
-        if command is None:
-            messagebox.showerror(TITLE, "make cannot read %s: %s. Copy it into the repository folder, for example "
-                                 "as stm32.bin." % (infile, "WSL is not installed" if in_wsl() and not
-                                                    shutil.which("wsl.exe") else "WSL cannot reach it or its path "
-                                                    "has spaces or special characters"))
+        if in_wsl() and not shutil.which("wsl.exe"):
+            messagebox.showerror(TITLE, "wsl.exe was not found. make runs in WSL on Windows; see "
+                                 "docs/guide/wsl_setup.md.")
             return
+        path = make_input(infile)
+        if path is None:   # make cannot take the path (spaces, special characters): work from a copy
+            copy = os.path.join(REPO, "build", INPUT_COPY)
+            try:
+                os.makedirs(os.path.dirname(copy), exist_ok=True)
+                shutil.copyfile(infile, copy)
+            except OSError as exc:
+                messagebox.showerror(TITLE, "Could not copy %s to %s: %s" % (infile, copy, exc))
+                return
+            self.append("make cannot take the path of %s; building from a copy, build/%s" % (infile, INPUT_COPY),
+                        "warn")
+            path = make_input(copy)
+            if path is None:
+                messagebox.showerror(TITLE, "WSL cannot reach the repository folder %s." % REPO)
+                return
+        command = make_command(path, self.name, self.verbose.get())
         self.run("Building %s from %s with preset %s%s" % (OUTPUT_TARGET, infile, self.name,
                                                            " (in WSL)" if in_wsl() else ""),
                  command, "%s built" % OUTPUT_TARGET)
@@ -838,7 +864,7 @@ class App(tk.Tk):
     def run(self, title, command, done, flashing=False, env=None):
         """Runs a command with its output in the log; one at a time, all action buttons disabled meanwhile."""
         self.append("=== %s ===" % title)
-        self.done, self.flashing, self.hints, self.running = done, flashing, [], title
+        self.done, self.hints, self.running = done, [], title
         if title.startswith("Building"):
             self.flashed = False   # the device no longer has the newest patched image
         try:
@@ -848,6 +874,7 @@ class App(tk.Tk):
         except OSError as exc:
             self.append("Could not start %s: %s" % (command[0], exc), "fail")
             return
+        self.flashing = flashing
         threading.Thread(target=self.reader, args=(self.proc,), daemon=True).start()
         for button in self.action_buttons():
             button.config(state="disabled")
@@ -910,14 +937,10 @@ class App(tk.Tk):
             self.run(title, command, done, flashing)
 
     def flash_image(self):
-        """The firmware file to flash or verify, if it is a full 1 MB image."""
+        """The firmware file to flash or verify; flash_new itself rejects anything but a full image."""
         path = self.flash_file.get().strip()
         if not os.path.isfile(path):
             messagebox.showerror(TITLE, "Choose the firmware image (e.g. the patched output).")
-            return None
-        if os.path.getsize(path) != FLASH_SIZE:
-            messagebox.showerror(TITLE, "%s is %d bytes; a full 1 MB image (%d bytes) is needed."
-                                 % (path, os.path.getsize(path), FLASH_SIZE))
             return None
         return path
 
