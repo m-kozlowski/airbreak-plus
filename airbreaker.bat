@@ -22,10 +22,15 @@ echo for your WSL password.
 choice /C YN /M "Install them now"
 if errorlevel 2 goto nopython
 wsl.exe --exec sudo sh -c "apt-get update && apt-get install -y python3 python3-tk make gcc-arm-none-eabi binutils-arm-none-eabi"
-wsl.exe --exec python3 -c "import tkinter" >nul 2>&1 || goto nopython
+wsl.exe --exec python3 -c "import tkinter" >nul 2>&1 || goto installfailed
 :runwsl
 powershell -NoProfile -WindowStyle Hidden -Command "Start-Process wsl.exe -WindowStyle Hidden -ArgumentList '--cd','%~dp0.','--exec','python3','python/airbreaker.py'"
 exit /b 0
+
+:installfailed
+echo Python 3 with tkinter is still missing in WSL; see the messages above.
+pause
+exit /b 1
 
 :noapt
 echo Your WSL distribution has no apt-get. Install python3 with tkinter, make and the
