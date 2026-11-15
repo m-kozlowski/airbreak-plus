@@ -45,7 +45,9 @@ PRESET_NAME = re.compile(r"[A-Za-z0-9_.-]+$")   # also passed to make in PATCH_A
 HEADER = "# Written by AirBreaker (python/airbreaker.py): the options this preset sets itself."
 NO_BASE = "(none)"
 SETTINGS_FILE = os.path.join(os.path.expanduser("~"), ".airbreak_patch_gui.json")
-OUTPUT_TARGET = "build/stm32-patched.bin"   # the Makefile image the window builds
+# The one fact about the Makefile this window needs: the target that builds the image from AIR10_FIRMWARE and
+# PATCH_ARGS (documented in docs/patch_options.md). Its options and input are tracked by make, not here.
+OUTPUT_TARGET = "build/stm32-patched.bin"
 OUTPUT = os.path.join(REPO, *OUTPUT_TARGET.split("/"))
 MAKE_JOBS = 2   # parallel payload builds; more needs more memory
 DEFAULT_BACKUP = os.path.join(REPO, "stm32.bin")   # where docs/guide/openocd.md has the stock dump
@@ -268,10 +270,11 @@ class App(tk.Tk):
             self.steps[key] = ttk.Label(checklist, text=text)
             self.steps[key].pack(side="left", padx=(0, 18))
         Tooltip(checklist, lambda: wrap_lines(
-            "The steps in order. A tick means it is done: the options are saved, the payloads are built "
-            "(build/), the patched firmware exists, a backup file exists, and the device was flashed from this "
-            "window. Step 5 matters most: the stock dump is the only way to restore the device."))
+            "The steps in order. A tick means it is done: the options are saved, make built the image from this "
+            "window with the saved options and this input firmware, a backup file exists, and the device was "
+            "flashed from this window. Step 5 matters most: the stock dump is the only way to restore the device."))
         self.flashed = False   # the device was flashed from this window since the last patch
+        self.built = None      # (preset, saved text, input) of the last successful build in this window
         self.running = ""      # title of the running command
 
         panes = ttk.PanedWindow(self, orient="vertical")   # top: options, bottom: patch firmware and log
@@ -334,7 +337,7 @@ class App(tk.Tk):
         self.base_box.pack(side="left", padx=(4, 0))
         self.base_box.bind("<<ComboboxSelected>>", lambda _: self.base_changed())
         Tooltip(self.base_box, lambda: wrap_lines(
-            "A preset this one builds on, such as plus (the patches of build/stm32-plus.bin). Its options apply "
+            "A preset this one builds on, such as plus. Its options apply "
             "first; this preset only stores what differs from it."))
         ttk.Button(bar, text="Save", command=self.save).pack(side="left", padx=(12, 0))
         ttk.Button(bar, text="Reload", command=self.reload).pack(side="left", padx=(6, 0))
@@ -379,7 +382,7 @@ class App(tk.Tk):
         self.patch_btn.pack(side="left")
         Tooltip(self.patch_btn, lambda: wrap_lines(
             "Saves the preset, then builds %s with make: the payloads (needed once, and again after changing "
-            "patches/), then the patched image. Runs%s: make -j%d AIR10_FIRMWARE=INPUT PATCH_ARGS='--preset %s' %s"
+            "patches/), then the patched image. make decides what is out of date. Runs%s: make -j%d AIR10_FIRMWARE=INPUT PATCH_ARGS='--preset %s' %s"
             % (OUTPUT_TARGET, " in WSL" if in_wsl() else "", MAKE_JOBS, self.name, OUTPUT_TARGET)))
         self.stop_btn = ttk.Button(actions, text="Stop", command=self.stop, state="disabled")
         self.stop_btn.pack(side="left", padx=(6, 0))
@@ -436,7 +439,7 @@ class App(tk.Tk):
         self.log.tag_configure("pass", foreground="#1b7f2a")
 
 
-        for var in (self.outfile, self.backup):
+        for var in (self.outfile, self.backup, self.infile):
             var.trace_add("write", lambda *_: self.update_steps())
         self.load_preset(self.settings.get("preset") or DEFAULT_PRESET)
         self.after(100, self.pump)
@@ -575,7 +578,8 @@ class App(tk.Tk):
             return
         done = {
             "save": preset_path(self.name).is_file() and not self.dirty(),
-            "patch": os.path.isfile(self.outfile.get().strip()),
+            "patch": os.path.isfile(self.outfile.get().strip()) and self.built == (
+                self.name, self.saved_text, self.infile.get().strip()),
             "backup": os.path.isfile(self.backup.get().strip()),
             "flash": self.flashed,
         }
@@ -986,6 +990,8 @@ class App(tk.Tk):
         code = self.proc.wait()
         if code == 0:
             self.flashed = self.flashed or self.running.startswith("Flashing")
+            if self.running.startswith("Building"):
+                self.built = (self.name, self.saved_text, self.infile.get().strip())
             self.append("=== Done: %s ===" % self.done, "pass")
         else:
             self.append("=== Failed (exit code %d) ===" % code, "fail")
