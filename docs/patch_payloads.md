@@ -1,8 +1,8 @@
 # Air 10 Patch Payloads
 
-Compiled Air 10 patches are linked into known erased CDX ranges. The build
-system measures every payload, allocates non-overlapping addresses, links final
-binaries at those addresses, and generates one layout per CDX version.
+Air 10 payloads share one build pipeline for CDX patches, BLX patches, and RAM
+modules. For injected payloads, it measures sizes, allocates non-overlapping
+addresses in known code caves, and links final binaries at those addresses.
 
 ## Supported versions
 
@@ -13,6 +13,8 @@ The payload build currently defines layouts for:
 - SX567-0306
 - SX567-0401
 - SX567-0402
+- SX584-0204 and SX584-0205
+- SX577-0200 and SX585-0200 (BLX)
 
 The Makefile `PAYLOADS_<version>` lists are the source of truth for which
 payloads are built for each version. A payload may be built and assigned space
@@ -23,7 +25,7 @@ without being enabled in a particular output image.
 `patches/s10_code_caves.tsv` lists available half-open ranges:
 
 ```text
-cdx_version  region  storage_start  storage_end  image_base  runtime_base  priority
+version      region  storage_start  storage_end  image_base  runtime_base  priority
 0402         cdx     0x080FCF98     0x080FFFFE   0x08000000  0x08000000    0
 ```
 
@@ -44,14 +46,18 @@ fails if a selected payload needs a range that is still occupied.
 
 The payload layout is generated in two link passes:
 
-1. compile versioned source with `CDX_VER_<version>`
-2. probe-link each payload at `0x08000000`
+1. compile versioned source with `CDX_VER_<version>` or `BLX_VER_<BID>` (hyphens replaced by underscores)
+2. probe-link each payload at the runtime base from its code-cave mapping
 3. convert each probe ELF to a binary and record its measured size
 4. allocate payloads by cave priority, then address
 5. align each allocation to 4 bytes
 6. write `build/payload_layout_<version>.tsv`
 7. link final ELFs at their assigned addresses
 8. convert final ELFs to the binaries consumed by the patchers
+
+RAM modules use the same compile, link, and binary rules. A `<payload>.ld`
+script supplies their entry point, memory bounds, and section placement. They
+do not consume code caves or appear in the generated injection layout.
 
 The allocator processes payloads in the order emitted by
 `payload_sizes_<version>.tsv`. Each payload uses the preferred cave with enough
@@ -79,12 +85,13 @@ cat build/payload_layout_0402.tsv
 The Python patcher consumes the generated TSV layout. Before injection it
 verifies:
 
-- the payload exists in the selected CDX layout
+- the payload exists in the selected firmware layout
 - the binary size matches the measured layout size
 - the final ELF is linked at the assigned runtime address
 - flattening the final ELF reproduces the supplied binary exactly
-- the complete destination range contains erased `0xFF` bytes
+- the destination contains the expected empty byte (`0xFF` by default), or the same payload already installed
 - the storage range lies inside the selected firmware region
+- the storage range and runtime mapping match the code-cave table
 
 Patch code resolves entry points and ABI objects from the final ELF symbol
 table. Source code and patcher functions do not maintain duplicate payload
@@ -136,6 +143,11 @@ for that state so they can run without `custom_settings`. Pointer slots use
 Firmware-stable var IDs belong in `s10_vars`. Firmware-stable function entry
 points belong in versioned stubs. Neither should be passed through a new ABI
 slot.
+
+Values known before injection can be passed as `abi={symbol: bytes}` to
+`_inject_payload`. These symbols must declare their size in the ELF. The
+framework checks slot bounds and sizes, fills the slots before writing, and
+accepts the same payload and ABI values when the patch is applied again.
 
 ## Variable callbacks
 
@@ -253,24 +265,24 @@ The generated layout is shared by all families.
 8. resolve hook and ABI symbols from the final ELF
 9. verify generated layouts and all intended output images
 
-Every registered CDX payload uses the same probe/final link template. Defaults
+Every registered payload uses the same link template. Defaults
 link its versioned object, optional `<payload>_abi.S`, and versioned firmware
 stubs. Declare exceptions before the template is expanded:
 
 | Makefile variable | Default |
 |-------------------|---------|
-| `S10_PAYLOAD_ENTRY_<payload>` | `start`; sets the ELF entry, not the patcher's hook target |
+| `S10_PAYLOAD_ENTRY_<payload>` | `start`; sets the ELF entry, not the patcher's hook target; standalone linker scripts supply their own entry |
 | `S10_PAYLOAD_OBJECTS_<payload>` | `<payload>` and `<payload>_abi` when present; ordered stems for `<stem>_<version>.o` |
-| `S10_PAYLOAD_STUBS_<payload>` | `s10`, selecting `s10_<version>_stubs.o`; empty omits stubs |
+| `S10_PAYLOAD_STUBS_<payload>` | `blx` for `blx_*` payloads, otherwise `s10`; selects `<stub>_<version>_stubs.o`; empty omits stubs |
 | `S10_PAYLOAD_IMPORTS_<payload>` | Empty; otherwise names of payloads supplying symbols |
 | `S10_PAYLOAD_LDFLAGS_<payload>` | `--sort-section=name` |
+| `S10_PAYLOAD_REGION_<payload>` | `blx` for `blx_*` payloads, otherwise `cdx`; selects the code-cave region |
 
 Imports must appear in `PAYLOADS_<version>` for every version of the consumer.
 They become Make prerequisites and `--just-symbols` inputs: probe ELFs for
 the size pass, final ELFs for the final link.
 
-Do not add a fixed payload address to source, patcher code, or a second Makefile
-variable. Code-cave ownership belongs to `s10_code_caves.tsv` and the generated
-layout.
+Injected payload addresses belong to `s10_code_caves.tsv` and the generated
+layout. Standalone module addresses belong to their linker script.
 
 See [Custom settings](custom_settings.md) for menu and persistence integration.

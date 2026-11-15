@@ -24,7 +24,7 @@ import re
 import sys
 
 from lib.as10_firmware import ASFirmware
-from lib.compiled_payload import CompiledPayloadMixin
+from lib.compiled_payload import CompiledPayloadMixin, elf_binary_data
 from lib.custom_menu import MenuBuilder, stock, custom
 from lib.custom_menu_stock import StockMenu
 from lib.patch_config import parse_patch_args
@@ -100,6 +100,7 @@ def firmware_build_identity(repo_dir):
 class ASFirmwarePatches(CompiledPayloadMixin):
     """This class contains the actual patching scripts for specific items"""
 
+    PAYLOAD_CAVES_FILE = "patches/s10_code_caves.tsv"
     PAYLOAD_VERSIONS = frozenset(('0302', '0305', '0306', '0401', '0402'))
     # Table offset and stock entry count, including the unused callback ID zero.
     VARIABLE_CALLBACK_TABLES = {
@@ -1906,7 +1907,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         return PatchOutcome.ok()
 
     def patch_blx_dump(self):
-        """Add the bootloader command used by resmed_flash.py --dump."""
+        """Add flash dump and the checked RAM loader for EEPROM transfers."""
         hooks = {
             'SX577-0200': (0x300e, b'\xfd\xf7\x56\xfa'),
             'SX585-0200': (0x306e, b'\xfd\xf7\x26\xfa'),
@@ -1916,6 +1917,16 @@ class ASFirmwarePatches(CompiledPayloadMixin):
 
         # Load the payload and its flash/SRAM allocation.
         data, _, elf_path = self._load_versioned_payload('blx_dump', region='BLX')
+        tail, _, _ = self._load_versioned_payload('blx_dump_tail', region='BLX')
+        module, _, module_elf = self._load_versioned_payload('blx_eeprom', region='BLX')
+        if elf_binary_data(module_elf) != module:
+            raise ValueError('blx_eeprom: binary does not match its ELF (run make binaries)')
+        for symbol in ('blx_eeprom_start', 'blx_eeprom_size', 'eeprom_service'):
+            if self._elf_symbol_addr(elf_path, symbol) != self._elf_symbol_addr(module_elf, symbol):
+                raise ValueError('blx_dump: module symbols differ from its ELF (run make binaries)')
+        if self._elf_symbol_addr(module_elf, 'blx_eeprom_size') != len(module):
+            raise ValueError('blx_eeprom: unexpected module size')
+        abi = {'blx_eeprom_crc': struct.pack('<H', self.asf.crcfunc(module))}
         _, layout = self._load_payload_layout(region='BLX')
         allocation = layout['blx_dump']
         entry_point = self._elf_symbol_addr(elf_path, 'start')
@@ -1926,16 +1937,18 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         hook_runtime = self.asf.FLASH_BASE + hook_offset + flash_to_ram
         patched_call = self._encode_thumb_bl_addr(hook_runtime, entry_point)
 
-        # Check the hook before injection; install it only after payload validation.
-        current_call = self.asf.read_bytes(hook_offset, len(original_call))
-        if current_call not in (original_call, patched_call):
-            raise ValueError("patch_blx_dump: unexpected dispatcher call bytes at 0x%04X" % hook_offset)
-        storage, _ = self._inject_payload('blx_dump', data, region='BLX', empty_byte=0)
-        self.asf.patch(patched_call, hook_offset, clobber=True)
+        # Validate both payloads before changing the hook or either code cave.
+        self._validate_payload('blx_dump', data, region='BLX', empty_byte=0, abi=abi)
+        self._validate_payload('blx_dump_tail', tail, region='BLX')
+        self._replace_bytes_checked(hook_offset, original_call, patched_call,
+                                    'BLX dispatcher call', accept_existing=True)
+        storage, _ = self._inject_payload('blx_dump', data, region='BLX', empty_byte=0, abi=abi)
+        tail_storage, _ = self._inject_payload('blx_dump_tail', tail, region='BLX')
 
         return PatchOutcome.ok(
             None,
             self._payload_detail('blx_dump', len(data), storage),
+            self._payload_detail('blx_dump_tail', len(tail), tail_storage),
             self._hook_detail('bootloader command dispatcher call', hook_runtime, entry_point))
 
     def bypass_psucheck(self):

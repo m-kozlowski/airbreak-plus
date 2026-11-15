@@ -3,7 +3,7 @@
 ResMed AirSense UART Flash Tool
 
 Transfers firmware through the ResMed AirSense UART bootloader protocol.
-Supports block flashing and full-image dumps with CRC validation.
+Supports block flashing, firmware dumps, and verified EEPROM transfers.
 
 S10 flash memory map (SX577/SX585):
   0x08000000  BLX  16KB   Bootloader
@@ -26,6 +26,8 @@ import sys
 import struct
 import re
 import math
+from pathlib import Path
+from tcp_serial import open_tcp
 
 
 class FlashUnconfirmed(RuntimeError):
@@ -94,6 +96,22 @@ SUPPORTED_BIDS = DUMP_SUPPORTED_BIDS | {'SX525-0300', 'SX525-0400'}
 FULL_IMAGE_SIZE = 0x100000
 DUMP_CHUNK_SIZE = 240
 DUMP_FRAME_TYPE = 'O'
+EEPROM_SIZE = 0x40000
+EEPROM_PAGE_SIZE = 256
+EEPROM_MODULE_LIMIT = 0x8000
+EEPROM_WRITE_BUFFER = 0x8000
+EEPROM_INFO = b'AEEP' + struct.pack('<BIHI', 3, EEPROM_SIZE, EEPROM_PAGE_SIZE, EEPROM_WRITE_BUFFER)
+EEPROM_ERRORS = {
+    1: 'invalid EEPROM request or range',
+    2: 'SPI transfer timeout',
+    3: 'EEPROM busy timeout (check the EEPROM connection)',
+    4: 'EEPROM block protection is enabled',
+    5: 'EEPROM did not enable writes',
+    6: 'EEPROM readback differs from written data',
+    7: 'bootloader is not idle',
+    8: 'SPI1 is already in use',
+    9: 'EEPROM write stream timed out',
+}
 
 BLOCK_ALIASES = {
     'bootloader': 'BLX', 'boot': 'BLX', 'blx': 'BLX',
@@ -177,6 +195,7 @@ def read_frame(ser, timeout=1.0):
     deadline = time.monotonic() + timeout
     try:
         while True:
+            needed = 5
             while True:
                 try:
                     start = data.index(ord('U'))
@@ -186,6 +205,7 @@ def read_frame(ser, timeout=1.0):
                 if start:
                     del data[:start]
                 if len(data) < 5:
+                    needed = 5 - len(data)
                     break
                 if data[1] == ord('U'):
                     del data[0]
@@ -199,6 +219,7 @@ def read_frame(ser, timeout=1.0):
                     del data[0]
                     continue
                 if len(data) < length:
+                    needed = length - len(data)
                     break
 
                 raw = bytes(data[:length])
@@ -218,42 +239,192 @@ def read_frame(ser, timeout=1.0):
             if remaining <= 0:
                 return None
             ser.timeout = min(0.02, remaining)
-            data.extend(ser.read(512))
+            # Serial.read waits for the requested byte count or its timeout.
+            # Read only the header/remainder, so a complete short frame returns
+            # immediately on serial ports as well as TCP sockets.
+            data.extend(ser.read(needed))
     finally:
         ser.timeout = old_timeout
 
 
-def request_dump_chunk(ser, offset, length, retries=3):
-    request = b'D' + struct.pack('<IH', offset, length)
-    last_error = "no response"
-    for _ in range(retries):
-        reset_input_buffer(ser)
-        ser.write(build_frame(DUMP_FRAME_TYPE, request))
-        ser.flush()
-        frame = read_frame(ser, timeout=1.0)
+def read_blx_reply(ser, timeout=1.0):
+    """Read a complete O reply with a valid CRC and declared payload length."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        frame = read_frame(ser, timeout=deadline - time.monotonic())
         if frame is None:
-            last_error = "no response"
-            continue
-        if frame['type'] != DUMP_FRAME_TYPE:
-            last_error = "unexpected frame type %s" % frame['type']
-            continue
-        if not frame['crc_ok']:
-            last_error = "CRC mismatch"
-            continue
+            return None
         payload = frame['payload']
-        if len(payload) < 7:
-            last_error = "short response"
+        if not frame['crc_ok'] or frame['type'] != DUMP_FRAME_TYPE or len(payload) < 7:
             continue
-        response_offset, response_length = struct.unpack_from('<IH', payload, 1)
-        if payload[0:1] == b'E':
-            raise RuntimeError("bootloader rejected dump range 0x%05X+%d" %
-                               (offset, length))
-        if (payload[0:1] != b'd' or response_offset != offset or
-                response_length != length or len(payload) != 7 + length):
-            last_error = "response range mismatch"
-            continue
-        return payload[7:]
-    raise RuntimeError("dump failed at 0x%05X: %s" % (offset, last_error))
+        offset, n = struct.unpack_from('<IH', payload, 1)
+        if len(payload) == 7 + n:
+            return payload[:1], offset, payload[7:]
+    return None
+
+
+def check_blx_error(command, op, offset, data):
+    if op == b'E' and not data:
+        if command == b'D':
+            raise RuntimeError('bootloader rejected dump range at 0x%05X' % offset)
+        raise RuntimeError('BLX rejected the RAM module or upload range; use the '
+                           'module from the same build as --patch-blx-dump')
+    if op == b'e' and len(data) == 1:
+        raise RuntimeError('%s at 0x%05X: %s' % (
+            'BLX' if command == b'D' else 'EEPROM', offset,
+            EEPROM_ERRORS.get(data[0], 'unknown error %d' % data[0])))
+
+
+def send_blx_request(ser, request):
+    wire = build_frame(DUMP_FRAME_TYPE, request)
+    if len(wire) > 0x1ff:
+        raise ValueError('request exceeds the bootloader frame size')
+    reset_input_buffer(ser)
+    if ser.write(wire) != len(wire):
+        raise OSError('short write of BLX transfer request')
+    ser.flush()
+
+
+def request_blx_chunk(ser, command, offset, length, data=b'', retries=3):
+    """Exchange a loader flash/upload chunk or a module information request."""
+    if command in (b'D', b'U'):
+        request = command + struct.pack('<IH', offset, length) + data
+    elif command == b'I':
+        request = b'X' + struct.pack('<IH', offset, length) + command + data
+    else:
+        raise ValueError('unknown BLX transfer command: %r' % command)
+    response_length = len(EEPROM_INFO) if command == b'I' else length
+    for _ in range(retries):
+        send_blx_request(ser, request)
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            reply = read_blx_reply(ser, deadline - time.monotonic())
+            if reply is None:
+                break
+            op, reply_offset, actual = reply
+            if reply_offset != offset:
+                continue
+            check_blx_error(command, op, offset, actual)
+            if op != command.lower() or len(actual) != response_length:
+                continue
+            if command == b'U' and actual != data:
+                raise RuntimeError('RAM module readback mismatch at 0x%05X' % offset)
+            return actual
+    raise RuntimeError('BLX transfer failed at 0x%05X: no valid response' % offset)
+
+
+def load_eeprom_module(bid, path=None):
+    if bid not in DUMP_SUPPORTED_BIDS:
+        raise RuntimeError('EEPROM service does not support BID ' + str(bid))
+    binary = (Path(path) if path else Path(__file__).resolve().parent.parent /
+              'build' / ('blx_eeprom_%s.bin' % bid))
+    try:
+        data = binary.read_bytes()
+    except OSError as exc:
+        raise RuntimeError('cannot load EEPROM module from %s '
+                           '(run make binaries): %s' % (binary, exc)) from exc
+    if not 0 < len(data) <= EEPROM_MODULE_LIMIT:
+        raise RuntimeError('invalid EEPROM module size: %s' % binary)
+    return data
+
+
+def upload_eeprom_module(ser, module):
+    print('[*] Uploading and verifying transfer RAM module (%d bytes)...' % len(module))
+    for offset, length in transfer_ranges(len(module)):
+        chunk = module[offset:offset + length]
+        request_blx_chunk(ser, b'U', offset, length, chunk)
+    info = request_blx_chunk(ser, b'I', 0, 0)
+    if info != EEPROM_INFO:
+        raise RuntimeError('unexpected EEPROM module protocol or geometry')
+    print('[+] RAM readback and BLX module CRC verified')
+
+
+def transfer_ranges(size):
+    offset = 0
+    while offset < size:
+        length = min(DUMP_CHUNK_SIZE, size - offset)
+        yield offset, length
+        offset += length
+
+
+def read_memory(ser, command, size):
+    yield from read_memory_range(ser, command, 0, size)
+
+
+def read_memory_range(ser, command, start, end, retries=3):
+    """Yield a verified contiguous range; drain to completion before resuming gaps."""
+    limits = {b'D': FULL_IMAGE_SIZE, b'R': EEPROM_SIZE}
+    if command not in limits or not 0 <= start < end <= limits[command]:
+        raise ValueError('invalid memory read command or range')
+    offset = start
+    for _ in range(retries):
+        # If only the end marker was lost, re-read the last byte to establish
+        # completion without returning duplicate data to the caller.
+        resume = min(offset, end - 1)
+        send_blx_request(ser, b'X' + struct.pack('<IH', resume, 0) + command + struct.pack('<I', end))
+        while True:
+            reply = read_blx_reply(ser)
+            if reply is None:
+                break
+            op, reply_offset, data = reply
+            if not resume <= reply_offset <= end:
+                continue
+            check_blx_error(command, op, reply_offset, data)
+            if op != command.lower():
+                continue
+            if reply_offset == end and not data:
+                if offset == end:
+                    return
+                break
+            if reply_offset == offset and len(data) == min(DUMP_CHUNK_SIZE, end - offset) and data:
+                yield offset, data
+                offset += len(data)
+    raise RuntimeError('memory stream incomplete at 0x%05X (end 0x%05X)' % (offset, end))
+
+
+def write_eeprom_range(ser, data):
+    """Stream frames into the device's staging buffer; await verified credits."""
+    end = len(data)
+    if not 0 < end <= EEPROM_SIZE:
+        raise ValueError('invalid EEPROM write range')
+    send_blx_request(ser, b'X' + struct.pack('<IH', 0, 0) + b'W' + struct.pack('<I', end))
+    offset = 0
+    while True:
+        # A full buffer needs at most 128 page writes. The device bounds each
+        # busy wait to 100 ms, so allow completion even at that error boundary.
+        reply = read_blx_reply(ser, timeout=15.0)
+        if reply is None:
+            raise RuntimeError('no verified EEPROM write completion at 0x%05X' % offset)
+        op, at, content = reply
+        check_blx_error(b'W', op, at, content)
+        if op != b'w' or at != offset or content:
+            raise RuntimeError('unexpected EEPROM write completion at 0x%05X' % offset)
+        if offset == end:
+            return
+        stop = min(offset + EEPROM_WRITE_BUFFER, end)
+        while offset < stop:
+            chunk = data[offset:min(offset + DUMP_CHUNK_SIZE, stop)]
+            frame = build_frame(DUMP_FRAME_TYPE, b'W' + struct.pack('<IH', offset, len(chunk)) + chunk)
+            write_transfer_frame(ser, frame, 'EEPROM data at 0x%05X' % offset)
+            offset += len(chunk)
+        ser.flush()
+
+
+def restore_eeprom_data(ser, data):
+    if len(data) != EEPROM_SIZE:
+        raise ValueError('EEPROM restore requires exactly 262144 bytes')
+    print('[*] Streaming EEPROM data with write verification...')
+    started = time.monotonic()
+    write_eeprom_range(ser, data)
+    print('[+] EEPROM write verified in %.1fs' % (time.monotonic() - started))
+    print('[*] Reading back all 262,144 bytes for final comparison...')
+    verified = time.monotonic()
+    for offset, actual in read_memory(ser, b'R', EEPROM_SIZE):
+        if actual != data[offset:offset + len(actual)]:
+            raise RuntimeError('final EEPROM verification failed at 0x%05X' % offset)
+    finished = time.monotonic()
+    print('[+] Entire EEPROM matches the restore file (comparison %.1fs, restore total %.1fs)' %
+          (finished - verified, finished - started))
 
 def send_cmd(ser, cmd_str, timeout=2.0, quiet=False):
     reset_input_buffer(ser)
@@ -677,14 +848,12 @@ def detect_input(file_data: bytes, block_args: list, include_bootloader: bool, b
     return jobs
 
 
-def dump_firmware(ser, output_path, args):
-    part_path = output_path + '.part'
-
+def connect_dump_bootloader(ser, args):
     device_bid = connect_device(ser, args.baud, wait=not args.no_wait)
     if not device_bid:
         raise RuntimeError("device connection failed")
     if device_bid not in DUMP_SUPPORTED_BIDS:
-        raise RuntimeError("firmware dump requires %s, got %s" %
+        raise RuntimeError("dump/EEPROM service requires %s, got %s" %
                            (' or '.join(sorted(DUMP_SUPPORTED_BIDS)), device_bid))
     platform = _platform(device_bid)
     default_baud = platform['default_baud']
@@ -704,23 +873,44 @@ def dump_firmware(ser, output_path, args):
         target = int(args.baud)
         if target != ser.baudrate and not switch_baud(ser, target):
             raise RuntimeError("failed to switch to %d baud" % target)
+    return device_bid, platform
 
-    print("\n[*] Dumping 1,048,576 bytes @ %d baud..." % ser.baudrate)
+
+def transfer_eeprom(ser, args, restore_data=None):
+    bid, platform = connect_dump_bootloader(ser, args)
+    module = load_eeprom_module(bid, args.eeprom_module)
+    try:
+        upload_eeprom_module(ser, module)
+        if restore_data is not None:
+            restore_eeprom_data(ser, restore_data)
+        else:
+            print('[*] Dumping 262,144 EEPROM bytes...')
+            dump_memory(ser, args.dump_eeprom, EEPROM_SIZE, b'R')
+            print('[+] EEPROM saved: %s' % args.dump_eeprom)
+    except (OSError, RuntimeError, KeyboardInterrupt):
+        print('[!] EEPROM operation incomplete; no reset sent. '
+              'Keep the device in BLX and retry the operation.')
+        raise
+    reset_device(ser, platform, reset=not args.no_reset)
+    return 0
+
+
+def dump_memory(ser, output_path, size, command, validate=None):
+    """Write chunks to .part; publish the dump only after transfer and validation."""
+    part_path = output_path + '.part'
     started = time.monotonic()
     tty_progress = sys.stdout.isatty()
     next_percent = 5
     with open(part_path, 'wb') as output:
-        for offset in range(0, FULL_IMAGE_SIZE, DUMP_CHUNK_SIZE):
-            length = min(DUMP_CHUNK_SIZE, FULL_IMAGE_SIZE - offset)
-            output.write(request_dump_chunk(ser, offset, length))
-            done = offset + length
+        for offset, chunk in read_memory(ser, command, size):
+            output.write(chunk)
+            done = offset + len(chunk)
             progress = ("    %s/%s (%3d%%)" %
-                        (f"{done:,}", f"{FULL_IMAGE_SIZE:,}",
-                         done * 100 // FULL_IMAGE_SIZE))
+                        (f"{done:,}", f"{size:,}", done * 100 // size))
             if tty_progress:
                 sys.stdout.write("\r" + progress)
                 sys.stdout.flush()
-            elif done == FULL_IMAGE_SIZE or done * 100 // FULL_IMAGE_SIZE >= next_percent:
+            elif done == size or done * 100 // size >= next_percent:
                 print(progress)
                 next_percent += 5
         output.flush()
@@ -731,8 +921,13 @@ def dump_firmware(ser, output_path, args):
     else:
         print("[*] Dump completed in %.1fs" % elapsed)
 
-    with open(part_path, 'rb') as dumped:
-        image = dumped.read()
+    if validate is not None:
+        with open(part_path, 'rb') as dumped:
+            validate(dumped.read())
+    os.replace(part_path, output_path)
+
+
+def validate_firmware_dump(image, device_bid):
     blocks = get_blocks(device_bid)
     print("[*] CRC validation:")
     crc_ok = True
@@ -745,17 +940,27 @@ def dump_firmware(ser, output_path, args):
                'OK' if match else 'MISMATCH'))
         crc_ok = crc_ok and match
     if not crc_ok:
-        raise RuntimeError("dumped image failed block CRC validation; partial file kept at %s" %
-                           part_path)
+        raise RuntimeError('dumped image failed block CRC validation; partial file kept as .part')
 
-    os.replace(part_path, output_path)
+
+def reset_device(ser, platform, reset=True):
+    default_baud = platform.get('default_baud', 57600)
+    if platform.get('baud_method', 'bdd') == 'bdd' and ser.baudrate != default_baud:
+        if not switch_baud(ser, default_baud):
+            raise RuntimeError('transfer completed, but baud reset failed; no reset sent')
+    if reset:
+        print('[*] Resetting device...')
+        send_cmd(ser, platform.get('reset_cmd', 'P S #RES 0001'), timeout=2.0)
+
+
+def dump_firmware(ser, output_path, args):
+    device_bid, platform = connect_dump_bootloader(ser, args)
+    upload_eeprom_module(ser, load_eeprom_module(device_bid, args.eeprom_module))
+    print("\n[*] Dumping 1,048,576 bytes @ %d baud..." % ser.baudrate)
+    dump_memory(ser, output_path, FULL_IMAGE_SIZE, b'D',
+                validate=lambda image: validate_firmware_dump(image, device_bid))
     print("[+] Firmware saved: %s" % output_path)
-
-    if not args.no_reset:
-        if ser.baudrate != default_baud:
-            switch_baud(ser, default_baud)
-        print("[*] Resetting device...")
-        send_cmd(ser, platform['reset_cmd'], timeout=2.0)
+    reset_device(ser, platform, reset=not args.no_reset)
     return 0
 
 
@@ -785,7 +990,7 @@ def check_flash_status(ser, status_var, expected, context, wait_final=False,
     return True
 
 
-def write_flash_frame(ser, frame, context):
+def write_transfer_frame(ser, frame, context):
     """Send once; a short or failed write does not establish the device result."""
     try:
         written = ser.write(frame)
@@ -881,7 +1086,7 @@ def flash_block(ser, block_id, data, flash_start, blocks, dry_run=False,
             gap = write_start - previous_write_end
             if gap > max_gap[0]:
                 max_gap = (gap, frame_index)
-        write_flash_frame(ser, f_frame, f'data frame {frame_index}')
+        write_transfer_frame(ser, f_frame, f'data frame {frame_index}')
         write_end = time.monotonic()
         write_time = write_end - write_start
         if write_time > max_write[0]:
@@ -923,7 +1128,7 @@ def flash_block(ser, block_id, data, flash_start, blocks, dry_run=False,
     if end_record is not None:
         record = bytes([end_record, 5]) + struct.pack('>I', flash_start) + b'\0'
         frame = build_f_frame(block_name, seq, record)
-        write_flash_frame(ser, frame, 'transfer end record')
+        write_transfer_frame(ser, frame, 'transfer end record')
         seq = (seq + 1) & 0xff
 
     # Completion frame
@@ -948,7 +1153,7 @@ def flash_block(ser, block_id, data, flash_start, blocks, dry_run=False,
     else:
         print("[*] Sending completion frame...")
         frame = build_completion_frame(block_name, seq)
-        write_flash_frame(ser, frame, 'transfer completion')
+        write_transfer_frame(ser, frame, 'transfer completion')
         ser.flush()
         if end_record is not None:
             # S9 returns to 57600 before verifying flash and answering PST.
@@ -1007,12 +1212,20 @@ Examples:
   %(prog)s -p /dev/ttyACM0 -f dump.bin --no-wait              Fail if device not found
   %(prog)s -p /dev/ttyACM0 --info                             Show device info
   %(prog)s -p /dev/ttyACM0 --dump firmware.bin                Dump firmware with a patched BLX
+  %(prog)s -p /dev/ttyACM0 --dump-eeprom eeprom.bin            Dump 256 KiB EEPROM
+  %(prog)s -p /dev/ttyACM0 --restore-eeprom eeprom.bin --yes   Restore and verify EEPROM
 """)
     parser.add_argument('-p', '--port', required=True, help='Serial port or tcp:host[:port]')
     parser.add_argument('--tcp-mode', choices=['raw', 'transparent'], default='transparent',
                         help='TCP mode: transparent (AirBridge, default), raw (dumb proxy)')
-    parser.add_argument('-f', '--file', help='Firmware file to flash')
-    parser.add_argument('--dump', metavar='FILE', help='Dump the full firmware image (patched SX577/SX585 BLX required)')
+    operation = parser.add_mutually_exclusive_group(required=True)
+    operation.add_argument('-f', '--file', help='Firmware file to flash')
+    operation.add_argument('--dump', metavar='FILE', help='Dump the full firmware image (patched SX577/SX585 BLX required)')
+    operation.add_argument('--dump-eeprom', metavar='FILE', help='Dump 256 KiB EEPROM (EEPROM-capable patched SX577/SX585 BLX required)')
+    operation.add_argument('--restore-eeprom', metavar='FILE', help='Restore and verify a full 256 KiB EEPROM image')
+    operation.add_argument('--info', action='store_true', help='Show device info and exit')
+    parser.add_argument('--eeprom-module', metavar='FILE', help='RAM module .bin from the matching BLX build (default: build/blx_eeprom_BID.bin)')
+    parser.add_argument('--yes', action='store_true', help='Confirm overwriting EEPROM with --restore-eeprom')
     parser.add_argument('--block', action='append', help='Target block (repeatable): config, firmware, all, bootloader')
     parser.add_argument('--baud', default='auto', help='Transfer baud: auto, 57600, 115200, 460800')
     parser.add_argument('--completion-timeout', type=float, default=3.0, metavar='SECONDS',
@@ -1021,11 +1234,10 @@ Examples:
     parser.add_argument('--force', action='store_true', help='Flash even with bad CRC')
     parser.add_argument('--include-bootloader', action='store_true', help='Allow bootloader writes')
     parser.add_argument('--dry-run', action='store_true', help='Validate only, do not flash')
-    parser.add_argument('--no-reset', action='store_true', help='Do not reset device after flash')
+    parser.add_argument('--no-reset', action='store_true', help='Do not reset device after transfer')
     parser.add_argument('--no-enter', action='store_true', help='Skip bootloader entry')
     parser.add_argument('--factory-reset', action='store_true',
                         help='Reset AirSense/AirCurve 10 settings to firmware defaults (default: preserve)')
-    parser.add_argument('--info', action='store_true', help='Show device info and exit')
     parser.add_argument('--raw', action='store_true', help='Flash raw image smaller than block size')
     parser.add_argument('--no-wait', action='store_true', help='Fail immediately if device not found')
     parser.add_argument('--timing', action='store_true',
@@ -1035,13 +1247,32 @@ Examples:
 
     if not math.isfinite(args.completion_timeout) or args.completion_timeout <= 0:
         parser.error('--completion-timeout must be a positive finite number')
-    if args.dump and args.file:
-        parser.error("--dump and -f/--file are mutually exclusive")
-    if not args.info and not args.dump and not args.file:
-        parser.error("-f/--file is required (unless using --info or --dump)")
+    eeprom = bool(args.dump_eeprom or args.restore_eeprom)
+    if eeprom and (args.block or args.raw or args.force or args.fix_crc or
+                   args.include_bootloader or args.factory_reset or args.yolo):
+        parser.error('firmware flashing options cannot be used for EEPROM transfers')
+    if args.eeprom_module and not (eeprom or args.dump):
+        parser.error('--eeprom-module requires --dump or an EEPROM operation')
+    if args.yes and not args.restore_eeprom:
+        parser.error('--yes requires --restore-eeprom')
+    if args.dump_eeprom and args.dry_run:
+        parser.error('--dry-run does not apply to EEPROM dump')
+    if args.restore_eeprom and not (args.yes or args.dry_run):
+        parser.error('--restore-eeprom requires --yes to overwrite all EEPROM contents')
+    restore_data = None
+    if args.restore_eeprom:
+        try:
+            restore_data = Path(args.restore_eeprom).read_bytes()
+        except OSError as exc:
+            parser.error(str(exc))
+        if len(restore_data) != EEPROM_SIZE:
+            parser.error('EEPROM restore requires exactly 262144 bytes')
+        print('[*] Restore file: %s' % args.restore_eeprom)
+        if args.dry_run:
+            print('[DRY RUN] EEPROM image size checked. No device connection or writes.')
+            return 0
 
     if args.port.startswith('tcp:'):
-        from tcp_serial import open_tcp
         ser = open_tcp(args.port, args.tcp_mode, timeout=1.0)
     else:
         ser = serial.Serial(args.port, 57600, timeout=1.0)
@@ -1052,6 +1283,9 @@ Examples:
 
         if args.dump:
             return dump_firmware(ser, args.dump, args)
+
+        if eeprom:
+            return transfer_eeprom(ser, args, restore_data)
 
         with open(args.file, 'rb') as f:
             file_data = f.read()
@@ -1353,10 +1587,7 @@ Examples:
 
         if not args.no_reset:
             if reset_cmd:
-                if can_bdd and ser.baudrate != default_baud:
-                    switch_baud(ser, default_baud)
-                print("\n[*] Resetting device...")
-                send_cmd(ser, reset_cmd, timeout=2.0)
+                reset_device(ser, plat)
                 if flash_status:
                     print("[*] Waiting for application...")
                     ok, bls, ble = wait_for_application(ser, flash_status)
@@ -1372,7 +1603,7 @@ Examples:
 
     except FlashUnconfirmed as exc:
         print(f"\n[!] {exc}")
-        print("[!] Flash result is unconfirmed; no automatic retry was attempted.")
+        print("[!] Write result is unconfirmed; no automatic retry was attempted.")
         return 3
     except (OSError, RuntimeError) as exc:
         print(f"[!] {exc}")

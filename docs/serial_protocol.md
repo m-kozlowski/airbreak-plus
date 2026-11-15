@@ -670,6 +670,72 @@ An invalid range returns `E`, the requested offset, and a zero length. The host
 checks the frame CRC, echoed offset, and echoed length before accepting a chunk.
 Timeouts and mismatched responses are retried at the same offset.
 
+### RAM transfer module
+
+The transfer module uses full `O` frames on patched SX577-0200 and SX585-0200.
+Command letters are ASCII bytes; `u16` and `u32` fields are little-endian.
+
+| Request payload | Successful response payload | Meaning |
+|-----------------|-----------------------------|---------|
+| `U offset_u32 length_u16 data...` | `u offset_u32 length_u16 data...` | Upload a module chunk and read it back from RAM |
+| `X 0_u32 0_u16 I` | `i 0_u32 15_u16 info...` | Verify the module and query its protocol/geometry |
+| `X start_u32 0_u16 D end_u32` | `d offset_u32 length_u16 data...`, then `d end_u32 0_u16` | Stream a flash range; `end` is exclusive |
+| `X start_u32 0_u16 R end_u32` | `r offset_u32 length_u16 data...`, then `r end_u32 0_u16` | Stream an EEPROM range; `end` is exclusive |
+| `X start_u32 0_u16 W end_u32` | `w start_u32 0_u16`, then cumulative `w offset_u32 0_u16` | Begin an EEPROM write stream |
+| `W offset_u32 length_u16 data...` | No per-frame response | Supply data within the granted write window |
+
+Upload the matching module with `U` before sending `X`. Upload offsets
+are relative to the start of the module; lengths are 1..240 bytes and the
+range must fit within the module. The response contains the bytes read back
+from the uploaded range. An incomplete or mismatched module causes `X` to
+return `E`.
+
+The 15-byte info body is `AEEP`, protocol byte `3`, EEPROM size `0x40000` as
+`u32`, page size `256` as `u16`, and write-window size `0x8000` as `u32`.
+EEPROM offsets are relative to byte zero of EEPROM; flash offsets are relative
+to `0x08000000`. Request lengths must match the selected operation exactly.
+Module requests require an idle bootloader.
+
+Read requests require `0 <= start < end`, with `end <= 0x40000` for EEPROM or
+`end <= 0x100000` for flash. One request produces consecutive `r` or `d` frames
+containing up to 240 bytes each, followed by a zero-length frame at `end`.
+Every frame uses the normal frame CRC. No acknowledgements
+or further read requests are needed during the stream. Success requires complete
+coverage of the requested range and the end frame. After draining an incomplete
+stream, the host can request the remaining range from the first missing byte.
+
+A write request requires `0 <= start < end <= 0x40000`. The initial `w start 0`
+grants `[start, min(start + 0x8000, end))`. Send consecutive `W` frames covering
+that window, with lengths 1..240 and valid frame CRCs. Data frames may cross
+EEPROM page boundaries but must not cross the window boundary. No other commands
+may be interleaved. After writing and verifying the window, `w offset 0` confirms
+all bytes before `offset` and grants the next window of up to `0x8000` bytes.
+`w end 0` completes the write. Success requires that final response and a full
+read/compare against the input image. There is no response per data frame.
+
+Gaps, invalid data frames, write failures, or two seconds without input abort
+the write. An incomplete window is not programmed. Earlier confirmed windows
+remain written; retry the restore before restarting the application.
+
+Loader rejection returns `E offset_u32 0_u16`. Module errors return
+`e offset_u32 1_u16 error_u8`:
+
+| Error | Meaning |
+|-------|---------|
+| 1 | Invalid request, range, or write-stream sequence |
+| 2 | SPI transfer timeout |
+| 3 | EEPROM busy timeout |
+| 4 | EEPROM block protection enabled |
+| 5 | Write enable latch did not set |
+| 6 | Written bytes failed readback comparison |
+| 7 | BLX is not idle |
+| 8 | EEPROM interface already in use |
+| 9 | Write-stream receive timeout |
+
+An accepted module session keeps the bootloader waiting after inactivity.
+Send `P S #RES 0001` to restart after completing the transfer. An error response
+reports a failed request; do not reset after an incomplete restore.
+
 ## Error Codes
 
 Command errors use four uppercase hex digits:

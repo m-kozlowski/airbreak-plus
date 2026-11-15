@@ -119,7 +119,7 @@ Example with custom VAuto:
 |-------|-------------|--------|
 | Expand heap | Adds about 13.5 KiB of runtime allocation space on SX567 firmware | `--patch-expand-heap` |
 | Repack fonts | Frees over 36 KiB of flash for patches without changing the available characters or their appearance | `--patch-font-repack` |
-| UART firmware dump | Adds the SX577-0200 / SX585-0200 bootloader command used by `resmed_flash.py --dump` | `--patch-blx-dump` |
+| UART dump/restore | Adds flash dump and EEPROM dump/restore over UART | `--patch-blx-dump` |
 | UART metadata | Reports live-stream layouts and custom-settings menu metadata through `G C` | `--patch-uart-stream-schema` |
 | Replacement LCD | Adds the ILI9325/ILI9328 LCD driver | `--patch-fw-lcd` |
 

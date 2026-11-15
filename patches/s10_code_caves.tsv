@@ -1,6 +1,8 @@
 # version      region  storage_start  storage_end  image_base  runtime_base  priority
 SX577-0200     blx     0x08003DE0     0x08003F80   0x08000300  0x20000000    0
 SX585-0200     blx     0x08003E78     0x08003F80   0x08000300  0x20000000    0
+SX577-0200     blx_tail 0x08003F90    0x08003FFE   0x08000300  0x20000000    0
+SX585-0200     blx_tail 0x08003F90    0x08003FFE   0x08000300  0x20000000    0
 0204           cdx     0x080E40EC     0x080FFFFE   0x08000000  0x08000000    0
 0205           cdx     0x080E434C     0x080FFFFE   0x08000000  0x08000000    0
 # Font storage below is available after patch-font-repack.

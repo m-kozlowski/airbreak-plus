@@ -116,7 +116,7 @@ PLATFORM = Platform('air10', phases=(
     Phase('Miscellaneous', (
         Patch('patch-expand-heap', 'Expand runtime heap by about 13.5 KiB on SX567 firmware.',
               True, 'patch_expand_heap'),
-        Patch('patch-blx-dump', 'Add bootloader support for firmware dumps over UART.',
+        Patch('patch-blx-dump', 'Add flash dump and EEPROM dump/restore over UART.',
               True, 'patch_blx_dump'),
         Patch('patch-fw-lcd', 'Add the universal ILI9325/ILI9328 LCD driver.',
               False, 'patch_lcd_ili9325'),
