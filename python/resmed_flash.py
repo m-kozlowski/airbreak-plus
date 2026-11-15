@@ -938,6 +938,10 @@ def flash_block(ser, block_id, data, flash_start, blocks, dry_run=False,
         if not check_flash_status(ser, status_var, FLASH_IN_PROGRESS, "after data transfer",
                                   timeout=completion_timeout, confirmation=True):
             return False
+        # AirBridge follows BDD, but cannot observe the timeout-driven reset.
+        # Restore both UART ends before BLX restarts at its default baud.
+        if ser.baudrate != default_baud and not switch_baud(ser, default_baud):
+            raise FlashUnconfirmed('Cannot restore default baud before bootloader restart')
         print(f"[*] Waiting for mode 5 timeout (~2s)...")
         time.sleep(2.5)
         reset_input_buffer(ser)
