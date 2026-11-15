@@ -9,13 +9,13 @@ require it. Options the preset sets itself are shown bold, and Save writes only 
 patch-airsense.config is edited by hand and applies under every preset, so the window shows what it sets.
 Build runs make AIR10_FIRMWARE=INPUT PATCH_ARGS='--preset NAME' build/stm32-patched.bin, with its output in
 the log: make builds the payloads, patches the image and tracks the options and the input image in the image's
-.config state file. On Windows make and every tool it runs go through WSL. Flash device does over SWD what docs/guide/flashing.md does in the OpenOCD
-telnet console: each button runs OpenOCD once with tcl/airsense.cfg and one of its commands (dump,
-flash_new, ...), either a Windows openocd.exe or run-ocd.sh in WSL. The paths and choices are remembered in
+.config state file. Flash device does over SWD what docs/guide/flashing.md does in the OpenOCD telnet console:
+each button runs run-ocd.sh once with the adapter (and its serial number, if given) and one of the
+tcl/airsense.cfg commands (dump, flash_new, verify, ...); the exit code tells whether it worked. On Windows
+make and run-ocd.sh run in WSL. The paths and choices are remembered in
 ~/.airbreak_patch_gui.json. Needs only Python with tkinter (included in the Windows installer). Start it with
 airbreaker.bat (no console) or python python/airbreaker.py.
 """
-import glob
 import json
 import os
 import queue
@@ -50,15 +50,6 @@ OUTPUT = os.path.join(REPO, *OUTPUT_TARGET.split("/"))
 MAKE_JOBS = 2   # parallel payload builds; more needs more memory
 DEFAULT_BACKUP = os.path.join(REPO, "stm32.bin")   # where docs/guide/openocd.md has the stock dump
 FLASH_SIZE = 0x100000   # flash_new and dump work on the whole 1 MB flash
-OPENOCD_GLOBS = (   # Windows installs of OpenOCD, newest version first within each
-    r"C:\Program Files*\OpenOCD*\bin\openocd.exe",
-    r"C:\Program Files*\xpack-openocd*\bin\openocd.exe",
-    os.path.expanduser(r"~\AppData\Roaming\xPacks\@xpack-dev-tools\openocd\*\.content\bin\openocd.exe"),
-    os.path.expanduser(r"~\ModusToolbox\tools_*\openocd\bin\openocd.exe"),
-    r"C:\VSCode_OnethinxPack_Windows\tools_*\openocd\bin\openocd.exe",
-    r"C:\Program Files*\Cypress\*\openocd\bin\openocd.exe",
-    r"C:\Program Files*\Infineon\*\openocd\bin\openocd.exe",
-)
 STEPS = (("choose", "1 Choose patches"), ("save", "2 Save"), ("patch", "3 Build"), ("backup", "4 Dump backup"),
          ("flash", "5 Flash"))   # the checklist above the options
 
@@ -183,19 +174,6 @@ LOG_HINTS = (   # output -> what to do about it, shown when the command ends
     ("Error: open failed", "OpenOCD found no adapter: check the programmer's USB cable and driver, or in WSL "
      "that usbipd shares it (docs/guide/openocd.md)."),
 )
-
-
-def find_openocd():
-    """openocd on the PATH, else a known Windows install; empty when none is found."""
-    found = shutil.which("openocd")
-    if found:
-        return found
-    if os.name == "nt":
-        for pattern in OPENOCD_GLOBS:
-            hits = sorted(glob.glob(pattern), reverse=True)
-            if hits:
-                return os.path.normpath(hits[0])
-    return ""
 
 
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -388,32 +366,23 @@ class App(tk.Tk):
         flash = ttk.LabelFrame(sections, text="Flash device (SWD, OpenOCD)", padding=8)
         flash.pack(side="left", fill="both", expand=True, padx=(8, 0))
         flash.columnconfigure(1, weight=1)
-        found = find_openocd()
-        mode = {"windows": "local"}.get(settings.get("ocd_mode"), settings.get("ocd_mode"))   # older settings files
-        if os.name != "nt" or mode not in ("local", "wsl"):   # WSL is only an option from Windows
-            mode = "local" if found or os.name != "nt" else "wsl"
-        self.ocd_mode = tk.StringVar(value=mode)
-        self.ocd_path = tk.StringVar(value=settings.get("ocd_path") or found)
         self.ocd_interface = tk.StringVar(value=settings.get("ocd_interface") or "stlink")
+        self.ocd_serial = tk.StringVar(value=settings.get("ocd_serial", ""))
         self.flash_file = tk.StringVar(value=settings.get("flash_file") or OUTPUT)
         self.backup = tk.StringVar(value=settings.get("backup") or DEFAULT_BACKUP)
-        ttk.Label(flash, text="OpenOCD:").grid(row=0, column=0, sticky="w", pady=(0, 4))
-        choices = (("local", "Windows openocd.exe"), ("wsl", "WSL (run-ocd.sh)")) if os.name == "nt" else (
-            ("local", "OpenOCD on this system"),)
-        modes = ttk.Frame(flash)
-        modes.grid(row=0, column=1, columnspan=2, sticky="w", padx=6, pady=(0, 4))
-        for value, text in choices:
-            ttk.Radiobutton(modes, text=text, value=value, variable=self.ocd_mode,
-                            command=self.ocd_mode_changed).pack(side="left", padx=(0, 12))
-        ttk.Label(modes, text="Adapter:").pack(side="left")
-        ttk.Combobox(modes, textvariable=self.ocd_interface, values=("stlink", "jlink"), state="readonly",
-                     width=7).pack(side="left", padx=(4, 0))
-        ttk.Label(flash, text="openocd.exe:" if os.name == "nt" else "openocd:").grid(
-            row=1, column=0, sticky="w", pady=(0, 4))
-        self.ocd_entry = ttk.Entry(flash, textvariable=self.ocd_path)
-        self.ocd_entry.grid(row=1, column=1, sticky="we", padx=6, pady=(0, 4))
-        self.ocd_browse = ttk.Button(flash, text="Browse...", command=self.browse_openocd)
-        self.ocd_browse.grid(row=1, column=2, pady=(0, 4))
+        ttk.Label(flash, text="Adapter:").grid(row=0, column=0, sticky="w", pady=(0, 4))
+        adapter = ttk.Frame(flash)
+        adapter.grid(row=0, column=1, columnspan=2, sticky="w", padx=6, pady=(0, 4))
+        ttk.Combobox(adapter, textvariable=self.ocd_interface, values=("stlink", "jlink"), state="readonly",
+                     width=7).pack(side="left")
+        ttk.Label(adapter, text="Serial (optional):").pack(side="left", padx=(12, 4))
+        serial = ttk.Entry(adapter, textvariable=self.ocd_serial, width=26)
+        serial.pack(side="left")
+        Tooltip(serial, lambda: wrap_lines(
+            "Selects one of several connected adapters by its serial number (run-ocd.sh -s SERIAL). Leave empty "
+            "with a single adapter."))
+        ttk.Label(adapter, text="via run-ocd.sh%s" % (" in WSL" if in_wsl() else ""), foreground="#888888").pack(
+            side="left", padx=(12, 0))
         for row, (label, var, saving) in enumerate((("Firmware:", self.flash_file, False),
                                                     ("Backup (dump):", self.backup, True)), start=2):
             ttk.Label(flash, text=label).grid(row=row, column=0, sticky="w", pady=(0, 4))
@@ -430,14 +399,12 @@ class App(tk.Tk):
                  "once on stock firmware before flashing: it is the only way to restore the device."),
                 ("Flash", self.ocd_flash, "Writes the firmware file to the device and verifies it (flash_new). "
                  "Takes about 30 seconds; the device reboots afterwards."),
-                ("Verify", self.ocd_verify, "Compares the device flash with the firmware file "
-                 "(flash verify_bank)."),
+                ("Verify", self.ocd_verify, "Compares the device flash with the firmware file (verify)."),
                 ("Reset", self.ocd_reset, "Restarts the device (reset run).")):
             button = ttk.Button(ocd_actions, text=text, command=command)
             button.pack(side="left", padx=(0, 6))
             Tooltip(button, lambda t=tip: wrap_lines(t))
             self.ocd_buttons.append(button)
-        self.ocd_mode_changed()
 
         self.log = tk.Text(bottom, state="disabled", wrap="none", font=("Consolas", 10), height=10)
         self.log.pack(fill="both", expand=True, pady=(8, 0))
@@ -771,8 +738,8 @@ class App(tk.Tk):
         try:
             with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
                 json.dump({"input": self.infile.get(),
-                           "verbose": self.verbose.get(), "ocd_mode": self.ocd_mode.get(),
-                           "ocd_path": self.ocd_path.get(), "ocd_interface": self.ocd_interface.get(),
+                           "verbose": self.verbose.get(), "ocd_interface": self.ocd_interface.get(),
+                           "ocd_serial": self.ocd_serial.get(),
                            "flash_file": self.flash_file.get(), "backup": self.backup.get(),
                            "preset": self.name}, f, indent=2)
         except OSError:
@@ -858,21 +825,10 @@ class App(tk.Tk):
                 return
             self.proc.terminate()
 
-    def ocd_mode_changed(self):
-        state = "normal" if self.ocd_mode.get() == "local" else "disabled"
-        self.ocd_entry.config(state=state)
-        self.ocd_browse.config(state=state)
-
-    def browse_openocd(self):
-        types = [("OpenOCD", "openocd*.exe"), ("All files", "*.*")] if os.name == "nt" else [("All files", "*")]
-        path = filedialog.askopenfilename(initialdir=os.path.dirname(self.ocd_path.get()) or None, filetypes=types)
-        if path:
-            self.ocd_path.set(os.path.normpath(path))
-
     def tcl_path(self, path):
         """A file argument for the airsense.cfg commands: relative to the repo (OpenOCD runs there) when inside
-        it, otherwise absolute, converted to a WSL path in WSL mode. Braced for Tcl. None, after telling the
-        user, when WSL cannot reach the file."""
+        it, otherwise absolute, as a WSL path on Windows. Braced for Tcl. None, after telling the user, when
+        WSL cannot reach the file."""
         path = os.path.realpath(path)
         try:
             rel = os.path.relpath(path, REPO)
@@ -880,39 +836,31 @@ class App(tk.Tk):
             rel = os.pardir
         if not rel.startswith(os.pardir):
             path = rel
-        elif self.ocd_mode.get() == "wsl":
+        elif in_wsl():
             translated = wsl_path(path)
             if translated is None:
-                messagebox.showerror(TITLE, "WSL cannot reach %s. Move the file into the repository folder "
-                                     "or use Windows openocd.exe." % path)
+                messagebox.showerror(TITLE, "WSL cannot reach %s. Move the file into the repository folder." % path)
                 return None
             path = translated
+        if "{" in path or "}" in path:
+            messagebox.showerror(TITLE, "OpenOCD cannot take a path with braces: %s" % path)
+            return None
         return "{%s}" % path.replace("\\", "/")
 
     def openocd_command(self, commands):
-        """OpenOCD with tcl/airsense.cfg, which connects and reports the device state, then these commands and
-        shutdown. WSL mode goes through run-ocd.sh, which also attaches the adapter with usbipd."""
-        commands = list(commands) + ["shutdown"]
-        interface = self.ocd_interface.get()
-        if self.ocd_mode.get() == "wsl":
-            wsl = shutil.which("wsl.exe")
-            if not wsl:
-                messagebox.showerror(TITLE, "wsl.exe was not found; choose Windows openocd.exe instead.")
-                return None
-            args = [wsl, "--cd", REPO, "--exec", "bash", "run-ocd.sh", "--interface", interface]
-        else:
-            exe = self.ocd_path.get().strip()
-            if not os.path.isfile(exe):
-                messagebox.showerror(
-                    TITLE, "Choose openocd.exe (OpenOCD for Windows, e.g. the xPack build), or use WSL." if os.name == "nt"
-                    else "openocd was not found. Install OpenOCD (docs/guide/openocd.md) or choose its path.")
-                return None
-            args = [exe] + (["-f", "interface/stlink.cfg"] if interface == "stlink" else
-                            ["-f", "interface/jlink.cfg", "-c", "transport select swd"])
-            args += ["-f", "tcl/airsense.cfg"]
-        for command in commands:
+        """run-ocd.sh with the adapter, which connects with tcl/airsense.cfg and reports the device state, then
+        these commands and shutdown. run-ocd.sh also attaches the adapter to WSL with usbipd."""
+        args = ["bash", "run-ocd.sh", "--interface", self.ocd_interface.get()]
+        serial = self.ocd_serial.get().strip()
+        if serial:
+            args += ["-s", serial]
+        for command in list(commands) + ["shutdown"]:
             args += ["-c", command]
-        return args
+        command = tool_command(args)
+        if command is None:
+            messagebox.showerror(TITLE, "wsl.exe was not found. OpenOCD runs in WSL on Windows; see "
+                                 "docs/guide/wsl_setup.md.")
+        return command
 
     def run_openocd(self, title, commands, done, flashing=False):
         command = self.openocd_command(commands)
@@ -972,10 +920,9 @@ class App(tk.Tk):
     def ocd_verify(self):
         path = self.flash_image()
         image = path and self.tcl_path(path)
-        if image:   # resume also after a mismatch, then report it
-            self.run_openocd("Verifying device flash against %s" % path,
-                             ["halt", "set r [catch {flash verify_bank 0 %s 0} msg]; resume; if {$r} {error $msg}"
-                              % image], "device flash matches %s" % path)
+        if image:
+            self.run_openocd("Verifying device flash against %s" % path, ["verify %s" % image],
+                             "device flash matches %s" % path)
 
     def ocd_reset(self):
         self.run_openocd("Resetting device", ["reset run"], "device reset")
