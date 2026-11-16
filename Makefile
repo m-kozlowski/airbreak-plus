@@ -29,10 +29,10 @@ endif
 BLX_PAYLOAD_VERSIONS := SX577-0200 SX585-0200
 PAYLOAD_LAYOUT_VERSIONS := 0204 0205 0302 0305 0306 0401 0402 $(BLX_PAYLOAD_VERSIONS)
 $(foreach v,$(BLX_PAYLOAD_VERSIONS),$(eval PAYLOADS_$(v) := blx_dump blx_dump_tail blx_eeprom))
-PAYLOADS_0204 := target_rh mop_callback_dispatcher variable_callback_dispatcher button_hooks keep_backlight custom_menu_hooks uart_stream_schema backlight_adapt header_clock s10_lcd_ili9325 asv_task_wrapper fall_time
+PAYLOADS_0204 := target_rh mop_callback_dispatcher variable_callback_dispatcher button_hooks keep_backlight gui_objects custom_menu_hooks uart_stream_schema backlight_adapt header_clock s10_lcd_ili9325 asv_task_wrapper fall_time
 PAYLOADS_0205 := $(PAYLOADS_0204)
 PAYLOADS_0302 := mop_callback_dispatcher variable_callback_dispatcher button_hooks keep_backlight vid_spoof squarewave asv_task_wrapper \
-	breath_tracking backlight_adapt wrapper_limit_max_pdiff s10_lcd_ili9325 custom_menu_hooks \
+	breath_tracking backlight_adapt wrapper_limit_max_pdiff s10_lcd_ili9325 gui_objects custom_menu_hooks \
 	uart_stream_schema language_fonts target_rh header_clock fall_time st_ibr autoepap therapy_screen learn_targets
 PAYLOADS_0305 := $(PAYLOADS_0302)
 PAYLOADS_0306 := $(PAYLOADS_0302)
@@ -172,13 +172,16 @@ $(foreach v,$(PAYLOAD_LAYOUT_VERSIONS),$(eval $(call S10_VERSIONED_OBJECTS_templ
 
 S10_PAYLOAD_ENTRY_breath_tracking := 0
 S10_PAYLOAD_ENTRY_custom_menu_hooks := custom_menu_hook_append
+S10_PAYLOAD_ENTRY_gui_objects := gui_destroy_windows
 S10_PAYLOAD_ENTRY_learn_targets := learn_targets_page_hook
 S10_PAYLOAD_ENTRY_s10_lcd_ili9325 := lcd_board_init
-S10_PAYLOAD_OBJECTS_custom_menu_hooks := custom_menu_hooks_entry custom_menu_hooks
+S10_PAYLOAD_OBJECTS_custom_menu_hooks := custom_menu_hooks_entry custom_menu_hooks custom_menu_editors
 S10_PAYLOAD_OBJECTS_therapy_screen := therapy_screen therapy_screen_abi graph graph_abi
 S10_PAYLOAD_STUBS_mop_callback_dispatcher :=
 S10_PAYLOAD_IMPORTS_squarewave := breath_tracking
 S10_PAYLOAD_IMPORTS_wrapper_limit_max_pdiff := breath_tracking
+S10_PAYLOAD_IMPORTS_custom_menu_hooks := gui_objects
+S10_PAYLOAD_IMPORTS_therapy_screen := gui_objects
 
 S10_PAYLOAD_REGION_blx_dump_tail := blx_tail
 S10_PAYLOAD_ENTRY_blx_dump_tail := blx_dump_reply

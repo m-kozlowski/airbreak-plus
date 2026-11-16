@@ -1,6 +1,7 @@
 /* Replace the main therapy page on the GUI task. Native data pages stay linked. */
 #include "s10_vars.h"
 #include "therapy_screen.h"
+#include "gui_objects.h"
 
 typedef unsigned char u8;
 typedef unsigned short u16;
@@ -26,8 +27,6 @@ extern const u8 therapy_screen_indirect_pages;
 extern const u16 therapy_screen_simple_modes;
 extern struct page *gui_therapy_pages[2];
 extern void *gui_task_group_get(void);
-extern void gui_window_registry_remove(void *obj);
-extern void WM__DeleteWindow(u32 window);
 extern void heap_free(void *obj);
 extern void variable_handler_release(void *handler);
 extern int variable_get_by_id(int var_id);
@@ -148,10 +147,7 @@ static void destroy(struct page *page)
     detach(page);
     if (simple)
         unlink_listener(page->rows[8]);
-    for (unsigned i = 0; i < page->count; ++i)
-        gui_window_registry_remove(page->rows[i]);
-    gui_window_registry_remove(page);
-    WM__DeleteWindow(page->window);
+    gui_destroy_windows(page);
 
     for (unsigned i = 0; i < page->count; ++i) {
         void *row = page->rows[i];

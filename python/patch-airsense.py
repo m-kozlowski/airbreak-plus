@@ -1084,9 +1084,12 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             self.asf.patch(actions, off, checkempty=True)
             abi['custom_menu_actions_addr'] = struct.pack('<I', self.asf.FLASH_BASE + off)
 
+        shared, _, _ = self._load_versioned_payload('gui_objects')
+        self._inject_payload('gui_objects', shared)
         data, _, elf_path = self._load_versioned_payload('custom_menu_hooks')
         flash, _ = self._inject_payload('custom_menu_hooks', data, abi=abi)
         self._custom_detail(self._payload_detail('custom_menu_hooks', len(data), flash))
+        self._custom_menu_lazy_editors(elf_path)
         registry_flash = self.asf.FLASH_BASE + self.custom_settings_registry_addr
 
         append_hook = self._elf_symbol_addr(elf_path, 'custom_menu_hook_append')
@@ -1235,6 +1238,29 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self._custom_detail(self._mop_handler_detail('custom_menu_visibility', visibility_handler))
 
         self._custom_detail("CSG recovery: group index %d, invalid files reset without system fault" % group_index)
+
+    def _custom_menu_lazy_editors(self, elf):
+        sym = lambda name: self._elf_symbol_addr(elf, name)
+        base = self.asf.FLASH_BASE
+        constructor = sym('gui_enum_row_init') & ~1
+        branch = bytearray(self._encode_thumb_bl(constructor - base, sym('custom_menu_enum_init')))
+        branch[3] &= ~0x40
+        self._replace_bytes_checked(constructor - base, b'\xf8\xb5\x04\x46', bytes(branch),
+                                    'enum row constructor', accept_existing=True)
+        for slot, original, replacement in (
+                (3, 'gui_enum_row_show', 'custom_menu_enum_show'),
+                (18, 'gui_enum_row_open', 'custom_menu_enum_open'),
+                (19, 'gui_enum_row_close', 'custom_menu_enum_close')):
+            self._replace_bytes_checked(
+                sym('gui_enum_row_methods') - base + 4 * slot,
+                struct.pack('<I', sym(original) | 1),
+                struct.pack('<I', sym(replacement) | 1),
+                'enum row ' + original, accept_existing=True)
+        site = sym('gui_editor_update_call') - base
+        self._replace_bytes_checked(
+            site, self._encode_thumb_bl(site, sym('gui_screen_update')),
+            self._encode_thumb_bl(site, sym('custom_menu_editor_update')),
+            'enum editor cleanup', accept_existing=True)
 
     def custom_patch_settings_vauto(self):
         """Expose reclaimed custom VAuto settings and pass their var_ids to the wrapper."""
@@ -2265,6 +2291,8 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         for at, old, new in replacements:
             if self.asf.read_bytes(at, len(old)) not in (old, new):
                 raise ValueError('therapy screen: unexpected bytes at 0x%X' % at)
+        shared, _, _ = self._load_versioned_payload('gui_objects')
+        self._inject_payload('gui_objects', shared)
         flash, _ = self._inject_payload('therapy_screen', data)
         for at, old, new in replacements:
             self._replace_bytes_checked(at, old, new, 'therapy screen', accept_existing=True)
