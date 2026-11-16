@@ -97,7 +97,7 @@ same declarations as the patcher's options, and the preset is read, validated
 and written with the same configuration code; the local options file is left
 to be edited by hand. Build runs
 `make AIR10_FIRMWARE=INPUT PATCH_ARGS='--preset NAME' build/stm32-patched.bin`.
-See the [AirBreaker guide](guide/patch_gui.md).
+See the [AirBreaker guide](guide/airbreaker.md).
 
 ## Precedence
 

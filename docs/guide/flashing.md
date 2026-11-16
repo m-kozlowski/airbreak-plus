@@ -23,7 +23,7 @@ flash_new stm32.bin
 
 ### From AirBreaker
 
-See the [AirBreaker guide](patch_gui.md) for setup on Windows, Linux and WSL.
+See the [AirBreaker guide](airbreaker.md) for setup on Windows, Linux and WSL.
 
 The Flash device section of `airbreaker.bat` (or
 `python python/airbreaker.py`) runs the same commands without a telnet

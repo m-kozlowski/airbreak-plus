@@ -154,7 +154,7 @@ The black box at the bottom is the log. Green lines are successful steps,
 orange are warnings or skipped patches, red are errors. When a command ends
 the log says `Done` or `Failed` and may add a hint.
 
-The window remembers the file paths and choices in `.airbreak_patch_gui.json`
+The window remembers the file paths and choices in `.airbreaker.json`
 in your home folder.
 
 ## Building a firmware image
@@ -254,7 +254,7 @@ and the one-time `usbipd bind`; see the
 |------|------------|
 | `presets/user/air10/NAME.config` | Your saved preset; not tracked by Git. See [presets](../patch_options.md#presets) |
 | `patch-airsense.config` | The local options file, edited by hand; applies under every preset |
-| `.airbreak_patch_gui.json` | The window's remembered paths and choices, in your home folder |
+| `.airbreaker.json` | The window's remembered paths and choices, in your home folder |
 | `build/stm32-patched.bin` | The image the window builds |
 | `stm32.bin` | The default place for the stock dump (the backup) |
 
