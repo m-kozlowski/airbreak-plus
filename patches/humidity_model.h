@@ -31,13 +31,21 @@ struct humidity_coeffs {
 extern int humidity_model_coefficients_get(void *unused, float *k0, float *k1,
                                            float *k2, float *k3, float *k4);
 
-/* The Start Coupling setting (raw = coupling * 100) raised to its menu minimum,
+/* Plate bound without a Start Coupling setting: fraction of the plate's rise
+ * above ambient over which the chamber adds saturation humidity. Lower values
+ * hold the tube back longer and lower the estimated RH.
+ */
+#define HUMIDITY_PLATE_COUPLING 0.25f
+
+/* The Start Coupling setting (raw = coupling * 100) held to its menu range,
  * so a stale stored value cannot starve or flood the estimate.
  */
 static inline float coupling_from_raw(int raw)
 {
     if (raw < 10)
         raw = 10;
+    if (raw > 100)
+        raw = 100;
     return raw * 0.01f;
 }
 

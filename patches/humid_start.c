@@ -90,7 +90,6 @@ extern int millisecond_timer_expired(void *timer, unsigned ms);
 extern float climate_tube_setpoint_get(struct obj *inputs);
 extern float climate_reference_temperature_get(struct obj *sensors);
 extern void *const climate_inputs_vtable[];
-extern const float humid_start_plate_coupling;
 extern const unsigned short humid_start_enable_var_id;
 extern const unsigned short humid_start_coupling_var_id;
 extern const unsigned short humid_start_min_tube_var_id;
@@ -110,7 +109,7 @@ static int enabled(void)
 static float coupling(void)
 {
     if (humid_start_coupling_var_id == 0xffffu)
-        return humid_start_plate_coupling;
+        return HUMIDITY_PLATE_COUPLING;
     return coupling_from_raw(variable_get_by_id(humid_start_coupling_var_id));
 }
 
@@ -182,8 +181,8 @@ float start(struct obj *inputs)
      * A changed tube setting or target RH checks again whether the tube needs
      * holding back, which ends at once if the water is already warm enough.
      */
-    /* The tube setting steps by whole degrees and the target RH is at most 1, so
-     * their sum is different for every pair.
+    /* The tube setting steps by whole degrees and the target RH is above 0 and
+     * at most 1, so their sum is different for every pair.
      */
     float target_rh = call_f(inputs, INPUT_TARGET_RH);
     if (fresh || set + target_rh != s->setpoints ||
@@ -222,6 +221,13 @@ float start(struct obj *inputs)
                                    variable_get_by_id(VAR_ID_HPM) * 0.01f,
                                    variable_get_by_id(VAR_ID_AFL) * 0.01f,
                                    coupling());
+    /* Without a usable estimate (a sensor reading NaN) the tube behaves as stock
+     * instead of waiting at the floor.
+     */
+    if (!(outlet >= 0.0f)) {
+        finish(s);
+        return set;
+    }
     /* The floor is the lowest tube setting or the Min Tube setting, not the
      * ambient reading: the sensor sits in the warm case, and a floor above the
      * tube would keep it heating. The tube heats to the floor at once and stays
