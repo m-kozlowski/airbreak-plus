@@ -143,7 +143,7 @@ You can drag the divider between them.
 
 **Flash device (bottom right)**
 
-- **Adapter**: `stlink` or `jlink`. **Serial**: optional, selects one of several
+- **Adapter**: one of the adapters `run-ocd.sh` supports (`stlink`, `jlink`). **Serial**: optional, selects one of several
   connected programmers (`run-ocd.sh -s SERIAL`).
 - **Firmware**: the image to flash or verify. **Backup (dump)**: where the
   stock dump is written.

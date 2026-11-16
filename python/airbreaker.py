@@ -48,7 +48,6 @@ PRESET_NAME_RULE = "a preset name starts with a letter or digit and uses letters
 HEADER = "# Written by AirBreaker (python/airbreaker.py): the options this preset sets itself."
 NO_BASE = "(none)"
 SETTINGS_FILE = os.path.join(os.path.expanduser("~"), ".airbreaker.json")
-OLD_SETTINGS_FILE = os.path.join(os.path.expanduser("~"), ".airbreak_patch_gui.json")   # read when there is no new one
 # The one fact about the Makefile this window needs: the target that builds the image from AIR10_FIRMWARE and
 # PATCH_ARGS (documented in docs/patch_options.md). Its options and input are tracked by make, not here.
 OUTPUT_TARGET = "build/stm32-patched.bin"
@@ -143,13 +142,27 @@ def file_id(path):
 
 
 def load_settings():
-    for path in (SETTINGS_FILE, OLD_SETTINGS_FILE):
-        try:
-            with open(path, encoding="utf-8") as f:
-                return json.load(f)
-        except (OSError, ValueError):
-            pass
-    return {}
+    try:
+        with open(SETTINGS_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def ocd_interfaces():
+    """The adapters run-ocd.sh knows, its default first; [] when it cannot be asked (no WSL, no bash)."""
+    command = ["bash", "run-ocd.sh", "--list-interfaces"]
+    if use_wsl():
+        wsl = wsl_exe()
+        if not wsl:
+            return []
+        command = [wsl, "--cd", REPO, "--exec"] + command
+    try:
+        result = subprocess.run(command, cwd=REPO, capture_output=True, text=True, timeout=60,
+                                creationflags=NO_WINDOW)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return result.stdout.split() if result.returncode == 0 else []
 
 
 def use_wsl():
@@ -439,15 +452,18 @@ class App(tk.Tk):
         flash = ttk.LabelFrame(sections, text="Flash device (SWD, OpenOCD)", padding=8)
         flash.pack(side="left", fill="both", expand=True, padx=(8, 0))
         flash.columnconfigure(1, weight=1)
-        self.ocd_interface = tk.StringVar(value=settings.get("ocd_interface") or "stlink")
+        self.ocd_interface = tk.StringVar(value=settings.get("ocd_interface", ""))   # empty: run-ocd.sh's default
         self.ocd_serial = tk.StringVar(value=settings.get("ocd_serial", ""))
         self.flash_file = tk.StringVar(value=settings.get("flash_file") or OUTPUT)
         self.backup = tk.StringVar(value=settings.get("backup") or DEFAULT_BACKUP)
         ttk.Label(flash, text="Adapter:").grid(row=0, column=0, sticky="w", pady=(0, 4))
         adapter = ttk.Frame(flash)
         adapter.grid(row=0, column=1, columnspan=2, sticky="w", padx=6, pady=(0, 4))
-        ttk.Combobox(adapter, textvariable=self.ocd_interface, values=("stlink", "jlink"), state="readonly",
-                     width=7).pack(side="left")
+        # run-ocd.sh owns the list of adapters. It is asked in the background, as WSL can take a while to start.
+        self.adapters = ttk.Combobox(adapter, textvariable=self.ocd_interface, state="readonly", width=7)
+        self.adapters.pack(side="left")
+        self.adapter_names = None   # set by the thread below, shown by pump()
+        threading.Thread(target=lambda: setattr(self, "adapter_names", ocd_interfaces()), daemon=True).start()
         ttk.Label(adapter, text="Serial (optional):").pack(side="left", padx=(12, 4))
         serial = ttk.Entry(adapter, textvariable=self.ocd_serial, width=26)
         serial.pack(side="left")
@@ -976,7 +992,9 @@ class App(tk.Tk):
     def openocd_command(self, commands):
         """run-ocd.sh with the adapter, which connects with tcl/airsense.cfg and reports the device state, then
         these commands and shutdown. run-ocd.sh also attaches the adapter to WSL with usbipd."""
-        args = ["bash", "run-ocd.sh", "--interface", self.ocd_interface.get()]
+        args = ["bash", "run-ocd.sh"]
+        if self.ocd_interface.get():
+            args += ["--interface", self.ocd_interface.get()]
         serial = self.ocd_serial.get().strip()
         if serial:
             args += ["-s", serial]
@@ -1056,6 +1074,11 @@ class App(tk.Tk):
         self.lines.put(None)
 
     def pump(self):
+        if self.adapter_names is not None:
+            names, self.adapter_names = self.adapter_names, None
+            self.adapters["values"] = names
+            if names and self.ocd_interface.get() not in names:
+                self.ocd_interface.set(names[0])
         try:
             while True:
                 line = self.lines.get_nowait()
