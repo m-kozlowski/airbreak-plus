@@ -19,7 +19,7 @@ struct page {
     struct page *previous, *next;
     /* Extra storage on the two main-page allocation sites only. */
     void *parent;
-    unsigned choice;
+    u8 choice, bar, extra_reserved[2];
 };
 
 extern const u16 therapy_screen_var_id;
@@ -28,7 +28,6 @@ extern const u16 therapy_screen_simple_modes;
 extern struct page *gui_therapy_pages[2];
 extern void *gui_task_group_get(void);
 extern void heap_free(void *obj);
-extern void variable_handler_release(void *handler);
 extern int variable_get_by_id(int var_id);
 extern void gui_invalidate_window(void *obj);
 extern void gui_menu_system_update_selected_page(void *menu, int changed, int active);
@@ -36,8 +35,6 @@ extern struct page *therapy_screen_construct(void *parent, unsigned bar);
 extern void gui_scrollable_layout_items(void *page);
 
 _Static_assert(sizeof(struct page) == 60, "main-page allocation size");
-
-#define WORD(p, off) (*(u32 *)((u8 *)(p) + (off)))
 
 unsigned therapy_screen_get_choice(void)
 {
@@ -61,9 +58,11 @@ static unsigned use_bar(unsigned choice)
 struct page *start(void *parent)
 {
     unsigned choice = therapy_screen_get_choice();
-    struct page *page = therapy_screen_construct(parent, use_bar(choice));
+    unsigned bar = use_bar(choice);
+    struct page *page = therapy_screen_construct(parent, bar);
     page->parent = parent;
     page->choice = choice;
+    page->bar = bar;
     return page;
 }
 
@@ -112,20 +111,6 @@ static void detach(struct page *page)
         next->previous = previous == page ? next : previous;
 }
 
-static void free_composite(void *obj)
-{
-    for (unsigned side = 0; side != 2; ++side) {
-        u32 *array = (u32 *)WORD(obj, 0x0c + 4 * side);
-        unsigned count = WORD(obj, 0x18 + 8 * side);
-        for (unsigned i = 0; i != count; ++i) {
-            u32 *link = (u32 *)array[i];
-            heap_free((void *)link[0]);
-            heap_free(link);
-        }
-        heap_free(array);
-    }
-}
-
 static void unlink_listener(void *gauge)
 {
     u32 *link = (u32 *)((u8 *)gui_task_group_get() + 0x74);
@@ -140,36 +125,35 @@ static void unlink_listener(void *gauge)
     }
 }
 
-static void destroy(struct page *page)
+static void detach_page(void *object)
 {
-    int simple = page->count == 10;
+    struct page *page = object;
     show(page, 0);
     detach(page);
-    if (simple)
+    if (!page->bar)
         unlink_listener(page->rows[8]);
-    gui_destroy_windows(page);
-
-    for (unsigned i = 0; i < page->count; ++i) {
-        void *row = page->rows[i];
-        if ((simple && i == 9) || (!simple && i >= 3)) {
-            free_composite(row);
-        } else if (simple && i == 8) {
-            heap_free((void *)WORD(row, 0x68));
-            for (unsigned j = 0; j < *((u8 *)row + 0x7a); ++j)
-                heap_free((void *)WORD(row, 0x70 + 4 * j));
-        } else if (!simple && i == 1) {
-            variable_handler_release((u8 *)row + 0x0c);
-            variable_handler_release((u8 *)row + 0x48);
-        } else if (!simple && i == 2) {
-            /* The two renderers borrow this row's window. */
-            heap_free((void *)WORD(row, 0x0c));
-            heap_free((void *)WORD(row, 0x10));
-        }
-        heap_free(row);
-    }
-    heap_free(page->rows);
-    heap_free(page);
 }
+
+static void release_page(void *object)
+{
+    struct page *page = object;
+    static const gui_release_fn simple[] = {
+        0, 0, 0, 0, 0, 0, 0, 0, gui_release_gauge, gui_release_composite,
+    };
+    static const gui_release_fn bar[] = {
+        0, gui_release_variable_header, gui_release_pressure,
+        gui_release_composite, gui_release_composite, gui_release_composite,
+    };
+    const gui_release_fn *types = page->bar ? bar : simple;
+    for (unsigned i = 0; i < page->count; ++i)
+        gui_free(page->rows[i], types[i]);
+    heap_free(page->rows);
+}
+
+static const struct gui_object_type page_type = {
+    .detach = detach_page,
+    .release = release_page,
+};
 
 void therapy_screen_update(void *menu, int changed, int active, int dialog)
 {
@@ -186,10 +170,10 @@ void therapy_screen_update(void *menu, int changed, int active, int dialog)
     int graph_changed = therapy_screen_has_graph(choice) !=
                         therapy_screen_has_graph(page->choice);
     int refresh = 0;
-    if (use_bar(choice) != (page->count == 6)) {
+    if (use_bar(choice) != page->bar) {
         void *parent = page->parent;
         pages[9] = 0;
-        destroy(page);
+        gui_destroy(page, &page_type);
         page = start(parent);
         /* The stock constructor appends; move the replacement to the front. */
         detach(page);
