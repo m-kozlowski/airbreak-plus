@@ -130,6 +130,16 @@ def wrap_lines(text):
     return textwrap.fill(text, 90)
 
 
+def file_id(path):
+    """Identifies the contents of a file for the checklist: its real path and modification time; None when it
+    does not exist."""
+    try:
+        path = os.path.realpath(path)
+        return path, os.stat(path).st_mtime_ns
+    except (OSError, ValueError):
+        return None
+
+
 def load_settings():
     try:
         with open(SETTINGS_FILE, encoding="utf-8") as f:
@@ -300,10 +310,12 @@ class App(tk.Tk):
         Tooltip(checklist, lambda: wrap_lines(
             "The steps in order. A tick means it is done: the options are saved, make built the image from this "
             "window with the saved options and this input firmware, a backup file exists, and the device was "
-            "flashed from this window. Step 5 matters most: the stock dump is the only way to restore the device."))
-        self.flashed = False   # the device was flashed from this window since the last patch
+            "flashed from this window with that image. Step 4 matters most: the stock dump is the only way to "
+            "restore the device."))
+        self.flashed = None    # file_id() of the image last flashed from this window
         self.built = None      # (preset, saved text, input) of the last successful build in this window
-        self.running = ""      # title of the running command
+        self.kind = None       # "build" or "flash" for the running command, whose success updates the checklist
+        self.pending = None    # what self.built or self.flashed becomes when the running command succeeds
 
         panes = ttk.PanedWindow(self, orient="vertical")   # top: options, bottom: patch firmware and log
         panes.pack(fill="both", expand=True, padx=8, pady=8)
@@ -616,7 +628,7 @@ class App(tk.Tk):
             "patch": os.path.isfile(self.outfile.get().strip()) and self.built == (
                 self.name, self.saved_text, self.infile.get().strip()),
             "backup": os.path.isfile(self.backup.get().strip()),
-            "flash": self.flashed,
+            "flash": self.flashed is not None and self.flashed == file_id(self.outfile.get().strip()),
         }
         for key, text in STEPS:
             label = self.steps[key]
@@ -853,9 +865,11 @@ class App(tk.Tk):
                 messagebox.showerror(TITLE, "WSL cannot reach the repository folder %s." % REPO)
                 return
         command = make_command(path, self.name, self.verbose.get())
+        # what is built: the options as saved now and this input, also when they change while make runs
+        self.pending = (self.name, self.saved_text, infile)
         self.run("Building %s from %s with preset %s%s" % (OUTPUT_TARGET, infile, self.name,
                                                            " (in WSL)" if in_wsl() else ""),
-                 command, "%s built" % OUTPUT_TARGET)
+                 command, "%s built" % OUTPUT_TARGET, kind="build")
 
     def ensure_wsl_tools(self):
         """False when WSL lacks make, the ARM toolchain or python3. Shows the command that installs them and, on a
@@ -883,12 +897,11 @@ class App(tk.Tk):
             self.append("To install them yourself, run in WSL: " + command, "warn")
         return False
 
-    def run(self, title, command, done, flashing=False, env=None):
-        """Runs a command with its output in the log; one at a time, all action buttons disabled meanwhile."""
+    def run(self, title, command, done, kind=None, flashing=False, env=None):
+        """Runs a command with its output in the log; one at a time, all action buttons disabled meanwhile.
+        kind is "build" or "flash" when its success updates the checklist with self.pending."""
         self.append("=== %s ===" % title)
-        self.done, self.hints, self.running = done, [], title
-        if title.startswith("Building"):
-            self.flashed = False   # the device no longer has the newest patched image
+        self.done, self.hints, self.kind = done, [], kind
         try:
             self.proc = subprocess.Popen(
                 command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=REPO,
@@ -958,11 +971,11 @@ class App(tk.Tk):
                                  "docs/guide/wsl_setup.md.")
         return command
 
-    def run_openocd(self, title, commands, done, flashing=False):
+    def run_openocd(self, title, commands, done, kind=None, flashing=False):
         command = self.openocd_command(commands)
         if command:
             self.save_settings()
-            self.run(title, command, done, flashing)
+            self.run(title, command, done, kind, flashing)
 
     def flash_image(self):
         """The firmware file to flash or verify; flash_new itself rejects anything but a full image."""
@@ -1006,8 +1019,9 @@ class App(tk.Tk):
             return
         image = self.tcl_path(path)
         if image:
+            self.pending = file_id(path)
             self.run_openocd("Flashing %s" % path, ["flash_new %s" % image],
-                             "%s flashed and verified; the device reboots" % path, flashing=True)
+                             "%s flashed and verified; the device reboots" % path, kind="flash", flashing=True)
 
     def ocd_verify(self):
         path = self.flash_image()
@@ -1040,15 +1054,16 @@ class App(tk.Tk):
     def finished(self):
         code = self.proc.wait()
         if code == 0:
-            self.flashed = self.flashed or self.running.startswith("Flashing")
-            if self.running.startswith("Building"):
-                self.built = (self.name, self.saved_text, self.infile.get().strip())
+            if self.kind == "build":
+                self.built = self.pending
+            elif self.kind == "flash":
+                self.flashed = self.pending
             self.append("=== Done: %s ===" % self.done, "pass")
         else:
             self.append("=== Failed (exit code %d) ===" % code, "fail")
         for hint in self.hints:
             self.append(hint, "warn")
-        self.proc, self.flashing = None, False
+        self.proc, self.flashing, self.kind, self.pending = None, False, None, None
         for button in self.action_buttons():
             button.config(state="normal")
         self.stop_btn.config(state="disabled")

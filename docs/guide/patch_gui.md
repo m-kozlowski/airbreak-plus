@@ -97,8 +97,9 @@ tools, follow the [Windows](#windows) route instead.
 
 A row of **Steps** runs along the top: choose patches, save, build, dump
 backup, flash. A green tick means the step is done: the preset is saved, the
-patched firmware exists, a backup file exists, and the device was flashed from
-this window. Work through them from left to right; hover the row for a reminder.
+window built the patched firmware from the saved options and the chosen input,
+a backup file exists, and the device was flashed from this window with that
+built image. Work through them from left to right; hover the row for a reminder.
 
 Below it, the top part is the options and the bottom part builds and flashes.
 You can drag the divider between them.
