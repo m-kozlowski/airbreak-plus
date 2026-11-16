@@ -107,8 +107,8 @@ You can drag the divider between them.
 **Options (top)**
 
 - **Patch groups**: one box per patch phase, in the order the patcher applies
-  them. Each patch has a checkbox with its description and its option name (for
-  example `--patch-header-clock`). A patch with parameters, such as
+  them. Each patch has a checkbox with its description; hover it for its option
+  name (for example `--patch-header-clock`). A patch with parameters, such as
   `--patch-target-rh`, shows a field for each one below it.
 - **Hover** a patch to see its declaration: description, default, parameters,
   what it requires and what requires it, and which file sets it now.

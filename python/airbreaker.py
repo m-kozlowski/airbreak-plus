@@ -492,16 +492,13 @@ class App(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
     def add_option(self, frame, patch):
-        """A checkbox with the patch description and its option name, then one field per parameter."""
+        """A checkbox with the patch description, then one field per parameter."""
         row = frame.grid_size()[1]
         self.enabled[patch.option] = tk.BooleanVar()
         check = ttk.Checkbutton(frame, text=patch.description.rstrip("."), variable=self.enabled[patch.option],
                                 command=lambda: self.toggled(patch.option))
         check.grid(row=row, column=0, sticky="w")
-        name = ttk.Label(frame, text="--" + patch.option, foreground="#888888", font=("Consolas", 9))
-        name.grid(row=row, column=1, sticky="e", padx=(8, 0))
-        for widget in (check, name):
-            Tooltip(widget, lambda: self.tooltip_text(patch))
+        Tooltip(check, lambda: self.tooltip_text(patch))   # shows the option name
         self.checks[patch.option] = check
         if patch.deprecated:
             ttk.Label(frame, text="Deprecated, only applied with --force-deprecated: " + patch.deprecated,
