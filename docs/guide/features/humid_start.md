@@ -175,7 +175,9 @@ even if the water is still cold.
 
 ## Settings
 
-With custom settings, clinical **Accessories** contains:
+With custom settings, clinical **Accessories** contains the settings below.
+While no humidifier is attached they are greyed out and cannot be changed, and
+Humid Start has no effect.
 
 | Setting | UART | Values | Default |
 |---------|------|--------|---------|

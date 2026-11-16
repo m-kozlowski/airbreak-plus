@@ -25,6 +25,9 @@ typedef struct {
 	unsigned short item_id;
 	unsigned short source_id;
 	unsigned short mode_mask;
+	/* Bit 0: the source must be nonzero (1) or zero (0). Bit 1: grey the row
+	 * out (clear EDT) instead of hiding it when the condition fails.
+	 */
 	unsigned short nonzero;
 } custom_menu_condition_t;
 

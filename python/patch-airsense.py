@@ -621,8 +621,14 @@ class ASFirmwarePatches(CompiledPayloadMixin):
                                   for name, container in self.custom_menu_pages.items()}
         self.custom_menu_plan = plan
 
-    def custom_menu_add_condition(self, var, source, mode_mask=None, *, nonzero=True):
-        """Require source to be zero/nonzero for var to appear in the selected modes."""
+    def custom_menu_add_condition(self, var, source, mode_mask=None, *, nonzero=True, grey=False):
+        """Require source to be zero/nonzero for var to appear in the selected modes.
+
+        With grey=True the row stays visible and is greyed out (not editable)
+        while the condition fails, instead of being hidden. SX567 only.
+        """
+        if grey and not self.asf.cdx_ver.startswith('SX567-'):
+            raise ValueError("custom_menu_add_condition: grey-out is supported on SX567 only")
         if mode_mask is None:
             mode_mask = self.CUSTOM_MENU_MODE_BITS
         mode_mask = int(mode_mask)
@@ -632,7 +638,8 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         source_id = self.asf.resolve_var_id(source)
         if self.asf.find_var_table_number(source_id) not in (4, 8):
             raise ValueError("custom_menu_add_condition: %s must be a g[4]/g[8] source" % source)
-        self.custom_menu_conditions.append((vid, source_id, mode_mask, int(bool(nonzero))))
+        self.custom_menu_conditions.append(
+            (vid, source_id, mode_mask, int(bool(nonzero)) | (2 if grey else 0)))
 
     def mop_bitmask(self, *modes):
         """Build a g[24]/MOP visibility mask from MOP names or numeric indexes."""
@@ -1556,6 +1563,8 @@ class ASFirmwarePatches(CompiledPayloadMixin):
                              2, 0, 0x00000003, self.asf.str_id_off_on_base, 0)
         self.custom_storage_add(enable)
         self.custom_menu_add('accessories', enable, self.CUSTOM_MENU_MODE_BITS)
+        # Greyed out, and without effect, while no humidifier is attached.
+        self.custom_menu_add_condition(enable, 'HUM', grey=True)
         vid = self.asf.resolve_var_id(enable)
         addr = self._write_payload_u16('humid_start', 'humid_start_enable_var_id', vid)
         self._custom_detail('Humid Start: %s var_id=0x%04X at 0x%08X' % (enable, vid, addr))
@@ -1568,6 +1577,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
                              16, 30, 16, 0, 1, 1, self.asf.str_id_empty)
         self.custom_storage_add(min_tube)
         self.custom_menu_add('accessories', min_tube, self.CUSTOM_MENU_MODE_BITS)
+        self.custom_menu_add_condition(min_tube, 'HUM', grey=True)
         vid = self.asf.resolve_var_id(min_tube)
         addr = self._write_payload_u16('humid_start', 'humid_start_min_tube_var_id', vid)
         self._custom_detail('Min Tube: %s var_id=0x%04X at 0x%08X' % (min_tube, vid, addr))
@@ -1584,6 +1594,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self.redefine_g4_var(coupling, 0x0007, 0, dep, label,
                              25, 100, 10, 2, 100, 5, self.asf.str_id_empty)
         self.custom_menu_add('accessories', coupling, self.CUSTOM_MENU_MODE_BITS)
+        self.custom_menu_add_condition(coupling, 'HUM', grey=True)
         vid = self.asf.resolve_var_id(coupling)
         addr = self._write_payload_u16('humid_start', 'humid_start_coupling_var_id', vid)
         self._custom_detail('Start Coupling: %s var_id=0x%04X at 0x%08X' % (coupling, vid, addr))
