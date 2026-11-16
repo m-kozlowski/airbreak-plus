@@ -136,7 +136,7 @@ You can drag the divider between them.
 - **Output firmware**: `build/stm32-patched.bin`, the Makefile target the
   window builds.
 - **Build**: saves the preset, then runs
-  `make -j2 AIR10_FIRMWARE=INPUT PATCH_ARGS='--preset NAME' build/stm32-patched.bin`.
+  `make AIR10_FIRMWARE=INPUT PATCH_ARGS='--preset NAME' build/stm32-patched.bin`.
   make builds the payloads when needed, patches the image and records the
   options and the input image, so it rebuilds the image whenever they change.
 - **Stop** ends the running command. **Verbose** (`V=1`) lists what each patch did.

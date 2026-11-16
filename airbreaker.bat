@@ -23,7 +23,9 @@ if errorlevel 2 goto nopython
 wsl.exe --exec sudo sh -c "apt-get update && apt-get install python3 python3-tk"
 wsl.exe --exec python3 -c "import tkinter" >nul 2>&1 || goto installfailed
 :runwsl
-powershell -NoProfile -WindowStyle Hidden -Command "Start-Process wsl.exe -WindowStyle Hidden -ArgumentList '--cd','%~dp0.','--exec','python3','python/airbreaker.py'"
+rem wsl.exe starts in the current folder; Start-Process does not quote an argument with spaces.
+cd /d "%~dp0"
+powershell -NoProfile -WindowStyle Hidden -Command "Start-Process wsl.exe -WindowStyle Hidden -ArgumentList '--exec','python3','python/airbreaker.py'"
 exit /b 0
 
 :installfailed

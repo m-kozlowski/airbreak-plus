@@ -51,7 +51,6 @@ SETTINGS_FILE = os.path.join(os.path.expanduser("~"), ".airbreak_patch_gui.json"
 OUTPUT_TARGET = "build/stm32-patched.bin"
 OUTPUT = os.path.join(REPO, *OUTPUT_TARGET.split("/"))
 INPUT_COPY = "airbreaker-input.bin"   # copy of an input firmware whose path make cannot take
-MAKE_JOBS = 2   # parallel payload builds; more needs more memory
 DEFAULT_BACKUP = os.path.join(REPO, "stm32.bin")   # where docs/guide/openocd.md has the stock dump
 STEPS = (("choose", "1 Choose patches"), ("save", "2 Save"), ("patch", "3 Build"), ("backup", "4 Dump backup"),
          ("flash", "5 Flash"))   # the checklist above the options
@@ -213,7 +212,7 @@ def make_input(firmware):
 def make_command(path, preset, verbose):
     """make building OUTPUT_TARGET from the input path (see make_input) with the preset; the Makefile tracks
     the options and the input in its .config state file."""
-    args = ["make", "-j%d" % MAKE_JOBS, "AIR10_FIRMWARE=" + path, "PATCH_ARGS=--preset " + preset]
+    args = ["make", "AIR10_FIRMWARE=" + path, "PATCH_ARGS=--preset " + preset]   # make picks the jobs
     return tool_command(args + (["V=1"] if verbose else []) + [OUTPUT_TARGET])
 
 
@@ -423,8 +422,8 @@ class App(tk.Tk):
         self.patch_btn.pack(side="left")
         Tooltip(self.patch_btn, lambda: wrap_lines(
             "Saves the preset, then builds %s with make: the payloads (needed once, and again after changing "
-            "patches/), then the patched image. make decides what is out of date. Runs%s: make -j%d AIR10_FIRMWARE=INPUT PATCH_ARGS='--preset %s' %s"
-            % (OUTPUT_TARGET, " in WSL" if in_wsl() else "", MAKE_JOBS, self.name, OUTPUT_TARGET)))
+            "patches/), then the patched image. make decides what is out of date. Runs%s: make AIR10_FIRMWARE=INPUT PATCH_ARGS='--preset %s' %s"
+            % (OUTPUT_TARGET, " in WSL" if in_wsl() else "", self.name, OUTPUT_TARGET)))
         self.stop_btn = ttk.Button(actions, text="Stop", command=self.stop, state="disabled")
         self.stop_btn.pack(side="left", padx=(6, 0))
         ttk.Checkbutton(actions, text="Verbose (per-patch details, V=1)", variable=self.verbose).pack(
