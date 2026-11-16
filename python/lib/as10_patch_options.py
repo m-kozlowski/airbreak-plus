@@ -37,7 +37,7 @@ PLATFORM = Platform('air10', phases=(
         Patch('patch-ivaps-settings', 'Restore iVAPS clinical settings.',
               True, 'enable_ivaps_settings', requires=('patch-custom-settings',)),
         Patch('patch-learn-targets', 'Expose native iVAPS Learn Targets on SX567.',
-              False, 'enable_learn_targets', requires=('patch-custom-settings',)),
+              True, 'enable_learn_targets', requires=('patch-custom-settings',)),
         Patch('patch-asv-ps-range', 'Unlock ASV/ASVAuto pressure constraints.',
               True, 'asv_unlock_ps_range'),
         Patch('patch-adjustable-mcp', 'Make the ASV pressure limit adjustable.',
