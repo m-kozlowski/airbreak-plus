@@ -179,21 +179,24 @@ With custom settings, clinical **Accessories** contains the settings below.
 While no humidifier is attached they are greyed out and cannot be changed, and
 Humid Start has no effect.
 
-| Setting | UART | Values | Default |
-|---------|------|--------|---------|
-| Humid Start | RMM | Off, On | On |
-| Min Tube (C) | LEF | 16-30 °C, step 1 | 16 |
-| Start Coupling | RDM | 0.10-1.00, step 0.05 | 0.25 |
+| Setting | Values | Default |
+|---------|--------|---------|
+| Humid Start | Off, On | On |
+| Min Tube (C) | 16-30 °C, step 1 | 16 |
+| Start Coupling | 0.10-1.00, step 0.05 | 0.25 |
 
-Without custom settings each one keeps its default: Humid Start on, no minimum
-beyond 16 °C, and a coupling of 0.25 (`HUMIDITY_PLATE_COUPLING` in
-`patches/humidity_model.h`).
+Each setting takes the first free variable of the custom settings pool and
+is left out when there is none. A build with many other custom settings (the
+plus preset, for example, uses every on/off slot) has no Humid Start switch,
+and Humid Start is on. Without custom settings each one keeps its default:
+Humid Start on, no minimum beyond 16 °C, and a coupling of 0.25
+(`HUMIDITY_PLATE_COUPLING` in `patches/humidity_model.h`).
 
-Start Coupling shares its variable with Max EPAP of iVAPS AutoEPAP. An image
-built with `--patch-autoepap y` has no Start Coupling row and uses the default
-coupling. When you move between an image with AutoEPAP and one without, check
-the setting that now owns the variable (Max EPAP or Start Coupling) after
-flashing: the stored value carries over.
+The variables RMM, ZRA, LET and LEF are never used: stock code still reads
+RMM and ZRA, and LET and LEF belong to a stock placeholder service. A
+settings variable that another build gave to a different feature keeps its
+stored value, so after moving between builds with different features check
+the Accessories settings and the therapy switches in the menus.
 
 Enable it with `--patch-humid-start y`. It is off by
 default and requires font repacking (on by default).

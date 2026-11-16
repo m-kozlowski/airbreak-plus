@@ -44,9 +44,9 @@ Settings are assigned when their corresponding patch or payload is active.
 | [Backlight adaptation](guide/features/backlight.md) | Buttons / Low | LBL | g[4] | CSG |
 | [Backlight adaptation](guide/features/backlight.md) | Buttons / High | LBH | g[4] | CSG |
 | [Target humidity](guide/features/general.md#target-humidity) | Target RH (%) | RCH | g[4] | CSG |
-| [Humid Start](guide/features/humid_start.md) | Humid Start | RMM | g[8] | CSG |
-| [Humid Start](guide/features/humid_start.md) | Min Tube (C) | LEF | g[4] | CSG |
-| [Humid Start](guide/features/humid_start.md) | Start Coupling | RDM; omitted with iVAPS AutoEPAP, which uses RDM for Max EPAP | g[4] | CSG |
+| [Humid Start](guide/features/humid_start.md) | Humid Start | first free g[8] slot of RXH, RXW, RSA, RPF, RPW, RPO, RPH, RXM; omitted when none is free | g[8] | CSG |
+| [Humid Start](guide/features/humid_start.md) | Min Tube (C) | first free g[4] slot of RDT, RTI, RCW, RCH, RCF, RDW, RDH, RCM, RDM, RDF; omitted when none is free | g[4] | CSG |
+| [Humid Start](guide/features/humid_start.md) | Start Coupling | next free g[4] slot of the same list; omitted when none is free | g[4] | CSG |
 
 
 ## Application sequence
