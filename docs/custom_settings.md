@@ -44,9 +44,9 @@ Settings are assigned when their corresponding patch or payload is active.
 | [Backlight adaptation](guide/features/backlight.md) | Buttons / Low | LBL | g[4] | CSG |
 | [Backlight adaptation](guide/features/backlight.md) | Buttons / High | LBH | g[4] | CSG |
 | [Target humidity](guide/features/general.md#target-humidity) | Target RH (%) | RCH | g[4] | CSG |
-| [Humid Start](guide/features/humid_start.md) | Humid Start | first free of RXH, RXW, RSA, RPF, RPW, RPO, RPH, RXM; omitted when none or no label string is free | g[8] | CSG |
-| [Humid Start](guide/features/humid_start.md) | Min Tube (C) | RDH; omitted when no label string is free | g[4] | CSG |
-| [Humid Start](guide/features/humid_start.md) | Start Coupling | RDW; omitted when no label string is free | g[4] | CSG |
+| [Humid Start](guide/features/humid_start.md) | Humid Start | RMM | g[8] | CSG |
+| [Humid Start](guide/features/humid_start.md) | Min Tube (C) | LEF | g[4] | CSG |
+| [Humid Start](guide/features/humid_start.md) | Start Coupling | RDM; omitted with iVAPS AutoEPAP, which uses RDM for Max EPAP | g[4] | CSG |
 
 
 ## Application sequence
@@ -57,8 +57,7 @@ requests custom settings:
 1. disable stock Reminder processing and remove its menu row and page
 2. rename the Reminder persistence group from `RGL` to `CSG`
 3. reclaim selected Reminder variables and string IDs
-4. let each active feature activate or redefine its variables; the Humid Start
-   switch runs last and takes any on/off variable left unclaimed
+4. let each active feature activate or redefine its variables
 5. extend the CSG member list with any additional persistent firmware variables
 6. resolve menu placement and emit the custom menu registry into reclaimed CDX space
 7. emit the dispatch table and inject the required clinical menu hooks

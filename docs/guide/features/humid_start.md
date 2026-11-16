@@ -179,25 +179,19 @@ With custom settings, clinical **Accessories** contains:
 
 | Setting | UART | Values | Default |
 |---------|------|--------|---------|
-| Humid Start | first free on/off slot | Off, On | On |
-| Min Tube (C) | RDH | 16-30 °C, step 1 | 16 |
-| Start Coupling | RDW | 0.10-1.00, step 0.05 | 0.25 |
+| Humid Start | RMM | Off, On | On |
+| Min Tube (C) | LEF | 16-30 °C, step 1 | 16 |
+| Start Coupling | RDM | 0.10-1.00, step 0.05 | 0.25 |
 
-Without custom settings, or when no label string is left for a setting, it
-keeps its default: no minimum beyond 16 °C, and a coupling of 0.25 (the constant
-in `patches/humid_start_abi.S`).
+Without custom settings each one keeps its default: Humid Start on, no minimum
+beyond 16 °C, and a coupling of 0.25 (`HUMIDITY_PLATE_COUPLING` in
+`patches/humidity_model.h`).
 
-Each setting needs a label string, and the switch also an on/off variable,
-that no other installed feature uses. The `plus` image uses all of them, so
-build it without features you don't need. Each one frees what its own settings
-used; for example, without ST iBR and AutoEPAP:
-
-```
-make build/stm32-plus.bin AIR10_PATCH_ARGS='--patch-st-ibr n --patch-autoepap n --patch-humid-start y'
-```
-
-The switch is added first, then Min Tube, then Start Coupling. When no label is
-left for a setting it is skipped: without the switch Humid Start stays on. The build log reports what was added.
+Start Coupling shares its variable with Max EPAP of iVAPS AutoEPAP. An image
+built with `--patch-autoepap y` has no Start Coupling row and uses the default
+coupling. When you move between an image with AutoEPAP and one without, check
+the setting that now owns the variable (Max EPAP or Start Coupling) after
+flashing: the stored value carries over.
 
 Enable it with `--patch-humid-start y`. It is off by
 default and requires font repacking (on by default).
