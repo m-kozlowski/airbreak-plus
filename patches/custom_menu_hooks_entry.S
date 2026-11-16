@@ -67,6 +67,12 @@ custom_menu_actions_addr:
 	.word 0xffffffff
 .size custom_menu_actions_addr, .-custom_menu_actions_addr
 
+.global custom_menu_previews_addr
+.type custom_menu_previews_addr, %object
+custom_menu_previews_addr:
+	.word 0xffffffff
+.size custom_menu_previews_addr, .-custom_menu_previews_addr
+
 /* Stock page-table metadata recovered by the patcher from the verified menu
  * controller and Reminders page constructor before those sites are changed.
  */

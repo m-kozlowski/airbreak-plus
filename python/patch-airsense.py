@@ -285,6 +285,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self.custom_menu_conditions = []
         self.custom_menu_conditions_addr = None
         self.custom_menu_actions = []
+        self.custom_menu_previews = []
         self.custom_menu_pages = {}
         self.custom_menu_page_count = 0
         self.custom_menu_clinical_page_id = None
@@ -677,6 +678,22 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         if self.asf.find_var_table_number(source_id) not in (4, 8):
             raise ValueError("custom_menu_add_condition: %s must be a g[4]/g[8] source" % source)
         self.custom_menu_conditions.append((vid, source_id, mode_mask, int(bool(nonzero))))
+
+    def custom_menu_add_preview(self, source, target, payload, symbol):
+        """Write a calculated target variable when a numeric editor's value changes."""
+        if self.custom_menu_plan is not None:
+            raise ValueError('custom menu: cannot register previews after compilation')
+        source_id, target_id = (self.asf.resolve_var_id(var) for var in (source, target))
+        if source_id == target_id or any(
+                self.asf.find_var_table_number(var) != 4 for var in (source_id, target_id)):
+            raise ValueError('custom menu preview requires two distinct numeric variables')
+        if any(entry[:2] == (source_id, target_id) for entry in self.custom_menu_previews):
+            raise ValueError('custom menu preview: duplicate binding %s -> %s' % (source, target))
+        if payload not in self.applied_payloads:
+            raise ValueError('custom menu preview: payload %s was not applied' % payload)
+        elf = self._require_versioned_artifact(payload, 'elf')
+        calculate = self._elf_symbol_addr(elf, symbol) | 1
+        self.custom_menu_previews.append((source_id, target_id, calculate))
 
     def mop_bitmask(self, *modes):
         """Build a g[24]/MOP visibility mask from MOP names or numeric indexes."""
@@ -1072,6 +1089,12 @@ class ASFirmwarePatches(CompiledPayloadMixin):
                 self.asf.cdx_ver)
 
         abi = {}
+        if self.custom_menu_previews:
+            previews = b''.join(struct.pack('<HHI', *entry) for entry in self.custom_menu_previews)
+            previews += b'\xff' * 8
+            off = self.asf.find_ccx_ff_range_backwards(len(previews), alignment=4)
+            self.asf.patch(previews, off, checkempty=True)
+            abi['custom_menu_previews_addr'] = struct.pack('<I', self.asf.FLASH_BASE + off)
         if self.custom_menu_actions:
             actions = bytearray()
             for write, label, binding, page, item, value in self.custom_menu_actions:
@@ -1090,6 +1113,14 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         flash, _ = self._inject_payload('custom_menu_hooks', data, abi=abi)
         self._custom_detail(self._payload_detail('custom_menu_hooks', len(data), flash))
         self._custom_menu_lazy_editors(elf_path)
+        if self.custom_menu_previews:
+            sym = lambda name: self._elf_symbol_addr(elf_path, name)
+            for method in ('changed', 'leave'):
+                self._replace_bytes_checked(
+                    sym('gui_numeric_row_' + method + '_slot') - self.asf.FLASH_BASE,
+                    struct.pack('<I', sym('gui_numeric_row_' + method) | 1),
+                    struct.pack('<I', sym('custom_menu_preview_' + method) | 1),
+                    'numeric preview ' + method, accept_existing=True)
         registry_flash = self.asf.FLASH_BASE + self.custom_settings_registry_addr
 
         append_hook = self._elf_symbol_addr(elf_path, 'custom_menu_hook_append')
@@ -1372,11 +1403,16 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             'therapy', 'PHI',
             ivaps_mask | self.CUSTOM_MENU_MODE_KEEP_VISIBILITY,
             self.CUSTOM_MENU_FLAG_SHOW_UNITS, after=stock('PHT'))
+        self._custom_patch_ivaps_preview()
         previous = stock('WMV')
-        for var in ('ZMV', 'ZTV', 'ZVK'):
+        for var, calculation in (('ZMV', 'mv'), ('ZTV', 'vt'), ('ZVK', 'vk')):
             previous = self.custom_menu_add(
                 'therapy', var, ivaps_mask,
                 self.CUSTOM_MENU_FLAG_SHOW_UNITS, after=previous)
+            for source, suffix in (('WMV', ''), ('IBR', '_rate'),
+                                   ('PHT', '_height'), ('PHI', '_inches')):
+                self.custom_menu_add_preview(
+                    source, var, 'ivaps_preview', 'ivaps_preview_' + calculation + suffix)
         self.custom_menu_add(
             'configuration', 'IHU', self.CUSTOM_MENU_MODE_BITS,
             after=stock('TMU'))
@@ -1385,6 +1421,44 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             "iVAPS height: PHT/PHI active, PHI added with firmware-managed visibility")
         self._custom_detail("iVAPS height units: IHU active in Configuration")
         self._custom_detail("iVAPS calculated values: ZMV/ZTV/ZVK active and read-only")
+
+    def _custom_patch_ivaps_preview(self):
+        data, _, elf = self._load_versioned_payload('ivaps_preview')
+        sym = lambda name: self._elf_symbol_addr(elf, name)
+        base = self.asf.FLASH_BASE
+        scales = [self.asf.read_u16(self.asf.find_var(var) + self.asf.G4_SCALE)
+                  for var in ('PHT', 'PHI', 'ZDS')]
+        flash, _ = self._inject_payload('ivaps_preview', data, abi={
+            'ivaps_height_inputs': struct.pack('<4H', *scales, self.asf.resolve_var_id('PHI'))})
+        for name, push, frame in (('mv', b'\x2d\xe9\xf0\x47', 0xe0),
+                                  ('vt', b'\x2d\xe9\xf0\x47', 0xe0),
+                                  ('vk', b'\x2d\xe9\xf0\x4f', 0x12c)):
+            entry = (sym('ivaps_calculate_' + name) & ~1) - base
+            branch = bytearray(self._encode_thumb_bl(entry, sym('ivaps_stock_' + name)))
+            branch[3] &= ~0x40
+            subtract = struct.pack('<H', 0xb080 | (frame // 4))
+            self._replace_bytes_checked(entry, push + subtract, bytes(branch) + subtract,
+                                        'iVAPS ' + name + ' entry', accept_existing=True)
+            reads = [('va', 'g4_numeric_get_value')]
+            if name == 'vk':
+                reads += [('rate_saved', 'ivaps_get_rate_saved_vk'),
+                          ('rate', 'ivaps_get_rate_vk'), ('deadspace', 'g4_numeric_get_value'),
+                          ('height', 'g4_numeric_get_value')]
+            else:
+                reads += [('rate', 'g4_numeric_get_value'), ('deadspace', 'ivaps_get_deadspace_mv')]
+            for field, original in reads:
+                read = sym('ivaps_calculate_' + name + '_read_' + field) - base
+                self._replace_bytes_checked(
+                    read, self._encode_thumb_bl(read, sym(original)),
+                    self._encode_thumb_bl(read, sym('ivaps_read_' + name + '_' + field)),
+                    'iVAPS ' + name + ' ' + field + ' read', accept_existing=True)
+            self._replace_bytes_checked(
+                sym('ivaps_calculate_' + name + '_return') - base,
+                struct.pack('<H', 0xb000 | (frame // 4)),
+                struct.pack('<H', 0xb000 | ((frame + 8) // 4)),
+                'iVAPS ' + name + ' stack release', accept_existing=True)
+        self.applied_payloads.add('ivaps_preview')
+        self._custom_detail(self._payload_detail('ivaps_preview', len(data), flash))
 
     def enable_learn_targets(self):
         if self.asf.cdx_ver not in self.LEARN_TARGETS_HOOK_SITES:

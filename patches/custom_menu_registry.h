@@ -28,6 +28,11 @@ typedef struct {
 	unsigned short nonzero;
 } custom_menu_condition_t;
 
+typedef struct {
+	unsigned short source_id, target_id;
+	int (*calculate)(int raw_value);
+} custom_menu_preview_t;
+
 /* write_id and binding_id use 0xffff for absent values. destination is 0 for
  * no navigation, 0xff for the default page, or 0x80+ for a generated page.
  * label_id is a firmware string ID.

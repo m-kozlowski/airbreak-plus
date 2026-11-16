@@ -39,6 +39,7 @@ NSTUB(0x0803DA69, menu_create_static_string)
 
 // Variable access and config storage
 NSTUB(0x0803F1A1, variable_get_by_id)
+NSTUB(0x0803F059, variable_set_by_id)
 NSTUB(0x0803EC6D, variable_lookup_handler)
 NSTUB(0x0803EC89, variable_handler_release)
 NSTUB(0x0803EF4D, variable_set_visible_from_handler)
@@ -103,3 +104,11 @@ NSTUB(0x0804651B, gui_base_is_visible)
 NSTUB(0x080540B7, gui_screen_update)
 NSTUB(0x0803D6A3, gui_enum_row_init)
 NSTUB_VAR(0x08047156, gui_editor_update_call)
+
+// Numeric edit previews
+NSTUB_VAR(0x080D8A5C, gui_numeric_row_methods)
+NSTUB(0x0803E5A3, gui_numeric_row_read)
+NSTUB_VAR(0x080D8AB4, gui_numeric_row_changed_slot)
+NSTUB(0x0803E5AD, gui_numeric_row_changed)
+NSTUB_VAR(0x080D8AA8, gui_numeric_row_leave_slot)
+NSTUB(0x0803DFBD, gui_numeric_row_leave)

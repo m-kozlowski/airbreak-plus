@@ -184,6 +184,16 @@ stock default page. Optional `binding` follows a variable's visibility;
 its existing visibility. Numeric rows can use `packed_time=True` to display
 `(minutes << 8) | seconds` as `mm:ss`.
 
+`custom_menu_add_preview(source, target, payload, symbol)` writes a calculated
+target variable when the source numeric editor's value changes. Both variables
+must be g[4]; the target does not need a menu row. The named function in an
+applied payload takes and returns raw integer values and runs in the GUI task.
+Several sources may update the same target; each source-target pair is unique.
+The framework writes its result through the native variable setter. Cancelling
+reloads the saved source value and updates targets through the same path.
+The source uses a native numeric control, including its formatter variants.
+Preview bindings are separate from the menu registry and UART discovery.
+
 ## Menu placement
 
 `custom_menu_add`, `custom_menu_add_heading`, `custom_menu_add_page`, and

@@ -1,6 +1,17 @@
 #ifndef CUSTOM_MENU_NATIVE_H
 #define CUSTOM_MENU_NATIVE_H
 
+struct custom_menu_numeric_row {
+    const void *methods;
+    unsigned window;
+    unsigned char state, reserved;
+    unsigned short var_id;
+    int displayed;
+    unsigned flags;
+    const void *input_methods;
+    int pending;
+};
+
 /* Numeric values are stored at +0x18. Method counts cover the primary vtable,
  * ending before the secondary base's offset-to-top entry.
  */
