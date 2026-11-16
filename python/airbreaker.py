@@ -283,6 +283,7 @@ class App(tk.Tk):
         self.name = ""          # the preset shown, presets/user/air10/NAME.config
         self.base = []          # presets this preset selects (--preset); they apply under it
         self.underlying = {}    # option -> value from the local options file and the base presets
+        self.explicit = set()   # options the preset file sets itself: kept even where they equal self.underlying
         self.sources = {}       # option -> the file under this preset that sets it
         self.local_options = ()   # what patch-airsense.config sets, shown as a note
         self.foreign = False      # the preset file was not written by this window: ask before replacing it
@@ -569,14 +570,15 @@ class App(tk.Tk):
 
     def shown(self):
         """option -> value of every patch and parameter as shown, parsed by the patcher's own option parser;
-        a parameter of an unticked patch keeps the value under this preset. None for an invalid value."""
+        a parameter of an unticked patch keeps the value under this preset, or the preset's own value when it
+        sets one. None for an invalid value."""
         tokens = []
         for patch in PLATFORM.patches():
             tokens += ["--" + patch.option, "y" if self.enabled[patch.option].get() else "n"]
         typed = set()
         for parameter, patch in PARAMETERS:
             text = self.params[parameter.option].get().strip()
-            if self.enabled[patch.option].get() and text:
+            if (self.enabled[patch.option].get() or parameter.option in self.explicit) and text:
                 typed.add(parameter.option)
                 try:
                     items = shlex.split(text) if parameter.value.repeat else [text]
@@ -597,8 +599,10 @@ class App(tk.Tk):
         return values
 
     def own_values(self, values):
-        """The options that differ from what applies under this preset: what the preset file stores."""
-        return {option: value for option, value in values.items() if value != self.underlying[option]}
+        """What the preset file stores: the options it sets itself and those that differ from what applies
+        under it."""
+        return {option: value for option, value in values.items()
+                if option in self.explicit or value != self.underlying[option]}
 
     def preset_text(self, own):
         return HEADER + "\n" + patch_config.option_text(PLATFORM, own, self.base)
@@ -702,7 +706,8 @@ class App(tk.Tk):
             self.underlying = {option: self.underlying[patch_options.dest(option)] for option in OPTIONS}
             self.sources, self.local_options = {}, ()
             status = "Could not read %s" % path.name
-        own = {option: value for option, value in own.items() if value != self.underlying[option]}
+        own = {option: value for option, value in own.items() if option in OPTIONS}
+        self.explicit = set(own)
         # an untouched new preset is not a change; one that could not be read always is
         self.saved_text = None if status.startswith("Could") else self.preset_text(own)
         self.status.config(text=status)
@@ -738,8 +743,13 @@ class App(tk.Tk):
             self.set_base([] if choice == NO_BASE else [choice])
         except (OSError, ValueError) as exc:
             messagebox.showerror(TITLE, "Preset %s could not be used:\n\n%s" % (choice, exc))
-            self.set_base(old)
-        self.apply({option: value for option, value in own.items() if value != self.underlying[option]})
+            try:
+                self.set_base(old)
+            except (OSError, ValueError):   # the old base changed on disk as well
+                self.load_preset(self.name)
+                return
+        self.apply({option: value for option, value in own.items()
+                    if option in self.explicit or value != self.underlying[option]})
 
     def reload(self):
         if self.dirty() and not messagebox.askyesno(TITLE, "Discard the unsaved changes?"):
@@ -747,6 +757,7 @@ class App(tk.Tk):
         self.load_preset(self.name)
 
     def clear(self):
+        self.explicit = set()
         self.apply({})
         self.status.config(text="Only the base preset shown; Save writes it")
 
