@@ -187,7 +187,8 @@ Humid Start has no effect.
 
 `--humid-start-coupling-row n` leaves the Start Coupling row out of the menu
 (the built-in coupling 0.25 applies), which frees a value slot and settings
-registry space for other features.
+registry space for other features. It is an on/off switch like the patches, so
+in AirBreaker it is a checkbox below Humid Start.
 
 Each setting takes the first free variable of the custom settings pool and
 is left out when there is none. A build with many other custom settings (the

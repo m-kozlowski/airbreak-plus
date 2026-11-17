@@ -181,7 +181,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         
     def __init__(self, asf, target_rh=85.0, humid_start_coupling_row=True):
         self.asf = asf
-        self.humid_start_coupling_row = humid_start_coupling_row  # --humid-start-coupling-row
+        self.humid_start_coupling_row = humid_start_coupling_row  # --humid-start-coupling-row switch
         self.target_rh_percent = target_rh
         self.applied_payloads = set()
         self.enabled_custom_settings_features = set()
@@ -2753,6 +2753,12 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self.applied_payloads.add('humid_start')
         return PatchOutcome.ok(None, *details)
 
+    def patch_humid_start_coupling_row(self):
+        """Switch only: custom_patch_settings_humid_start reads humid_start_coupling_row."""
+        if 'humid_start' not in self.applied_payloads:
+            return PatchOutcome.skip("Humid Start not installed")
+        return PatchOutcome.ok("Start Coupling row in the custom settings menu")
+
     def patch_defaults(self):
         defaults = (
             ('LAN', 0),  # English
@@ -3989,7 +3995,8 @@ def run_patcher(args, detail_log=None):
     repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     build_identity = firmware_build_identity(repo_dir)
     patches = ASFirmwarePatches(asf, target_rh=args.target_rh,
-                                humid_start_coupling_row=args.humid_start_coupling_row)
+                                humid_start_coupling_row=PATCH_OPTIONS.selected(
+                                    args, PATCH_OPTIONS.patch('humid-start-coupling-row')))
 
     apply_patch_phases(patches, args, detail_log)
 
