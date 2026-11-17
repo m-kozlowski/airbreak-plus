@@ -73,6 +73,8 @@ class Patch:
     requires: tuple = ()
     deprecated: str = None
     parameters: tuple = ()
+    # Required when the platform declares presentation categories.
+    category: str = None
 
 
 # Unset patch switches are None on platforms that declare this parameter.
@@ -95,14 +97,25 @@ class Platform:
     parameters: tuple = ()
     # Run options of this patcher, after RUN_OPTIONS.
     run_options: tuple = ()
+    # Display order; an empty tuple groups patches by execution phase.
+    categories: tuple = ()
 
     def __post_init__(self):
+        categories = set(self.categories)
+        if len(categories) != len(self.categories):
+            raise ValueError("%s: duplicate category" % self.name)
         patches = {patch.option for patch in self.patches()}
         names = [option.option for option in (*self.patches(), *self.all_parameters(),
                                                *self.all_run_options())]
         if len(set(names)) != len(names):
             raise ValueError("%s: duplicate option" % self.name)
         for patch in self.patches():
+            if categories:
+                if patch.category is None:
+                    raise ValueError("%s: --%s requires a category" % (self.name, patch.option))
+                if patch.category not in categories:
+                    raise ValueError("%s: --%s has unknown category %r" %
+                                     (self.name, patch.option, patch.category))
             for option in patch.requires:
                 if option not in patches:
                     raise ValueError("%s: --%s requires unknown patch --%s" % (self.name, patch.option, option))
@@ -114,6 +127,18 @@ class Platform:
     def patches(self):
         for phase in self.phases:
             yield from phase.patches
+
+    def patch_groups(self):
+        """Display groups in declared category order, or phase order without categories."""
+        if self.categories:
+            groups = {category: [] for category in self.categories}
+            for patch in self.patches():
+                groups[patch.category].append(patch)
+            return groups
+        groups = {}
+        for phase in self.phases:
+            groups.setdefault(phase.name, []).extend(phase.patches)
+        return groups
 
     def patch(self, option):
         for patch in self.patches():

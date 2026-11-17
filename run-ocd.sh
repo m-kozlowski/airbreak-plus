@@ -1,11 +1,15 @@
 #!/bin/bash
 
+interfaces=(stlink jlink)   # the default first
+
 usage() {
-    echo "Usage: $0 [-s SERIAL] [--interface stlink|jlink] [--jlink] [-c \"COMMAND ARGS\"]... [config]"
+    local IFS='|'
+    echo "Usage: $0 [-s SERIAL] [--interface ${interfaces[*]}] [--jlink] [-c \"COMMAND ARGS\"]... [config]"
+    echo "       $0 --list-interfaces"
 }
 
 adapter_serial=
-interface=stlink
+interface=${interfaces[0]}
 commands=()
 positional=()
 while (( $# > 0 )); do
@@ -23,6 +27,10 @@ while (( $# > 0 )); do
         --jlink)
             interface=jlink
             shift
+            ;;
+        --list-interfaces)
+            printf '%s\n' "${interfaces[@]}"
+            exit 0
             ;;
         -c)
             (( $# >= 2 )) || { usage >&2; exit 2; }
@@ -47,10 +55,11 @@ done
 cfg=${positional[0]:-airsense}
 [[ -f "tcl/${cfg}.cfg" ]] || { echo "No configuration tcl/${cfg}.cfg" >&2; usage >&2; exit 2; }
 
-case "$interface" in
-    stlink|jlink) ;;
-    *) usage >&2; exit 2 ;;
-esac
+known=
+for name in "${interfaces[@]}"; do
+    [[ $name == "$interface" ]] && known=1
+done
+[[ -n "$known" ]] || { usage >&2; exit 2; }
 
 adapter_filter() {
     case "$interface" in

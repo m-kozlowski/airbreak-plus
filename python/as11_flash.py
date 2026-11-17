@@ -1495,7 +1495,7 @@ def cmd_service(args) -> int:
     if args.service_cmd == "flash":
         service_flash = _prepare_service_flash(args)
 
-    if args.service_cmd in ("enter", "flash"):
+    if args.service_cmd in ("enter", "flash") or getattr(args, "enter", False):
         entry_timeout = args.timeout if args.service_cmd == "enter" else 30.0
         client, transport = _connect_service_or_enter(
             args, entry_timeout=entry_timeout
@@ -2429,6 +2429,10 @@ def main(argv=None) -> int:
         p_s_read.add_argument(
             "selection", nargs="*", metavar="RANGE",
             help=f"{selection_help}; omit for the complete target",
+        )
+        p_s_read.add_argument(
+            "--enter", action="store_true",
+            help="enter service mode first, as service enter does",
         )
 
     for command, selection_help in (

@@ -2,6 +2,7 @@
 
 The patched image can be installed over SWD or CAN. Bluetooth (BLE) is useful
 for later updates after its pairing and OTA-key requirements have been prepared.
+[AirBreaker](../airbreaker.md#flashing) runs all three from a window.
 
 ## SWD
 
