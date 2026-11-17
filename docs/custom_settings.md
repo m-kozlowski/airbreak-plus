@@ -1,12 +1,11 @@
 # Custom Settings
 
-The custom settings framework exposes persistent controls for injected Air 10
+The custom settings framework exposes controls and pages for injected Air 10
 payloads in the stock clinical menu. It is separate from the payloads
 themselves. A payload can run without the framework by recognizing unpatched
 ABI slots and using its built-in fallback values.
 
-The framework is supported on SX567-0302, SX567-0305, SX567-0306, SX567-0401,
-SX567-0402, and Lumis SX584-0204/0205.
+The framework supports SX567 and Lumis SX584 firmware.
 
 ## Assignments
 
@@ -167,11 +166,40 @@ available.
 The text of a new ID is English for every compiled language without a supplied
 translation.
 
+## Pages and controls
+
+`custom_menu_add_page` registers a generated page and a navigation row in its
+parent. `custom_menu_declare_page(name, parent_name, title_str_id, *, back=True)`
+registers only the page. Use `back=False` when the page supplies its own return
+actions instead of the automatic Back row. Page numbers are assigned after
+placement; feature hooks must use that assignment rather than fixed numbers.
+
+`custom_menu_add_action(container, label, ...)` adds a button with a label
+string ID. Set `write` and `value` to write a variable, `page` to open a generated
+page by name, or both to write before navigation. `page='default'` selects the
+stock default page. Optional `binding` follows a variable's visibility;
+`item` selects the row on the destination page.
+
+`custom_menu_add(..., view=True)` adds another row for a variable, preserving
+its existing visibility. Numeric rows can use `packed_time=True` to display
+`(minutes << 8) | seconds` as `mm:ss`.
+
+`custom_menu_add_preview(source, target, payload, symbol)` writes a calculated
+target variable when the source numeric editor's value changes. Both variables
+must be g[4]; the target does not need a menu row. The named function in an
+applied payload takes and returns raw integer values and runs in the GUI task.
+Several sources may update the same target; each source-target pair is unique.
+The framework writes its result through the native variable setter. Cancelling
+reloads the saved source value and updates targets through the same path.
+The source uses a native numeric control, including its formatter variants.
+Preview bindings are separate from the menu registry and UART discovery.
+
 ## Menu placement
 
-`custom_menu_add`, `custom_menu_add_heading`, and `custom_menu_add_page` accept
-an optional `before` or `after` reference and return an item handle. Placement
-is relative to another entry in the same section or generated page:
+`custom_menu_add`, `custom_menu_add_heading`, `custom_menu_add_page`, and
+`custom_menu_add_action` accept an optional `before` or `after` reference and
+return an item handle. Placement is relative to another entry in the same
+section or generated page:
 
 ```python
 from lib.custom_menu import stock, custom
@@ -184,9 +212,10 @@ self.custom_menu_add('therapy', 'ZVK', ivaps_mask, after=vt)
 
 `stock('PHT')` refers to a native row by its UART variable name.
 `custom('ZMV')` refers to a registered custom variable, including one registered
-later. Returned handles also identify headings and page links. An omitted
-placement appends to the end of the section or generated page, in registration
-order. Generated pages retain their Back row first.
+later. When a variable has several rows, use item handles: `custom(var)` is
+rejected as ambiguous. Returned handles also identify headings, page links,
+and actions. An omitted placement appends to the end of the section or
+generated page, in registration order.
 
 Entries attached to the same side of an anchor retain registration order.
 An entry and the entries attached to it stay together: if A is before a stock
@@ -224,15 +253,20 @@ typedef struct {
 | container | stock clinical section or generated page |
 | flags bit 0 | construct a g[4] numeric item; clear for g[8] enum items |
 | flags bit 1 | construct a static heading; `item_id` is a string ID |
-| flags bit 2 | construct a page link; `item_id` is the page title string ID |
-| flags bit 3 | append the g[4] variable units to its displayed value |
-| item_id | variable ID, heading string ID, or page title string ID |
+| flags bit 2 | declare a page and normally construct its parent link; `item_id` is its title string ID |
+| flags bit 3 | append numeric units; for page records, omit the automatic Back row |
+| flags bit 4 | page declaration only, without a parent navigation row |
+| flags bit 5 | action row; `item_id` indexes the separate action table |
+| flags bit 6 | additional variable view, excluded from visibility management and UART discovery |
+| flags bit 7 | format a numeric value as packed `mm:ss` |
+| item_id | variable ID, string ID, or action-table index, as selected by flags |
 | mode_mask bits 0..11 | one bit per MOP option |
 | mode_mask bit 31 | preserve visibility managed by stock firmware callbacks |
 
 An entry with container `0xFF` or item ID `0xFFFF` terminates the registry.
-Duplicate variable IDs are rejected before registry emission.
+Duplicate setting registrations are rejected; explicit views may share a variable ID.
 The registry holds at most 64 entries, followed by the terminator.
+Action records are defined in [custom_menu_registry.h](../patches/custom_menu_registry.h).
 
 After feature registration, the patcher orders entries within each container.
 It emits containers in section and page order. The registry supplies GUI
@@ -247,8 +281,8 @@ stock list capacity by the number of entries added directly to stock sections.
 
 When the registry contains pages, the menu constructor preserves all stock page
 pointers in a larger table and appends the generated pages. Each generated page
-has a stock Back row followed by records assigned to its container. Page records
-may use a stock section or an earlier generated page as their parent.
+has its optional stock Back row followed by records assigned to its container.
+Page records may use a stock section or an earlier generated page as their parent.
 
 ## UART discovery
 
@@ -263,11 +297,14 @@ paths. Numeric limits and enum options remain available through the stock
 [serial protocol](serial_protocol.md#custom-settings-registry) for the record
 format.
 
+Page declarations, headings, actions, and additional views have no separate
+UART setting records.
+
 ## Mode visibility
 
 Clinical menu pages are constructed once. The MOP callback dispatcher calls the
-stock MOP callback first, followed by the custom visibility handler. For every
-variable entry, the handler tests the current MOP bit in `mode_mask` and updates
+stock MOP callback first, followed by the custom visibility handler. For each
+registered setting, the handler tests the current MOP bit in `mode_mask` and updates
 the variable handler's runtime VIS flag. Entries with bit 31 set retain the
 visibility selected by stock firmware callbacks. Existing menu refresh code
 then shows or hides the variable item. Static headings and page links are

@@ -62,6 +62,7 @@ All patches below are **enabled by default** unless noted.
 | Unlock options | Enables all built-in tube and ramp choices, including the 3m tube and Auto ramp | `--patch-unlock-options` |
 | Unlock settings | Makes the clinical settings used by unlocked modes available and editable | `--patch-gui-config` |
 | iVAPS settings | Restores height controls and calculated MV, Vt, and Vt/kg IBW values | `--patch-ivaps-settings` |
+| [Learn Targets](features/general.md#learn-targets) | Calculates iVAPS therapy targets from breathing. Requires custom settings. Off by default. | `--patch-learn-targets` |
 | Unlock pressure range | Expands standard pressure settings to 1.0-30.0 cmH2O | `--patch-unlock-uilimits` |
 | Unlock ASV PS range | Expands ASV/ASVAuto pressure support to 0-25 cmH2O, allows Max PS below Min PS + 5, and raises fixed ASV EPAP to the device pressure limit | `--patch-asv-ps-range` |
 | Adjustable ASV pressure limit | Allows setting the limit from 10 cmH2O to the factory maximum. Off by default. | `--patch-adjustable-mcp` |
@@ -119,7 +120,7 @@ Example with custom VAuto:
 |-------|-------------|--------|
 | Expand heap | Adds about 13.5 KiB of runtime allocation space on SX567 firmware | `--patch-expand-heap` |
 | Repack fonts | Frees over 36 KiB of flash for patches without changing the available characters or their appearance | `--patch-font-repack` |
-| UART firmware dump | Adds the SX577-0200 / SX585-0200 bootloader command used by `resmed_flash.py --dump` | `--patch-blx-dump` |
+| UART dump/restore | Adds flash dump and EEPROM dump/restore over UART | `--patch-blx-dump` |
 | UART metadata | Reports live-stream layouts and custom-settings menu metadata through `G C` | `--patch-uart-stream-schema` |
 | Replacement LCD | Adds the ILI9325/ILI9328 LCD driver | `--patch-fw-lcd` |
 

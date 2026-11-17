@@ -86,6 +86,7 @@ class CompiledPayloadMixin(object):
 
     PAYLOAD_LAYOUT_TEMPLATE = "payload_layout_%s.tsv"
     PAYLOAD_BUILD_COMMAND = "make binaries"
+    PAYLOAD_CAVES_FILE = None
 
     def _init_compiled_payloads(self):
         self.payload_layouts = {}
@@ -206,8 +207,8 @@ class CompiledPayloadMixin(object):
     def _elf_symbol_size(self, elf_path, symbol):
         return elf_symbol_size(elf_path, symbol)
 
-    def _inject_payload(self, name, data, region=None, empty_byte=0xff):
-        """Validate and inject one payload at its generated layout address."""
+    def _validate_payload(self, name, data, region=None, empty_byte=0xff, abi=None):
+        """Check a payload and ABI values; return storage, offset and final bytes."""
         data = bytes(data)
         ver, layout = self._load_payload_layout(region)
         if name not in layout:
@@ -219,6 +220,24 @@ class CompiledPayloadMixin(object):
         runtime = entry["runtime"]
         storage = entry["storage"]
         expected_size = entry["size"]
+        if self.PAYLOAD_CAVES_FILE:
+            # Check the stored/executed mapping against the allocator's source
+            # table, rather than repeating firmware addresses in each patch.
+            path = os.path.join(self._payload_repo_dir(), self.PAYLOAD_CAVES_FILE)
+            with open(path, "r", encoding="ascii") as caves:
+                for line in caves:
+                    fields = line.split()
+                    if not fields or fields[0] != ver:
+                        continue
+                    if len(fields) != 7:
+                        raise CompiledPayloadError("malformed code cave in %s" % path)
+                    begin, end, image_base, runtime_base = (int(x, 0) for x in fields[2:6])
+                    if (begin <= storage and storage + expected_size <= end and
+                            runtime == runtime_base + storage - image_base):
+                        break
+                else:
+                    raise CompiledPayloadError(
+                        "%s: layout is outside the code caves or has an invalid runtime mapping" % name)
         if len(data) != expected_size:
             raise CompiledPayloadError(
                 "%s: binary size %dB differs from layout %dB (run %s)" %
@@ -241,13 +260,27 @@ class CompiledPayloadMixin(object):
                 (name, os.path.basename(elf_path), self.PAYLOAD_BUILD_COMMAND)
             )
 
+        if abi:
+            prepared = bytearray(data)
+            for symbol, value in abi.items():
+                slot = elf_symbol_address(elf_path, symbol) - runtime
+                size = elf_symbol_size(elf_path, symbol)
+                if len(value) != size or slot < 0 or slot + size > len(data):
+                    raise CompiledPayloadError("%s: invalid ABI slot %s" % (name, symbol))
+                prepared[slot:slot + size] = value
+            data = bytes(prepared)
         off = storage - self.asf.FLASH_BASE
         if bytes(self.asf.fw[off:off + len(data)]) != data:
             if bytes(self.asf.fw[off:off + len(data)]) != bytes([empty_byte]) * len(data):
                 raise CompiledPayloadError(
                     "%s: payload area at 0x%08X is not empty" % (name, storage))
-            if empty_byte == 0xff:
-                self.asf.patch(data, off, checkempty=True, verbose=False)
-            else:
-                self.asf.patch(data, off, clobber=True, verbose=False)
+        return storage, off, data
+
+    def _inject_payload(self, name, data, region=None, empty_byte=0xff, abi=None):
+        """Validate and inject one payload at its generated layout address."""
+        data = bytes(data)
+        storage, off, data = self._validate_payload(name, data, region, empty_byte, abi)
+        if bytes(self.asf.fw[off:off + len(data)]) != bytes(data):
+            self.asf.patch(data, off, checkempty=empty_byte == 0xff,
+                           clobber=empty_byte != 0xff, verbose=False)
         return storage, off

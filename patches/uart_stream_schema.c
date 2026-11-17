@@ -197,8 +197,7 @@ static unsigned int custom_settings_variable_count(void)
          guard++, entry++) {
         if (custom_menu_entry_is_end(entry))
             break;
-        if (!(entry->flags & (CUSTOM_MENU_FLAG_PAGE |
-                              CUSTOM_MENU_FLAG_HEADING)))
+        if (!(entry->flags & CUSTOM_MENU_NON_SETTING))
             count++;
     }
     return count;
@@ -212,7 +211,7 @@ static const custom_menu_entry_t *custom_settings_variable(unsigned int index)
          guard++, entry++) {
         if (custom_menu_entry_is_end(entry))
             break;
-        if (entry->flags & (CUSTOM_MENU_FLAG_PAGE | CUSTOM_MENU_FLAG_HEADING))
+        if (entry->flags & CUSTOM_MENU_NON_SETTING)
             continue;
         if (index-- == 0)
             return entry;

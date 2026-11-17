@@ -36,6 +36,8 @@ PLATFORM = Platform('air10', phases=(
               True, 'gui_config'),
         Patch('patch-ivaps-settings', 'Restore iVAPS clinical settings.',
               True, 'enable_ivaps_settings', requires=('patch-custom-settings',)),
+        Patch('patch-learn-targets', 'Expose native iVAPS Learn Targets on SX567.',
+              True, 'enable_learn_targets', requires=('patch-custom-settings',)),
         Patch('patch-asv-ps-range', 'Unlock ASV/ASVAuto pressure constraints.',
               True, 'asv_unlock_ps_range'),
         Patch('patch-adjustable-mcp', 'Make the ASV pressure limit adjustable.',
@@ -116,7 +118,7 @@ PLATFORM = Platform('air10', phases=(
     Phase('Miscellaneous', (
         Patch('patch-expand-heap', 'Expand runtime heap by about 13.5 KiB on SX567 firmware.',
               True, 'patch_expand_heap'),
-        Patch('patch-blx-dump', 'Add bootloader support for firmware dumps over UART.',
+        Patch('patch-blx-dump', 'Add flash dump and EEPROM dump/restore over UART.',
               True, 'patch_blx_dump'),
         Patch('patch-fw-lcd', 'Add the universal ILI9325/ILI9328 LCD driver.',
               False, 'patch_lcd_ili9325'),

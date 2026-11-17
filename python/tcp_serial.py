@@ -15,25 +15,38 @@ class TcpSerial:
 
     text_mode = False
 
-    def __init__(self, host, port=23, timeout=1.0, mode='transparent'):
+    def __init__(self, host, port=23, timeout=1.0, mode='transparent', hold=False):
         self._host = host
         self._port = port
         self._timeout = timeout
         self._baudrate = 57600
         self._mode = mode
         self.text_mode = (mode == 'text')
+        self.reply_buffer = 512
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._sock.settimeout(timeout)
         self._sock.connect((host, port))
+        self._sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
 
         if mode == 'raw':
             pass  # no handshake
         elif mode == 'transparent':
             self._read_line(0.5)  # consume banner
-            self._sock.sendall(b'$TRANSPARENT\n')
+            self._sock.sendall(b'$TRANSPARENT HOLD\n' if hold else b'$TRANSPARENT\n')
             resp = self._read_line(1.0)
-            if 'OK' not in resp and 'transparent' not in resp.lower():
+            if not resp.startswith('OK:'):
+                self._sock.close()
                 raise ConnectionError(f"Failed to enter transparent mode: {resp}")
+            fields = dict(item.split('=', 1) for item in resp.split() if '=' in item)
+            try:
+                self.reply_buffer = int(fields.get('reply_buffer', '512'))
+                if self.reply_buffer < 511:
+                    raise ValueError('reply_buffer is smaller than one frame')
+                if hold and fields.get('idle_timeout') != '0':
+                    raise ValueError('dump flow control requires AirBridge with $TRANSPARENT HOLD')
+            except ValueError as exc:
+                self._sock.close()
+                raise ConnectionError(f"Invalid transparent-mode handshake: {exc}") from exc
         elif mode == 'text':
             self._read_line(0.5)  # consume banner
 
@@ -140,7 +153,7 @@ class TcpSerial:
         self.close()
 
 
-def open_tcp(port_str, mode, timeout=1.0):
+def open_tcp(port_str, mode, timeout=1.0, hold=False):
     host, port = TcpSerial.parse_address(port_str)
     print(f"[*] Connecting to {host}:{port} via TCP ({mode} mode)...")
-    return TcpSerial(host, port, timeout=timeout, mode=mode)
+    return TcpSerial(host, port, timeout=timeout, mode=mode, hold=hold)
