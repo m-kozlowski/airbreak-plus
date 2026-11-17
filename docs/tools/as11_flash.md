@@ -408,14 +408,16 @@ as11_flash.py -d can:/dev/ttyACM0 service flash --conf conf.bin --appl appl.bin
 ### Read storage
 
 ```text
-service read-flash FILE [REGION | OFFSET LENGTH] [OPTIONS]
-service read-nor FILE [VOLUME | OFFSET LENGTH] [OPTIONS]
-service read-bkpsram FILE [OFFSET LENGTH] [OPTIONS]
+service read-flash FILE [REGION | OFFSET LENGTH] [--enter] [OPTIONS]
+service read-nor FILE [VOLUME | OFFSET LENGTH] [--enter] [OPTIONS]
+service read-bkpsram FILE [OFFSET LENGTH] [--enter] [OPTIONS]
 ```
 
 `read-flash` reads internal STM32 flash, `read-nor` reads the physical SPI NOR,
 and `read-bkpsram` reads the 4 KiB battery-backed SRAM. All commands require an
-output file `FILE`; the default range is the complete target.
+output file `FILE`; the default range is the complete target. `--enter` first
+enters service mode as [enter](#enter) does, within a 30-second entry window;
+the service stays active after the read.
 `REGION` selects a named flash region. `OFFSET` and `LENGTH` select a byte
 range: flash uses absolute addresses from `0x08000000`; NOR and backup SRAM
 use zero-based offsets. Backup-SRAM offset zero corresponds to `0x38800000`.
@@ -435,6 +437,7 @@ Complete NOR and single-volume dumps can be inspected and extracted with
 
 ```sh
 as11_flash.py -d can:/dev/ttyACM0 service read-flash part.bin 0x08040000 0x20000
+as11_flash.py -d can:/dev/ttyACM0 service read-flash device-dump.bin --enter
 as11_flash.py -d tcp:aircannect service read-nor nor.bin
 as11_flash.py -d can:/dev/ttyACM0 service read-nor settings.bin settings
 ```
