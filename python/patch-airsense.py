@@ -1461,6 +1461,8 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self._custom_detail(self._payload_detail('ivaps_preview', len(data), flash))
 
     def enable_learn_targets(self):
+        if self.asf.cdx_ver.startswith('SX584-'):
+            return PatchOutcome.skip('Learn Targets is already present in the stock Lumis menu')
         if self.asf.cdx_ver not in self.LEARN_TARGETS_HOOK_SITES:
             raise ValueError('Learn Targets is unsupported on %s' % self.asf.cdx_ver)
         mop = self.asf.find_var('MOP')
@@ -2760,6 +2762,8 @@ class ASFirmwarePatches(CompiledPayloadMixin):
 
     def patch_autoepap(self):
         """Add the iVAPS pressure controller and adapt shared flow workers."""
+        if self.asf.cdx_ver.startswith('SX584-'):
+            return PatchOutcome.skip('AutoEPAP is already present in the stock Lumis firmware')
         # Offsets follow the call, interior-branch and vtable hooks below.
         sites = {
             'SX567-0302': (
