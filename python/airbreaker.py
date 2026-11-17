@@ -36,9 +36,9 @@ NO_BASE = "(none)"
 SETTINGS_FILE = os.path.join(os.path.expanduser("~"), ".airbreaker.json")
 # Build targets and SWD entry points; patch definitions remain in patch_options.
 TARGETS = {
-    "Air10": dict(platform="air10", firmware="AIR10_FIRMWARE",
+    "Air10": dict(platform="air10", firmware="AIR10_FIRMWARE", patch_args="AIR10_PATCH_ARGS",
                   output="build/stm32-patched.bin", config="airsense", backup="stm32.bin", size=0x100000),
-    "Air11": dict(platform="air11", firmware="AS11_FIRMWARE",
+    "Air11": dict(platform="air11", firmware="AS11_FIRMWARE", patch_args="AIR11_PATCH_ARGS",
                   output="build/as11-patched.bin", config="as11", backup="as11.bin", size=0x200000),
 }
 STEPS = (("choose", "1 Choose patches"), ("patch", "2 Build"), ("backup", "3 Dump backup"),
@@ -208,10 +208,10 @@ def make_input(firmware):
 
 
 def make_command(target, path, options, verbose):
-    """Build the selected platform's output from the input path and full form selection."""
+    """Pass the form selection through the platform-specific Make variable, overriding its environment value."""
     # Make expands dollars before the recipe shell interprets the quoted arguments.
     arguments = shlex.join(options).replace("$", "$$")
-    args = ["make", target["firmware"] + "=" + path, "PATCH_ARGS=" + arguments]
+    args = ["make", target["firmware"] + "=" + path, target["patch_args"] + "=" + arguments]
     return tool_command(args + (["V=1"] if verbose else []) + [target["output"]])
 
 
