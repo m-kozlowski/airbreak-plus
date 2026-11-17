@@ -3,7 +3,7 @@
 The patches, their phases, descriptions, defaults, parameters and dependencies come from the shared option
 declarations (python/lib/as10_patch_options.py through patch_options.load("air10")). Presets and option files
 are read, validated and written with python/lib/patch_config.py, the code the patcher and make use too.
-The window edits a user preset, presets/user/air10/NAME.config, which can build on another preset such as the
+The window optionally edits a user preset, presets/user/air10/NAME.config, which can build on another preset such as the
 built-in plus. Ticking a patch also ticks the patches it requires; unticking one unticks the patches that
 require it. Options the preset sets itself are shown bold, and Save writes only those. The local options file
 patch-airsense.config is edited by hand and applies under every preset, so the window shows what it sets.
@@ -30,7 +30,7 @@ import sys
 import textwrap
 import threading
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 from tkinter import font as tkfont
 import traceback
 
@@ -55,8 +55,8 @@ OUTPUT_TARGET = "build/stm32-patched.bin"
 OUTPUT = os.path.join(REPO, *OUTPUT_TARGET.split("/"))
 INPUT_COPY = "airbreaker-input.bin"   # copy of an input firmware whose path make cannot take
 DEFAULT_BACKUP = os.path.join(REPO, "stm32.bin")   # where docs/guide/openocd.md has the stock dump
-STEPS = (("choose", "1 Choose patches"), ("save", "2 Save"), ("patch", "3 Build"), ("backup", "4 Dump backup"),
-         ("flash", "5 Flash"))   # the checklist above the options
+STEPS = (("choose", "1 Choose patches"), ("patch", "2 Build"), ("backup", "3 Dump backup"),
+         ("flash", "4 Flash"))
 
 
 def parameter_items(patch):
@@ -301,7 +301,7 @@ class App(tk.Tk):
         self.checks = {}    # patch option -> Checkbutton, bold when this preset sets it
         self.required_by = {patch.option: [other.option for other in PLATFORM.patches()
                                            if patch.option in other.requires] for patch in PLATFORM.patches()}
-        self.name = ""          # the preset shown, presets/user/air10/NAME.config
+        self.name = ""          # empty for a form that has not been named as a preset
         self.base = []          # presets this preset selects (--preset); they apply under it
         self.underlying = {}    # option -> value from the local options file and the base presets
         self.explicit = set()   # options the preset file sets itself: kept even where they equal self.underlying
@@ -378,7 +378,7 @@ class App(tk.Tk):
 
         bar = ttk.Frame(top)
         bar.pack(fill="x", pady=(8, 0))
-        ttk.Label(bar, text="Preset:").pack(side="left")
+        ttk.Label(bar, text="Preset (optional):").pack(side="left")
         self.preset_var = tk.StringVar()
         self.preset_box = ttk.Combobox(bar, textvariable=self.preset_var, width=18)
         self.preset_box.pack(side="left", padx=(4, 0))
@@ -394,8 +394,7 @@ class App(tk.Tk):
         self.base_box.pack(side="left", padx=(4, 0))
         self.base_box.bind("<<ComboboxSelected>>", lambda _: self.base_changed())
         Tooltip(self.base_box, lambda: wrap_lines(
-            "A preset this one builds on, such as plus. Its options apply "
-            "first; this preset only stores what differs from it."))
+            "The base preset. Its options apply first; saved overrides take precedence."))
         ttk.Button(bar, text="Save", command=self.save).pack(side="left", padx=(12, 0))
         ttk.Button(bar, text="Reload", command=self.reload).pack(side="left", padx=(6, 0))
         clear = ttk.Button(bar, text="Clear own options", command=self.clear)
@@ -498,7 +497,7 @@ class App(tk.Tk):
 
         for var in (self.backup, self.infile):
             var.trace_add("write", lambda *_: self.update_steps())
-        self.load_preset(self.settings.get("preset") or DEFAULT_PRESET)
+        self.load_preset(self.settings.get("preset") or "")
         self.after(100, self.pump)
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
@@ -636,7 +635,6 @@ class App(tk.Tk):
         if self.loading or not hasattr(self, "backup"):
             return
         done = {
-            "save": preset_path(self.name).is_file() and not self.dirty(),
             "patch": self.built is not None and os.path.isfile(self.outfile.get().strip())
                      and self.built == self.build_key(),
             "backup": os.path.isfile(self.backup.get().strip()),
@@ -652,7 +650,7 @@ class App(tk.Tk):
 
     def refresh(self, *_):
         """Parameter states, bold for options this preset sets, the preset file line and the title."""
-        if self.loading or not self.name:
+        if self.loading:
             return
         for parameter, patch in PARAMETERS:
             self.param_widgets[parameter.option].state(
@@ -667,7 +665,7 @@ class App(tk.Tk):
         self.cmdline.set(shlex.join(patch_config.option_args(PLATFORM, own, self.base)))
         self.local_note.config(text="%s also applies under this preset: %s" % (
             LOCAL_FILE.name, shlex.join(self.local_options)) if self.local_options else "")
-        self.title("%s - preset %s%s" % (TITLE, self.name, " *" if self.dirty() else ""))
+        self.title("%s%s%s" % (TITLE, " - " + self.name if self.name else "", " *" if self.dirty() else ""))
         self.update_steps()
 
     def toggled(self, option):
@@ -688,7 +686,8 @@ class App(tk.Tk):
                 self.follow(other, on, changed)
 
     def load_preset(self, name):
-        """Shows a user preset; a name without a file starts a new preset on the built-in defaults."""
+        """Load a user preset, or show the local configuration when no preset is selected."""
+        self.loading = True
         self.name = name
         self.preset_box.config(values=user_presets())
         self.preset_var.set(name)
@@ -696,7 +695,7 @@ class App(tk.Tk):
         path = preset_path(name)
         base, own, self.foreign = [], {}, False
         try:
-            if path.is_file():
+            if name and path.is_file():
                 text = path.read_text(encoding="utf-8")
                 self.foreign = not text.startswith(HEADER)
                 base, options = patch_config.split_presets(patch_config.read_options(path))
@@ -704,7 +703,7 @@ class App(tk.Tk):
                                                                              tuple(options)))
                 status = "Loaded %s" % path
             else:
-                status = "New preset %s: Save writes %s" % (name, path)
+                status = "New preset %s" % name if name else ""
             self.set_base(base)
         except (OSError, ValueError) as exc:
             messagebox.showerror(TITLE, "%s could not be read:\n\n%s\n\nThe built-in defaults are shown; Save "
@@ -725,17 +724,22 @@ class App(tk.Tk):
         name = name.strip()
         if name == self.name:
             return
-        if not PRESET_NAME.match(name):
+        if name and not PRESET_NAME.match(name):
             messagebox.showerror(TITLE, PRESET_NAME_RULE[0].upper() + PRESET_NAME_RULE[1:])
             self.preset_var.set(self.name)
             return
-        if self.dirty():
-            answer = messagebox.askyesnocancel(TITLE, "Save the changes to preset %s first?" % self.name)
-            if answer is None or (answer and not self.save(self.name)):
-                self.preset_var.set(self.name)
-                return
+        if not self.confirm_preset_change():
+            self.preset_var.set(self.name)
+            return
         self.load_preset(name)
         self.save_settings()
+
+    def confirm_preset_change(self):
+        if not self.dirty():
+            return True
+        question = "Save the changes to preset %s?" % self.name if self.name else "Save these options as a preset?"
+        answer = messagebox.askyesnocancel(TITLE, question)
+        return answer is not None and (not answer or self.save(self.name))
 
     def base_changed(self):
         """Shows the new base preset with the options this preset sets itself on top."""
@@ -772,6 +776,11 @@ class App(tk.Tk):
     def save(self, name=None):
         """Writes the preset: its base presets and the options it sets itself. False when not saved."""
         name = (name or self.preset_var.get()).strip()
+        if not name:
+            name = simpledialog.askstring(TITLE, "Preset name:", initialvalue=DEFAULT_PRESET, parent=self)
+            if name is None:
+                return False
+            name = name.strip()
         if not PRESET_NAME.match(name):
             messagebox.showerror(TITLE, "Not saved: " + PRESET_NAME_RULE)
             return False
@@ -809,6 +818,7 @@ class App(tk.Tk):
             return False
         if name != self.name:
             self.name = name
+            self.preset_var.set(name)
             self.preset_box.config(values=user_presets())
             self.base_box.config(values=[NO_BASE] + [p for p in patch_config.preset_files(PLATFORM.name)
                                                      if p != name])
@@ -1110,10 +1120,8 @@ class App(tk.Tk):
         self.update_steps()
 
     def on_close(self):
-        if self.dirty():
-            answer = messagebox.askyesnocancel(TITLE, "Save the changes to preset %s?" % self.name)
-            if answer is None or (answer and not self.save()):
-                return
+        if not self.confirm_preset_change():
+            return
         if self.flashing and not messagebox.askyesno(
                 TITLE, "Flashing is in progress. Closing stops it and can leave the device without working "
                 "firmware.\n\nClose anyway?", icon="warning", default="no"):
