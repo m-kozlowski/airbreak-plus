@@ -185,6 +185,10 @@ Humid Start has no effect.
 | Min Tube (C) | 16-30 °C, step 1 | 16 |
 | Start Coupling | 0.10-1.00, step 0.05 | 0.25 |
 
+`--humid-start-coupling-row n` leaves the Start Coupling row out of the menu
+(the built-in coupling 0.25 applies), which frees a value slot and settings
+registry space for other features.
+
 Each setting takes the first free variable of the custom settings pool and
 is left out when there is none. A build with many other custom settings (the
 plus preset, for example, uses every on/off slot) has no Humid Start switch,

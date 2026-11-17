@@ -2,7 +2,7 @@
 
 import argparse
 
-from .patch_options import Flag, Parameter, Patch, Phase, Platform, Value
+from .patch_options import Flag, Parameter, Patch, Phase, Platform, Value, str2bool
 
 
 def percentage(value):
@@ -84,7 +84,13 @@ PLATFORM = Platform('air10', categories=(
         Patch('patch-humid-start',
               'Humid Start: hold the heated tube at the target RH temperature while the humidifier warms up.',
               False, 'patch_humid_start', category='Quality of life',
-              requires=('patch-font-repack',)),
+              requires=('patch-font-repack',), parameters=(
+                  Parameter('humid-start-coupling-row',
+                            'Add the Start Coupling row to the menu (y/n). n leaves it out, which frees a '
+                            'value slot and settings registry space; the built-in coupling 0.25 applies. '
+                            'Default: y.',
+                            Value(str2bool, 'y/n'), True),
+              )),
         Patch('patch-custom-palette', 'Patch the custom color palette.',
               True, 'custom_palette', category='Quality of life'),
         Patch('patch-past-date', 'Allow setting past date in the menu and over UART.',
