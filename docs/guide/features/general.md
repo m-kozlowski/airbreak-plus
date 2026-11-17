@@ -92,6 +92,19 @@ With custom settings, clinical **Therapy** contains:
 With AutoEPAP On, Min/Max EPAP replace the fixed EPAP setting in the menu.
 If Fall Time is installed, flow-shape analysis uses its selected duration.
 
+## Learn Targets
+
+This optional patch calculates **Target Pt Rate** and **Target Va** for iVAPS
+from breathing during a 20-minute learning session.
+
+With custom settings, **Learn Targets** appears in clinical **Therapy**.
+Set **Height** for the person being measured before starting. When learning
+finishes, review **Targets Learnt** and choose **Accept** to use the results.
+Use **Stop Learning** to cancel the session.
+
+During learning, the device uses the fixed **EPAP** setting even if AutoEPAP
+is On. Automatic EPAP adjustment resumes with normal iVAPS therapy.
+
 ## Target Humidity
 
 This patch lets users adjust humidification above or below the stock

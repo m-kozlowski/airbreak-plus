@@ -3,8 +3,8 @@
 Airbreak can read a device's complete firmware through the external serial
 port, without opening the case. This is an alternative to the standard SWD
 dump. Use it when you want to keep the device closed and already have an
-unmodified firmware file from another AirSense 10 or AirCurve 10 device. This
-file is referred to below as the **reference image**.
+unmodified firmware file with the same bootloader ID from another Air 10
+device. This file is referred to below as the **reference image**.
 
 > **Before you start:** This procedure overwrites the bootloader - the part
 > that starts the device and handles serial firmware updates. If power or the
@@ -12,11 +12,12 @@ file is referred to below as the **reference image**.
 > way back is an SWD programmer and an opened case: exactly what this method
 > avoids. Leave both connected until the tool reports the write is complete.
 
-The repository does not distribute ResMed firmware. The reference image does
-not have to match your device: a different model or firmware version is fine.
-Only its bootloader is used. Nothing else about your device changes.
+The repository does not distribute ResMed firmware. The reference image must
+match your device's bootloader ID; a different model or application version is
+fine. Only its bootloader is used. Nothing else about your device changes.
 
-Lumis ST-A firmware uses a different bootloader and is not supported.
+AirSense/AirCurve 10 uses `SX577-0200`; Lumis ST-A uses `SX585-0200`.
+Both bootloaders are supported. Do not exchange them between platforms.
 
 ## Why this works
 
@@ -36,13 +37,13 @@ device serial number, calibration, model selection, or therapy settings. Those
 remain in the other parts of the device.
 
 The factory bootloader can write firmware but cannot read it back. The
-airbreak patch adds one read command and leaves the existing update commands
-unchanged. The dump command itself only reads flash memory.
+airbreak patch adds flash read and EEPROM transfer commands and leaves the
+existing update commands unchanged. The dump command itself only reads flash
+memory.
 
 ## Requirements
 
-- a reference image: another unmodified 1 MB firmware file from an AirSense 10
-  or AirCurve 10 device
+- a reference image: another unmodified 1 MB firmware file with the same BID
 - the airbreak build tools, including `arm-none-eabi-gcc` for the compiled
   payload
 - a [serial connection](serial_connection.md) to the accessory port
@@ -56,8 +57,9 @@ Check the reference image first:
 ./python/resmed_image.py info reference.bin
 ```
 
-The output must report `SX577-0200`, and every listed block CRC must report
-`ok`.
+The output must report the device's BID (`SX577-0200` or `SX585-0200`), and every
+listed block CRC must report `ok`. Read the device BID with
+`./python/resmed_flash.py -p /dev/ttyACM0 --info`.
 
 The serial dump extension is a compiled payload, so build it first. This needs
 `arm-none-eabi-gcc`:
@@ -91,7 +93,9 @@ bootloader, with no other block listed, then accept the write.
 ./python/resmed_flash.py -p /dev/ttyACM0 --dump device-dump.bin
 ```
 
-The tool reads exactly 1,048,576 bytes and validates each firmware part before
+Use the same build directory that produced the installed bootloader; the tool
+loads its matching transfer module automatically. It reads exactly 1,048,576
+bytes and validates each firmware part before
 completing the output file. Inspect the result independently:
 
 ```
@@ -104,7 +108,14 @@ dump-enabled bootloader in place of the original one.
 
 Unit-specific data lives in EEPROM, outside the internal flash: serial number,
 calibration, settings, therapy statistics, etc. None of it is
-part of this dump. You can back the EEPROM up separately with
+part of this dump. Back it up separately over UART:
+
+```
+./python/resmed_flash.py -p /dev/ttyACM0 --dump-eeprom eeprom.bin
+```
+
+See [EEPROM dump and restore](../tools/resmed_flash.md#dump-or-restore-air-10-eeprom)
+for requirements and restore commands. The SD-card workflow is available through
 [`resmed_config.py`](../tools/resmed_config.md#calibration-eeprom).
 
 ## Optional follow-up

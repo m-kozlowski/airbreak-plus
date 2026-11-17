@@ -58,48 +58,55 @@ def format_rpc_permission(rule):
     return "%s:%s:%d" % (target, selector, enabled)
 
 
-PLATFORM = Platform("air11", phases=(
+PLATFORM = Platform("air11", categories=(
+    "Therapy unlocks",
+    "Therapy modifications",
+    "Therapy data and reporting",
+    "Connectivity and control",
+    "Quality of life",
+    "Miscellaneous",
+), phases=(
     Phase("Patches", (
         Patch("patch-airbreak-info",
               "Expose Airbreak version and applied patch metadata through RPC Get.",
-              True, "enable_airbreak_info"),
+              True, "enable_airbreak_info", category="Miscellaneous"),
         Patch("patch-fgbl-service", "Add bootloader support for firmware dump and restore over CAN.",
-              True, "patch_fgbl_service"),
+              True, "patch_fgbl_service", category="Miscellaneous"),
         Patch("patch-unlock-features",
               "Unlock supported therapy modes, related settings, and GUI editability.",
-              True, "unlock_features"),
+              True, "unlock_features", category="Therapy unlocks"),
         Patch("patch-unlock-languages", "Unlock all configured language choices.",
-              True, "unlock_languages"),
+              True, "unlock_languages", category="Quality of life"),
         Patch("patch-defaults", "Patch firmware defaults for selected settings.",
-              True, "patch_defaults"),
+              True, "patch_defaults", category="Quality of life"),
         Patch("patch-rpc-json-profile-visibility",
               "Expose supported therapy/feature profile nodes in RPC JSON.",
-              True, "rpc_json_profile_visibility"),
+              True, "rpc_json_profile_visibility", category="Connectivity and control"),
         Patch("patch-edf-superset", "Expose the official S11 EDF schema superset.",
-              True, "patch_edf_superset"),
+              True, "patch_edf_superset", category="Therapy data and reporting"),
         Patch("patch-asv-ps-range", "Unlock ASV/ASVAuto pressure support range.",
-              True, "asv_pressure_support_range"),
+              True, "asv_pressure_support_range", category="Therapy unlocks"),
         Patch("patch-therapy-screen",
               "Show additional respiratory statistics in compatible therapy modes.",
-              True, "therapy_screen"),
+              True, "therapy_screen", category="Therapy modifications"),
         Patch("patch-therapy-screen-style", "Enable persistent therapy-screen style selection.",
-              True, "therapy_screen_style"),
+              True, "therapy_screen_style", category="Therapy modifications"),
         Patch("patch-header-clock", "Show local time and usage time in the header during therapy.",
-              True, "header_clock", parameters=(
+              True, "header_clock", category="Quality of life", parameters=(
                   Parameter("header-clock-usage",
                             "Usage shown during therapy: PPD for the therapy day (default), "
                             "PUD for the current mask-on interval.",
                             Value(str.upper, choices=("PPD", "PUD")), "PPD"),
               )),
         Patch("patch-custom-settings", "Expose settings requested by active feature patches.",
-              True, "enable_custom_settings"),
+              True, "enable_custom_settings", category="Therapy modifications"),
         Patch("patch-flow-wave", "Show live flow and pressure waveforms in the Flow therapy view.",
-              False, "flow_wave"),
+              False, "flow_wave", category="Therapy modifications"),
         Patch("patch-screen-keep-awake", "Toggle LCD inactivity suppression with a three-finger hold.",
-              True, "screen_keep_awake"),
+              True, "screen_keep_awake", category="Quality of life"),
         Patch("patch-backlight",
               "Set ambient-light thresholds, LCD brightness levels, and response delay.",
-              False, "backlight", parameters=(
+              False, "backlight", category="Quality of life", parameters=(
                   Parameter("backlight-threshold-low",
                             "Dim mode below this AmbientLight value, 0..255. Default: 10.",
                             Value(int, "VALUE"), 10),
@@ -116,9 +123,9 @@ PLATFORM = Platform("air11", phases=(
               )),
         Patch("patch-scroll-animation",
               "Shorten menu scrolling with a 1.5x step at the native timer interval.",
-              False, "scroll_animation"),
+              False, "scroll_animation", category="Quality of life"),
         Patch("patch-startup-logo", "Replace the startup logo with --startup-logo.",
-              False, "startup_logo", parameters=(
+              False, "startup_logo", category="Quality of life", parameters=(
                   Parameter("startup-logo",
                             "Startup logo: 0 Off, 1 AirSense 11, 2 AirCurve 11, 3 Lumis 11, "
                             "4 ResMed. Default: 4.",
@@ -126,15 +133,15 @@ PLATFORM = Platform("air11", phases=(
               )),
         Patch("patch-sensitivity-split-screen",
               "Show graphics beside supported Trigger/Cycle sensitivity selectors.",
-              False, "sensitivity_split_screen"),
+              False, "sensitivity_split_screen", category="Quality of life"),
         Patch("patch-asv-backup-rate", "Add ASV/ASVAuto backup-rate suppression and control.",
-              True, "asv_backup_rate"),
+              True, "asv_backup_rate", category="Therapy modifications"),
         Patch("patch-airplane-reminder", "Suppress the standby airplane-mode reminder.",
-              True, "airplane_reminder"),
+              True, "airplane_reminder", category="Quality of life"),
         Patch("patch-motor-nagscreen", "Remove \"Motor life exceeded\" nag screen.",
-              True, "motor_nagscreen"),
+              True, "motor_nagscreen", category="Quality of life"),
         Patch("patch-rpc-permissions", "Apply configured RPC method and DataItem permissions.",
-              True, "rpc_permissions", parameters=(
+              True, "rpc_permissions", category="Connectivity and control", parameters=(
                   Parameter("rpc-permission",
                             "Set METHOD:VCID or DATAITEM:RPC|RPW permission; repeatable. "
                             "Overrides the built-in rule for the same pair.",
@@ -143,7 +150,7 @@ PLATFORM = Platform("air11", phases=(
               )),
         Patch("patch-cloud-firmware-change",
               "Retain cloud flow-generator firmware changes without applying them.",
-              False, "cloud_firmware_change", parameters=(
+              False, "cloud_firmware_change", category="Connectivity and control", parameters=(
                   Parameter("cloud-firmware-change-mode",
                             "Behavior of patch-cloud-firmware-change: retain download "
                             "metadata only, or stage and verify the file without applying it. "
@@ -152,14 +159,14 @@ PLATFORM = Platform("air11", phases=(
               )),
         Patch("patch-cellular-download",
               "Download an HTTP resource to upgrade storage through the cellular modem.",
-              False, "cellular_download"),
+              False, "cellular_download", category="Connectivity and control"),
         Patch("patch-ble-oxi-fallback",
               "Work around pairing and measurement-status incompatibilities in Bluetooth PLX "
               "pulse oximeters (experimental).",
-              False, "ble_oxi_fallback"),
+              False, "ble_oxi_fallback", category="Connectivity and control"),
         Patch("patch-timezone-write", "Allow time-zone changes after summary history exists.",
-              True, "timezone_write"),
+              True, "timezone_write", category="Connectivity and control"),
         Patch("patch-vid-spoof", "Install runtime MOP-based software variant spoofing.",
-              True, "vid_spoof"),
+              True, "vid_spoof", category="Therapy data and reporting"),
     )),
 ), parameters=(ALL_PATCHES,))

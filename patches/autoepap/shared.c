@@ -21,10 +21,15 @@ _Static_assert(sizeof(Ventilation) == 404, "SX567 estimator allocation");
 /* The SX567 stop slot is a no-op; Lumis disables the estimator so its next
  * start performs the fresh-state reset rather than an enabled-worker refresh. */
 void autoepap_ventilation_stop(Ventilation *worker) {
+    if (*iref(0x12) == 7) return; /* Native learning stop slot is a no-op. */
     worker->header[8] = 0;
 }
 
 void autoepap_ventilation_mode(Ventilation *worker) {
+    if (*iref(0x12) == 7) {
+        ivaps_ventilation_estimator_mode_update(worker);
+        return;
+    }
     Autoepap *s = autoepap_find();
     int previous = worker->header[8];
     if (!previous) {
@@ -179,6 +184,7 @@ void autoepap_timing_update(Timing *worker) {
 
 /* Stock timing worker frame: min/median/max at 3/1/5 and 4/2/9. */
 int autoepap_timing_tail(const float *frame) {
+    if (*iref(0x6f) == 7) return 0; /* Continue the original learning calculation. */
     Autoepap *s = autoepap_find();
     if (!s) return 0;
     int active = autoepap_active(s);

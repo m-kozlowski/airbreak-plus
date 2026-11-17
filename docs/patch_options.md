@@ -87,6 +87,8 @@ through other presets, is an error.
 |----------|-----------------|---------|
 | Air 10 | `plus` | Optional therapy payloads of `build/stm32-plus.bin` |
 
+[AirBreaker](guide/airbreaker.md) edits Air 10 and Air11 user presets in a window.
+
 ## Precedence
 
 Lowest to highest; applies to Make builds, wrappers and Python entry points:
@@ -155,4 +157,5 @@ and `patch-airsense-s9.py --help`.
 [Air11 patching guide](guide/as11/patching.md),
 [Air 10 configuration example](../patch-airsense.config.example),
 [Air11 configuration example](../patch-airsense-s11.config.example),
-[S9 configuration example](../patch-airsense-s9.config.example).
+[S9 configuration example](../patch-airsense-s9.config.example),
+[AirBreaker guide](guide/airbreaker.md).

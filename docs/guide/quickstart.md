@@ -69,6 +69,9 @@ telnet localhost 4444
 make
 ```
 
+Prefer a window? [AirBreaker](airbreaker.md) picks the patches,
+builds the image and flashes it, on Windows, Linux and WSL.
+
 ### 5. [Flash](flashing.md)
 
 OpenOCD (path B):
