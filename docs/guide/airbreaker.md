@@ -12,7 +12,8 @@ The window can:
   another preset such as `plus`
 - build the selected platform's firmware with `make`, payloads included, and
   show what the patcher did
-- dump, flash, verify and reset the device over SWD
+- dump and flash the device over SWD, Air10 UART, Air11 CAN or BLE, or an
+  AirBridge or AirCANnect TCP bridge
 
 Select the platform, `air10` or `air11`, at the top of the window. For device preparation,
 see the [Air10 quickstart](quickstart.md) or [Air11 quickstart](as11/quickstart.md).
@@ -24,10 +25,10 @@ see the [Air10 quickstart](quickstart.md) or [Air11 quickstart](as11/quickstart.
 | An original firmware image: `stm32.bin` for Air10 or `as11.bin` for Air11 | The patcher starts from the original. Follow the quickstart for your device |
 | Python 3.10 or newer with tkinter | Runs the window |
 | `make`, `python3` and `arm-none-eabi-gcc` | Build the image. On Windows they live in [WSL](wsl_setup.md) |
-| OpenOCD and an SWD programmer | Only for the Flash device section. See [Air10 wiring](wiring.md) or [Air11 connection](as11/connection.md#swd) |
+| A [connection](#connections) to the device | Only for the Flash device section |
 
-You can build without any hardware. Only the Flash device section needs the
-programmer and an opened device.
+You can build without any hardware. Only the Flash device section needs a
+connection to the device, and only SWD needs an opened device.
 
 ## Start the window
 
@@ -152,25 +153,75 @@ bottom. You can drag the divider between them.
 
 **Flash device (bottom right)**
 
-- **Adapter**: one of the adapters `run-ocd.sh` supports (`stlink`, `jlink`).
-  **Serial** (optional) selects one of several connected programmers.
-- **Firmware**: the image to flash or verify. **Backup (dump)**: where the
-  stock dump is written.
-
-Each button runs `run-ocd.sh` once with the platform's OpenOCD configuration
-(`airsense` or `as11`), the adapter, one command and `shutdown`:
-
-| Button | OpenOCD command |
-|--------|-----------------|
-| Check device | none; the configuration reports the device when it connects |
-| Dump backup | `dump BACKUP` |
-| Flash | `flash_new FIRMWARE`, which also verifies the written image |
-| Verify | `verify FIRMWARE` |
-| Reset | `reset run` |
+- **Connection**: how the window reaches the device; see
+  [Connections](#connections). Each platform remembers its own.
+- **Firmware**: the image to flash or verify. **Region**: what Flash writes
+  from it; see [Regions](#regions). **Backup (dump)**: where Dump backup
+  writes the firmware read from the device.
+- **More** holds dumps outside the standard steps: the Air10 EEPROM over UART
+  or AirBridge, and the Air11 NOR over the patched bootloader. The window asks
+  where to write the file.
+- Hover a button for the command it runs over the selected connection.
 
 The log at the bottom shows the output. Green lines are successful steps,
 orange are warnings or skipped patches, red are errors. When a command ends
 the log says `Done` or `Failed` and may add a hint.
+
+### Connections
+
+| Connection | Platform | Fields | Tools |
+|------------|----------|--------|-------|
+| SWD (OpenOCD) | Both | **Adapter**: one that `run-ocd.sh` supports (`stlink`, `jlink`); **Serial** (optional) selects one of several programmers | `run-ocd.sh` |
+| UART | Air10 | **Port** of the USB-UART adapter, such as `COM3` or `/dev/ttyACM0` | `resmed_flash.py` |
+| AirBridge (TCP) | Air10 | **Host**: `HOST[:PORT]` of the bridge | `resmed_flash.py` |
+| CAN | Air11 | **Port** of the CAN adapter, or a SocketCAN interface such as `can0`; **Adapter type** `waveshare` for Waveshare adapters | `as11_flash.py`, `as11_config.py` |
+| AirCANnect (TCP) | Air11 | **Host**: `HOST[:PORT]` of the bridge | `as11_flash.py`, `as11_config.py` |
+| BLE | Air11 | **Device**: alias or address of a paired device; **Apply**; **OTA key file** (optional) | `as11_flash.py`, `as11_config.py` |
+
+The Port list shows the serial ports found on the system; the Device list
+shows the stored pairings.
+
+CAN and AirCANnect have a **Protocol**: `native (JSON-RPC)` talks to the
+running application, `patched bootloader` to the bootloader service of
+`--patch-fgbl-service`, which the tool enters with a reset. BLE uses the native
+protocol. Over BLE, `authenticated` apply needs the device's OTA key: the key
+file, the key stored for the paired device or `AS11_OTA_KEY`. `plain` apply
+needs firmware with `--patch-rpc-permissions`; see
+[Air11 flashing](as11/flashing.md#ble).
+
+SWD runs `run-ocd.sh` once per button with the platform's OpenOCD
+configuration (`airsense` or `as11`), the adapter, one command and `shutdown`.
+The other connections run the tool once per button:
+
+| Button | SWD | UART, AirBridge | Native protocol | Patched bootloader |
+|--------|-----|-----------------|-----------------|--------------------|
+| Check device | none; the configuration reports the device when it connects | `--info` | `as11_config.py get ApplicationIdentifier BootloaderIdentifier` | `service enter` |
+| Dump backup | `dump BACKUP` | `--dump BACKUP` | -- | `service read-flash BACKUP --enter` |
+| Flash | the region's command with `FIRMWARE` | `-f FIRMWARE` and the region | `flash -f FIRMWARE` and the region | `service flash -f FIRMWARE` and the region |
+| Verify | `verify FIRMWARE` | -- | -- | -- |
+| Reset | `reset run` | -- | `as11_config.py reset` | `service reset` |
+| More | -- | `--dump-eeprom FILE` | -- | `service read-nor FILE --enter` |
+
+Buttons marked `--` are disabled. Flash over SWD verifies the written image.
+The patched bootloader stays in service mode after Check device and Dump
+backup, until Flash or Reset restarts the device.
+
+### Regions
+
+The first region in each list is the default:
+
+| Connection | Regions |
+|------------|---------|
+| SWD | `full image` (`flash_new`); bootloader: `flash_blx` on Air10, `flash_fgbl` on Air11 |
+| UART, AirBridge | `CMX`, `CCX`, `CDX`, `BLX`, `all` (BLX and CMX), passed as `--block` |
+| CAN, AirCANnect, BLE | `APCX`, `CONF`, `APPL`, `FGBL`, `FGCB`, passed as `--block` |
+
+Regions with the bootloader (`BLX`, `all`, `FGBL`, `FGCB`) add
+`--include-bootloader`. The default regions leave the bootloader unchanged, so
+bootloader patches such as `--patch-blx-dump` and `--patch-fgbl-service` reach
+the device only over SWD or with a region that includes the bootloader. Over
+UART, CAN and BLE, an interrupted bootloader write leaves a device that only
+SWD can recover.
 
 ## Building a firmware image
 
@@ -197,22 +248,32 @@ make AS11_FIRMWARE=as11.bin AIR11_PATCH_ARGS='--preset NAME' build/as11-patched.
 > **Dump first.** The dump of the stock firmware is the only way to restore the
 > device. Do it once, on stock firmware, and keep the file safe.
 
-1. Open the device and connect the programmer as in [Air10 wiring](wiring.md)
-   or [Air11 connection](as11/connection.md#swd). Power the device and select
-   the matching platform in the window.
-2. Choose the **Adapter**, and its **Serial** if several are connected.
+1. Connect the device:
+   - SWD: open the device and connect the programmer as in
+     [Air10 wiring](wiring.md) or [Air11 connection](as11/connection.md#swd)
+   - UART: see [serial connection](serial_connection.md)
+   - CAN: see [Air11 CAN connection](../as11/can_connection.md)
+   - BLE: pair the device once from a terminal with
+     `python/as11_config.py devices pair ADDRESS`
+
+   Power the device and select the matching platform and connection in the
+   window.
+2. Fill in the connection's fields.
 3. Press **Check device**. The log reports the connection and the device.
 4. Press **Dump backup** once, on stock firmware. The window asks before it
-   overwrites an existing backup.
-5. Set **Firmware** to the patched image and press **Flash**. The window asks
-   you to confirm and warns when no backup exists. Keep the device and
-   programmer connected until the log says `Done`.
-6. Optionally press **Verify** to compare the device with the file, then
-   **Reset** to restart it.
+   overwrites an existing backup. Over UART, AirBridge and the patched
+   bootloader, the device needs the dump bootloader first; see
+   [serial firmware dump](serial_dump.md) and
+   [CAN firmware dump](as11/service_dump.md).
+5. Set **Firmware** to the patched image, choose the **Region** and press
+   **Flash**. The window asks you to confirm and warns when no backup exists.
+   Keep the device and the connection up until the log says `Done`.
+6. Over SWD, optionally press **Verify** to compare the device with the file.
+   Press **Reset** to restart the device.
 
-Flash needs a full image of the selected platform: 1 MB for Air10, 2 MB for
-Air11. Verify compares the file, which may be shorter, with the start of the
-flash. Closing the window while flashing asks for confirmation,
+Over SWD, `full image` needs a full image of the selected platform: 1 MB for
+Air10, 2 MB for Air11. Verify compares the file, which may be shorter, with the
+start of the flash. Closing the window while flashing asks for confirmation,
 because stopping a flash can leave the device without working firmware.
 
 On Windows and in WSL, OpenOCD runs in WSL. It needs `openocd` and `usbutils`
@@ -220,9 +281,12 @@ there (`sudo apt install openocd usbutils`) and a one-time `usbipd bind`; see
 the [WSL setup](wsl_setup.md#forward-an-swd-programmer-into-wsl2-optional).
 `run-ocd.sh` attaches the programmer when WSL does not see it yet.
 
-UART flashing of the Air10 and CAN or BLE updates of the Air11 use the
-command-line tools; see [Air10 flashing](flashing.md) and
-[Air11 flashing](as11/flashing.md).
+The UART, CAN and BLE tools run with the Python that runs the window, so on
+Windows they open COM ports and Bluetooth directly. That Python needs pyserial
+for UART, AirBridge and serial CAN adapters, and bleak for BLE.
+
+For EEPROM restore, OTA containers and other operations, use the command-line
+tools; see [Air10 flashing](flashing.md) and [Air11 flashing](as11/flashing.md).
 
 ## Troubleshooting
 
@@ -234,6 +298,9 @@ command-line tools; see [Air10 flashing](flashing.md) and
 | `flash_new: expected a ... full image` | Check the selected platform and use a full image: 1 MB for Air10, 2 MB for Air11 |
 | `openocd: command not found` | Install OpenOCD (in WSL: `sudo apt install openocd usbutils`) |
 | `Error: open failed` | OpenOCD found no programmer: check the cable and driver, or in WSL that usbipd shares it |
+| `No module named 'serial'`, `pyserial is required` | Install pyserial in the Python that runs the window: `pip install pyserial`, or the `python3-serial` package |
+| `bleak not installed` | Install bleak in the Python that runs the window: `pip install bleak`. BLE does not work in WSL |
+| `no MAC/UUID/alias matched` | Pair the device first: `python/as11_config.py devices pair ADDRESS` |
 | `WSL cannot reach <file>` | Move the file into the repository folder |
 | A patch shows `[SKIP]` | It does not apply to this firmware version, or a required option is off. Read the log line |
 | A setting is missing from the device menu | The build ran out of menu slots or labels; the verbose log says which. See [custom settings](../custom_settings.md) |
@@ -248,7 +315,7 @@ command-line tools; see [Air10 flashing](flashing.md) and
 | `build/stm32-patched.bin`, `build/as11-patched.bin` | The images the window builds |
 | `build/airbreaker-air10-input.bin`, `build/airbreaker-air11-input.bin` | Copy of an input image whose path Make cannot take, such as one with spaces; the log says when it is used |
 | `stm32.bin`, `as11.bin` | Default paths of the stock dumps (the backups) |
-| `.airbreaker.json` | In your home folder: the selected platform, file paths, presets, adapter, serial and Verbose |
+| `.airbreaker.json` | In your home folder: the selected platform; per platform the file paths, preset, connection and its fields; the SWD adapter and serial, and Verbose |
 
 ## See also
 

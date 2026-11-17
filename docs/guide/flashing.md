@@ -1,6 +1,7 @@
 # Flashing
 
 Two methods: SWD (via OpenOCD) or UART (via [`resmed_flash.py`](../tools/resmed_flash.md)).
+[AirBreaker](airbreaker.md#flashing) runs both from a window.
 
 ## Method 1: OpenOCD (SWD)
 
@@ -20,10 +21,6 @@ Takes about 30 seconds. The device reboots automatically.
 ```
 flash_new stm32.bin
 ```
-
-### From AirBreaker
-
-[AirBreaker](airbreaker.md#flashing) runs these commands from a window.
 
 ## Method 2: UART
 
@@ -66,7 +63,7 @@ The 1MB flash is divided into regions:
 | Region | Offset | Size | Content |
 |--------|--------|------|---------|
 | BLX | 0x00000 | 16 KB | Bootloader |
-| CCX | 0x04000 | 240 KB | Configuration (variable descriptors, signal tables, strings) |
+| CCX | 0x04000 | 240 KB | Model definition (variable descriptors, signal tables, strings) |
 | CDX | 0x40000 | 768 KB | Application firmware (therapy algorithms, GUI, drivers) |
 | CMX | -- | -- | CCX+CDX combined (used by the flash protocol as a single block) |
 

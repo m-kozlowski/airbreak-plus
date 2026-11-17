@@ -1,9 +1,11 @@
-"""AirBreaker: Air10 and Air11 patch selection, builds and SWD flashing.
+"""AirBreaker: Air10 and Air11 patch selection, builds, flashing and dumps.
 
 Patch declarations and configuration come from lib.patch_options and lib.patch_config.
 Build passes the full form selection to Make; saving a preset is a separate operation
 that retains only its own options and base preset selections. SWD actions use run-ocd.sh
-and the selected platform's Tcl commands. On Windows, Make and OpenOCD run in WSL.
+and the selected platform's Tcl commands; on Windows, Make and OpenOCD run in WSL. UART,
+CAN, TCP bridge and BLE actions run the repository's Python tools with this window's
+interpreter.
 """
 import filecmp
 import json
@@ -25,6 +27,7 @@ import traceback
 HERE = os.path.dirname(os.path.abspath(__file__))   # <repo>/python
 REPO = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.join(HERE, "lib"))   # resmed_credentials imports its neighbours as the tools do
 from lib import patch_config, patch_options  # noqa: E402
 
 TITLE = "AirBreaker"
@@ -34,13 +37,71 @@ PRESET_NAME_RULE = "a preset name starts with a letter or digit and uses letters
 HEADER = "# Written by AirBreaker (python/airbreaker.py): the options this preset sets itself."
 NO_BASE = "(none)"
 SETTINGS_FILE = os.path.join(os.path.expanduser("~"), ".airbreaker.json")
-# Build targets and SWD entry points; patch definitions remain in patch_options.
+# Build targets, flash connections and flash regions; patch definitions remain in patch_options. A region is
+# (label, what Flash runs): the Tcl flash command over SWD, the tool's region options over the other connections.
+# The first region is the default.
 TARGETS = {
     "air10": dict(firmware="AIR10_FIRMWARE", patch_args="AIR10_PATCH_ARGS",
-                  output="build/stm32-patched.bin", config="airsense", backup="stm32.bin"),
+                  output="build/stm32-patched.bin", config="airsense", backup="stm32.bin",
+                  links=("swd", "uart", "airbridge"),
+                  swd_regions=(("full image", "flash_new"), ("BLX (bootloader)", "flash_blx")),
+                  regions=(("CMX (model definition and firmware)", ("--block", "cmx")),
+                           ("CCX (model definition)", ("--block", "ccx")),
+                           ("CDX (firmware)", ("--block", "cdx")),
+                           ("BLX (bootloader)", ("--block", "blx", "--include-bootloader")),
+                           ("all (BLX and CMX)", ("--block", "all", "--include-bootloader")))),
     "air11": dict(firmware="AS11_FIRMWARE", patch_args="AIR11_PATCH_ARGS",
-                  output="build/as11-patched.bin", config="as11", backup="as11.bin"),
+                  output="build/as11-patched.bin", config="as11", backup="as11.bin",
+                  links=("swd", "can", "aircannect", "ble"),
+                  swd_regions=(("full image", "flash_new"), ("FGBL (bootloader)", "flash_fgbl")),
+                  regions=(("APCX (model definition and application)", ("--block", "apcx")),
+                           ("CONF (model definition)", ("--block", "conf")),
+                           ("APPL (application)", ("--block", "appl")),
+                           ("FGBL (bootloader)", ("--block", "fgbl", "--include-bootloader")),
+                           ("FGCB (complete flash)", ("--block", "fgcb", "--include-bootloader")))),
 }
+# Flash connections. SWD runs run-ocd.sh. The others run a Python tool of the repository with this window's
+# interpreter, which opens the serial port, socket or Bluetooth itself (on Windows without WSL); option and prefix
+# turn the connection field into the tool's device argument. mode selects what the buttons run (TOOL_ACTIONS);
+# without it, the Protocol choice does.
+LINKS = {
+    "swd": dict(label="SWD (OpenOCD)", mode="swd"),
+    "uart": dict(label="UART", mode="uart", field="port", option="-p", prefix=""),
+    "airbridge": dict(label="AirBridge (TCP)", mode="uart", field="host", option="-p", prefix="tcp:"),
+    "can": dict(label="CAN", field="port", option="-d", prefix="can:"),
+    "aircannect": dict(label="AirCANnect (TCP)", field="host", option="-d", prefix="tcp:"),
+    "ble": dict(label="BLE", mode="native", field="device", option="-d", prefix="ble:"),
+}
+PROTOCOLS = {"native": "native (JSON-RPC)", "service": "patched bootloader"}
+FILE = object()   # the file argument of an action
+# What the buttons run over each tool protocol: action -> (tool, arguments); a missing action is unavailable. Flash
+# adds the region's options. more lists the actions outside the standard steps: (label, file name, tool, arguments).
+TOOL_ACTIONS = {
+    "uart": dict(check=("resmed_flash.py", "--info"),
+                 dump=("resmed_flash.py", "--dump", FILE),
+                 flash=("resmed_flash.py", "-f", FILE),
+                 more=(("Dump EEPROM", "eeprom.bin", "resmed_flash.py", "--dump-eeprom", FILE),)),
+    "native": dict(check=("as11_config.py", "get", "ApplicationIdentifier", "BootloaderIdentifier"),
+                   flash=("as11_flash.py", "flash", "-f", FILE),
+                   reset=("as11_config.py", "reset")),
+    "service": dict(check=("as11_flash.py", "service", "enter"),
+                    dump=("as11_flash.py", "service", "read-flash", FILE, "--enter"),
+                    flash=("as11_flash.py", "service", "flash", "-f", FILE),
+                    reset=("as11_flash.py", "service", "reset"),
+                    more=(("Dump NOR", "nor.bin", "as11_flash.py", "service", "read-nor", FILE, "--enter"),)),
+}
+# SWD actions: a Tcl command of the platform's OpenOCD configuration; Flash puts the region's command before the file.
+SWD_ACTIONS = dict(check=(), dump=("dump", FILE), flash=(FILE,), verify=("verify", FILE), reset=("reset run",))
+DEVICE_BUTTONS = (   # action, button text, tooltip
+    ("check", "Check device", "Connects and reports the device identity."),
+    ("dump", "Dump backup", "Saves the complete firmware to the backup file."),
+    ("flash", "Flash", "Writes the selected region of the firmware file to the device."),
+    ("verify", "Verify", "Compares the device flash with the firmware file."),
+    ("reset", "Reset", "Restarts the device."),
+)
+FILE_NAMES = dict(dump="BACKUP", flash="FIRMWARE", verify="FIRMWARE")   # the file in tooltips
+BLE_APPLY = ("authenticated", "plain")
+CAN_TYPES = ("auto", "waveshare")
 STEPS = (("choose", "1 Choose patches"), ("patch", "2 Build"), ("backup", "3 Dump backup"),
          ("flash", "4 Flash"))
 
@@ -145,9 +206,32 @@ def ocd_interfaces():
     return result.stdout.split() if result.returncode == 0 else []
 
 
+def serial_ports():
+    """The serial ports the tools can open, as they name them; [] without pyserial."""
+    try:
+        from serial.tools import list_ports
+    except ImportError:
+        return []
+    return sorted(port.device for port in list_ports.comports())
+
+
+def ble_devices():
+    """The stored Air11 pairings as the tools take them: the alias, or the address of a device without one."""
+    try:
+        import resmed_credentials
+        stored = resmed_credentials.load_all_credentials()
+    except ImportError:
+        return []
+    except resmed_credentials.TransportError:   # unreadable file: the tool reports it
+        return []
+    return sorted(entry.get("alias") or address for address, entry in stored.items()
+                  if resmed_credentials.credential_family(entry) == "as11")
+
+
 def use_wsl():
     """Whether tools run through WSL. The one toolchain rule: on Windows, make and the tools it runs (the ARM
-    toolchain, the patcher, OpenOCD) run in WSL (docs/guide/wsl_setup.md); elsewhere they run on this system."""
+    toolchain, the patcher) and OpenOCD run in WSL (docs/guide/wsl_setup.md); elsewhere they run on this system.
+    The Python device tools run with this window's interpreter everywhere."""
     return os.name == "nt"
 
 
@@ -216,9 +300,13 @@ def make_command(target, path, options, verbose):
 
 
 WSL_TOOLS_HINT = "WSL needs openocd and lsusb (usbutils); see docs/guide/wsl_setup.md."
+PYSERIAL_HINT = ("The UART and CAN tools need pyserial in %s: pip install pyserial, or the python3-serial package."
+                 % sys.executable)
 LOG_HINTS = (   # output -> what to do about it, shown when the command ends
     ("openocd: command not found", WSL_TOOLS_HINT),
     ("lsusb: command not found", WSL_TOOLS_HINT),
+    ("No module named 'serial'", PYSERIAL_HINT),
+    ("pyserial is required", PYSERIAL_HINT),
     ("Error: open failed", "OpenOCD found no adapter: check the programmer's USB cable and driver, or in WSL "
      "that usbipd shares it (docs/guide/openocd.md)."),
 )
@@ -296,6 +384,7 @@ class App(tk.Tk):
         self.proc = None
         self.done = ""          # log text when the running command succeeds
         self.flashing = False   # the running command writes the device flash: ask before stopping it
+        self.in_wsl = False     # the running command runs in WSL, where stop_in_wsl() ends it
         self.hints = []         # LOG_HINTS matched by the running command's output
         self.lines = queue.Queue()
         self.error = ""         # why shown() found an invalid value
@@ -430,49 +519,128 @@ class App(tk.Tk):
         ttk.Checkbutton(actions, text="Verbose (per-patch details, V=1)", variable=self.verbose).pack(
             side="left", padx=12)
 
-        flash = ttk.LabelFrame(sections, text="Flash device (SWD, OpenOCD)", padding=8)
+        flash = ttk.LabelFrame(sections, text="Flash device", padding=8)
         flash.pack(side="left", fill="both", expand=True, padx=(8, 0))
         flash.columnconfigure(1, weight=1)
         self.ocd_interface = tk.StringVar(value=self.settings.get("ocd_interface", ""))
         self.ocd_serial = tk.StringVar(value=self.settings.get("ocd_serial", ""))
         self.flash_file = tk.StringVar(value=settings.get("flash_file") or self.output)
         self.backup = tk.StringVar(value=settings.get("backup") or self.default_backup)
-        ttk.Label(flash, text="Adapter:").grid(row=0, column=0, sticky="w", pady=(0, 4))
-        adapter = ttk.Frame(flash)
-        adapter.grid(row=0, column=1, columnspan=2, sticky="w", padx=6, pady=(0, 4))
+        self.link_var, self.protocol_var, self.region_var = tk.StringVar(), tk.StringVar(), tk.StringVar()
+        self.can_type, self.ble_apply, self.ble_key = tk.StringVar(), tk.StringVar(), tk.StringVar()
+        self.fields = {name: tk.StringVar() for name in ("port", "host", "device")}   # LINKS field -> its value
+
+        ttk.Label(flash, text="Connection:").grid(row=0, column=0, sticky="w", pady=(0, 4))
+        choice = ttk.Frame(flash)
+        choice.grid(row=0, column=1, columnspan=2, sticky="w", padx=6, pady=(0, 4))
+        self.link_box = ttk.Combobox(choice, textvariable=self.link_var, state="readonly", width=17)
+        self.link_box.pack(side="left")
+        self.link_box.bind("<<ComboboxSelected>>", lambda _: self.link_changed())
+        self.protocol_label = ttk.Label(choice, text="Protocol:")
+        self.protocol_box = ttk.Combobox(choice, textvariable=self.protocol_var, values=list(PROTOCOLS.values()),
+                                         state="readonly", width=19)
+        self.protocol_box.bind("<<ComboboxSelected>>", lambda _: self.link_changed())
+        Tooltip(self.protocol_box, lambda: wrap_lines(
+            "native: the JSON-RPC interface of the running application. patched bootloader: the bootloader "
+            "service of patch-fgbl-service, which also dumps the flash; the tool enters it with a reset."))
+
+        self.field_label = ttk.Label(flash)
+        self.field_label.grid(row=1, column=0, sticky="w", pady=(0, 4))
+        fields = ttk.Frame(flash)   # the fields of the selected connection: one of self.field_frames
+        fields.grid(row=1, column=1, columnspan=2, sticky="w", padx=6, pady=(0, 4))
+        swd = ttk.Frame(fields)
         # run-ocd.sh owns the list of adapters. It is asked in the background, as WSL can take a while to start.
-        self.adapters = ttk.Combobox(adapter, textvariable=self.ocd_interface, state="readonly", width=7)
+        self.adapters = ttk.Combobox(swd, textvariable=self.ocd_interface, state="readonly", width=7)
         self.adapters.pack(side="left")
         self.adapter_names = None   # set by the thread below, shown by pump()
         threading.Thread(target=lambda: setattr(self, "adapter_names", ocd_interfaces()), daemon=True).start()
-        ttk.Label(adapter, text="Serial (optional):").pack(side="left", padx=(12, 4))
-        serial = ttk.Entry(adapter, textvariable=self.ocd_serial, width=26)
+        ttk.Label(swd, text="Serial (optional):").pack(side="left", padx=(12, 4))
+        serial = ttk.Entry(swd, textvariable=self.ocd_serial, width=26)
         serial.pack(side="left")
         Tooltip(serial, lambda: wrap_lines(
             "Selects one of several connected adapters by its serial number (run-ocd.sh -s SERIAL). Leave empty "
             "with a single adapter."))
-        ttk.Label(adapter, text="via run-ocd.sh%s" % (" in WSL" if use_wsl() else ""), foreground="#888888").pack(
+        ttk.Label(swd, text="via run-ocd.sh%s" % (" in WSL" if use_wsl() else ""), foreground="#888888").pack(
             side="left", padx=(12, 0))
-        for row, (label, var, saving) in enumerate((("Firmware:", self.flash_file, False),
-                                                    ("Backup (dump):", self.backup, True)), start=2):
+        port = ttk.Frame(fields)
+        port_box = ttk.Combobox(port, textvariable=self.fields["port"], width=24,
+                                postcommand=lambda: port_box.configure(values=serial_ports()))
+        port_box.pack(side="left")
+        Tooltip(port_box, lambda: wrap_lines(
+            "The serial port of the USB-UART adapter, such as COM3 or /dev/ttyACM0." if self.link() == "uart" else
+            "The serial port of the CAN adapter, such as COM3 or /dev/ttyACM0, or a SocketCAN interface such as "
+            "can0."))
+        self.can_type_label = ttk.Label(port, text="Adapter type:")
+        self.can_type_box = ttk.Combobox(port, textvariable=self.can_type, values=CAN_TYPES, state="readonly",
+                                         width=10)
+        Tooltip(self.can_type_box, lambda: wrap_lines(
+            "auto: SLCAN on a serial port, SocketCAN on an interface such as can0. Waveshare adapters need "
+            "waveshare."))
+        host = ttk.Frame(fields)
+        host_entry = ttk.Entry(host, textvariable=self.fields["host"], width=26)
+        host_entry.pack(side="left")
+        Tooltip(host_entry, lambda: wrap_lines("The host name or address of the bridge, optionally with a port."))
+        ttk.Label(host, text="HOST[:PORT]", foreground="#888888").pack(side="left", padx=(12, 0))
+        ble = ttk.Frame(fields)
+        ble_box = ttk.Combobox(ble, textvariable=self.fields["device"], width=24,
+                               postcommand=lambda: ble_box.configure(values=ble_devices()))
+        ble_box.pack(side="left")
+        Tooltip(ble_box, lambda: wrap_lines(
+            "A paired device: its alias or address. Pair it once from a terminal with python/as11_config.py devices "
+            "pair ADDRESS."))
+        ttk.Label(ble, text="Apply:").pack(side="left", padx=(12, 4))
+        apply_box = ttk.Combobox(ble, textvariable=self.ble_apply, values=BLE_APPLY, state="readonly", width=13)
+        apply_box.pack(side="left")
+        apply_box.bind("<<ComboboxSelected>>", lambda _: self.link_changed())
+        Tooltip(apply_box, lambda: wrap_lines(
+            "authenticated needs the device's OTA key. plain needs firmware with patch-rpc-permissions."))
+        self.field_frames = dict(swd=swd, port=port, host=host, device=ble)
+        self.can_type_label.pack(side="left", padx=(12, 4))   # measured with the CAN fields; link_changed() hides them
+        self.can_type_box.pack(side="left")
+        self.update_idletasks()   # the size of the widest fields, so that switching keeps the section's width
+        fields.configure(width=max(frame.winfo_reqwidth() for frame in self.field_frames.values()),
+                         height=max(frame.winfo_reqheight() for frame in self.field_frames.values()))
+        fields.pack_propagate(False)
+
+        key_entry = ttk.Entry(flash, textvariable=self.ble_key)
+        self.key_row = (ttk.Label(flash, text="OTA key file:"), key_entry, ttk.Button(
+            flash, text="Browse...", command=lambda: self.browse(
+                self.ble_key, False, [("OTA key", "*.hex *.bin *.key"), ("All files", "*.*")])))
+        self.key_row[0].grid(row=2, column=0, sticky="w", pady=(0, 4))
+        key_entry.grid(row=2, column=1, sticky="we", padx=6, pady=(0, 4))
+        self.key_row[2].grid(row=2, column=2, pady=(0, 4))
+        Tooltip(key_entry, lambda: wrap_lines(
+            "Optional: the OTA key, 32 bytes or 64 hexadecimal digits. Without it the tool takes the key stored "
+            "for the paired device or AS11_OTA_KEY."))
+        for row, (label, var, saving) in ((3, ("Firmware:", self.flash_file, False)),
+                                          (5, ("Backup (dump):", self.backup, True))):
             ttk.Label(flash, text=label).grid(row=row, column=0, sticky="w", pady=(0, 4))
             ttk.Entry(flash, textvariable=var).grid(row=row, column=1, sticky="we", padx=6, pady=(0, 4))
             ttk.Button(flash, text="Browse...", command=lambda v=var, s=saving: self.browse(v, s)).grid(
                 row=row, column=2, pady=(0, 4))
-        ocd_actions = ttk.Frame(flash)
-        ocd_actions.grid(row=4, column=0, columnspan=3, sticky="w", pady=(8, 0))
-        self.ocd_buttons = []
-        for text, command, tip in (
-                ("Check device", self.ocd_check, "Connect to the selected platform and report device information."),
-                ("Dump backup", self.ocd_dump, "Save the complete firmware to the backup file."),
-                ("Flash", self.ocd_flash, "Writes the firmware file to the device and verifies it (flash_new). "
-                 "The device reboots afterwards."),
-                ("Verify", self.ocd_verify, "Compares the device flash with the firmware file (verify)."),
-                ("Reset", self.ocd_reset, "Restarts the device (reset run).")):
-            button = ttk.Button(ocd_actions, text=text, command=command)
+        ttk.Label(flash, text="Region:").grid(row=4, column=0, sticky="w", pady=(0, 4))
+        self.region_box = ttk.Combobox(flash, textvariable=self.region_var, state="readonly", width=40)
+        self.region_box.grid(row=4, column=1, sticky="w", padx=6, pady=(0, 4))
+        Tooltip(self.region_box, lambda: wrap_lines(
+            "What Flash writes from the firmware file. Over UART, CAN and BLE, an interrupted bootloader write "
+            "leaves a device that only SWD can recover."))
+
+        device_actions = ttk.Frame(flash)
+        device_actions.grid(row=6, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        handlers = dict(check=self.device_check, dump=self.device_dump, flash=self.device_flash,
+                        verify=self.device_verify, reset=self.device_reset)
+        self.device_buttons = {}
+        for action, text, tip in DEVICE_BUTTONS:
+            button = ttk.Button(device_actions, text=text, command=handlers[action])
             button.pack(side="left", padx=(0, 6))
-            Tooltip(button, lambda t=tip: wrap_lines(t))
-            self.ocd_buttons.append(button)
+            Tooltip(button, lambda a=action, t=tip: self.action_tip(a, t))
+            self.device_buttons[action] = button
+        self.more_menu = tk.Menu(self, tearoff=False)
+        self.more_btn = ttk.Menubutton(device_actions, text="More", menu=self.more_menu)
+        self.more_btn.pack(side="left")
+        Tooltip(self.more_btn, lambda: wrap_lines("Device data outside the standard steps, such as an EEPROM or NOR "
+                                                  "dump."))
+        self.load_link_settings(settings)
 
         self.log = tk.Text(bottom, state="disabled", wrap="none", font=("Consolas", 10), height=10)
         self.log.pack(fill="both", expand=True, pady=(8, 0))
@@ -541,6 +709,7 @@ class App(tk.Tk):
         self.outfile.set(self.output)
         self.flash_file.set(settings.get("flash_file") or self.output)
         self.backup.set(settings.get("backup") or self.default_backup)
+        self.load_link_settings(settings)
         self.built = self.flashed = None
         self.load_preset(settings.get("preset") or "")
         self.save_settings()
@@ -914,9 +1083,9 @@ class App(tk.Tk):
         self.refresh()
         return True
 
-    def browse(self, var, saving):
+    def browse(self, var, saving, filetypes=(("Firmware image", "*.bin"), ("All files", "*.*"))):
         start = os.path.dirname(var.get()) or REPO
-        kwargs = dict(initialdir=start, filetypes=[("Firmware image", "*.bin"), ("All files", "*.*")])
+        kwargs = dict(initialdir=start, filetypes=list(filetypes))
         path = (filedialog.asksaveasfilename(defaultextension=".bin", **kwargs) if saving
                 else filedialog.askopenfilename(**kwargs))
         if path:
@@ -926,6 +1095,9 @@ class App(tk.Tk):
         self.platform_settings[self.platform.name] = {
             "input": self.infile.get(), "flash_file": self.flash_file.get(),
             "backup": self.backup.get(), "preset": self.name,
+            "link": self.link(), "protocol": self.link_protocol(), "can_type": self.can_type.get(),
+            "ble_apply": self.ble_apply.get(), "ble_key": self.ble_key.get(),
+            **{name: var.get() for name, var in self.fields.items()},
         }
         try:
             with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
@@ -1042,6 +1214,7 @@ class App(tk.Tk):
             self.append("Could not start %s: %s" % (command[0], exc), "fail")
             return
         self.flashing = flashing
+        self.in_wsl = use_wsl() and command[0] == wsl_exe()   # tool_command(), not a Python device tool
         self.platform_box.config(state="disabled")
         threading.Thread(target=self.reader, args=(self.proc,), daemon=True).start()
         for button in self.action_buttons():
@@ -1049,16 +1222,17 @@ class App(tk.Tk):
         self.stop_btn.config(state="normal")
 
     def action_buttons(self):
-        return [self.patch_btn] + self.ocd_buttons
+        return [self.patch_btn, self.more_btn, *self.device_buttons.values()]
 
     def stop(self, ask=True):
         if self.proc and self.proc.poll() is None:
             if self.flashing and ask and not messagebox.askyesno(
                     TITLE, "Flashing is in progress. Stopping now can leave the device without working firmware "
-                    "until it is flashed again over SWD.\n\nStop anyway?", icon="warning"):
+                    "until it is flashed again.\n\nStop anyway?", icon="warning"):
                 return
             if use_wsl():
-                stop_in_wsl()
+                if self.in_wsl:
+                    stop_in_wsl()
                 self.proc.terminate()
             else:   # make or run-ocd.sh and everything they started, such as the patcher or openocd
                 try:
@@ -1111,17 +1285,167 @@ class App(tk.Tk):
             self.run(title, command, done, kind, flashing)
 
     def flash_image(self):
-        """The existing image file to pass to the Tcl flash or verify command."""
+        """The existing image file to flash or verify."""
         path = self.flash_file.get().strip()
         if not os.path.isfile(path):
             messagebox.showerror(TITLE, "Choose the firmware image (e.g. the patched output).")
             return None
         return path
 
-    def ocd_check(self):
-        self.run_openocd("Checking device", [], "device checked")
+    def link(self):
+        return next(key for key, link in LINKS.items() if link["label"] == self.link_var.get())
 
-    def ocd_dump(self):
+    def link_protocol(self):
+        return next(key for key, label in PROTOCOLS.items() if label == self.protocol_var.get())
+
+    def mode(self):
+        """What the buttons run: "swd" or a TOOL_ACTIONS protocol."""
+        return LINKS[self.link()].get("mode") or self.link_protocol()
+
+    def link_text(self):
+        link = LINKS[self.link()]
+        return link["label"] if "mode" in link else "%s, %s" % (link["label"], self.protocol_var.get())
+
+    def actions(self):
+        return SWD_ACTIONS if self.mode() == "swd" else TOOL_ACTIONS[self.mode()]
+
+    def regions(self):
+        return self.target["swd_regions" if self.mode() == "swd" else "regions"]
+
+    def region(self):
+        """What Flash runs for the selected region: a Tcl command over SWD, tool options otherwise."""
+        return dict(self.regions())[self.region_var.get()]
+
+    def load_link_settings(self, settings):
+        """The platform's connection as last used; the region starts at its default."""
+        links = self.target["links"]
+        self.link_box["values"] = [LINKS[key]["label"] for key in links]
+        self.link_var.set(LINKS[settings.get("link") if settings.get("link") in links else links[0]]["label"])
+        self.protocol_var.set(PROTOCOLS.get(settings.get("protocol"), PROTOCOLS["native"]))
+        for name, var in self.fields.items():
+            var.set(settings.get(name, ""))
+        self.can_type.set(settings.get("can_type") if settings.get("can_type") in CAN_TYPES else CAN_TYPES[0])
+        self.ble_apply.set(settings.get("ble_apply") if settings.get("ble_apply") in BLE_APPLY else BLE_APPLY[0])
+        self.ble_key.set(settings.get("ble_key", ""))
+        self.region_var.set("")
+        self.link_changed()
+
+    def link_changed(self):
+        """Shows the fields and regions of the selected connection and enables what it can do. A region the
+        connection also has stays selected."""
+        link = LINKS[self.link()]
+        field = link.get("field", "swd")
+        self.field_label.config(text=dict(swd="Adapter:", port="Port:", host="Host:", device="Device:")[field])
+        for name, frame in self.field_frames.items():
+            if name == field:
+                frame.pack(side="left")
+            else:
+                frame.pack_forget()
+        for widget, padx in ((self.protocol_label, (12, 4)), (self.protocol_box, 0)):
+            if "mode" in link:
+                widget.pack_forget()
+            else:
+                widget.pack(side="left", padx=padx)
+        for widget, padx in ((self.can_type_label, (12, 4)), (self.can_type_box, 0)):
+            if self.link() == "can":
+                widget.pack(side="left", padx=padx)
+            else:
+                widget.pack_forget()
+        for widget in self.key_row:
+            if self.link() == "ble":
+                widget.grid()
+                widget.state(["!disabled"] if self.ble_apply.get() == "authenticated" else ["disabled"])
+            else:
+                widget.grid_remove()
+        names = [label for label, _ in self.regions()]
+        self.region_box["values"] = names
+        if self.region_var.get() not in names:
+            self.region_var.set(names[0])
+        self.update_device_buttons()
+
+    def update_device_buttons(self):
+        """Enables the actions of the selected connection while no command runs, and fills the More menu."""
+        actions = self.actions()
+        idle = self.proc is None
+        for action, button in self.device_buttons.items():
+            button.state(["!disabled"] if idle and action in actions else ["disabled"])
+        self.more_menu.delete(0, "end")
+        for label, name, tool, *args in actions.get("more", ()):
+            self.more_menu.add_command(label=label + "...", command=lambda l=label, n=name, t=tool, a=args:
+                                       self.device_more(l, n, t, a))
+        self.more_btn.state(["!disabled"] if idle and "more" in actions else ["disabled"])
+
+    def swd_words(self, action, path):
+        """The Tcl command of an SWD action as words, the file braced by tcl_path()."""
+        words = [path if word is FILE else word for word in SWD_ACTIONS[action]]
+        return [self.region()] + words if action == "flash" else words
+
+    def tool_args(self, action, path):
+        """The tool of an action over the selected connection and its arguments after the device options."""
+        tool, *args = TOOL_ACTIONS[self.mode()][action]
+        args = [path if arg is FILE else arg for arg in args]
+        if action == "flash":
+            args += self.region()
+            if self.link() == "ble":
+                key = self.ble_key.get().strip()
+                if self.ble_apply.get() == "plain":
+                    args.append("--apply-plain")
+                elif key:
+                    args += ["--key-file", os.path.abspath(key)]
+        return tool, args
+
+    def device_args(self, value):
+        """The tool's device options for the value of the connection field."""
+        link = LINKS[self.link()]
+        args = [link["option"], link["prefix"] + value]
+        if self.link() == "can" and self.can_type.get() != "auto":
+            args += ["--can-flavour", self.can_type.get()]
+        return args
+
+    def action_tip(self, action, tip):
+        """The button's tooltip: what it does and, over the selected connection, what it runs."""
+        if action not in self.actions():
+            return wrap_lines("%s Not available over %s." % (tip, self.link_text()))
+        path = FILE_NAMES.get(action)
+        if self.mode() == "swd":
+            words = self.swd_words(action, path)
+            runs = "OpenOCD: " + (" ".join(words) if words else "connect only")
+        else:
+            tool, args = self.tool_args(action, path)
+            field = LINKS[self.link()]["field"]
+            device = self.device_args(self.fields[field].get().strip() or field.upper())
+            runs = shlex.join(["python/" + tool] + device + args)
+        return wrap_lines(tip) + "\n\n" + wrap_lines(runs)
+
+    def run_device(self, action, path, title, done, kind=None, flashing=False):
+        """Runs an action over the selected connection; path is its file, if it has one."""
+        if self.mode() != "swd":
+            tool, args = self.tool_args(action, path and os.path.abspath(path))
+            self.run_tool(title, tool, args, done, kind, flashing)
+            return
+        if path is not None:
+            path = self.tcl_path(path)
+            if path is None:
+                return
+        words = self.swd_words(action, path)
+        self.run_openocd("%s over %s" % (title, self.link_text()), [" ".join(words)] if words else [], done, kind,
+                         flashing)
+
+    def run_tool(self, title, tool, args, done, kind=None, flashing=False):
+        """Runs a Python tool of the repository with this window's interpreter on the selected connection."""
+        link = LINKS[self.link()]
+        value = self.fields[link["field"]].get().strip()
+        if not value:
+            messagebox.showerror(TITLE, "Enter the %s for %s." % (link["field"], link["label"]))
+            return
+        self.save_settings()
+        command = [sys.executable, "-u", os.path.join(HERE, tool)] + self.device_args(value) + list(args)
+        self.run("%s over %s" % (title, self.link_text()), command, done, kind, flashing)
+
+    def device_check(self):
+        self.run_device("check", None, "Checking device", "device checked")
+
+    def device_dump(self):
         path = self.backup.get().strip()
         if not path:
             messagebox.showerror(TITLE, "Choose where the backup is written.")
@@ -1131,40 +1455,47 @@ class App(tk.Tk):
                 "device.\n\nOverwrite it?" % path, icon="warning", default="no"):
             return
         os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-        target = self.tcl_path(path)
-        if target:
-            self.run_openocd("Dumping device flash to %s" % path, ["dump %s" % target], "%s written" % path)
+        self.run_device("dump", path, "Dumping device flash to %s" % path, "%s written" % path)
 
-    def ocd_flash(self):
+    def device_flash(self):
         path = self.flash_image()
         if not path:
             return
         backup = self.backup.get().strip()
         if not os.path.isfile(backup) and not messagebox.askyesno(
-                TITLE, "No backup found at %s.\n\nDumping the stock firmware before flashing is mandatory "
-                "(docs/guide/openocd.md): it is the only way to restore the device. Flash anyway?" % backup,
-                icon="warning", default="no"):
+                TITLE, "No backup found at %s.\n\nA dump of the device before flashing is the only way to restore "
+                "it. Flash anyway?" % backup, icon="warning", default="no"):
             return
+        region = self.region_var.get()
+        risk = ("An interrupted bootloader write leaves a device that only SWD can recover. "
+                if self.mode() != "swd" and "--include-bootloader" in self.region() else "")
         if not messagebox.askyesno(
-                TITLE, "Flash %s to the %s device?\n\nThis replaces the whole firmware. "
-                "Keep the device and the programmer connected until the log says Done." % (path, self.platform.name),
+                TITLE, "Flash %s of %s to the %s device over %s?\n\n%sKeep the device and the connection up until "
+                "the log says Done." % (region, path, self.platform.name, self.link_text(), risk),
                 icon="warning", default="no"):
             return
-        image = self.tcl_path(path)
-        if image:
-            self.pending = file_id(path)
-            self.run_openocd("Flashing %s" % path, ["flash_new %s" % image],
-                             "%s flashed and verified; the device reboots" % path, kind="flash", flashing=True)
+        self.pending = file_id(path)
+        self.run_device("flash", path, "Flashing %s of %s" % (region, path), "%s flashed" % path, kind="flash",
+                        flashing=True)
 
-    def ocd_verify(self):
+    def device_verify(self):
         path = self.flash_image()
-        image = path and self.tcl_path(path)
-        if image:
-            self.run_openocd("Verifying device flash against %s" % path, ["verify %s" % image],
-                             "device flash matches %s" % path)
+        if path:
+            self.run_device("verify", path, "Verifying device flash against %s" % path,
+                            "device flash matches %s" % path)
 
-    def ocd_reset(self):
-        self.run_openocd("Resetting device", ["reset run"], "device reset")
+    def device_reset(self):
+        self.run_device("reset", None, "Resetting device", "device reset")
+
+    def device_more(self, label, name, tool, args):
+        """An action of the More menu: a tool that writes the file chosen here."""
+        path = filedialog.asksaveasfilename(
+            initialdir=os.path.dirname(os.path.abspath(self.backup.get().strip() or self.default_backup)),
+            initialfile=name, defaultextension=".bin", filetypes=[("Raw image", "*.bin"), ("All files", "*.*")])
+        if path:
+            path = os.path.abspath(path)
+            self.run_tool("%s to %s" % (label, path), tool, [path if arg is FILE else arg for arg in args],
+                          "%s written" % path)
 
     def reader(self, proc):
         for raw in proc.stdout:
@@ -1203,8 +1534,8 @@ class App(tk.Tk):
             self.append(hint, "warn")
         self.proc, self.flashing, self.kind, self.pending = None, False, None, None
         self.platform_box.config(state="readonly")
-        for button in self.action_buttons():
-            button.config(state="normal")
+        self.patch_btn.config(state="normal")
+        self.update_device_buttons()
         self.stop_btn.config(state="disabled")
         self.update_steps()
 
