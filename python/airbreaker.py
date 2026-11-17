@@ -826,6 +826,7 @@ class App(tk.Tk):
                                                      if p != name])
             self.save_settings()
         self.foreign = False
+        self.explicit = set(own)
         self.saved_text = text
         self.status.config(text="Saved %s" % path)
         self.refresh()
