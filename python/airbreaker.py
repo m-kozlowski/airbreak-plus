@@ -29,17 +29,17 @@ from lib import patch_config, patch_options  # noqa: E402
 
 TITLE = "AirBreaker"
 DEFAULT_PRESET = "airbreaker"
-PRESET_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*\Z")   # also in make PATCH_ARGS: no spaces, quotes, leading dash
+PRESET_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*\Z")
 PRESET_NAME_RULE = "a preset name starts with a letter or digit and uses letters, digits, '.', '_' and '-' only."
 HEADER = "# Written by AirBreaker (python/airbreaker.py): the options this preset sets itself."
 NO_BASE = "(none)"
 SETTINGS_FILE = os.path.join(os.path.expanduser("~"), ".airbreaker.json")
 # Build targets and SWD entry points; patch definitions remain in patch_options.
 TARGETS = {
-    "Air10": dict(platform="air10", firmware="AIR10_FIRMWARE", patch_args="AIR10_PATCH_ARGS",
-                  output="build/stm32-patched.bin", config="airsense", backup="stm32.bin", size=0x100000),
-    "Air11": dict(platform="air11", firmware="AS11_FIRMWARE", patch_args="AIR11_PATCH_ARGS",
-                  output="build/as11-patched.bin", config="as11", backup="as11.bin", size=0x200000),
+    "air10": dict(firmware="AIR10_FIRMWARE", patch_args="AIR10_PATCH_ARGS",
+                  output="build/stm32-patched.bin", config="airsense", backup="stm32.bin"),
+    "air11": dict(firmware="AS11_FIRMWARE", patch_args="AIR11_PATCH_ARGS",
+                  output="build/as11-patched.bin", config="as11", backup="as11.bin"),
 }
 STEPS = (("choose", "1 Choose patches"), ("patch", "2 Build"), ("backup", "3 Dump backup"),
          ("flash", "4 Flash"))
@@ -273,14 +273,10 @@ class App(tk.Tk):
         super().__init__()
         self.geometry("1280x900")
         self.settings = load_settings()
-        # Older settings files describe Air10 only.
-        self.platform_settings = self.settings.setdefault("platforms", {})
-        if "air10" not in self.platform_settings:
-            self.platform_settings["air10"] = {key: self.settings[key] for key in
-                ("input", "flash_file", "backup", "preset") if key in self.settings}
-        platform_name = self.settings.get("platform", "Air10")
+        self.platform_settings = self.settings.get("platforms", {})
+        platform_name = self.settings.get("platform", "air10")
         if platform_name not in TARGETS:
-            platform_name = "Air10"
+            platform_name = "air10"
         self.configure_platform(platform_name)
         self.enabled = {}   # patch option -> BooleanVar: patch selected
         self.params = {}    # parameter option -> StringVar with its value as typed
@@ -492,7 +488,7 @@ class App(tk.Tk):
 
     def configure_platform(self, name):
         self.target = TARGETS[name]
-        self.platform = patch_options.load(self.target["platform"])
+        self.platform = patch_options.load(name)
         self.local_file = patch_config.REPO / patch_config.LOCAL_FILES[self.platform.name]
         self.user_presets_dir = patch_config.REPO / patch_config.preset_dirs(self.platform.name)[0]
         self.output = os.path.join(REPO, *self.target["output"].split("/"))
@@ -540,7 +536,7 @@ class App(tk.Tk):
 
     def switch_platform(self):
         name = self.platform_var.get()
-        previous = next(label for label, target in TARGETS.items() if target is self.target)
+        previous = self.platform.name
         if name == previous:
             return
         if self.proc or not self.confirm_preset_change():
@@ -943,7 +939,7 @@ class App(tk.Tk):
         }
         try:
             with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
-                json.dump({"platform": next(label for label, target in TARGETS.items() if target is self.target),
+                json.dump({"platform": self.platform.name,
                            "platforms": self.platform_settings,
                            "verbose": self.verbose.get(), "ocd_interface": self.ocd_interface.get(),
                            "ocd_serial": self.ocd_serial.get()}, f, indent=2)
@@ -1125,14 +1121,10 @@ class App(tk.Tk):
             self.run(title, command, done, kind, flashing)
 
     def flash_image(self):
-        """Require a complete image for the selected platform before starting OpenOCD."""
+        """The existing image file to pass to the Tcl flash or verify command."""
         path = self.flash_file.get().strip()
         if not os.path.isfile(path):
             messagebox.showerror(TITLE, "Choose the firmware image (e.g. the patched output).")
-            return None
-        if os.path.getsize(path) != self.target["size"]:
-            messagebox.showerror(TITLE, "Expected a complete %d MB %s firmware image." % (
-                self.target["size"] // 0x100000, self.platform.name))
             return None
         return path
 
