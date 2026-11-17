@@ -87,6 +87,7 @@ instead of producing that reduced result.
 | RPC permissions | Applies configured method/VCID and DataItem RPC permissions | `--patch-rpc-permissions` |
 | [PLX oximeter compatibility](features.md#plx-oximeter-compatibility-optional) (optional) | Works around pairing and measurement-status incompatibilities in Bluetooth PLX pulse oximeters | `--patch-ble-oxi-fallback` |
 | Cloud firmware changes | Retains cellular flow-generator updates without installing them | `--patch-cloud-firmware-change` |
+| [Cellular downloads](features.md#cellular-downloads-optional) (optional) | Downloads a supplied HTTP URL through the cellular modem into firmware-update storage | `--patch-cellular-download` |
 | Time-zone write | Allows the time zone to be changed through RPC or the device menu after therapy history exists | `--patch-timezone-write` |
 
 ### Quality of Life
@@ -98,6 +99,7 @@ instead of producing that reduced result.
 | Header clock | Shows local time and usage time in the header during therapy | `--patch-header-clock` |
 | Screen keep-awake | Uses a three-finger hold to toggle whether inactivity turns off the display | `--patch-screen-keep-awake` |
 | Backlight (optional) | Sets ambient-light thresholds, LCD brightness levels, and response delay at build time | `--patch-backlight` |
+| [Faster menu scrolling](features.md#faster-menu-scrolling-optional) (optional) | Shortens menu scrolling by increasing the animation step by 50% | `--patch-scroll-animation` |
 | Startup logo (optional) | Selects the logo shown when the device starts | `--patch-startup-logo` |
 | Sensitivity split screen (optional) | Shows a graphic beside Trigger/Cycle sensitivity choices in supported modes | `--patch-sensitivity-split-screen` |
 | Motor nag removal | Removes the design-life warning while preserving the runtime counter | `--patch-motor-nagscreen` |

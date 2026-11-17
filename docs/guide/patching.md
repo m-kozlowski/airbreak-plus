@@ -85,6 +85,7 @@ All patches below are **enabled by default** unless noted.
 | Language fonts | Selects the correct font for each language, including the language selection list | `--patch-language-fonts` |
 | Ukrainian font (opt-in) | Adds missing Ukrainian letters to the standard font; does not add translations or change the language list | `--patch-font-ua Y` |
 | [Therapy screen](features/general.md#therapy-screen) | Adds selectable therapy screen styles and live graphs | `--patch-therapy-screen` |
+| Keep graph screen on | Keeps the screen awake during therapy while the graph is enabled. Requires the therapy-screen patch. Off by default. | `--patch-graph-keep-screen-on` |
 | Defaults | Sets firmware defaults (English, cmH2O, pillows mask, slim tube) | `--patch-defaults` |
 | Bypass integrity check | Disables firmware integrity checks that prevent boot on CRC mismatch | `--patch-integrity-check` |
 | Bypass PSU check | Disables power supply ID check at startup | `--patch-bypass-psuid` |

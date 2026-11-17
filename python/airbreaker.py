@@ -507,32 +507,22 @@ class App(tk.Tk):
         self.param_widgets.clear()
         self.inherited_labels.clear()
         self.checks.clear()
-        if len(self.platform.phases) == 1:
-            frame = ttk.LabelFrame(self.option_area, text=self.platform.phases[0].name, padding=8)
-            frame.pack(fill="x")
-            columns = [ttk.Frame(frame) for _ in range(2)]
-            rows = [0, 0]
-            for i, column in enumerate(columns):
-                column.grid(row=0, column=i, sticky="nwe", padx=(0, 8))
-                frame.columnconfigure(i, weight=1, uniform="column")
-            for patch in self.platform.patches():
-                i = rows.index(min(rows))
-                self.add_option(columns[i], patch)
-                rows[i] += 1 + len(patch.parameters)
-        else:
-            columns = [ttk.Frame(self.option_area) for _ in range(2)]
-            rows = [0, 0]
-            for i, column in enumerate(columns):
-                column.grid(row=0, column=i, sticky="nwe", padx=(0, 8))
-                self.option_area.columnconfigure(i, weight=1, uniform="column")
-            for phase in self.platform.phases:
-                i = rows.index(min(rows))
-                rows[i] += len(phase.patches) + sum(len(p.parameters) for p in phase.patches) + 2
-                frame = ttk.LabelFrame(columns[i], text=phase.name, padding=8)
-                frame.pack(fill="x", pady=(0, 8))
-                frame.columnconfigure(0, weight=1)
-                for patch in phase.patches:
-                    self.add_option(frame, patch)
+        groups = self.platform.patch_groups()
+        columns = [ttk.Frame(self.option_area) for _ in range(2)]
+        rows = [0, 0]
+        for i, column in enumerate(columns):
+            column.grid(row=0, column=i, sticky="nwe", padx=(0, 8))
+            self.option_area.columnconfigure(i, weight=1, uniform="column")
+        for name, patches in groups.items():
+            if not patches:
+                continue
+            i = rows.index(min(rows))
+            rows[i] += len(patches) + sum(len(p.parameters) for p in patches) + 2
+            frame = ttk.LabelFrame(columns[i], text=name, padding=8)
+            frame.pack(fill="x", pady=(0, 8))
+            frame.columnconfigure(0, weight=1)
+            for patch in patches:
+                self.add_option(frame, patch)
 
     def switch_platform(self):
         name = self.platform_var.get()

@@ -111,9 +111,10 @@ bottom. You can drag the divider between them.
 
 - **Platform** selects `air10` or `air11`. Each has its own patches, presets and
   output image, and its own remembered input, firmware and backup paths.
-- **Patch groups**: one box per patch phase, in the order the patcher applies
-  them. Each patch has a checkbox with its description, and a field below it
-  for each parameter, such as `--target-rh` of `--patch-target-rh`.
+- **Patch groups** organize options by purpose, such as therapy unlocks,
+  reporting and quality of life. Each patch has a checkbox with its description
+  and a field below it for each parameter, such as `--target-rh` of
+  `--patch-target-rh`.
 - **Hover** a patch for its option name, default, parameters, what it requires
   and what requires it, and which file sets it now.
 - Ticking a patch also ticks the patches it needs; unticking one unticks the
