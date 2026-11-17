@@ -87,17 +87,7 @@ through other presets, is an error.
 |----------|-----------------|---------|
 | Air 10 | `plus` | Optional therapy payloads of `build/stm32-plus.bin` |
 
-### Graphical editor
-
-`airbreaker.bat` (Windows, no console) or `python python/airbreaker.py`
-opens AirBreaker, a window that edits an Air 10 user preset in
-`presets/user/air10`, optionally based on another preset such as `plus`. The
-patches, their descriptions, defaults, parameters and dependencies come from the
-same declarations as the patcher's options, and the preset is read, validated
-and written with the same configuration code; the local options file is left
-to be edited by hand. Build runs
-`make AIR10_FIRMWARE=INPUT PATCH_ARGS='--preset NAME' build/stm32-patched.bin`.
-See the [AirBreaker guide](guide/airbreaker.md).
+[AirBreaker](guide/airbreaker.md) edits Air 10 and Air11 user presets in a window.
 
 ## Precedence
 
@@ -168,4 +158,4 @@ and `patch-airsense-s9.py --help`.
 [Air 10 configuration example](../patch-airsense.config.example),
 [Air11 configuration example](../patch-airsense-s11.config.example),
 [S9 configuration example](../patch-airsense-s9.config.example),
-[AirBreaker](../python/airbreaker.py).
+[AirBreaker guide](guide/airbreaker.md).

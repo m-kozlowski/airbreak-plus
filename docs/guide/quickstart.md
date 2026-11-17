@@ -70,7 +70,7 @@ make
 ```
 
 Prefer a window? [AirBreaker](airbreaker.md) picks the patches,
-patches the image and flashes it, on Windows, Linux and WSL.
+builds the image and flashes it, on Windows, Linux and WSL.
 
 ### 5. [Flash](flashing.md)
 

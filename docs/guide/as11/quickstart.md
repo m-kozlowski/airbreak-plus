@@ -139,6 +139,9 @@ See [Patching](patching.md#firmware-image) for input image details.
 
 ## 4. Patch
 
+For graphical patch selection and builds, use [AirBreaker](../airbreaker.md)
+and select `air11`. From a terminal:
+
 ```bash
 make as11
 ```
