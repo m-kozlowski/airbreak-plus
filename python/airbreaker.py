@@ -7,7 +7,8 @@ The window edits a user preset, presets/user/air10/NAME.config, which can build 
 built-in plus. Ticking a patch also ticks the patches it requires; unticking one unticks the patches that
 require it. Options the preset sets itself are shown bold, and Save writes only those. The local options file
 patch-airsense.config is edited by hand and applies under every preset, so the window shows what it sets.
-Build runs make AIR10_FIRMWARE=INPUT PATCH_ARGS='--preset NAME' build/stm32-patched.bin, with its output in
+Build passes the full form selection to make AIR10_FIRMWARE=INPUT PATCH_ARGS=OPTIONS build/stm32-patched.bin,
+independently of preset saving, with its output in
 the log: make builds the payloads, patches the image and tracks the options and the input image in the image's
 .config state file. Flash device does over SWD what docs/guide/flashing.md does in the OpenOCD telnet console:
 each button runs run-ocd.sh once with the adapter (and its serial number, if given) and one of the
@@ -227,10 +228,12 @@ def make_input(firmware):
     return path
 
 
-def make_command(path, preset, verbose):
-    """make building OUTPUT_TARGET from the input path (see make_input) with the preset; the Makefile tracks
+def make_command(path, options, verbose):
+    """make building OUTPUT_TARGET from the input path (see make_input) with the form selection; the Makefile tracks
     the options and the input in its .config state file."""
-    args = ["make", "AIR10_FIRMWARE=" + path, "PATCH_ARGS=--preset " + preset]   # make picks the jobs
+    # Make expands dollars before the recipe shell interprets the quoted arguments.
+    arguments = shlex.join(options).replace("$", "$$")
+    args = ["make", "AIR10_FIRMWARE=" + path, "PATCH_ARGS=" + arguments]
     return tool_command(args + (["V=1"] if verbose else []) + [OUTPUT_TARGET])
 
 
@@ -326,13 +329,8 @@ class App(tk.Tk):
         for key, text in STEPS:
             self.steps[key] = ttk.Label(checklist, text=text)
             self.steps[key].pack(side="left", padx=(0, 18))
-        Tooltip(checklist, lambda: wrap_lines(
-            "The steps in order. A tick means it is done: the options are saved, make built the image from this "
-            "window with the saved options and this input firmware, a backup file exists, and the device was "
-            "flashed from this window with that image. Step 4 matters most: the stock dump is the only way to "
-            "restore the device."))
         self.flashed = None    # file_id() of the image last flashed from this window
-        self.built = None      # (preset, saved text, input) of the last successful build in this window
+        self.built = None      # platform, effective option arguments and input identity of the last build
         self.kind = None       # "build" or "flash" for the running command, whose success updates the checklist
         self.pending = None    # what self.built or self.flashed becomes when the running command succeeds
 
@@ -440,10 +438,7 @@ class App(tk.Tk):
         self.patch_btn = ttk.Button(actions, text="Build", command=self.patch)
         self.patch_btn.pack(side="left")
         Tooltip(self.patch_btn, lambda: wrap_lines(
-            "Saves the preset, then builds %s with make: the payloads (needed once, and again after changing "
-            "patches/), then the patched image. make decides what is out of date. Runs%s: "
-            "make AIR10_FIRMWARE=INPUT PATCH_ARGS='--preset %s' %s"
-            % (OUTPUT_TARGET, " in WSL" if use_wsl() else "", self.name, OUTPUT_TARGET)))
+            "Build %s from the current patch selection." % OUTPUT_TARGET))
         self.stop_btn = ttk.Button(actions, text="Stop", command=self.stop, state="disabled")
         self.stop_btn.pack(side="left", padx=(6, 0))
         ttk.Checkbutton(actions, text="Verbose (per-patch details, V=1)", variable=self.verbose).pack(
@@ -589,17 +584,13 @@ class App(tk.Tk):
         self.base = list(base)
 
     def shown(self):
-        """option -> value of every patch and parameter as shown, parsed by the patcher's own option parser;
-        a parameter of an unticked patch keeps the value under this preset, or the preset's own value when it
-        sets one. None for an invalid value."""
+        """Full effective form values, parsed with the shared option declarations; None for invalid input."""
         tokens = []
         for patch in PLATFORM.patches():
             tokens += ["--" + patch.option, "y" if self.enabled[patch.option].get() else "n"]
-        typed = set()
         for parameter, patch in PARAMETERS:
             text = self.params[parameter.option].get().strip()
-            if (self.enabled[patch.option].get() or parameter.option in self.explicit) and text:
-                typed.add(parameter.option)
+            if text:
                 try:
                     items = shlex.split(text) if parameter.value.repeat else [text]
                 except ValueError as exc:
@@ -613,9 +604,6 @@ class App(tk.Tk):
             self.error = str(exc)
             return None
         values = {option: args[patch_options.dest(option)] for option in OPTIONS}
-        for parameter, patch in PARAMETERS:
-            if parameter.option not in typed and not self.enabled[patch.option].get():
-                values[parameter.option] = self.underlying[parameter.option]
         return values
 
     def own_values(self, values):
@@ -649,8 +637,8 @@ class App(tk.Tk):
             return
         done = {
             "save": preset_path(self.name).is_file() and not self.dirty(),
-            "patch": os.path.isfile(self.outfile.get().strip()) and self.built == (
-                self.name, self.saved_text, self.infile.get().strip()),
+            "patch": self.built is not None and os.path.isfile(self.outfile.get().strip())
+                     and self.built == self.build_key(),
             "backup": os.path.isfile(self.backup.get().strip()),
             "flash": self.flashed is not None and self.flashed == file_id(self.outfile.get().strip()),
         }
@@ -862,7 +850,7 @@ class App(tk.Tk):
         self.log.config(state="disabled")
 
     def patch(self):
-        """Saves the preset, then builds OUTPUT_TARGET from the input firmware with make."""
+        """Build the current form selection, independently of preset saving."""
         infile = self.infile.get().strip()
         if not os.path.isfile(infile):
             messagebox.showerror(TITLE, "Choose the original firmware image to patch.")
@@ -876,9 +864,14 @@ class App(tk.Tk):
             return
         if not self.ensure_wsl_tools():
             return
-        if self.dirty() and not self.save():
+        values = self.shown()
+        if values is None:
+            messagebox.showerror(TITLE, self.error)
             return
-        if not preset_path(self.name).is_file() and not self.save():   # make reads the preset from its file
+        options = patch_config.option_args(PLATFORM, values)
+        errors = PLATFORM.dependency_errors(patch_config.options_parser(PLATFORM).parse_args(options))
+        if errors:
+            messagebox.showerror(TITLE, "Cannot build:\n\n" + "\n".join(errors))
             return
         self.save_settings()
         path = make_input(infile)
@@ -898,12 +891,18 @@ class App(tk.Tk):
             if path is None:
                 messagebox.showerror(TITLE, "WSL cannot reach the repository folder %s." % REPO)
                 return
-        command = make_command(path, self.name, self.verbose.get())
-        # what is built: the options as saved now and this input, also when they change while make runs
-        self.pending = (self.name, self.saved_text, infile)
-        self.run("Building %s from %s with preset %s%s" % (OUTPUT_TARGET, infile, self.name,
-                                                           " (in WSL)" if use_wsl() else ""),
+        command = make_command(path, options, self.verbose.get())
+        self.pending = self.build_key(values)
+        self.run("Building %s from %s%s" % (OUTPUT_TARGET, infile,
+                                             " (in WSL)" if use_wsl() else ""),
                  command, "%s built" % OUTPUT_TARGET, kind="build")
+
+    def build_key(self, values=None):
+        values = self.shown() if values is None else values
+        if values is None:
+            return None
+        return (PLATFORM.name, tuple(patch_config.option_args(PLATFORM, values)),
+                file_id(self.infile.get().strip()))
 
     def ensure_wsl_tools(self):
         """False when WSL lacks make, the ARM toolchain or python3. Shows the command that installs them and, on a
@@ -1135,4 +1134,3 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
-
