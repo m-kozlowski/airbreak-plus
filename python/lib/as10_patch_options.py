@@ -2,7 +2,7 @@
 
 import argparse
 
-from .patch_options import Flag, Parameter, Patch, Phase, Platform, Value
+from .patch_options import Parameter, Patch, Phase, Platform, Value
 
 
 def percentage(value):
@@ -135,6 +135,4 @@ PLATFORM = Platform('air10', categories=(
         Patch('patch-fw-lcd', 'Support ILI9325 and ILI9328 replacement displays (detected at startup)',
               False, 'patch_lcd_ili9325', category='Miscellaneous'),
     )),
-), run_options=(
-    Flag('force-deprecated', 'Apply deprecated patches (you know what you are doing).'),
 ))

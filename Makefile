@@ -96,7 +96,7 @@ endef
 # options file and the selected presets; a change rebuilds the image.
 .PHONY: patch-config-force
 define patch_image_rule
-$(1): $(4) $(1).config Makefile python/lib/patch_config.py python/lib/patch_options.py | $(BUILD)
+$(1): $(4) $(1).config Makefile python/lib/patch_config.py python/lib/patch_options.py python/lib/patch_runner.py python/lib/firmware_io.py | $(BUILD)
 	$$(announce_image)
 	python3 python/$(3) '$(4)' '$$@' PATCH $$(PATCHER_OUTPUT_ARGS) $(5) $$($(6))
 $(1).config: patch-config-force

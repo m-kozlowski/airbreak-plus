@@ -1110,7 +1110,7 @@ class App(tk.Tk):
 
     def append(self, text, tag=None):
         if tag is None:
-            tag = ("fail" if "[ERROR]" in text or ": error:" in text or "Error:" in text or text.startswith("Traceback")
+            tag = ("fail" if "[ERROR]" in text or ": error:" in text or "Error:" in text or text.startswith(("error:", "Traceback"))
                    else "warn" if "[WARN]" in text or "[SKIP]" in text or text.startswith("Warn :")
                    else "pass" if "[OK]" in text else "")
         self.log.config(state="normal")

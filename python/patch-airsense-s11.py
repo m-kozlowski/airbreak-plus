@@ -15,15 +15,12 @@ import argparse
 import binascii
 import datetime
 import fnmatch
-import io
 import json
 import os
 import re
 import struct
 import subprocess
 import sys
-from contextlib import redirect_stdout
-from dataclasses import dataclass
 
 from lib.as11_conf_discovery import (
     discover_conf_global_count,
@@ -32,15 +29,11 @@ from lib.as11_conf_discovery import (
 )
 from lib.as11_patch_versions import AS11_FGBL_PATCH_VERSIONS, AS11_PATCH_VERSIONS
 from lib.compiled_payload import CompiledPayloadMixin
-from lib.patch_config import parse_patch_args
+from lib.patch_runner import (
+    PatchOutcome, PatchVersionUnavailable, apply_patch_phases, apply_reported_patch, exit_with,
+    run_main, run_unreported_step)
 from lib import patch_options
 from lib.as11_patch_options import RPC_DATAITEM_PERMISSION_FLAGS
-
-
-class PatchVersionUnavailable(ValueError):
-    def __init__(self, status, summary):
-        super().__init__(summary)
-        self.status = status
 
 
 def crc16_ccitt_false(data, crc=0xFFFF):
@@ -1091,6 +1084,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             self.asf.write_thumb2_bl_target(
                 self.asf.ptr_to_off(version_data[hook]), storage[role]
             )
+        return PatchOutcome.ok()
 
     def mop_callback_register_handler(self, handler, name):
         """Register one feature handler to run after a MOP writeback."""
@@ -1319,6 +1313,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
     def enable_custom_settings(self):
         """Enable custom settings requested by payload patches."""
         self.custom_settings_enabled = True
+        return PatchOutcome.ok()
 
     def storage_register_members(self, group, *identifiers):
         """Queue persistent DataItems; each group is rebuilt once at finalization."""
@@ -1757,6 +1752,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
                 (AS11_CUSTOM_SETTINGS_PAYLOAD, ver,
                  len(menu_payload), menu_flash)
             )
+        return PatchOutcome.ok()
 
     def is_blacklisted_setting(self, row):
         long_name = row["long_name"] or ""
@@ -2033,6 +2029,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             "Patching therapy screen... %d visibility flags enabled, "
             "%d already enabled" % (changed, already_visible)
         )
+        return PatchOutcome.ok()
 
     def fix_ivaps_patient_height_range(self):
         """Replace the stripped metric-height descriptor with usable bounds."""
@@ -2245,6 +2242,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         print("Patching GUI enum editability... %d/%d masks enabled (%d already enabled, %d skipped, %d mirrors)" % (
             n_editable, len(editable_rows), n_already, n_skipped, mirror_count
         ))
+        return PatchOutcome.ok()
 
     def rpc_json_profile_visibility(self):
         # Each globals[18] record contains independent read-enabled and
@@ -2298,6 +2296,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         print("Patching RPC JSON profile visibility... %d/%d nodes enabled" % (n, len(nodes)))
         if n_hidden:
             print("Hiding blacklisted RPC JSON profile nodes... %d nodes disabled" % n_hidden)
+        return PatchOutcome.ok()
 
     def asv_pressure_support_range(self):
         """Remove the ASV/ASVAuto 5 cmH2O MinPS/MaxPS separation."""
@@ -2369,6 +2368,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
 
         print("Patching ASV pressure support range... %d max floors, %d static bounds, %d code constants" %
               (n_max_floor, n_static_bounds, n_code))
+        return PatchOutcome.ok()
 
     def asv_backup_rate(self):
         """Install an ASV/ASVAuto update wrapper that inhibits backup breaths."""
@@ -2417,6 +2417,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             "Patching ASV backup rate... build/%s_%s.bin (%dB) at 0x%08X" %
             (AS11_ASV_BACKUP_RATE_PAYLOAD, ver, len(data), flash)
         )
+        return PatchOutcome.ok()
 
     def airplane_reminder(self):
         # BL standby_reminder -> NOP; NOP
@@ -2878,6 +2879,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         self.asf.patch_exact(anchors["delay_ms"], "40f6b931", delay_instruction)
         print("Patching backlight... ambient thresholds=%d/%d, LCD=%d/%d%%, delay=%d ms" %
               (threshold_low, threshold_high, low, high, delay_ms))
+        return PatchOutcome.ok()
 
     def scroll_animation(self):
         """Increase the native scroll step by 50%, retaining its timer interval."""
@@ -3083,10 +3085,12 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             from as11_edf_superset import patch_edf_superset
 
         patch_edf_superset(self.asf)
+        return PatchOutcome.ok()
 
     def enable_airbreak_info(self):
         """Request the runtime AirbreakInfo RPC object."""
         self.airbreak_info_enabled = True
+        return PatchOutcome.ok()
 
     def _airbreak_info_manifest(self):
         patch_statuses = {}
@@ -3150,38 +3154,6 @@ class S11FirmwarePatches(CompiledPayloadMixin):
 PATCH_OPTIONS = patch_options.load("air11")
 
 
-@dataclass(frozen=True)
-class PatchOutcome:
-    status: str = "OK"
-    summary: str = None
-
-    @classmethod
-    def ok(cls, summary=None):
-        return cls("OK", summary)
-
-    @classmethod
-    def warn(cls, summary):
-        return cls("WARN", summary)
-
-    @classmethod
-    def skip(cls, summary):
-        return cls("SKIP", summary)
-
-
-class TeeStream:
-    def __init__(self, *streams):
-        self.streams = streams
-
-    def write(self, data):
-        for stream in self.streams:
-            stream.write(data)
-        return len(data)
-
-    def flush(self):
-        for stream in self.streams:
-            stream.flush()
-
-
 def build_arg_parser():
     parser = argparse.ArgumentParser(description="Patch AirSense/AirCurve 11 firmware.", allow_abbrev=False)
     parser.add_argument("INFILE", help="Input original binary file")
@@ -3190,39 +3162,6 @@ def build_arg_parser():
     PATCH_OPTIONS.add_arguments(parser)
     PATCH_OPTIONS.add_run_arguments(parser)
     return parser
-
-
-def print_patch_output(text, stream=None):
-    for line in text.rstrip("\n").splitlines():
-        if line.startswith("  "):
-            line = line[2:]
-        print(("  " + line) if line else "", file=stream)
-
-
-def apply_reported_patch(option, method, args, detail_log=None):
-    output = io.StringIO()
-    try:
-        with redirect_stdout(output):
-            outcome = method()
-        if not isinstance(outcome, PatchOutcome):
-            outcome = PatchOutcome.ok()
-    except PatchVersionUnavailable as exc:
-        outcome = PatchOutcome(exc.status, str(exc))
-    except Exception as exc:
-        print("PATCH: %s [ERROR]" % option)
-        stream = None if args.verbose or detail_log is None else detail_log
-        print_patch_output(output.getvalue(), stream)
-        print("  " + str(exc))
-        raise
-
-    print("PATCH: %s [%s]" % (option, outcome.status))
-    if args.verbose:
-        print_patch_output(output.getvalue())
-    elif detail_log is not None:
-        print_patch_output(output.getvalue(), detail_log)
-    if outcome.status in ("WARN", "SKIP") and outcome.summary:
-        print("  " + outcome.summary)
-    return outcome
 
 
 def run_patcher(args, detail_log=None):
@@ -3261,11 +3200,9 @@ def run_patcher(args, detail_log=None):
         backlight_delay_ms=args.backlight_delay_ms,
     )
 
-    print("\n=== Patches")
-    for patch in PATCH_OPTIONS.patches():
-        if PATCH_OPTIONS.selected(args, patch):
-            outcome = apply_reported_patch(patch.option, getattr(patches, patch.method), args, detail_log)
-            patches.record_patch_outcome(patch.option, outcome)
+    outcomes = apply_patch_phases(PATCH_OPTIONS, patches, args, detail_log)
+    for option, outcome in outcomes.items():
+        patches.record_patch_outcome(option, outcome)
 
 
     print("\n=== Finalization")
@@ -3294,44 +3231,17 @@ def run_patcher(args, detail_log=None):
 
     apply_reported_patch("patch-rpc-dispatcher", patches.patch_rpc_dispatcher, args, detail_log)
 
-    output = io.StringIO()
-    try:
-        with redirect_stdout(output):
-            asf.fix_crcs()
-            asf.write_output(args.OUTFILE, args.overwrite)
-    except Exception:
-        stream = None if args.verbose or detail_log is None else detail_log
-        print(output.getvalue(), end="", file=stream)
-        raise
+    def write_image():
+        asf.fix_crcs()
+        asf.write_output(args.OUTFILE, args.overwrite)
 
-    if args.verbose:
-        print(output.getvalue(), end="")
-    elif detail_log is not None:
-        print(output.getvalue(), end="", file=detail_log)
+    run_unreported_step(write_image, args, detail_log)
     return 0
 
 
 def main(argv=None):
-    parser = build_arg_parser()
-    args = parse_patch_args(parser, argv, PATCH_OPTIONS)
-    if args.OPERATION == "PATCH":
-        errors = PATCH_OPTIONS.dependency_errors(args)
-        if errors:
-            parser.error("; ".join(errors))
-
-    if args.log_file is None:
-        return run_patcher(args)
-
-    with open(args.log_file, "a", encoding="utf-8") as detail_log:
-        with redirect_stdout(TeeStream(sys.stdout, detail_log)):
-            return run_patcher(args, detail_log)
+    return run_main(build_arg_parser(), PATCH_OPTIONS, run_patcher, argv)
 
 
 if __name__ == "__main__":
-    try:
-        raise SystemExit(main())
-    except BrokenPipeError:
-        raise SystemExit(1)
-    except Exception as exc:
-        print("error: %s" % exc, file=sys.stderr)
-        raise SystemExit(2)
+    exit_with(main)

@@ -13,7 +13,6 @@
 
 import argparse
 from contextlib import redirect_stdout
-from dataclasses import dataclass
 import datetime
 import heapq
 import io
@@ -27,7 +26,9 @@ from lib.as10_firmware import ASFirmware
 from lib.compiled_payload import CompiledPayloadMixin, elf_binary_data
 from lib.custom_menu import MenuBuilder, stock, custom
 from lib.custom_menu_stock import StockMenu
-from lib.patch_config import parse_patch_args
+from lib.patch_runner import (
+    PatchOutcome, apply_patch_phases, apply_reported_patch, exit_with, run_main,
+    run_unreported_step)
 from lib import patch_options
 
 
@@ -3713,39 +3714,6 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         return PatchOutcome.ok(summary or None)
 
 
-@dataclass(frozen=True)
-class PatchOutcome:
-    status: str = 'OK'
-    summary: str = None
-    details: tuple = ()
-
-    @classmethod
-    def ok(cls, summary=None, *details):
-        return cls('OK', summary, details)
-
-    @classmethod
-    def warn(cls, summary, *details):
-        return cls('WARN', summary, details)
-
-    @classmethod
-    def skip(cls, summary):
-        return cls('SKIP', summary)
-
-
-class TeeStream:
-    def __init__(self, *streams):
-        self.streams = streams
-
-    def write(self, data):
-        for stream in self.streams:
-            stream.write(data)
-        return len(data)
-
-    def flush(self):
-        for stream in self.streams:
-            stream.flush()
-
-
 PATCH_OPTIONS = patch_options.load('air10')
 
 
@@ -3762,75 +3730,6 @@ def build_argument_parser():
     return parser
 
 
-def print_patch_output(text, stream=None):
-    for line in text.rstrip('\n').splitlines():
-        # Existing patch messages already use the standard two-space indent.
-        if line.startswith('  '):
-            line = line[2:]
-        print(('  ' + line) if line else '', file=stream)
-
-
-def print_patch_details(output, outcome, stream=None, include_summary=True):
-    print_patch_output(output, stream)
-    for detail in outcome.details:
-        print('  ' + detail, file=stream)
-    if include_summary and outcome.summary:
-        print('  ' + outcome.summary, file=stream)
-
-
-def apply_reported_patch(option, method, args, detail_log=None, deprecated=None):
-    if deprecated and not args.force_deprecated:
-        print('PATCH: %s [SKIP]' % option)
-        print('  ' + deprecated)
-        return PatchOutcome.skip(deprecated)
-
-    output = io.StringIO()
-    try:
-        with redirect_stdout(output):
-            outcome = method()
-        if not isinstance(outcome, PatchOutcome):
-            raise TypeError("%s returned %s instead of PatchOutcome" %
-                            (option, type(outcome).__name__))
-    except Exception as exc:
-        print('PATCH: %s [ERROR]' % option)
-        if args.verbose or detail_log is None:
-            print_patch_output(output.getvalue())
-        else:
-            print_patch_output(output.getvalue(), detail_log)
-        print('  ' + str(exc))
-        raise
-
-    status = outcome.status
-    if deprecated and status == 'OK':
-        status = 'WARN'
-
-    print('PATCH: %s [%s]' % (option, status))
-    if deprecated:
-        print('  deprecated: ' + deprecated)
-    if args.verbose:
-        print_patch_details(output.getvalue(), outcome)
-    else:
-        show_summary = outcome.status in ('WARN', 'SKIP')
-        if detail_log is not None:
-            print_patch_details(output.getvalue(), outcome, detail_log, include_summary=not show_summary)
-        if show_summary and outcome.summary:
-            print('  ' + outcome.summary)
-    return outcome
-
-
-def apply_patch_phases(patches, args, detail_log=None):
-
-    for phase in PATCH_OPTIONS.phases:
-        selected = [patch for patch in phase.patches if PATCH_OPTIONS.selected(args, patch)]
-        if not selected:
-            continue
-
-        print('\n=== ' + phase.name)
-        for patch in selected:
-            apply_reported_patch(patch.option, getattr(patches, patch.method), args,
-                                 detail_log, patch.deprecated)
-
-
 def run_patcher(args, detail_log=None):
     with open(args.INFILE, 'rb') as firmware_file:
         asf = ASFirmware(firmware_file)
@@ -3841,7 +3740,7 @@ def run_patcher(args, detail_log=None):
     build_identity = firmware_build_identity(repo_dir)
     patches = ASFirmwarePatches(asf, target_rh=args.target_rh)
 
-    apply_patch_phases(patches, args, detail_log)
+    apply_patch_phases(PATCH_OPTIONS, patches, args, detail_log)
 
     print('\n=== Finalization')
     if {'squarewave', 'wrapper_limit_max_pdiff'} & patches.applied_payloads:
@@ -3873,40 +3772,18 @@ def run_patcher(args, detail_log=None):
 
     asf.patch_firmware_sid(build_identity)
 
-    output = io.StringIO()
-    try:
-        with redirect_stdout(output):
-            asf.fix_crcs()
-            asf.write_output(args.OUTFILE, args.overwrite)
-            patches.print_custom_resource_summary()
-    except Exception:
-        stream = detail_log if detail_log is not None and not args.verbose else None
-        print(output.getvalue(), end='', file=stream)
-        raise
+    def write_image():
+        asf.fix_crcs()
+        asf.write_output(args.OUTFILE, args.overwrite)
+        patches.print_custom_resource_summary()
 
-    if args.verbose:
-        print(output.getvalue(), end='')
-    elif detail_log is not None:
-        print(output.getvalue(), end='', file=detail_log)
+    run_unreported_step(write_image, args, detail_log)
     return 0
 
 
 def main(argv=None):
-    parser = build_argument_parser()
-    args = parse_patch_args(parser, argv, PATCH_OPTIONS)
-
-    if args.OPERATION == 'PATCH':
-        errors = PATCH_OPTIONS.dependency_errors(args)
-        if errors:
-            parser.error('; '.join(errors))
-
-    if args.log_file is None:
-        return run_patcher(args)
-
-    with open(args.log_file, 'a', encoding='utf-8') as detail_log:
-        with redirect_stdout(TeeStream(sys.stdout, detail_log)):
-            return run_patcher(args, detail_log)
+    return run_main(build_argument_parser(), PATCH_OPTIONS, run_patcher, argv)
 
 
 if __name__ == '__main__':
-    sys.exit(main())
+    exit_with(main)
