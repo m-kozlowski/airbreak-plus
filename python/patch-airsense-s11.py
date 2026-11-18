@@ -1002,11 +1002,12 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         self.rpc_dispatcher_context = None
         self.rpc_dispatcher_outcome = None
         self.custom_settings_enabled = False
+        self.enabled_custom_settings_features = set()
         self.custom_setting_claims = {}
+        self.custom_setting_bindings = []
         self.custom_reclaim_pools = set()
         self.custom_menu_entries = []
         self.custom_enum_label_requests = {}
-        self.custom_setting_bindings = []
         self.storage_member_requests = {}
         self.airbreak_info_enabled = False
         self.patch_outcomes = {}
@@ -1391,6 +1392,10 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             raise ValueError("custom settings: %s defined twice" % setting)
         claim["definition"] = dict(fields)
 
+    def custom_setting_bind(self, setting, payload, symbol):
+        """Queue a DataItem ID for a named 16-bit payload slot."""
+        self.custom_setting_bindings.append((self._custom_setting_key(setting), payload, symbol))
+
     def custom_menu_add(
             self, section, setting, label_id, mode_mask,
             factory):
@@ -1414,11 +1419,6 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             "mode_mask": mode_mask,
             "factory": factory,
         })
-
-    def custom_setting_bind(self, setting, abi_slot):
-        """Write a DataItem's var_id into a payload ABI slot."""
-        setting = self._custom_setting_key(setting)
-        self.custom_setting_bindings.append((setting, abi_slot))
 
     def custom_enum_labels(self, setting, labels):
         """Assign existing GUI text IDs to raw enum values."""
@@ -1488,24 +1488,35 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             "patches": patches,
         }
 
+    def custom_patch_settings_collect_features(self):
+        """Return active custom-settings feature functions."""
+        feature_patches = (
+            (AS11_ASV_BACKUP_RATE_PAYLOAD, self.custom_patch_settings_asv_backup_rate),
+            ("therapy_screen_style", self.custom_patch_settings_therapy_screen_style),
+            ("header_clock", self.custom_patch_settings_header_clock),
+            (AS11_FLOW_WAVE_PAYLOAD, self.custom_patch_settings_flow_wave),
+        )
+        active = self.applied_payloads | self.enabled_custom_settings_features
+        return [feature for source, feature in feature_patches if source in active]
+
     def finalize_custom_settings(self):
-        """Resolve queued feature requests and install their shared support."""
+        """Register active features, resolve their requests and install shared support."""
         if not self.custom_settings_enabled:
             return PatchOutcome.skip("custom settings disabled")
-        if not (self.custom_setting_claims or self.custom_menu_entries or
-                self.custom_setting_bindings or self.custom_reclaim_pools):
-            return PatchOutcome.skip("no active features")
+        features = self.custom_patch_settings_collect_features()
+        if not features:
+            return PatchOutcome.skip("no active custom-setting features")
+        for feature in features:
+            feature()
 
         ver = self._payload_version_key()
 
         # Resolve each requested DataItem once after all feature patches have
         # declared their storage, menu, and ABI requirements.
         setting_names = set(self.custom_setting_claims)
+        setting_names.update(setting for setting, _, _ in self.custom_setting_bindings)
         setting_names.update(
             request["setting"] for request in self.custom_menu_entries
-        )
-        setting_names.update(
-            setting for setting, _abi_slot in self.custom_setting_bindings
         )
         setting_rows = {}
         for setting in setting_names:
@@ -1692,16 +1703,6 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             if stock_feature:
                 self.disabled_stock_features.add(stock_feature)
 
-        # Compiled feature payloads receive resolved var_ids through explicit
-        # 16-bit ABI slots, keeping descriptor indexes out of their code.
-        for setting, abi_slot in self.custom_setting_bindings:
-            self.asf.patch_exact(
-                abi_slot, b"\xFF\xFF",
-                struct.pack("<H", setting_rows[setting]["var_id"]),
-            )
-
-        # Remove the original consumers only after their replacement resources
-        # and payload bindings have been installed.
         for off, patch_data in stock_patches:
             self.asf.patch(patch_data, addr=off, verbose=False)
 
@@ -1738,6 +1739,9 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             self.asf.write_thumb2_bl_target(
                 menu_symbols["call_off"], menu_symbols["wrapper"]
             )
+
+        for setting, payload, symbol in self.custom_setting_bindings:
+            self._write_payload_u16(payload, symbol, setting_rows[setting]["var_id"])
 
         for request in self.custom_menu_entries:
             row = setting_rows[request["setting"]]
@@ -1958,9 +1962,15 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         self.storage_register_members("HST", "TSS")
         if menu is None:
             return PatchOutcome.warn("storage and RPC enabled; menu labels unavailable for this APPX")
+        self.enabled_custom_settings_features.add("therapy_screen_style")
+        return PatchOutcome.ok("Auto follows the therapy mode" if options > TSS_AUTO else None)
+
+    def custom_patch_settings_therapy_screen_style(self):
+        """Add Therapy View to Configuration with the native option labels."""
+        menu = self._patch_version_data("therapy_screen_style")
+        options = self.asf.find_descriptors("TSS", ("g5",))[0]["n_options"]
         self.custom_enum_labels("TSS", dict(enumerate(menu["option_labels"][:options])))
         self.custom_menu_add("configuration", "TSS", menu["label_id"], 0xFFFF, "enum")
-        return PatchOutcome.ok("Auto follows the therapy mode" if options > TSS_AUTO else None)
 
     def _therapy_screen_style_auto(self, anchors):
         """Add raw TSS 3: Simple in CPAP, AutoSet and AutoSet for Her, otherwise Pressure."""
@@ -2382,9 +2392,6 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             AS11_ASV_BACKUP_RATE_PAYLOAD, "elf", ver
         )
         start = self._elf_symbol_addr(elf_path, "start")
-        backup_rate_var_slot = self._elf_symbol_addr(
-            elf_path, "as11_asv_backup_rate_var_id"
-        )
         original_update = self._elf_symbol_addr(elf_path, "AsvFeature_update")
         original_ptr = original_update | 1
         vtable_update_off = self.asf.ptr_to_off(version["vtable_slot"])
@@ -2397,8 +2404,18 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         # Replace the ASV update vtable entry; the payload calls the original
         # implementation through its versioned stub after applying the gate.
         self.asf.write_u32(vtable_update_off, start | 1)
-        # Without custom-settings finalization, the untouched 0xFFFF slot keeps
-        # backup-rate suppression active unconditionally.
+
+        print(
+            "Patching ASV backup rate... build/%s_%s.bin (%dB) at 0x%08X" %
+            (AS11_ASV_BACKUP_RATE_PAYLOAD, ver, len(data), flash)
+        )
+        return PatchOutcome.ok()
+
+    def custom_patch_settings_asv_backup_rate(self):
+        """Add the ASV/ASVAuto backup-rate switch to Therapy."""
+        # Without this function, the untouched 0xFFFF slot keeps backup-rate
+        # suppression active unconditionally.
+        version = self._patch_version_data("asv_backup_rate")
         backup_rate_setting = self.custom_setting_claim("RIF", "patch-asv-backup-rate", custom_name="ASVBackupRateEnable")
         self.custom_setting_define(
             backup_rate_setting,
@@ -2411,13 +2428,9 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             mode_mask=self.therapy_mode_mask("ASV", "ASVAuto"),
             factory="text_value",
         )
-        self.custom_setting_bind(backup_rate_setting, backup_rate_var_slot)
-
-        print(
-            "Patching ASV backup rate... build/%s_%s.bin (%dB) at 0x%08X" %
-            (AS11_ASV_BACKUP_RATE_PAYLOAD, ver, len(data), flash)
+        self.custom_setting_bind(
+            backup_rate_setting, AS11_ASV_BACKUP_RATE_PAYLOAD, "as11_asv_backup_rate_var_id"
         )
-        return PatchOutcome.ok()
 
     def airplane_reminder(self):
         # BL standby_reminder -> NOP; NOP
@@ -2790,7 +2803,6 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         text_ids = self._elf_symbol_addr(
             elf_path, "header_clock_text_ids"
         )
-        setting_slot = self._elf_symbol_addr(elf_path, "header_clock_var_id")
         usage_slot = self._elf_symbol_addr(elf_path, "header_clock_usage_var_id")
         usage = self.asf.find_descriptors(self.header_clock_usage, ("g2",))[0]
         page_ids = self._elf_symbol_addr(elf_path, "header_clock_page_ids")
@@ -2841,18 +2853,23 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         self.asf.write_u32(timer_slot, timer_callback | 1)
 
         if menu_draw_call is not None:
-            setting = self.custom_setting_claim("RIM", "patch-header-clock", custom_name="HeaderClockEnable")
-            self.custom_setting_define(setting, default_option=0)
-            # TODO: Replace this label shim with framework-managed GUI string
-            # redefinition once custom settings can reclaim localized text IDs.
-            self.custom_menu_add("configuration", setting, anchors["menu_text_id"], 0xFFFF, "text_value")
-            self.custom_setting_bind(setting, setting_slot)
+            self.enabled_custom_settings_features.add("header_clock")
 
         print(
             "Patching header clock... build/%s_%s.bin (%dB) at 0x%08X; usage: %s" %
             (AS11_HEADER_CLOCK_PAYLOAD, ver, len(data), flash, self.header_clock_usage)
         )
         return PatchOutcome.ok()
+
+    def custom_patch_settings_header_clock(self):
+        """Add the Clock switch to Configuration."""
+        anchors = self._patch_version_data("header_clock")
+        setting = self.custom_setting_claim("RIM", "patch-header-clock", custom_name="HeaderClockEnable")
+        self.custom_setting_define(setting, default_option=0)
+        # TODO: Replace this label shim with framework-managed GUI string
+        # redefinition once custom settings can reclaim localized text IDs.
+        self.custom_menu_add("configuration", setting, anchors["menu_text_id"], 0xFFFF, "text_value")
+        self.custom_setting_bind(setting, AS11_HEADER_CLOCK_PAYLOAD, "header_clock_var_id")
 
     def backlight(self):
         """Set ambient thresholds, LCD levels, and transition delay."""
@@ -2943,9 +2960,6 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         # preserving its native Simple and Pressure destinations.
         tss_switch = self.asf.u32(self.asf.ptr_to_off(anchors["tss_switch_pointer"]))
 
-        # Queue removal of Reminders navigation and its scheduler in the custom
-        # settings finalizer. Flow reuses the page, not the reminder variables.
-        self.custom_settings_reclaim("reminders")
         self._inject_payload(AS11_FLOW_WAVE_PAYLOAD, data)
         # flow_layout in the C payload: native switch pointer, reclaimed page ID.
         self.asf.patch(struct.pack("<II", tss_switch, page_index), addr=self.asf.ptr_to_off(layout_addr))
@@ -2972,6 +2986,12 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         self.asf.write_descriptor_fields(row, {"option_mask": row["option_mask"] | 4})
         print("Patching Flow therapy view... native page %d, reclaiming Reminders" % page_index)
         return PatchOutcome.ok()
+
+    def custom_patch_settings_flow_wave(self):
+        """Reclaim the Reminders page for the Flow view."""
+        # Removes Reminders navigation and its scheduler. Flow reuses the page,
+        # not the reminder variables.
+        self.custom_settings_reclaim("reminders")
 
     def screen_keep_awake(self):
         """Toggle LCD inactivity suppression with a three-finger hold."""
