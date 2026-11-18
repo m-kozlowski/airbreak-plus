@@ -90,6 +90,8 @@ class CompiledPayloadMixin(object):
 
     def _init_compiled_payloads(self):
         self.payload_layouts = {}
+        self.applied_payloads = set()
+        self.written_payload_slots = set()
 
     def _payload_version_key(self, region=None):
         raise NotImplementedError
@@ -283,4 +285,17 @@ class CompiledPayloadMixin(object):
         if bytes(self.asf.fw[off:off + len(data)]) != bytes(data):
             self.asf.patch(data, off, checkempty=empty_byte == 0xff,
                            clobber=empty_byte != 0xff, verbose=False)
+        self.applied_payloads.add(name)
         return storage, off
+
+    def _write_payload_u16(self, payload, symbol, value):
+        """Write one u16 ABI value at a named symbol of an applied payload; return its address."""
+        if payload not in self.applied_payloads:
+            raise ValueError("payload %s was not applied" % payload)
+        if (payload, symbol) in self.written_payload_slots:
+            raise ValueError("payload slot %s:%s written twice" % (payload, symbol))
+        self.written_payload_slots.add((payload, symbol))
+        elf_path = self._require_versioned_artifact(payload, "elf")
+        address = self._elf_symbol_addr(elf_path, symbol)
+        self.asf.write_u16(address - self.asf.FLASH_BASE, value)
+        return address

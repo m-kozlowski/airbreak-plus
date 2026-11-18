@@ -183,7 +183,6 @@ class ASFirmwarePatches(CompiledPayloadMixin):
     def __init__(self, asf, target_rh=85.0):
         self.asf = asf
         self.target_rh_percent = target_rh
-        self.applied_payloads = set()
         self.enabled_custom_settings_features = set()
         self.mop_callback_handlers = {}
         self.variable_callbacks = {}
@@ -228,15 +227,6 @@ class ASFirmwarePatches(CompiledPayloadMixin):
     def _mop_handler_detail(name, handler):
         return "Registered MOP callback handler: %s at 0x%08X" % (name, handler)
 
-    def _write_payload_u16(self, payload, symbol, value):
-        """Write one u16 ABI value at a named symbol in a built payload."""
-        if payload not in self.applied_payloads:
-            raise ValueError("payload %s was not applied" % payload)
-        elf_path = self._require_versioned_artifact(payload, 'elf')
-        address = self._elf_symbol_addr(elf_path, symbol)
-        self.asf.write_u16(address - self.asf.FLASH_BASE, value)
-        return address
-
     def _inject_function_pointer_payload(self, name, pointer_off, hook_name,
                                          original_symbol=None,
                                          expected_original=None):
@@ -261,7 +251,6 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         if original_slot is not None:
             self.asf.write_u32(original_slot - self.asf.FLASH_BASE, original)
         self.asf.write_u32(pointer_off, target)
-        self.applied_payloads.add(name)
         return (
             self._payload_detail(name, len(data), flash),
             self._hook_detail(hook_name, self.asf.FLASH_BASE + pointer_off, target),
@@ -801,7 +790,6 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             name = 'variable_callback_dispatcher'
             payload, _, elf_path = self._load_versioned_payload(name)
             flash, _ = self._inject_payload(name, payload)
-            self.applied_payloads.add(name)
             details.append(self._payload_detail(name, len(payload), flash))
             thunk_addr = self._elf_symbol_addr(elf_path, 'variable_callback_thunk')
             thunk_size = self._elf_symbol_size(elf_path, 'variable_callback_thunk')
@@ -895,7 +883,6 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         take_detail = self._patch_thumb_bl_checked(
             take_site, bytes.fromhex('92699047'), take,
             'button hooks: GUI event read')
-        self.applied_payloads.add(name)
         return PatchOutcome.ok(
             None, self._payload_detail(name, len(data), flash),
             "Button hooks: %d handlers at 0x%08X" %
@@ -1458,7 +1445,6 @@ class ASFirmwarePatches(CompiledPayloadMixin):
                 struct.pack('<H', 0xb000 | (frame // 4)),
                 struct.pack('<H', 0xb000 | ((frame + 8) // 4)),
                 'iVAPS ' + name + ' stack release', accept_existing=True)
-        self.applied_payloads.add('ivaps_preview')
         self._custom_detail(self._payload_detail('ivaps_preview', len(data), flash))
 
     def enable_learn_targets(self):
@@ -1529,7 +1515,6 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             abi[symbol] = struct.pack('<B', page)
         abi['learn_targets_prompt_index'] = struct.pack('<H', self.asf.find_var_table_index(6, 'ZPK'))
         flash, _ = self._inject_payload('learn_targets', data, abi=abi)
-        self.applied_payloads.add('learn_targets')
         self._custom_detail(self._payload_detail('learn_targets', len(data), flash))
         self.button_hook_add('start_stop', 'learn_targets', 'learn_targets_stop_button', consume=True)
         page_site, default_site, timer_sites = self.LEARN_TARGETS_HOOK_SITES[self.asf.cdx_ver]
@@ -2375,7 +2360,6 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             self._replace_bytes_checked(at, old, new, 'therapy screen', accept_existing=True)
         for slot, original in graph_originals:
             self.asf.write_u32(slot - self.asf.FLASH_BASE, original)
-        self.applied_payloads.add('therapy_screen')
         self._write_payload_u16('therapy_screen', 'therapy_screen_simple_modes',
                                 self.mop_bitmask('CPAP', 'AutoSet', 'APAP', 'AFH'))
         return PatchOutcome.ok('Selectable therapy screen',
@@ -2601,7 +2585,6 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         branch[3] &= ~0x40  # BL -> B.W, same displacement.
         self._replace_bytes_checked(getter, bytes.fromhex('9f ed 7f 0a'),
                                     bytes(branch), 'target RH getter')
-        self.applied_payloads.add('target_rh')
         return PatchOutcome.ok('Climate model target RH: %g%% (Auto and Manual)' % percent,
                                self._payload_detail('target_rh', len(data), flash))
 
@@ -2724,7 +2707,6 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         details = [self._payload_detail('fall_time', len(data), flash)]
         for site, instruction, target in hooks:
             details.append(self._patch_thumb_bl_checked(site, instruction, target, 'fall time'))
-        self.applied_payloads.add('fall_time')
         return PatchOutcome.ok(None, *details)
 
     def patch_st_ibr(self):
@@ -2758,7 +2740,6 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         # strh r0,[r4,#0x24] -> str r0,[r4,#0x24]: also clear padding +0x26/27.
         self._replace_bytes_checked(init_site, b'\xa0\x84', b'\x60\x62',
                                     'ST iBR initialization', accept_existing=True)
-        self.applied_payloads.add('st_ibr')
         return PatchOutcome.ok(None, *details)
 
     def patch_autoepap(self):
@@ -2857,7 +2838,6 @@ class ASFirmwarePatches(CompiledPayloadMixin):
                 replacement = bytes(replacement)
             self._replace_bytes_checked(site, expected, replacement, symbol)
             details.append(self._hook_detail(symbol, self.asf.FLASH_BASE + site, target))
-        self.applied_payloads.add('autoepap')
         return PatchOutcome.ok(None, *details)
 
     def connect_autoepap_fall_time(self):
@@ -2912,7 +2892,6 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             target = self._elf_symbol_addr(elf_path, hook)
             details.append(self._patch_thumb_bl_checked(
                 site, self._encode_thumb_bl(site, original), target, hook))
-        self.applied_payloads.add('breath_tracking')
         return PatchOutcome.ok(None, *details)
 
     def connect_breath_controller(self):
@@ -3061,7 +3040,6 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             target = self._elf_symbol_addr(elf_path, replacement)
             details.append(self._patch_thumb_bl_checked(
                 site, self._encode_thumb_bl(site, original), target, 'keep backlight'))
-        self.applied_payloads.add(name)
         self.button_hook_add('encoder_hold', name, 'keep_backlight_toggle',
                              consume=True, on_release=False)
         return PatchOutcome.ok(None, *details)
@@ -3425,7 +3403,6 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             self._replace_bytes_checked(site, expected, replacement, label)
             details.append(self._hook_detail(label, self.asf.FLASH_BASE + site, address))
 
-        self.applied_payloads.add('language_fonts')
         return PatchOutcome.ok("Fonts follow the active language", *details)
 
     def patch_header_clock(self):
@@ -3464,7 +3441,6 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         flash, _ = self._inject_payload('header_clock', data)
         for site, expected, replacement, name in replacements:
             self._replace_bytes_checked(site, expected, replacement, 'patch_header_clock: ' + name)
-        self.applied_payloads.add('header_clock')
         return PatchOutcome.ok(None, self._payload_detail('header_clock', len(data), flash))
 
     def patch_backlight_adapt(self):
@@ -3512,7 +3488,6 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self.asf.write_u32(self.asf.find_var('LBH') + self.asf.G4_DEFAULT, 80)  # buttons high
         self.asf.write_u32(self.asf.find_var('ATH') + self.asf.G4_DEFAULT, 590)  # ambient low threshold
 
-        self.applied_payloads.add('backlight_adapt')
         return PatchOutcome.ok(
             None,
             self._payload_detail('backlight_adapt', len(data), flash),
