@@ -1298,10 +1298,14 @@ Examples:
             print('[DRY RUN] EEPROM image size checked. No device connection or writes.')
             return 0
 
-    if args.port.startswith('tcp:'):
-        ser = open_tcp(args.port, args.tcp_mode, timeout=1.0, hold=bool(eeprom or args.dump))
-    else:
-        ser = serial.Serial(args.port, 57600, timeout=READ_POLL_TIMEOUT)
+    try:
+        if args.port.startswith('tcp:'):
+            ser = open_tcp(args.port, args.tcp_mode, timeout=1.0, hold=bool(eeprom or args.dump))
+        else:
+            ser = serial.Serial(args.port, 57600, timeout=READ_POLL_TIMEOUT)
+    except OSError as exc:
+        print(f"[!] {exc}")
+        return 1
 
     try:
         if args.info:
