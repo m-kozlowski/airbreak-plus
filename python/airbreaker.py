@@ -718,7 +718,7 @@ class App(tk.Tk):
         """A checkbox with the patch description, then one field per parameter."""
         row = frame.grid_size()[1]
         self.enabled[patch.option] = tk.BooleanVar()
-        check = ttk.Checkbutton(frame, text=patch.description.rstrip("."), variable=self.enabled[patch.option],
+        check = ttk.Checkbutton(frame, text=patch.description, variable=self.enabled[patch.option],
                                 style="Patch.TCheckbutton",
                                 command=lambda: self.toggled(patch.option))
         check.grid(row=row, column=0, sticky="w")
