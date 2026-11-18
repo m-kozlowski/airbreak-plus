@@ -59,6 +59,15 @@ TARGETS = {
                            ("APPL (application)", ("--block", "appl")),
                            ("FGBL (bootloader)", ("--block", "fgbl", "--include-bootloader")),
                            ("FGCB (complete flash)", ("--block", "fgcb", "--include-bootloader")))),
+    "s9": dict(firmware="S9_FIRMWARE", patch_args="S9_PATCH_ARGS",
+               output="build/stm32-s9.bin", config="s9", backup="stm32-s9.bin",
+               links=("swd", "uart"),
+               swd_regions=(("full image", "flash_new"),),
+               regions=(("CCX and CDX (model definition and firmware)", ("--block", "ccx", "--block", "cdx")),
+                        ("CCX (model definition)", ("--block", "ccx")),
+                        ("CDX (firmware)", ("--block", "cdx")),
+                        ("BLX (bootloader)", ("--block", "blx", "--include-bootloader")),
+                        ("all (BLX, CCX and CDX)", ("--block", "all", "--include-bootloader")))),
 }
 # Flash connections. SWD runs run-ocd.sh. The others run a Python tool of the repository with this window's
 # interpreter, which opens the serial port, socket or Bluetooth itself (on Windows without WSL); option and prefix
