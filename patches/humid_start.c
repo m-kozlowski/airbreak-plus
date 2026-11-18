@@ -92,7 +92,7 @@ extern float climate_reference_temperature_get(struct obj *sensors);
 extern void *const climate_inputs_vtable[];
 extern const unsigned short humid_start_enable_var_id;
 extern const unsigned short humid_start_coupling_var_id;
-extern const unsigned short humid_start_min_tube_var_id;
+extern const unsigned short humid_start_min_tube_c;
 extern int variable_get_by_id(int var_id);
 
 static float call_f(struct obj *o, int slot) { return ((getf_t)o->vptr[slot])(o); }
@@ -113,17 +113,15 @@ static float coupling(void)
     return coupling_from_raw(variable_get_by_id(humid_start_coupling_var_id));
 }
 
-/* Lowest the cap goes: the custom Min Tube setting (whole degC), never below
+/* Lowest the cap goes: the patch-time Min Tube (whole degC), never below
  * the lowest tube setting.
  */
 static float cap_floor(void)
 {
     int lowest = (int)MIN_TUBE_TEMP;
-    if (humid_start_min_tube_var_id != 0xffffu) {
-        int setting = variable_get_by_id(humid_start_min_tube_var_id);
-        if (setting > lowest)
-            lowest = setting;
-    }
+    int setting = humid_start_min_tube_c;
+    if (setting > lowest)
+        lowest = setting;
     return (float)lowest;
 }
 

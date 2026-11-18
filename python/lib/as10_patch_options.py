@@ -15,6 +15,16 @@ def percentage(value):
     return percent
 
 
+def tube_temperature(value):
+    try:
+        degrees = int(value)
+    except ValueError:
+        degrees = None
+    if degrees is None or not 16 <= degrees <= 30:
+        raise argparse.ArgumentTypeError('Whole degrees C from 16 to 30 expected.')
+    return degrees
+
+
 # Patch order is part of the implementation. Payloads must be present before
 # custom settings patch their ABI slots; all MOP handlers must be registered
 # before finalization installs the shared dispatcher and expands the variable
@@ -84,7 +94,13 @@ PLATFORM = Platform('air10', categories=(
         Patch('patch-humid-start',
               'Humid Start: hold the heated tube at the target RH temperature while the humidifier warms up.',
               False, 'patch_humid_start', category='Quality of life',
-              requires=('patch-font-repack',)),
+              requires=('patch-font-repack',), parameters=(
+                  Parameter('humid-start-min-tube',
+                            'Humid Start: lowest tube temperature the warm-up cap goes to, whole '
+                            'degC, 16..30. 16 is the lowest tube setting, so no extra minimum. '
+                            'Default: 16.',
+                            Value(tube_temperature, 'DEGC'), 16),
+              )),
         Patch('humid-start-coupling-row',
               'Humid Start: add the Start Coupling row to the custom settings menu. Without it the '
               'built-in coupling 0.25 applies, which frees a value slot and settings registry space. '

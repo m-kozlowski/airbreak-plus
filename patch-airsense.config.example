@@ -47,6 +47,8 @@
 
 # Humid Start: hold the heated tube back while the humidifier warms up; SX567 only.
 # --patch-humid-start n
+# Humid Start: lowest tube temperature during warm-up, whole degC 16-30 (16 = no extra minimum).
+# --humid-start-min-tube 16
 
 # Climate target relative humidity, percent.
 # With custom settings, initializes Target RH (%) in Accessories (70-100, step 1).

@@ -164,8 +164,10 @@ there until the estimated moisture allows more, then the cap follows the water u
 as usual. For example, with Min Tube at 23 °C, the first air is at least 23 °C
 even if the water is still cold.
 
-- The default is **16 °C**, which is the lowest tube setting and the same as
-  without the setting. The range is 16-30 °C, in steps of 1 °C.
+- Min Tube is not a menu setting. It is fixed when the firmware is patched:
+  `--humid-start-min-tube DEGC`, or the Min Tube field under Humid Start in
+  AirBreaker. The default is **16 °C**, which is the lowest tube setting and
+  the same as no extra minimum. The range is 16-30 °C, in steps of 1 °C.
 - A higher minimum makes the first minutes warmer and drier, because the tube
   is hotter than the water can support. The RH at the mask stays below the
   target until the water catches up. Choose the lowest value that is comfortable.
@@ -182,7 +184,6 @@ Humid Start has no effect.
 | Setting | Values | Default |
 |---------|--------|---------|
 | Humid Start | Off, On | On |
-| Min Tube (C) | 16-30 °C, step 1 | 16 |
 | Start Coupling | 0.10-1.00, step 0.05 | 0.25 |
 
 `--humid-start-coupling-row n` leaves the Start Coupling row out of the menu
@@ -194,7 +195,7 @@ Each setting takes the first free variable of the custom settings pool and
 is left out when there is none. A build with many other custom settings (the
 plus preset, for example, uses every on/off slot) has no Humid Start switch,
 and Humid Start is on. Without custom settings each one keeps its default:
-Humid Start on, no minimum beyond 16 °C, and a coupling of 0.25
+Humid Start on and a coupling of 0.25
 (`HUMIDITY_PLATE_COUPLING` in `patches/humidity_model.h`).
 
 The variables RMM, ZRA, LET and LEF are never used: stock code still reads
