@@ -2903,8 +2903,6 @@ class S11FirmwarePatches(CompiledPayloadMixin):
 
     def flow_wave(self):
         """Draw flow and mask pressure on the reclaimed Reminders page."""
-        if not self.custom_settings_enabled:
-            return PatchOutcome.skip("requires patch-custom-settings")
         ver = self._payload_version_key()
         anchors = AS11_PATCH_VERSIONS.get(ver, {}).get("flow_wave")
         if anchors is None:
