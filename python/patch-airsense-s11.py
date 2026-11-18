@@ -1087,22 +1087,31 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             )
         return PatchOutcome.ok()
 
-    def mop_callback_register_handler(self, handler, name):
-        """Register one feature handler to run after a MOP writeback."""
+    def mop_callback_dispatcher_available(self):
+        """OK, or SKIP with the reason the MOP callback dispatcher cannot be installed."""
         outcome = self._prepare_mop_callback_dispatcher()
-        if outcome.status != "OK":
-            summary = "MOP callback dispatcher unavailable"
-            if outcome.summary:
-                summary += ": " + outcome.summary
-            return PatchOutcome.skip(summary)
+        if outcome.status == "OK":
+            return outcome
+        summary = "MOP callback dispatcher unavailable"
+        if outcome.summary:
+            summary += ": " + outcome.summary
+        return PatchOutcome.skip(summary)
+
+    def mop_callback_register_handler(self, handler, name):
+        """Register one feature handler to run after a MOP writeback.
+
+        Raises when the dispatcher is unavailable. A patch that can be skipped
+        checks mop_callback_dispatcher_available() before modifying the image.
+        """
+        if self._prepare_mop_callback_dispatcher().status != "OK":
+            raise ValueError("%s: MOP callback dispatcher unavailable" % name)
 
         handler = int(handler) | 1
         if handler in self.mop_callback_handler_seen:
-            return PatchOutcome.ok()
+            return
         self.mop_callback_handler_seen.add(handler)
         self.mop_callback_handlers.append(handler)
         print("  MOP callback handler: %s at 0x%08X" % (name, handler))
-        return PatchOutcome.ok()
 
     def patch_mop_callback_dispatcher(self):
         """Install the shared EnumDataItem writeback dispatcher."""
@@ -1211,22 +1220,31 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         self.mop_callback_dispatcher_outcome = PatchOutcome.ok()
         return self.mop_callback_dispatcher_outcome
 
-    def rpc_object_register(self, rpc_object, name):
-        """Register one rpc_object_t with the shared named-object dispatcher."""
+    def rpc_dispatcher_available(self):
+        """OK, or SKIP with the reason the RPC dispatcher cannot be installed."""
         outcome = self._prepare_rpc_dispatcher()
-        if outcome.status != "OK":
-            summary = "RPC dispatcher unavailable"
-            if outcome.summary:
-                summary += ": " + outcome.summary
-            return PatchOutcome.skip(summary)
+        if outcome.status == "OK":
+            return outcome
+        summary = "RPC dispatcher unavailable"
+        if outcome.summary:
+            summary += ": " + outcome.summary
+        return PatchOutcome.skip(summary)
+
+    def rpc_object_register(self, rpc_object, name):
+        """Register one rpc_object_t with the shared named-object dispatcher.
+
+        Raises when the dispatcher is unavailable. A provider checks
+        rpc_dispatcher_available() before modifying the image.
+        """
+        if self._prepare_rpc_dispatcher().status != "OK":
+            raise ValueError("%s: RPC dispatcher unavailable" % name)
 
         rpc_object = int(rpc_object)
         if rpc_object in self.rpc_object_seen:
-            return PatchOutcome.ok()
+            return
         self.rpc_object_seen.add(rpc_object)
         self.rpc_objects.append(rpc_object)
         print("  RPC object: %s at 0x%08X" % (name, rpc_object))
-        return PatchOutcome.ok()
 
     @staticmethod
     def _rel32_target(address, value):
@@ -1646,11 +1664,12 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             if any(
                     request["mode_mask"] != 0xFFFF
                     for request in self.custom_menu_entries):
-                outcome = self.mop_callback_register_handler(
-                    menu_symbols["start"], "custom_settings"
-                )
+                outcome = self.mop_callback_dispatcher_available()
                 if outcome.status != "OK":
                     return outcome
+                self.mop_callback_register_handler(
+                    menu_symbols["start"], "custom_settings"
+                )
 
         # Apply the prepared payload, descriptor, ABI, and reclaim changes.
         menu_flash = None
@@ -2497,6 +2516,9 @@ class S11FirmwarePatches(CompiledPayloadMixin):
     def cellular_download(self):
         """Expose native cellular HTTP downloads through AirbreakDownload."""
         version = self._patch_version_data("cellular_download")
+        outcome = self.rpc_dispatcher_available()
+        if outcome.status != "OK":
+            return outcome
         data, ver = self._load_versioned_bin(
             AS11_CELLULAR_DOWNLOAD_PAYLOAD, required=True
         )
@@ -2535,9 +2557,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
                 version["set_state_prologue"]):
             raise ValueError("cellular download: state-machine hook does not match")
 
-        outcome = self.rpc_object_register(rpc_object, "AirbreakDownload")
-        if outcome.status != "OK":
-            return outcome
+        self.rpc_object_register(rpc_object, "AirbreakDownload")
 
         flash, _off = self._inject_payload(
             AS11_CELLULAR_DOWNLOAD_PAYLOAD, data
@@ -3079,14 +3099,15 @@ class S11FirmwarePatches(CompiledPayloadMixin):
 
     def vid_spoof(self):
         """Set VID from MOP after the stock writeback completes."""
+        outcome = self.mop_callback_dispatcher_available()
+        if outcome.status != "OK":
+            return outcome
         data, ver = self._load_versioned_bin(AS11_VID_SPOOF_PAYLOAD)
         if data is None:
             return PatchOutcome.skip("compiled payload unavailable")
         elf_path = self._versioned_artifact_path(AS11_VID_SPOOF_PAYLOAD, "elf", ver)
         handler = self._elf_symbol_addr(elf_path, "start")
-        outcome = self.mop_callback_register_handler(handler, "vid_spoof")
-        if outcome.status != "OK":
-            return outcome
+        self.mop_callback_register_handler(handler, "vid_spoof")
 
         flash, _off = self._inject_payload(AS11_VID_SPOOF_PAYLOAD, data)
         print(
@@ -3137,6 +3158,9 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         if not self.airbreak_info_enabled:
             return PatchOutcome.skip("AirbreakInfo disabled")
 
+        outcome = self.rpc_dispatcher_available()
+        if outcome.status != "OK":
+            return outcome
         ver = self._payload_version_key()
         data, _payload_ver = self._load_versioned_bin(AS11_AIRBREAK_INFO_PAYLOAD)
         if data is None:
@@ -3159,9 +3183,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
                 (len(manifest), manifest_capacity)
             )
 
-        outcome = self.rpc_object_register(rpc_object, "AirbreakInfo")
-        if outcome.status != "OK":
-            return outcome
+        self.rpc_object_register(rpc_object, "AirbreakInfo")
 
         flash, _off = self._inject_payload(AS11_AIRBREAK_INFO_PAYLOAD, data)
         self.asf.patch(manifest, addr=manifest_addr - self.asf.FLASH_BASE, verbose=False)

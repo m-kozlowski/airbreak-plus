@@ -185,6 +185,8 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         self.target_rh_percent = target_rh
         self.enabled_custom_settings_features = set()
         self.mop_callback_handlers = {}
+        self.mop_callback_dispatcher_context = None
+        self.mop_callback_dispatcher_outcome = None
         self.variable_callbacks = {}
         self.variable_callback_handlers = {}
         self.button_handlers = {}
@@ -889,8 +891,45 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             (len(self.button_handlers), self.asf.FLASH_BASE + off),
             init_detail, take_detail)
 
+    def _prepare_mop_callback_dispatcher(self):
+        """Resolve and validate the dispatcher without modifying the image."""
+        if self.mop_callback_dispatcher_outcome is not None:
+            return self.mop_callback_dispatcher_outcome
+
+        layout = self.VARIABLE_CALLBACK_TABLES.get(self.asf.cdx_ver)
+        if layout is None or not self._supports_compiled_payloads():
+            self.mop_callback_dispatcher_outcome = PatchOutcome.skip(
+                "unsupported CDX version %s" % self.asf.cdx_ver)
+            return self.mop_callback_dispatcher_outcome
+
+        data, _, elf_path = self._load_versioned_payload('mop_callback_dispatcher')
+        self.mop_callback_dispatcher_context = {
+            'callback_table': layout[0],
+            'data': data,
+            'start': self._elf_symbol_addr(elf_path, 'start'),
+            'handler_table': self._elf_symbol_addr(elf_path, 'mop_callback_handler_table'),
+        }
+        self.mop_callback_dispatcher_outcome = PatchOutcome.ok()
+        return self.mop_callback_dispatcher_outcome
+
+    def mop_callback_dispatcher_available(self):
+        """OK, or SKIP with the reason the MOP callback dispatcher cannot be installed."""
+        outcome = self._prepare_mop_callback_dispatcher()
+        if outcome.status == 'OK':
+            return outcome
+        summary = "MOP callback dispatcher unavailable"
+        if outcome.summary:
+            summary += ": " + outcome.summary
+        return PatchOutcome.skip(summary)
+
     def mop_callback_register_handler(self, handler, name):
-        """Register one feature handler to run after the stock MOP callback."""
+        """Register one feature handler to run after the stock MOP callback.
+
+        Raises when the dispatcher is unavailable. A patch that can be skipped
+        checks mop_callback_dispatcher_available() before modifying the image.
+        """
+        if self._prepare_mop_callback_dispatcher().status != 'OK':
+            raise ValueError("%s: MOP callback dispatcher unavailable" % name)
         handler = int(handler) | 1
         self.mop_callback_handlers.setdefault(handler, name)
         return handler
@@ -902,20 +941,20 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         preserves the displaced stock callback, followed by feature handlers and
         an all-ones sentinel.
         """
+        if (self.mop_callback_dispatcher_outcome is not None and
+                self.mop_callback_dispatcher_outcome.status != 'OK'):
+            return self.mop_callback_dispatcher_outcome
         if not self.mop_callback_handlers:
             return PatchOutcome.skip("no MOP callback handlers registered")
         if len(self.mop_callback_handlers) > 4:
             raise ValueError("mop_callback_dispatcher: too many handlers (%d)" %
                              len(self.mop_callback_handlers))
 
-        layout = self.VARIABLE_CALLBACK_TABLES.get(self.asf.cdx_ver)
-        if layout is None:
-            raise ValueError("mop_callback_dispatcher: unsupported CDX version %s" % self.asf.cdx_ver)
-        callback_table, _ = layout
-
-        data, _, elf_path = self._load_versioned_payload('mop_callback_dispatcher')
-        start = self._elf_symbol_addr(elf_path, 'start')
-        handler_table = self._elf_symbol_addr(elf_path, 'mop_callback_handler_table')
+        context = self.mop_callback_dispatcher_context
+        callback_table = context['callback_table']
+        data = context['data']
+        start = context['start']
+        handler_table = context['handler_table']
 
         mop_rec = self.asf.find_var('MOP')
         callback_id = self.asf.read_u8(mop_rec + self.asf.G8_CALLBACK)
@@ -1795,6 +1834,10 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         features = self.custom_patch_settings_collect_features()
         if not features:
             return PatchOutcome.skip("no active custom-setting features")
+        # The menu hooks always register the mode-visibility handler.
+        outcome = self.mop_callback_dispatcher_available()
+        if outcome.status != 'OK':
+            return outcome
 
         self.custom_patch_settings_init()
         if not self.custom_patch_settings_reclaim_reminders():
@@ -3498,10 +3541,13 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         """Set VID from therapy mode, using a regional variant where known."""
         if not self._supports_compiled_payloads():
             return PatchOutcome.skip("unsupported CDX version %s" % self.asf.cdx_ver)
+        outcome = self.mop_callback_dispatcher_available()
+        if outcome.status != 'OK':
+            return outcome
         data, _, elf_path = self._load_versioned_payload('vid_spoof')
-        flash, _ = self._inject_payload('vid_spoof', data)
         handler = self._elf_symbol_addr(elf_path, 'start')
         handler = self.mop_callback_register_handler(handler, 'vid_spoof')
+        flash, _ = self._inject_payload('vid_spoof', data)
         return PatchOutcome.ok(
             None,
             self._payload_detail('vid_spoof', len(data), flash),
