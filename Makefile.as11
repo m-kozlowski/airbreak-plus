@@ -101,14 +101,15 @@ $$(BUILD)/$(3)_payload_sizes_$(2).tsv: \
 		$$(foreach p,$(4),$$(BUILD)/$$(p)_$(2).probe.bin) \
 		Makefile Makefile.as11 | $$(BUILD)
 	@: > $$@.tmp
-	@for bin in $$(filter %.probe.bin,$$^); do \
+	@set -e; for bin in $$(filter %.probe.bin,$$^); do \
 		base=$$$${bin##*/}; \
 		name=$$$${base%_$(2).probe.bin}; \
 		region=$(1); \
 		case ' $$(AS11_FGBL_SRAM_PAYLOADS_$(2)) ' in \
 			*" $$$$name "*) region=fgbl_sram ;; \
 		esac; \
-		printf '%s\t%s\t%s\n' "$$$$name" "$$$$(stat -c %s "$$$$bin")" "$$$$region" >> $$@.tmp; \
+		size=$$$$(wc -c < "$$$$bin"); \
+		printf '%s\t%s\t%s\n' "$$$$name" "$$$$size" "$$$$region" >> $$@.tmp; \
 	done
 	@mv $$@.tmp $$@
 
@@ -173,7 +174,7 @@ $$(BUILD)/$(1)_$(2).elf: $$(BUILD)/$(1)_$(2).o $(strip $(4)) \
 
 $$(BUILD)/$(1)_$(2).bin: $$(BUILD)/$(1)_$(2).elf
 	$$(OBJCOPY) -Obinary $$< $$@
-	@set -e; actual=$$$$(stat -c %s $$@); \
+	@set -e; actual=$$$$(wc -c < "$$@"); \
 		expected=$$$$($(call as11_layout_field,$(1),3,$(strip $(5)))); \
 		[ "$$$$actual" -eq "$$$$expected" ] || { \
 			echo "$$@: final size $$$$actual differs from layout size $$$$expected" >&2; \

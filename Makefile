@@ -141,8 +141,9 @@ PAYLOAD_PROBE_BINS_$(1) := $$(foreach p,$$(call allocated_payloads,$(1)),$$(BUIL
 
 $$(BUILD)/payload_sizes_$(1).tsv: $$(PAYLOAD_PROBE_BINS_$(1)) Makefile | $$(BUILD)
 	@rm -f $$@.tmp
-	@$(foreach p,$(call allocated_payloads,$(1)),\
-		printf '%s\t%s\t%s\n' '$(p)' "$$$$(stat -c %s $(BUILD)/$(p)_$(1).probe.bin)" \
+	@set -e; $(foreach p,$(call allocated_payloads,$(1)),\
+		size=$$$$(wc -c < "$(BUILD)/$(p)_$(1).probe.bin"); \
+		printf '%s\t%s\t%s\n' '$(p)' "$$$$size" \
 		'$(call payload_region,$(p))' >> $$@.tmp;)
 	@mv $$@.tmp $$@
 
@@ -284,7 +285,7 @@ $(BUILD)/%.bin: $(BUILD)/%.elf
 				echo "$@: no payload row for $$payload in $$layout" >&2; \
 				exit 1; \
 			}; \
-			actual=$$(stat -c %s "$@"); \
+			actual=$$(wc -c < "$@"); \
 			[ "$$actual" -eq "$$expected" ] || { \
 				echo "$@: final size $$actual differs from layout size $$expected" >&2; \
 				exit 1; \
