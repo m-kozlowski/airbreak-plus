@@ -566,7 +566,8 @@ class S11Firmware(object):
         )
         return struct.pack("<HH", first, second)
 
-    def patch(self, patchdata, addr=None, dataseq=None, verbose=True, checkempty=False):
+    def patch(self, patchdata, addr=None, dataseq=None, verbose=True,
+              checkempty=False, clobber=False):
         patchdata = bytes(patchdata)
         if addr is None:
             if dataseq is None:
@@ -574,7 +575,7 @@ class S11Firmware(object):
             addr = self.find_bytes(dataseq)
         if verbose:
             print("Patching %d bytes at 0x%x" % (len(patchdata), addr))
-        if checkempty and bytes(self.fw[addr:addr + len(patchdata)]) != b"\xFF" * len(patchdata):
+        if checkempty and not clobber and bytes(self.fw[addr:addr + len(patchdata)]) != b"\xFF" * len(patchdata):
             raise ValueError("Appears data in section you want me to patch! Bailing out...")
         self.fw[addr:addr + len(patchdata)] = patchdata
 
