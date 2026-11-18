@@ -358,8 +358,9 @@ readback rules as WRITE. The successful response payload MUST be empty.
 | `0x0a` | `VerifyFailure` | programmed data did not match readback |
 | `0x0b` | `EntryTimeout` | AirCANnect did not enter service mode in time |
 | `0x0c` | `DecodeFailure` | compressed data is invalid or has the wrong raw length |
+| `0x0d` | `Busy` | AirCANnect service channel is in use by another connection |
 
-Values `0x0d..0xff` are reserved for compatible extension. A client MUST treat
+Values `0x0e..0xff` are reserved for compatible extension. A client MUST treat
 every unknown nonzero status as command failure.
 
 ## Error mapping
@@ -445,8 +446,19 @@ and exactly the 19-byte INFO payload. It leaves the connection open in normal
 packet-bridge mode and MUST NOT forward the intercepted INFO response again.
 CAN ownership remains exclusive to that service connection until it closes.
 On timeout AirCANnect returns ENTER with `EntryTimeout`, closes the connection,
-and releases ownership. A disconnect or other failure MUST also release it
-immediately.
+and releases ownership. Other failures MUST also release it.
+
+When a service connection closes, AirCANnect abandons its request if the
+device has not accepted it with Flow Control. A request the device may have
+accepted is completed or timed out without retry, and its response is
+discarded. Ownership is released once no request remains in flight.
+
+While the service channel is in use, AirCANnect reads one request from any
+other service connection and closes that connection. The channel is in use
+while a connection holds ownership or a request is in flight. A request with
+valid magic, version, and CRC is first answered with its command and sequence,
+status `Busy`, and an empty payload. AirCANnect MUST NOT transmit that request
+on CAN or disturb the connection using the channel.
 
 ## Implementation checklist
 
