@@ -58,6 +58,8 @@ S10_PATCHER_DEPS := \
 	python/edf_ccx_merge.py \
 	python/lib/as10_patch_options.py \
 	python/lib/as10_firmware.py \
+	python/lib/as10_languages.py \
+	python/lib/language_tsv.py \
 	python/lib/custom_menu.py \
 	python/lib/custom_menu_stock.py \
 	python/lib/compiled_payload.py

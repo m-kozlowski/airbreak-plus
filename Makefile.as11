@@ -8,6 +8,7 @@ AS11_PATCHER_DEPS := \
 	python/as11_edf_superset.py \
 	python/lib/as11_patch_options.py \
 	python/lib/as11_patch_versions.py \
+	python/lib/as11_conf_discovery.py \
 	python/lib/compiled_payload.py
 
 # Register APPL payloads by APPX version and FGBL payloads by BID.
