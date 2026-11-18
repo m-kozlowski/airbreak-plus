@@ -31,23 +31,18 @@ struct humidity_coeffs {
 extern int humidity_model_coefficients_get(void *unused, float *k0, float *k1,
                                            float *k2, float *k3, float *k4);
 
-/* Plate bound without a Start Coupling setting: fraction of the plate's rise
- * above ambient over which the chamber adds saturation humidity. Lower values
- * hold the tube back longer and lower the estimated RH.
+/* Plate coupling. Not a user setting: it is too hard to choose without a
+ * hygrometer, so it is fixed here and can be changed by a programmer.
+ *
+ * What it is: the fraction of the plate's rise above ambient over which the air
+ * leaving the chamber is assumed to pick up moisture. It scales the plate bound
+ * of the humidity estimate, so it only matters in the first minutes of warm-up,
+ * while the plate bound is the smaller one. Lower values estimate less moisture,
+ * so the tube is held colder for longer (more humid early air, more condensation
+ * risk); higher values let the tube warm sooner (drier early air). Sensible
+ * range 0.10-1.00; 0.25 is not calibrated (see docs/guide/features/humid_start.md).
  */
 #define HUMIDITY_PLATE_COUPLING 0.25f
-
-/* The Start Coupling setting (raw = coupling * 100) held to its menu range,
- * so a stale stored value cannot starve or flood the estimate.
- */
-static inline float coupling_from_raw(int raw)
-{
-    if (raw < 10)
-        raw = 10;
-    if (raw > 100)
-        raw = 100;
-    return raw * 0.01f;
-}
 
 /* Stock saturation absolute humidity, g/m3. */
 static __attribute__((noinline)) float ah_sat(float t)

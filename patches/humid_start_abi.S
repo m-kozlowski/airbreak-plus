@@ -21,12 +21,3 @@ humid_start_enable_var_id:
 humid_start_min_tube_c:
     .short 16
 .size humid_start_min_tube_c, . - humid_start_min_tube_c
-
-/* Custom-settings variable for the plate coupling (raw = coupling * 100);
- * 0xffff uses HUMIDITY_PLATE_COUPLING (humidity_model.h).
- */
-.global humid_start_coupling_var_id
-.type humid_start_coupling_var_id, %object
-humid_start_coupling_var_id:
-    .short 0xffff
-.size humid_start_coupling_var_id, . - humid_start_coupling_var_id

@@ -115,9 +115,11 @@ would exceed saturation, since air cannot hold more than that. In steady state
 it is the stock model's own prediction, which could be off in either direction.
 It has not been checked against a hygrometer.
 
-## Start Coupling
+## Plate coupling
 
-The coupling is the fraction of the plate's rise above room temperature over
+The coupling is a fixed value, not a setting: it is hard to choose without a
+hygrometer. It is `HUMIDITY_PLATE_COUPLING` in `patches/humidity_model.h`, where
+a programmer can change it; this section explains what it does. The coupling is the fraction of the plate's rise above room temperature over
 which the air leaving the chamber is assumed to pick up moisture. It scales the
 plate bound, so it only matters while the plate bound is the smaller one: during
 the first minutes. It has no effect once the heater-power bound takes over. The
@@ -184,19 +186,12 @@ Humid Start has no effect.
 | Setting | Values | Default |
 |---------|--------|---------|
 | Humid Start | Off, On | On |
-| Start Coupling | 0.10-1.00, step 0.05 | 0.25 |
 
-`--humid-start-coupling-row n` leaves the Start Coupling row out of the menu
-(the built-in coupling 0.25 applies), which frees a value slot and settings
-registry space for other features. It is an on/off switch like the patches, so
-in AirBreaker it is a checkbox below Humid Start.
-
-Each setting takes the first free variable of the custom settings pool and
-is left out when there is none. A build with many other custom settings (the
-plus preset, for example, uses every on/off slot) has no Humid Start switch,
-and Humid Start is on. Without custom settings each one keeps its default:
-Humid Start on and a coupling of 0.25
-(`HUMIDITY_PLATE_COUPLING` in `patches/humidity_model.h`).
+The switch takes the first free variable of the custom settings pool and is
+left out when there is none. A build with many other custom settings (the plus
+preset, for example, uses every on/off slot) has no Humid Start switch, and
+Humid Start is on. Without custom settings Humid Start is on. Min Tube is not a
+menu setting (see above), and the coupling is fixed at 0.25.
 
 The variables RMM, ZRA, LET and LEF are never used: stock code still reads
 RMM and ZRA, and LET and LEF belong to a stock placeholder service. A

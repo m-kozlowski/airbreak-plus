@@ -91,7 +91,6 @@ extern float climate_tube_setpoint_get(struct obj *inputs);
 extern float climate_reference_temperature_get(struct obj *sensors);
 extern void *const climate_inputs_vtable[];
 extern const unsigned short humid_start_enable_var_id;
-extern const unsigned short humid_start_coupling_var_id;
 extern const unsigned short humid_start_min_tube_c;
 extern int variable_get_by_id(int var_id);
 
@@ -105,12 +104,12 @@ static int enabled(void)
            variable_get_by_id(humid_start_enable_var_id);
 }
 
-/* Plate bound coupling: the custom setting, else the built-in constant. */
+/* Plate bound coupling: the constant in humidity_model.h. A fixed value, not
+ * a setting; a programmer can change HUMIDITY_PLATE_COUPLING there.
+ */
 static float coupling(void)
 {
-    if (humid_start_coupling_var_id == 0xffffu)
-        return HUMIDITY_PLATE_COUPLING;
-    return coupling_from_raw(variable_get_by_id(humid_start_coupling_var_id));
+    return HUMIDITY_PLATE_COUPLING;
 }
 
 /* Lowest the cap goes: the patch-time Min Tube (whole degC), never below

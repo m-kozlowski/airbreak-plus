@@ -101,11 +101,6 @@ PLATFORM = Platform('air10', categories=(
                             'Default: 16.',
                             Value(tube_temperature, 'DEGC'), 16),
               )),
-        Patch('humid-start-coupling-row',
-              'Humid Start: add the Start Coupling row to the custom settings menu. Without it the '
-              'built-in coupling 0.25 applies, which frees a value slot and settings registry space. '
-              'Only used with Humid Start.',
-              True, 'patch_humid_start_coupling_row', category='Quality of life'),
         Patch('patch-custom-palette', 'Patch the custom color palette.',
               True, 'custom_palette', category='Quality of life'),
         Patch('patch-past-date', 'Allow setting past date in the menu and over UART.',
