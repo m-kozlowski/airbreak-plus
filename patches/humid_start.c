@@ -73,7 +73,14 @@ enum {
 
 /* Cloning the inputs vtable lets both hooks find this state from their own
  * object without reserving a writable global.
- */
+ *
+ * The block is allocated once and never freed on purpose. In the 0401 image the
+ * climate controller (constructor at 0x080EBD24, sensors at +0x14, inputs at
+ * +0x28) has one caller, the wrapper constructor at 0x080EBE6C, whose only
+ * caller is a static initializer that registers the destructor with
+ * __cxa_atexit. It is a boot-time singleton that is never rebuilt per therapy
+ * session, so this is one allocation per power-up, not one per session. A new
+ * session is told apart by the timers in the state (see start()). */
 struct state {
     void *methods[INPUT_SLOTS];
     unsigned magic;
