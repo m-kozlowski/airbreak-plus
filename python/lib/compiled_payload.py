@@ -123,24 +123,16 @@ class CompiledPayloadMixin(object):
             )
         return path
 
-    def _load_versioned_bin(self, name, required=False, region=None):
-        """Load a per-version binary, optionally failing when unavailable."""
+    def _load_versioned_bin(self, name, region=None):
+        """Load a per-version binary or fail with a build hint."""
         ver = self._payload_version_key(region)
-        bin_path = self._versioned_artifact_path(name, "bin", ver)
-        if required:
-            bin_path = self._require_versioned_artifact(name, "bin", ver)
-        if not os.path.exists(bin_path):
-            message = "%s: build/%s_%s.bin not found (run %s)" % (
-                name, name, ver, self.PAYLOAD_BUILD_COMMAND
-            )
-            print("  " + message)
-            return None, ver
+        bin_path = self._require_versioned_artifact(name, "bin", ver)
         with open(bin_path, "rb") as f:
             return f.read(), ver
 
     def _load_versioned_payload(self, name, region=None):
         """Load a payload binary and require its matching ELF metadata."""
-        data, ver = self._load_versioned_bin(name, required=True, region=region)
+        data, ver = self._load_versioned_bin(name, region=region)
         elf_path = self._require_versioned_artifact(name, "elf", ver)
         return data, ver, elf_path
 

@@ -203,7 +203,7 @@ endef
 
 $(foreach p,$(AS11_PAYLOAD_NAMES),$(eval $(call AS11_PAYLOAD_STAMP_template,$(p))))
 
-.PHONY: as11 as11-binaries as11-patched as11-nor-sram-reader
+.PHONY: as11 as11-binaries as11-nor-sram-reader
 
 as11:
 	@: > '$(MAKE_LOG)'
@@ -233,12 +233,6 @@ $(AS11_NOR_READER_BIN): $(AS11_NOR_READER_ELF)
 as11-nor-sram-reader: $(AS11_NOR_READER_BIN)
 	@echo "AS11 NOR SRAM reader built:"
 	@echo "  $(AS11_NOR_READER_BIN)"
-
-as11-patched:
-	@: > '$(MAKE_LOG)'
-	-$(MAKE) --no-print-directory as11-binaries
-	$(MAKE) --no-print-directory $(AS11_PATCHED)
-	@printf '\nFirmware image:\n  %s\n' '$(AS11_PATCHED)' | tee -a '$(MAKE_LOG)'
 
 # Air11 image $(1) with the options $(2) of this image.
 air11_image = $(eval $(call patch_image_rule,$(1),air11,patch-airsense-s11.py,$(AS11_FIRMWARE),$(2),AIR11_PATCH_ARGS))

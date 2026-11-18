@@ -231,14 +231,8 @@ def patch_example_rpc(self):
     outcome = self.rpc_dispatcher_available()
     if outcome.status != "OK":
         return outcome
-    ver = self._payload_version_key()
-    data, _ = self._load_versioned_bin("as11_example")
-    if data is None:
-        return PatchOutcome.skip("compiled payload unavailable")
 
-    elf_path = self._versioned_artifact_path(
-        "as11_example", "elf", ver
-    )
+    data, _, elf_path = self._load_versioned_payload("as11_example")
     rpc_object = self._elf_symbol_addr(
         elf_path, "example_rpc_object"
     )

@@ -48,11 +48,6 @@ make as11 AS11_FIRMWARE=/path/to/original.bin \
     AS11_PATCHED=build/my-as11-patched.bin
 ```
 
-`make as11-patched` is the permissive alternative for systems without the Arm
-toolchain. It attempts to build the payloads, then lets the patcher skip patches
-whose compiled payload is unavailable. The standard `make as11` target fails
-instead of producing that reduced result.
-
 ## What Each Patch Does
 
 ### Therapy Unlocks

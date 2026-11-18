@@ -1077,7 +1077,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         storage = {}
         for role in ("gate", "extension"):
             name = "as11_fgbl_service_" + role
-            data, _ = self._load_versioned_bin(name, required=True, region="FGBL")
+            data, _ = self._load_versioned_bin(name, region="FGBL")
             storage[role], _ = self._inject_payload(name, data, region="FGBL")
         for hook, role in (("selector_hook", "gate"),
                            ("dispatch_hook_storage", "extension")):
@@ -1179,12 +1179,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             )
             return self.mop_callback_dispatcher_outcome
 
-        data, _ = self._load_versioned_bin(
-            AS11_MOP_CALLBACK_DISPATCHER_PAYLOAD, required=True
-        )
-        elf_path = self._versioned_artifact_path(
-            AS11_MOP_CALLBACK_DISPATCHER_PAYLOAD, "elf", ver
-        )
+        data, _, elf_path = self._load_versioned_payload(AS11_MOP_CALLBACK_DISPATCHER_PAYLOAD)
         start = self._elf_symbol_addr(elf_path, "start")
         handler_table = self._elf_symbol_addr(
             elf_path, "mop_callback_handler_table"
@@ -1301,8 +1296,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             self.rpc_dispatcher_outcome = PatchOutcome(exc.status, str(exc))
             return self.rpc_dispatcher_outcome
 
-        data, _ = self._load_versioned_bin(AS11_RPC_DISPATCHER_PAYLOAD, required=True)
-        elf_path = self._versioned_artifact_path(AS11_RPC_DISPATCHER_PAYLOAD, "elf", ver)
+        data, _, elf_path = self._load_versioned_payload(AS11_RPC_DISPATCHER_PAYLOAD)
         start = self._elf_symbol_addr(elf_path, "start")
         registry_ctor = self._elf_symbol_addr(elf_path, "rpc_profile_json_formatter_registry_ctor")
         object_table = self._elf_symbol_addr(elf_path, "rpc_object_table")
@@ -1569,14 +1563,8 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         menu_symbols = None
         if self.custom_menu_entries or removed_rows:
             # Menu rows and reclaimed stock rows share one bridge payload.
-            data, _payload_ver = self._load_versioned_bin(
+            data, _payload_ver, elf_path = self._load_versioned_payload(
                 AS11_CUSTOM_SETTINGS_PAYLOAD
-            )
-            if data is None:
-                return PatchOutcome.skip("compiled payload unavailable")
-
-            elf_path = self._versioned_artifact_path(
-                AS11_CUSTOM_SETTINGS_PAYLOAD, "elf", ver
             )
             factory_symbols = {
                 name: self._elf_symbol_addr(elf_path, symbol)
@@ -1993,13 +1981,9 @@ class S11FirmwarePatches(CompiledPayloadMixin):
 
     def _therapy_screen_style_auto(self, anchors):
         """Add raw TSS 3: Simple in CPAP, AutoSet and AutoSet for Her, otherwise Pressure."""
-        ver = self._payload_version_key()
         if "pressure_bar_registration_call" not in anchors:
             return False
-        data, _ = self._load_versioned_bin(AS11_THERAPY_SCREEN_STYLE_PAYLOAD)
-        if data is None:
-            return False
-        elf_path = self._versioned_artifact_path(AS11_THERAPY_SCREEN_STYLE_PAYLOAD, "elf", ver)
+        data, _, elf_path = self._load_versioned_payload(AS11_THERAPY_SCREEN_STYLE_PAYLOAD)
         register_call = self.asf.ptr_to_off(anchors["pressure_bar_registration_call"])
         read_call = self.asf.ptr_to_off(anchors["pressure_bar_style_read_call"])
         # Native: movs r1,#1; movs r0,r4; bl GuiSwitchAction_add.
@@ -2403,13 +2387,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         """Install an ASV/ASVAuto update wrapper that inhibits backup breaths."""
         ver = self._payload_version_key()
         version = self._patch_version_data("asv_backup_rate", ver)
-        data, _ = self._load_versioned_bin(AS11_ASV_BACKUP_RATE_PAYLOAD)
-        if data is None:
-            return PatchOutcome.skip("compiled payload unavailable")
-
-        elf_path = self._versioned_artifact_path(
-            AS11_ASV_BACKUP_RATE_PAYLOAD, "elf", ver
-        )
+        data, _, elf_path = self._load_versioned_payload(AS11_ASV_BACKUP_RATE_PAYLOAD)
         start = self._elf_symbol_addr(elf_path, "start")
         original_update = self._elf_symbol_addr(elf_path, "AsvFeature_update")
         original_ptr = original_update | 1
@@ -2519,12 +2497,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         outcome = self.rpc_dispatcher_available()
         if outcome.status != "OK":
             return outcome
-        data, ver = self._load_versioned_bin(
-            AS11_CELLULAR_DOWNLOAD_PAYLOAD, required=True
-        )
-        elf_path = self._versioned_artifact_path(
-            AS11_CELLULAR_DOWNLOAD_PAYLOAD, "elf", ver
-        )
+        data, ver, elf_path = self._load_versioned_payload(AS11_CELLULAR_DOWNLOAD_PAYLOAD)
 
         rpc_object = self._elf_symbol_addr(
             elf_path, "cellular_download_rpc_object"
@@ -2805,13 +2778,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         """Show local time and therapy usage in the title bar."""
         ver = self._payload_version_key()
         anchors = self._patch_version_data("header_clock", ver)
-        data, _ = self._load_versioned_bin(AS11_HEADER_CLOCK_PAYLOAD)
-        if data is None:
-            return PatchOutcome.skip("compiled payload unavailable")
-
-        elf_path = self._versioned_artifact_path(
-            AS11_HEADER_CLOCK_PAYLOAD, "elf", ver
-        )
+        data, _, elf_path = self._load_versioned_payload(AS11_HEADER_CLOCK_PAYLOAD)
         draw_wrapper = self._elf_symbol_addr(elf_path, "start")
         menu_draw_wrapper = self._elf_symbol_addr(elf_path, "header_clock_menu_label_draw")
         ctor_wrapper = self._elf_symbol_addr(
@@ -2946,14 +2913,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         anchors = AS11_PATCH_VERSIONS.get(ver, {}).get("flow_wave")
         if anchors is None:
             return PatchOutcome.skip("Flow view payload not ported to this APPX")
-        data, _ = self._load_versioned_bin(AS11_FLOW_WAVE_PAYLOAD)
-        if data is None:
-            return PatchOutcome.skip("compiled payload unavailable")
-        reclaim_data, _ = self._load_versioned_bin(AS11_CUSTOM_SETTINGS_PAYLOAD)
-        if reclaim_data is None:
-            return PatchOutcome.skip("Reminders reclaim requires the custom-settings bridge")
-
-        elf_path = self._versioned_artifact_path(AS11_FLOW_WAVE_PAYLOAD, "elf", ver)
+        data, _, elf_path = self._load_versioned_payload(AS11_FLOW_WAVE_PAYLOAD)
         ctor = self._elf_symbol_addr(elf_path, "start")
         layout_addr = self._elf_symbol_addr(elf_path, "flow_layout")
         gui_call = self.asf.ptr_to_off(anchors["gui_update_call"])
@@ -3016,12 +2976,8 @@ class S11FirmwarePatches(CompiledPayloadMixin):
     def screen_keep_awake(self):
         """Toggle LCD inactivity suppression with a three-finger hold."""
         ver = self._payload_version_key()
-        data, _ = self._load_versioned_bin(AS11_SCREEN_KEEP_AWAKE_PAYLOAD)
-        if data is None:
-            return PatchOutcome.skip("compiled payload unavailable")
         anchors = self._patch_version_data("screen_keep_awake", ver)
-
-        elf_path = self._versioned_artifact_path(AS11_SCREEN_KEEP_AWAKE_PAYLOAD, "elf", ver)
+        data, _, elf_path = self._load_versioned_payload(AS11_SCREEN_KEEP_AWAKE_PAYLOAD)
         report_wrapper = self._elf_symbol_addr(elf_path, "start")
         ui_wrapper = self._elf_symbol_addr(elf_path, "screen_keep_awake_process_touch_events")
         fade_wrapper = self._elf_symbol_addr(elf_path, "screen_keep_awake_schedule_transition")
@@ -3069,8 +3025,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         """Retry unbonded pulse oximeters without security after pairing fails."""
         ver = self._payload_version_key()
         anchors = self._patch_version_data("ble_oxi_fallback", ver)
-        data, _ = self._load_versioned_bin(AS11_BLE_OXI_FALLBACK_PAYLOAD, required=True)
-        elf_path = self._versioned_artifact_path(AS11_BLE_OXI_FALLBACK_PAYLOAD, "elf", ver)
+        data, _, elf_path = self._load_versioned_payload(AS11_BLE_OXI_FALLBACK_PAYLOAD)
         hooks = {
             "ble_oxi_gatt_client_on_stack_event": "start",
             "ble_oxi_gatt_client_queue_connect": "ble_oxi_fallback_queue_connect",
@@ -3102,10 +3057,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         outcome = self.mop_callback_dispatcher_available()
         if outcome.status != "OK":
             return outcome
-        data, ver = self._load_versioned_bin(AS11_VID_SPOOF_PAYLOAD)
-        if data is None:
-            return PatchOutcome.skip("compiled payload unavailable")
-        elf_path = self._versioned_artifact_path(AS11_VID_SPOOF_PAYLOAD, "elf", ver)
+        data, ver, elf_path = self._load_versioned_payload(AS11_VID_SPOOF_PAYLOAD)
         handler = self._elf_symbol_addr(elf_path, "start")
         self.mop_callback_register_handler(handler, "vid_spoof")
 
@@ -3162,10 +3114,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         if outcome.status != "OK":
             return outcome
         ver = self._payload_version_key()
-        data, _payload_ver = self._load_versioned_bin(AS11_AIRBREAK_INFO_PAYLOAD)
-        if data is None:
-            return PatchOutcome.skip("compiled payload unavailable")
-        elf_path = self._versioned_artifact_path(AS11_AIRBREAK_INFO_PAYLOAD, "elf", ver)
+        data, _payload_ver, elf_path = self._load_versioned_payload(AS11_AIRBREAK_INFO_PAYLOAD)
         rpc_object = self._elf_symbol_addr(elf_path, "airbreak_info_rpc_object")
         manifest_addr = self._elf_symbol_addr(elf_path, "airbreak_info_json")
         manifest_capacity = self._elf_symbol_size(elf_path, "airbreak_info_json")
