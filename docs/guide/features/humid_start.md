@@ -200,4 +200,7 @@ stored value, so after moving between builds with different features check
 the Accessories settings and the therapy switches in the menus.
 
 Enable it with `--patch-humid-start y`. It is off by
-default and requires font repacking (on by default).
+default and requires font repacking (on by default). Humid Start does not use
+the fonts: the requirement is for flash space. Its payload (about 1 KB) is placed
+in the code caves that repacking frees in the font storage (see
+`patches/s10_code_caves.tsv`).

@@ -541,18 +541,6 @@ class ASFirmwarePatches(CompiledPayloadMixin):
                 return self.custom_claim_g8_var(request, owner)
         return None
 
-    # Value slots a setting without a fixed one takes the first free of. LEF
-    # is left out, like LET: they are placeholders of a stock service.
-    FREE_VALUE_SLOTS = ('RDT', 'RTI', 'RCW', 'RCH', 'RCF', 'RDW', 'RDH', 'RCM', 'RDM', 'RDF')
-
-    def custom_claim_free_g4_var(self, candidates, owner):
-        """Claim the first unclaimed reclaimed g[4] candidate, or return None."""
-        for request in candidates:
-            vid = self.asf.resolve_var_id(request)
-            if vid in self.custom_g4_reclaimed and vid not in self.custom_g4_claims:
-                return self.custom_claim_g4_var(request, owner)
-        return None
-
     def custom_storage_add_unless_member(self, var):
         """Queue a variable for CSG unless the stock group already holds it."""
         rec = self.asf.find_var_group('CSG')

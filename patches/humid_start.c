@@ -57,6 +57,11 @@ enum {
  * for a long time, and is still heating then.
  */
 #define PLATE_STALL_RATE 0.05f
+/* The plate must be this far above ambient before a stalled plate ends
+ * warm-up, degC: a plate that has hardly started heating (cold water, a
+ * slow first minutes) also barely rises, and is not yet warm.
+ */
+#define PLATE_WARM_MARGIN 8.0f
 /* Setpoint lead over the cap, as a multiple of the tube's gap below it. The
  * setpoint is never above HTS, so the tube never heats faster than stock.
  */
@@ -205,7 +210,7 @@ float start(struct obj *inputs)
         int check = !(++s->minutes & (WINDOW_MINUTES - 1));
         if (s->minutes >= MAX_MINUTES ||
                 (check && plate - s->last_plate < PLATE_STALL_RATE * WINDOW_MINUTES &&
-                 plate > ambient + 8.0f)) {
+                 plate > ambient + PLATE_WARM_MARGIN)) {
             finish(s);
             return set;
         }
