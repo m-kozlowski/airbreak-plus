@@ -37,14 +37,15 @@ Best support for SX567-0401 and SX567-0402 firmware. Other versions are handled 
 
 ### Air11
 
-- [Unlocks supported therapy modes and related clinical settings](docs/guide/as11/features.md#supported-therapy-modes)
+- [Unlocks all therapy modes](docs/guide/as11/features.md#supported-therapy-modes)
 - [Allows custom ASV and ASVAuto pressure-support ranges](docs/guide/as11/features.md#asv-pressure-support-range)
 - [Allows backup breaths to be disabled in ASV and ASVAuto](docs/guide/as11/features.md#asv-backup-rate)
 - [Adds respiratory statistics to the therapy screen](docs/guide/as11/features.md#therapy-screen)
 - [Adds an optional clock to the home and therapy screens](docs/guide/as11/features.md#header-clock)
 - [Expands EDF recording across unlocked therapy modes](docs/guide/as11/features.md#edf-recording)
-- [Keeps EDF and myAir variant reporting aligned with the selected mode](docs/guide/as11/features.md#variant-reporting)
+- [Maintains myAir cloud compatibility across therapy modes](docs/guide/as11/features.md#variant-reporting)
 - [Unlocks configured languages and selected firmware defaults](docs/guide/as11/features.md#languages-and-defaults)
+- [Allows firmware updates and clock correction over Bluetooth](docs/guide/as11/features.md#remote-access)
 - [Removes the design-life warning triggered after ~20,000 hours of runtime](docs/guide/as11/features.md#device-design-life-message)
 
 <p align="center">
@@ -94,7 +95,7 @@ Windows users can prepare the common build environment with the
 | Document | Content |
 |----------|---------|
 | [as11_config](docs/tools/as11_config.md) | Configuration, RPC, streams, events, spools, and BLE pairing |
-| [as11_flash](docs/tools/as11_flash.md) | CAN and BLE firmware flashing |
+| [as11_flash](docs/tools/as11_flash.md) | CAN/BLE firmware flashing and bootloader service storage access |
 | [CONF block format](docs/as11/conf_block_format.md) | Descriptor and schema structures |
 | [Variable reference](docs/as11/var_reference.tsv) | Cross-version variable names and metadata |
 | [as11_descriptors](docs/tools/as11_descriptors.md) | Offline firmware and CONF inspection |
