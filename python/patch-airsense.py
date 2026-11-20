@@ -520,39 +520,6 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             request, owner, self.custom_g4_reclaimed,
             self.custom_g4_claims, 4)
 
-    # Switch slots a setting without a fixed one takes the first free of.
-    # Display-only slot first: the others hold therapy switches (iBR, AutoEPAP,
-    # Square Wave, Backup Rate, Custom VAuto), whose stored value would carry
-    # over if a later build gives the slot back to its feature. RMM and ZRA
-    # are left out: stock code still reads them for the Reminder popup, and
-    # a build using them restarted when an SD card was inserted. LET is left
-    # out with them.
-    FREE_SWITCH_SLOTS = ('RXH', 'RXW', 'RSA', 'RPF', 'RPW', 'RPO', 'RPH', 'RXM')
-
-    def custom_claim_free_g8_var(self, candidates, owner):
-        """Claim the first unclaimed reclaimed g[8] candidate, or return None."""
-        for request in candidates:
-            vid = self.asf.resolve_var_id(request)
-            if vid in self.custom_g8_reclaimed and vid not in self.custom_g8_claims:
-                if request != 'RXH':
-                    self._custom_detail('WARNING: %s uses the %s slot of a therapy switch; after '
-                                        'flashing, check iBR, AutoEPAP, Square Wave and Backup Rate '
-                                        'in the menu' % (owner, request))
-                return self.custom_claim_g8_var(request, owner)
-        return None
-
-    def custom_storage_add_unless_member(self, var):
-        """Queue a variable for CSG unless the stock group already holds it."""
-        rec = self.asf.find_var_group('CSG')
-        if rec is None:
-            raise ValueError("custom_patch_settings: CSG variable group not found")
-        members = self.asf.read_u32(rec + 8) - self.asf.FLASH_BASE
-        count = self.asf.read_u32(rec + 0x0c)
-        vid = self.asf.resolve_var_id(var)
-        if any(self.asf.read_u16(members + 2 * i) == vid for i in range(count)):
-            return
-        self.custom_storage_add(var)
-
     def redefine_g8_var(self, var, flags, callback, dep_head, name_str, default,
                         num_options, param_0a, perm_mask, base_str, param_12):
         """Rewrite a g[8] descriptor with caller-provided raw fields."""
@@ -700,14 +667,8 @@ class ASFirmwarePatches(CompiledPayloadMixin):
                                   for name, container in self.custom_menu_pages.items()}
         self.custom_menu_plan = plan
 
-    def custom_menu_add_condition(self, var, source, mode_mask=None, *, nonzero=True, grey=False):
-        """Require source to be zero/nonzero for var to appear in the selected modes.
-
-        With grey=True the row stays visible and is greyed out (not editable)
-        while the condition fails, instead of being hidden. SX567 only.
-        """
-        if grey and not self.asf.cdx_ver.startswith('SX567-'):
-            raise ValueError("custom_menu_add_condition: grey-out is supported on SX567 only")
+    def custom_menu_add_condition(self, var, source, mode_mask=None, *, nonzero=True):
+        """Require source to be zero/nonzero for var to appear in the selected modes."""
         if mode_mask is None:
             mode_mask = self.CUSTOM_MENU_MODE_BITS
         mode_mask = int(mode_mask)
@@ -717,8 +678,7 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         source_id = self.asf.resolve_var_id(source)
         if self.asf.find_var_table_number(source_id) not in (4, 8):
             raise ValueError("custom_menu_add_condition: %s must be a g[4]/g[8] source" % source)
-        self.custom_menu_conditions.append(
-            (vid, source_id, mode_mask, int(bool(nonzero)) | (2 if grey else 0)))
+        self.custom_menu_conditions.append((vid, source_id, mode_mask, int(bool(nonzero))))
 
     def custom_menu_add_preview(self, source, target, payload, symbol):
         """Write a calculated target variable when a numeric editor's value changes."""
@@ -1825,30 +1785,6 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         addr = self._write_payload_u16('target_rh', 'target_rh_var_id', vid)
         self._custom_detail('Target RH: %s var_id=0x%04X at 0x%08X' % (var, vid, addr))
 
-    def custom_patch_settings_humid_start(self):
-        """Expose the Humid Start switch in Accessories."""
-        # The switch takes the first free slot, and is left out when there is
-        # none. Label strings are never short; once the reclaimed pool is
-        # empty, new string IDs are allocated. Min Tube is a patch-time value
-        # (--humid-start-min-tube); the plate coupling is a constant in
-        # humidity_model.h.
-        dep = self.asf.find_var_table_index(4, 'RGT')
-        enable = self.custom_claim_free_g8_var(
-            self.FREE_SWITCH_SLOTS, 'humid_start_enable')
-        if enable is None:
-            self._custom_detail('Humid Start switch: no free on/off slot')
-        else:
-            label = self.redefine_fw_string(-1, {0: 'Humid Start'}, 'humid_start_enable_label')
-            self.redefine_g8_var(enable, 0x0007, 0, dep, label, 1,
-                                 2, 0, 0x00000003, self.asf.str_id_off_on_base, 0)
-            self.custom_storage_add_unless_member(enable)
-            self.custom_menu_add('accessories', enable, self.CUSTOM_MENU_MODE_BITS)
-            # Greyed out, and without effect, while no humidifier is attached.
-            self.custom_menu_add_condition(enable, 'HUM', grey=True)
-            vid = self.asf.resolve_var_id(enable)
-            addr = self._write_payload_u16('humid_start', 'humid_start_enable_var_id', vid)
-            self._custom_detail('Humid Start: %s var_id=0x%04X at 0x%08X' % (enable, vid, addr))
-
     def custom_patch_settings_collect_features(self):
         """Return active custom-settings feature functions."""
         feature_patches = (
@@ -1865,8 +1801,6 @@ class ASFirmwarePatches(CompiledPayloadMixin):
             ('target_rh', self.custom_patch_settings_target_rh),
             ('header_clock', self.custom_patch_settings_header_clock),
             ('learn_targets', self.custom_patch_settings_learn_targets),
-            # Last: its switch claims a g[8] slot left free by the features above.
-            ('humid_start', self.custom_patch_settings_humid_start),
         )
         active = self.applied_payloads | self.enabled_custom_settings_features
         return [feature for source, feature in feature_patches if source in active]

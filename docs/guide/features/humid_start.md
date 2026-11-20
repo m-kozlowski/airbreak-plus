@@ -179,25 +179,10 @@ even if the water is still cold.
 
 ## Settings
 
-With custom settings, clinical **Accessories** contains the settings below.
-While no humidifier is attached they are greyed out and cannot be changed, and
-Humid Start has no effect.
-
-| Setting | Values | Default |
-|---------|--------|---------|
-| Humid Start | Off, On | On |
-
-The switch takes the first free variable of the custom settings pool and is
-left out when there is none. A build with many other custom settings (the plus
-preset, for example, uses every on/off slot) has no Humid Start switch, and
-Humid Start is on. Without custom settings Humid Start is on. Min Tube is not a
-menu setting (see above), and the coupling is fixed at 0.25.
-
-The variables RMM, ZRA, LET and LEF are never used: stock code still reads
-RMM and ZRA, and LET and LEF belong to a stock placeholder service. A
-settings variable that another build gave to a different feature keeps its
-stored value, so after moving between builds with different features check
-the Accessories settings and the therapy switches in the menus.
+Humid Start has no menu setting: building the firmware with the patch turns
+it on, and building without it turns it off. It only acts while a humidifier
+is attached and climate control is Auto with a heated tube. Min Tube is chosen
+when patching (see above), and the coupling is fixed at 0.25.
 
 Enable it with `--patch-humid-start y`. It is off by
 default and requires font repacking (on by default). Humid Start does not use

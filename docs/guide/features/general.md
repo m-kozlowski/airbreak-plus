@@ -137,8 +137,8 @@ At the start of therapy, the heated tube normally reaches its temperature
 within minutes, while the humidifier plate takes much longer to heat the water.
 Until then the air is warm but dry. This optional patch (SX567 only) holds
 the tube back while the humidifier warms up, so the air reaches the target
-humidity sooner. It adds a Humid Start switch to the Accessories menu. Min Tube is chosen
-when patching (`--humid-start-min-tube`).
+humidity sooner. It has no menu setting: the patch is the switch. Min Tube is
+chosen when patching (`--humid-start-min-tube`).
 
 See [Humid Start](humid_start.md) for how it works, the settings and tuning.
 

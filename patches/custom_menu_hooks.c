@@ -27,7 +27,6 @@ extern void *menu_create_numeric_var(void *storage, int var_id, int arg);
 extern void *menu_create_static_string(void *storage, int str_id);
 extern void variable_lookup_handler(void *ctx, int var_id, int arg);
 extern void variable_set_visible_from_handler(void *ctx, int visible);
-extern void variable_set_editable_from_handler(void *ctx, int editable);
 extern void variable_handler_release(void *ctx);
 extern int variable_get_by_id(int var_id);
 extern unsigned file_get_size(void *file);
@@ -345,43 +344,27 @@ void custom_menu_hook_common(void *list, void *item, unsigned return_pc)
 	scrollbar_add_item(list, item);
 }
 
-/* Sets VIS from the entry's modes and hide conditions, and, when the entry
- * has grey-out conditions, EDT from those: a non-editable row is greyed out.
- * The EDT setter is only mapped for SX567; the patcher allows grey-out there
- * only.
- */
-static void custom_menu_set_state(u16 var_id, int visible, int editable)
+static void custom_menu_set_visible(u16 var_id, int visible)
 {
 	u32 ctx[16];
 
 	variable_lookup_handler(ctx, var_id, 0);
 	variable_set_visible_from_handler(ctx, visible);
-#if !defined(CDX_VER_0204) && !defined(CDX_VER_0205)
-	if (editable >= 0)
-		variable_set_editable_from_handler(ctx, editable);
-#endif
 	variable_handler_release(ctx);
 }
 
-/* 1 when all applicable conditions of one kind hold (hide conditions for
- * grey = 0, grey-out conditions for grey = 1); -1 when there are no grey-out
- * conditions to apply.
- */
-static int custom_menu_conditions_match(u16 var_id, u32 mode_bit, unsigned grey)
+static int custom_menu_conditions_match(u16 var_id, u32 mode_bit)
 {
 	const custom_menu_condition_t *condition = custom_menu_conditions();
-	int match = grey ? -1 : 1;
 	if (!condition)
-		return match;
+		return 1;
 	for (; condition->item_id != 0xffff; condition++) {
-		if (condition->item_id != var_id || !(condition->mode_mask & mode_bit) ||
-		    (condition->nonzero >> 1) != grey)
+		if (condition->item_id != var_id || !(condition->mode_mask & mode_bit))
 			continue;
-		if ((variable_get_by_id(condition->source_id) != 0) != (condition->nonzero & 1))
+		if ((variable_get_by_id(condition->source_id) != 0) != condition->nonzero)
 			return 0;
-		match = 1;
 	}
-	return match;
+	return 1;
 }
 
 void custom_menu_apply_mode_visibility(void)
@@ -403,9 +386,8 @@ void custom_menu_apply_mode_visibility(void)
 			continue;
 		int visible = (entry->mode_mask & CUSTOM_MENU_MODE_BITS & mode_bit) != 0;
 		if (visible)
-			visible = custom_menu_conditions_match(entry->item_id, mode_bit, 0);
-		custom_menu_set_state(entry->item_id, visible,
-				      custom_menu_conditions_match(entry->item_id, mode_bit, 1));
+			visible = custom_menu_conditions_match(entry->item_id, mode_bit);
+		custom_menu_set_visible(entry->item_id, visible);
 	}
 }
 

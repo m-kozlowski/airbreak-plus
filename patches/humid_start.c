@@ -102,19 +102,11 @@ extern int millisecond_timer_expired(void *timer, unsigned ms);
 extern float climate_tube_setpoint_get(struct obj *inputs);
 extern float climate_reference_temperature_get(struct obj *sensors);
 extern void *const climate_inputs_vtable[];
-extern const unsigned short humid_start_enable_var_id;
 extern const unsigned short humid_start_min_tube_c;
 extern int variable_get_by_id(int var_id);
 
 static float call_f(struct obj *o, int slot) { return ((getf_t)o->vptr[slot])(o); }
 static int call_i(struct obj *o, int slot) { return ((geti_t)o->vptr[slot])(o); }
-
-/* Custom settings, when installed, supply the switch. */
-static int enabled(void)
-{
-    return humid_start_enable_var_id == 0xffffu ||
-           variable_get_by_id(humid_start_enable_var_id);
-}
 
 /* Plate bound coupling: the constant in humidity_model.h. A fixed value, not
  * a setting; a programmer can change HUMIDITY_PLATE_COUPLING there.
@@ -203,7 +195,7 @@ float start(struct obj *inputs)
     s->capping = s->done &&
                  variable_get_by_id(VAR_ID_HTT) < set * 10.0f - 10.0f * HANDOFF_MARGIN &&
                  !millisecond_timer_expired(s->sample, HANDOFF_MS);
-    if (s->done || !enabled() || !call_i(inputs, INPUT_HUMIDIFIER_ACTIVE) ||
+    if (s->done || !call_i(inputs, INPUT_HUMIDIFIER_ACTIVE) ||
             !auto_with_tube(inputs))
         return set;
 

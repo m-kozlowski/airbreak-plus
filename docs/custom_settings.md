@@ -43,7 +43,6 @@ Settings are assigned when their corresponding patch or payload is active.
 | [Backlight adaptation](guide/features/backlight.md) | Buttons / Low | LBL | g[4] | CSG |
 | [Backlight adaptation](guide/features/backlight.md) | Buttons / High | LBH | g[4] | CSG |
 | [Target humidity](guide/features/general.md#target-humidity) | Target RH (%) | RCH | g[4] | CSG |
-| [Humid Start](guide/features/humid_start.md) | Humid Start | first free g[8] slot of RXH, RXW, RSA, RPF, RPW, RPO, RPH, RXM; omitted when none is free | g[8] | CSG |
 
 
 ## Application sequence
@@ -311,16 +310,12 @@ visibility selected by stock firmware callbacks. Existing menu refresh code
 then shows or hides the variable item. Static headings and page links are
 always visible.
 
-`custom_menu_add_condition(var, source, mode_mask=None, *, nonzero=True, grey=False)`
-adds a visibility condition to a registered variable. The source must be a g[4] or
+`custom_menu_add_condition(var, source, mode_mask=None, *, nonzero=True)` adds a
+visibility condition to a registered variable. The source must be a g[4] or
 g[8] variable. `nonzero=True` requires a nonzero raw value; `False` requires
 zero. The mask selects the MOP modes in which this condition applies, defaulting
 to all modes. Outside that mask the condition has no effect. All applicable
 conditions must hold in addition to the menu entry's mode mask.
-With `grey=True` (SX567 only) a failing condition greys the row out instead of
-hiding it: the row stays visible but the handler's EDT flag is cleared, so it
-cannot be changed. Grey-out conditions are evaluated separately from hiding
-conditions.
 
 Conditions use a separate sentinel-terminated table:
 
@@ -329,7 +324,7 @@ Conditions use a separate sentinel-terminated table:
 | +0x00 | u16 | target variable ID; `0xFFFF` ends the table |
 | +0x02 | u16 | source variable ID |
 | +0x04 | u16 | applicable MOP bits 0..11 |
-| +0x06 | u16 | bit 0: required source state, 0 for zero, 1 for nonzero; bit 1: grey out instead of hide |
+| +0x06 | u16 | required source state: 0 for zero, 1 for nonzero |
 
 Targets must have framework-managed visibility; entries marked
 `CUSTOM_MENU_MODE_KEEP_VISIBILITY` cannot have these conditions. The patcher
