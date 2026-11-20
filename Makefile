@@ -14,7 +14,7 @@ PATCHER_OUTPUT_ARGS += --verbose
 endif
 
 # Use all cores unless the caller selected -j, and keep output lines intact.
-JOBS ?= $(shell nproc)
+JOBS ?= $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1)
 ifeq ($(MAKELEVEL),0)
 ifeq ($(filter -j%,$(MAKEFLAGS)),)
 MAKEFLAGS += -j$(JOBS)
@@ -206,7 +206,7 @@ S10_PAYLOAD_LDFLAGS_$(1) ?= --sort-section=name
 
 $(foreach p,$(S10_PAYLOAD_IMPORTS_$(1)),$(if $(filter $(p),$(PAYLOADS_$(2))),,$(error $(1)_$(2) requires payload $(p) in PAYLOADS_$(2))))
 
-$(BUILD)/$(1)_$(2).bin: private PAYLOAD_LINKER_SCRIPT := $(call payload_linker_script,$(1))
+$(BUILD)/$(1)_$(2).bin: PAYLOAD_LINKER_SCRIPT := $(call payload_linker_script,$(1))
 
 $(BUILD)/$(1)_$(2).probe.elf: $$(call s10_payload_objects,$(1),$(2)) $$(call s10_payload_imports,$(1),$(2),.probe) $(or $(call payload_linker_script,$(1)),$(SRC)/s10_code_caves.tsv) | $(BUILD)
 	@set -e; $(if $(call payload_linker_script,$(1)),,addr=$$$$($(call probe_addr,$(1),$(2)));) \
@@ -263,7 +263,7 @@ DEPFLAGS = -MMD -MP -MF $(basename $@).d -MT $@
 # $(1): file stem, $(2): compiler/flag variable names
 define compiler_config
 compile_config_$(1) := $$(foreach name,$(2),$$(name)=$$($$(name)))
-ifneq ($$(file <$(BUILD)/$(1).flags),$$(compile_config_$(1)))
+ifneq ($$(shell cat '$(BUILD)/$(1).flags' 2>/dev/null),$$(compile_config_$(1)))
 .PHONY: $(BUILD)/$(1).flags
 endif
 $(BUILD)/$(1).flags: | $(BUILD)
