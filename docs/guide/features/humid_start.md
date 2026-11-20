@@ -5,6 +5,22 @@ within minutes, while the humidifier plate takes much longer to heat the water.
 Until then the air is warm but dry. This optional patch (SX567 only) holds
 the tube back while the humidifier warms up.
 
+## Enabling
+
+Build with `--patch-humid-start y`, or tick Humid Start in AirBreaker. It is off
+by default and requires font repacking (on by default). Humid Start has no menu
+setting: the patch is the switch. To turn it off, build and flash without it.
+
+- It only acts while a humidifier is attached and climate control is Auto with
+  a heated tube. In any other case the tube behaves as stock.
+- [Min Tube](#min-tube) is chosen when patching. The
+  [plate coupling](#plate-coupling) is fixed at 0.25.
+- It supports the SX567 firmware versions 0302, 0305, 0306, 0401 and 0402. It
+  has been tested on a device with 0401 only.
+- Humid Start does not use the fonts: the requirement is for flash space. Its
+  payload (about 1 KB) is placed in the code caves that repacking frees in the
+  font storage (see `patches/s10_code_caves.tsv`).
+
 ## How it works
 
 During warm-up, the tube setpoint is capped at the temperature where the
@@ -119,8 +135,9 @@ It has not been checked against a hygrometer.
 
 The coupling is a fixed value, not a setting: it is hard to choose without a
 hygrometer. It is `HUMIDITY_PLATE_COUPLING` in `patches/humidity_model.h`, where
-a programmer can change it; this section explains what it does. The coupling is the fraction of the plate's rise above room temperature over
-which the air leaving the chamber is assumed to pick up moisture. It scales the
+a programmer can change it; this section explains what it does. The coupling is
+the fraction of the plate's rise above room temperature over which the air
+leaving the chamber is assumed to pick up moisture. It scales the
 plate bound, so it only matters while the plate bound is the smaller one: during
 the first minutes. It has no effect once the heater-power bound takes over. The
 default is **0.25**, which has not been calibrated.
@@ -152,7 +169,8 @@ where `ah_sat(T) = 4.61 + 0.436 T + 0.00122 T² + 0.000427 T³` g/m³. For a pla
 68 °C, ambient 32 °C and a power bound of 13.7 g/m³ this gives about 0.18. This
 assumes the stock calibration is right in steady state.
 
-A practical procedure is to start at the default 0.25 and step down by 0.05 on
+To try another value, change `HUMIDITY_PLATE_COUPLING`, rebuild and flash. A
+practical procedure is to start at the default 0.25 and step down by 0.05 on
 successive nights, keeping the tube setting, target RH and water level the same,
 until you see condensation near the mask, then keep the previous value. If 0.25
 already condenses, raise it.
@@ -176,16 +194,3 @@ even if the water is still cold.
 - A minimum at or above the tube temperature setting ends Humid Start at once,
   so the tube behaves as stock.
 - The value is whole °C. It is not converted when the device shows °F.
-
-## Settings
-
-Humid Start has no menu setting: building the firmware with the patch turns
-it on, and building without it turns it off. It only acts while a humidifier
-is attached and climate control is Auto with a heated tube. Min Tube is chosen
-when patching (see above), and the coupling is fixed at 0.25.
-
-Enable it with `--patch-humid-start y`. It is off by
-default and requires font repacking (on by default). Humid Start does not use
-the fonts: the requirement is for flash space. Its payload (about 1 KB) is placed
-in the code caves that repacking frees in the font storage (see
-`patches/s10_code_caves.tsv`).

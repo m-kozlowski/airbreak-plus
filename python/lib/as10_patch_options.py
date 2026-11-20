@@ -92,7 +92,7 @@ PLATFORM = Platform('air10', categories=(
                             Value(percentage, 'PERCENT'), 85.0),
               )),
         Patch('patch-humid-start',
-              'Humid Start: hold the heated tube at the target RH temperature while the humidifier warms up.',
+              'Hold the heated tube back while the humidifier warms up',
               False, 'patch_humid_start', category='Quality of life',
               requires=('patch-font-repack',), parameters=(
                   Parameter('humid-start-min-tube',
