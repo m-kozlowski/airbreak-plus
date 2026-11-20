@@ -8,7 +8,7 @@ Two paths depending on whether you have an original firmware image.
 
 ### Path A: already have a firmware image
 
-If you obtained an original firmware dump elsewhere and don’t need to back up the current firmware, you can skip the device disassembly and SWD hardware entirely and [flash over UART](serial_connection.md).
+If you obtained an original firmware dump elsewhere and don't need to back up the current firmware, you can skip the device disassembly and SWD hardware entirely and [flash over UART](serial_connection.md).
 
 Copy original firmware to cloned directory as `stm32.bin` and jump to [step 4 (patch)](#4-patch).
 

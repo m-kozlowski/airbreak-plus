@@ -105,7 +105,7 @@ make as11 AS11_FIRMWARE=/path/to/original.bin \
 | Patch | What it does | Switch |
 |-------|--------------|--------|
 | [Runtime identity](../../as11/patch_airbreak_info.md) | Exposes the Airbreak version and installed changes through RPC | `--patch-airbreak-info` |
-| Bootloader service | Adds internal-flash and NOR memory-chip read/write service over CAN for bootloader 1.1.0 | `--patch-fgbl-service` |
+| Bootloader service | Adds internal-flash and NOR memory-chip read/write service over CAN on a supported bootloader | `--patch-fgbl-service` |
 
 See [Features](features.md) for additional behavior details.
 
@@ -162,9 +162,10 @@ make as11 AIR11_PATCH_ARGS='--patch-backlight y --backlight-threshold-low 5 --ba
 ## Bootloader Service
 
 `patch-fgbl-service` adds a bootloader maintenance mode for reading and writing
-internal flash and the physical NOR memory chip over CAN. It is included in the default
-patch set for bootloader version 1.1.0. To enter service mode while resetting or
-powering on the device, hold the physical Start/Stop button or transmit a
+internal flash and the physical NOR memory chip over CAN. It is included in
+the default patch set on a supported bootloader. To enter service mode while
+resetting or powering on the device, hold the physical Start/Stop button or
+transmit a
 continuous 1 Mbit/s CAN burst. Release the button or stop the burst when the
 status LED starts blinking.
 

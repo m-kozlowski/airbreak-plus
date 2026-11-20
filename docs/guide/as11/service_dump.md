@@ -2,17 +2,34 @@
 
 Airbreak can read the complete 2 MiB internal flash over CAN without opening
 the device. This is an alternative to the standard SWD dump. It requires an
-unmodified Air11 image containing bootloader version 1.1.0. This file is
-referred to below as the **reference image**.
+unmodified Air11 image with a bootloader the service patch supports, referred
+to below as the **reference image**.
 
-This procedure replaces the bootloader, which starts the device and applies
-firmware updates. If power or CAN communication is lost while it is being
-written, the device may stop booting and require SWD recovery. Keep the device
-and adapter powered until the update completes.
+> **Before you start:** This procedure replaces the bootloader, which starts
+> the device and applies firmware updates. If power or CAN communication is
+> lost while it is being written, the device may stop booting and require SWD
+> recovery. Keep the device and adapter powered until the update completes.
 
 The repository does not distribute ResMed firmware. The reference image may
-come from any AirSense 11 or AirCurve 11 image with bootloader version `1.1.0`.
-Only its 128 KiB bootloader region is written to the device.
+come from any AirSense 11 or AirCurve 11 unit whose bootloader the service
+patch supports; only its 128 KiB bootloader region is written to the device.
+
+## Why this works
+
+The Air11 internal flash is divided into regions that the update path addresses
+independently:
+
+| Region | Content |
+|--------|---------|
+| FGBL | bootloader and lower update path |
+| CONF | model definition: descriptors, schemas, and product data |
+| APPL | application firmware: therapy control, user interface, drivers |
+
+Because the regions are independent, the reference image supplies only a
+service-enabled FGBL while the device keeps its own CONF and APPL. The service
+runs inside the bootloader, so it reads and writes flash even when the
+application cannot start. The factory bootloader cannot read flash back; the
+service patch adds the read path.
 
 ## Requirements
 
@@ -23,13 +40,15 @@ Only its 128 KiB bootloader region is written to the device.
 
 ## Prepare the bootloader
 
-Check the reference image versions:
+Check the reference image:
 
 ```
 python3 python/resmed_image.py info reference.bin
 ```
 
-The bootloader version must be `1.1.0`.
+The `Boot:` line reports the image's bootloader; `info` refuses an image whose
+bootloader it does not recognize. The service patch supports specific
+bootloader builds and rejects an unsupported reference by its build ID.
 
 Build the compiled payloads:
 
@@ -46,8 +65,9 @@ python3 python/patch-airsense-s11.py \
     --patch-fgbl-service y
 ```
 
-Install only the bootloader region. The model definition and application
-firmware already installed on the device are not changed.
+Install the bootloader region. `--include-bootloader` is the deliberate
+confirmation required for a bootloader write, and `--block bootloader` keeps
+the write to that region.
 
 ```
 python3 python/as11_flash.py flash \
@@ -56,6 +76,11 @@ python3 python/as11_flash.py flash \
     --block bootloader \
     --include-bootloader
 ```
+
+Before writing, `as11_flash` reads the device's running bootloader and stops if
+its flash layout differs from the reference image's, which would otherwise
+leave the existing CONF and APPL at the wrong offsets. Pass `--force` only when
+you are sure the layouts match.
 
 ## Enter service mode
 
