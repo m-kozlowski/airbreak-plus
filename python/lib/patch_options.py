@@ -60,6 +60,7 @@ RUN_OPTIONS = (
     Flag("overwrite", "Overwrite an existing output file."),
     Flag("verbose", "Show per-patch details.", "v"),
     Parameter("log-file", "Append a verbose patching transcript to this file.", Value()),
+    Flag("force-deprecated", "Apply deprecated patches (you know what you are doing)."),
 )
 
 

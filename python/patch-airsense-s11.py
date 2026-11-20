@@ -15,15 +15,12 @@ import argparse
 import binascii
 import datetime
 import fnmatch
-import io
 import json
 import os
 import re
 import struct
 import subprocess
 import sys
-from contextlib import redirect_stdout
-from dataclasses import dataclass
 
 from lib.as11_conf_discovery import (
     discover_conf_global_count,
@@ -32,15 +29,11 @@ from lib.as11_conf_discovery import (
 )
 from lib.as11_patch_versions import AS11_FGBL_PATCH_VERSIONS, AS11_PATCH_VERSIONS
 from lib.compiled_payload import CompiledPayloadMixin
-from lib.patch_config import parse_patch_args
+from lib.patch_runner import (
+    PatchOutcome, PatchVersionUnavailable, apply_patch_phases, apply_reported_patch, exit_with,
+    run_main, run_unreported_step)
 from lib import patch_options
 from lib.as11_patch_options import RPC_DATAITEM_PERMISSION_FLAGS
-
-
-class PatchVersionUnavailable(ValueError):
-    def __init__(self, status, summary):
-        super().__init__(summary)
-        self.status = status
 
 
 def crc16_ccitt_false(data, crc=0xFFFF):
@@ -566,7 +559,8 @@ class S11Firmware(object):
         )
         return struct.pack("<HH", first, second)
 
-    def patch(self, patchdata, addr=None, dataseq=None, verbose=True, checkempty=False):
+    def patch(self, patchdata, addr=None, dataseq=None, verbose=True,
+              checkempty=False, clobber=False):
         patchdata = bytes(patchdata)
         if addr is None:
             if dataseq is None:
@@ -574,7 +568,7 @@ class S11Firmware(object):
             addr = self.find_bytes(dataseq)
         if verbose:
             print("Patching %d bytes at 0x%x" % (len(patchdata), addr))
-        if checkempty and bytes(self.fw[addr:addr + len(patchdata)]) != b"\xFF" * len(patchdata):
+        if checkempty and not clobber and bytes(self.fw[addr:addr + len(patchdata)]) != b"\xFF" * len(patchdata):
             raise ValueError("Appears data in section you want me to patch! Bailing out...")
         self.fw[addr:addr + len(patchdata)] = patchdata
 
@@ -1008,11 +1002,12 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         self.rpc_dispatcher_context = None
         self.rpc_dispatcher_outcome = None
         self.custom_settings_enabled = False
+        self.enabled_custom_settings_features = set()
         self.custom_setting_claims = {}
+        self.custom_setting_bindings = []
         self.custom_reclaim_pools = set()
         self.custom_menu_entries = []
         self.custom_enum_label_requests = {}
-        self.custom_setting_bindings = []
         self.storage_member_requests = {}
         self.airbreak_info_enabled = False
         self.patch_outcomes = {}
@@ -1082,7 +1077,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         storage = {}
         for role in ("gate", "extension"):
             name = "as11_fgbl_service_" + role
-            data, _ = self._load_versioned_bin(name, required=True, region="FGBL")
+            data, _ = self._load_versioned_bin(name, region="FGBL")
             storage[role], _ = self._inject_payload(name, data, region="FGBL")
         for hook, role in (("selector_hook", "gate"),
                            ("dispatch_hook_storage", "extension")):
@@ -1090,23 +1085,33 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             self.asf.write_thumb2_bl_target(
                 self.asf.ptr_to_off(version_data[hook]), storage[role]
             )
+        return PatchOutcome.ok()
+
+    def mop_callback_dispatcher_available(self):
+        """OK, or SKIP with the reason the MOP callback dispatcher cannot be installed."""
+        outcome = self._prepare_mop_callback_dispatcher()
+        if outcome.status == "OK":
+            return outcome
+        summary = "MOP callback dispatcher unavailable"
+        if outcome.summary:
+            summary += ": " + outcome.summary
+        return PatchOutcome.skip(summary)
 
     def mop_callback_register_handler(self, handler, name):
-        """Register one feature handler to run after a MOP writeback."""
-        outcome = self._prepare_mop_callback_dispatcher()
-        if outcome.status != "OK":
-            summary = "MOP callback dispatcher unavailable"
-            if outcome.summary:
-                summary += ": " + outcome.summary
-            return PatchOutcome.skip(summary)
+        """Register one feature handler to run after a MOP writeback.
+
+        Raises when the dispatcher is unavailable. A patch that can be skipped
+        checks mop_callback_dispatcher_available() before modifying the image.
+        """
+        if self._prepare_mop_callback_dispatcher().status != "OK":
+            raise ValueError("%s: MOP callback dispatcher unavailable" % name)
 
         handler = int(handler) | 1
         if handler in self.mop_callback_handler_seen:
-            return PatchOutcome.ok()
+            return
         self.mop_callback_handler_seen.add(handler)
         self.mop_callback_handlers.append(handler)
         print("  MOP callback handler: %s at 0x%08X" % (name, handler))
-        return PatchOutcome.ok()
 
     def patch_mop_callback_dispatcher(self):
         """Install the shared EnumDataItem writeback dispatcher."""
@@ -1174,12 +1179,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             )
             return self.mop_callback_dispatcher_outcome
 
-        data, _ = self._load_versioned_bin(
-            AS11_MOP_CALLBACK_DISPATCHER_PAYLOAD, required=True
-        )
-        elf_path = self._versioned_artifact_path(
-            AS11_MOP_CALLBACK_DISPATCHER_PAYLOAD, "elf", ver
-        )
+        data, _, elf_path = self._load_versioned_payload(AS11_MOP_CALLBACK_DISPATCHER_PAYLOAD)
         start = self._elf_symbol_addr(elf_path, "start")
         handler_table = self._elf_symbol_addr(
             elf_path, "mop_callback_handler_table"
@@ -1215,22 +1215,31 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         self.mop_callback_dispatcher_outcome = PatchOutcome.ok()
         return self.mop_callback_dispatcher_outcome
 
-    def rpc_object_register(self, rpc_object, name):
-        """Register one rpc_object_t with the shared named-object dispatcher."""
+    def rpc_dispatcher_available(self):
+        """OK, or SKIP with the reason the RPC dispatcher cannot be installed."""
         outcome = self._prepare_rpc_dispatcher()
-        if outcome.status != "OK":
-            summary = "RPC dispatcher unavailable"
-            if outcome.summary:
-                summary += ": " + outcome.summary
-            return PatchOutcome.skip(summary)
+        if outcome.status == "OK":
+            return outcome
+        summary = "RPC dispatcher unavailable"
+        if outcome.summary:
+            summary += ": " + outcome.summary
+        return PatchOutcome.skip(summary)
+
+    def rpc_object_register(self, rpc_object, name):
+        """Register one rpc_object_t with the shared named-object dispatcher.
+
+        Raises when the dispatcher is unavailable. A provider checks
+        rpc_dispatcher_available() before modifying the image.
+        """
+        if self._prepare_rpc_dispatcher().status != "OK":
+            raise ValueError("%s: RPC dispatcher unavailable" % name)
 
         rpc_object = int(rpc_object)
         if rpc_object in self.rpc_object_seen:
-            return PatchOutcome.ok()
+            return
         self.rpc_object_seen.add(rpc_object)
         self.rpc_objects.append(rpc_object)
         print("  RPC object: %s at 0x%08X" % (name, rpc_object))
-        return PatchOutcome.ok()
 
     @staticmethod
     def _rel32_target(address, value):
@@ -1287,8 +1296,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             self.rpc_dispatcher_outcome = PatchOutcome(exc.status, str(exc))
             return self.rpc_dispatcher_outcome
 
-        data, _ = self._load_versioned_bin(AS11_RPC_DISPATCHER_PAYLOAD, required=True)
-        elf_path = self._versioned_artifact_path(AS11_RPC_DISPATCHER_PAYLOAD, "elf", ver)
+        data, _, elf_path = self._load_versioned_payload(AS11_RPC_DISPATCHER_PAYLOAD)
         start = self._elf_symbol_addr(elf_path, "start")
         registry_ctor = self._elf_symbol_addr(elf_path, "rpc_profile_json_formatter_registry_ctor")
         object_table = self._elf_symbol_addr(elf_path, "rpc_object_table")
@@ -1318,6 +1326,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
     def enable_custom_settings(self):
         """Enable custom settings requested by payload patches."""
         self.custom_settings_enabled = True
+        return PatchOutcome.ok()
 
     def storage_register_members(self, group, *identifiers):
         """Queue persistent DataItems; each group is rebuilt once at finalization."""
@@ -1395,6 +1404,10 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             raise ValueError("custom settings: %s defined twice" % setting)
         claim["definition"] = dict(fields)
 
+    def custom_setting_bind(self, setting, payload, symbol):
+        """Queue a DataItem ID for a named 16-bit payload slot."""
+        self.custom_setting_bindings.append((self._custom_setting_key(setting), payload, symbol))
+
     def custom_menu_add(
             self, section, setting, label_id, mode_mask,
             factory):
@@ -1418,11 +1431,6 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             "mode_mask": mode_mask,
             "factory": factory,
         })
-
-    def custom_setting_bind(self, setting, abi_slot):
-        """Write a DataItem's var_id into a payload ABI slot."""
-        setting = self._custom_setting_key(setting)
-        self.custom_setting_bindings.append((setting, abi_slot))
 
     def custom_enum_labels(self, setting, labels):
         """Assign existing GUI text IDs to raw enum values."""
@@ -1492,24 +1500,35 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             "patches": patches,
         }
 
+    def custom_patch_settings_collect_features(self):
+        """Return active custom-settings feature functions."""
+        feature_patches = (
+            (AS11_ASV_BACKUP_RATE_PAYLOAD, self.custom_patch_settings_asv_backup_rate),
+            ("therapy_screen_style", self.custom_patch_settings_therapy_screen_style),
+            ("header_clock", self.custom_patch_settings_header_clock),
+            (AS11_FLOW_WAVE_PAYLOAD, self.custom_patch_settings_flow_wave),
+        )
+        active = self.applied_payloads | self.enabled_custom_settings_features
+        return [feature for source, feature in feature_patches if source in active]
+
     def finalize_custom_settings(self):
-        """Resolve queued feature requests and install their shared support."""
+        """Register active features, resolve their requests and install shared support."""
         if not self.custom_settings_enabled:
             return PatchOutcome.skip("custom settings disabled")
-        if not (self.custom_setting_claims or self.custom_menu_entries or
-                self.custom_setting_bindings or self.custom_reclaim_pools):
-            return PatchOutcome.skip("no active features")
+        features = self.custom_patch_settings_collect_features()
+        if not features:
+            return PatchOutcome.skip("no active custom-setting features")
+        for feature in features:
+            feature()
 
         ver = self._payload_version_key()
 
         # Resolve each requested DataItem once after all feature patches have
         # declared their storage, menu, and ABI requirements.
         setting_names = set(self.custom_setting_claims)
+        setting_names.update(setting for setting, _, _ in self.custom_setting_bindings)
         setting_names.update(
             request["setting"] for request in self.custom_menu_entries
-        )
-        setting_names.update(
-            setting for setting, _abi_slot in self.custom_setting_bindings
         )
         setting_rows = {}
         for setting in setting_names:
@@ -1544,14 +1563,8 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         menu_symbols = None
         if self.custom_menu_entries or removed_rows:
             # Menu rows and reclaimed stock rows share one bridge payload.
-            data, _payload_ver = self._load_versioned_bin(
+            data, _payload_ver, elf_path = self._load_versioned_payload(
                 AS11_CUSTOM_SETTINGS_PAYLOAD
-            )
-            if data is None:
-                return PatchOutcome.skip("compiled payload unavailable")
-
-            elf_path = self._versioned_artifact_path(
-                AS11_CUSTOM_SETTINGS_PAYLOAD, "elf", ver
             )
             factory_symbols = {
                 name: self._elf_symbol_addr(elf_path, symbol)
@@ -1639,11 +1652,12 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             if any(
                     request["mode_mask"] != 0xFFFF
                     for request in self.custom_menu_entries):
-                outcome = self.mop_callback_register_handler(
-                    menu_symbols["start"], "custom_settings"
-                )
+                outcome = self.mop_callback_dispatcher_available()
                 if outcome.status != "OK":
                     return outcome
+                self.mop_callback_register_handler(
+                    menu_symbols["start"], "custom_settings"
+                )
 
         # Apply the prepared payload, descriptor, ABI, and reclaim changes.
         menu_flash = None
@@ -1696,16 +1710,6 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             if stock_feature:
                 self.disabled_stock_features.add(stock_feature)
 
-        # Compiled feature payloads receive resolved var_ids through explicit
-        # 16-bit ABI slots, keeping descriptor indexes out of their code.
-        for setting, abi_slot in self.custom_setting_bindings:
-            self.asf.patch_exact(
-                abi_slot, b"\xFF\xFF",
-                struct.pack("<H", setting_rows[setting]["var_id"]),
-            )
-
-        # Remove the original consumers only after their replacement resources
-        # and payload bindings have been installed.
         for off, patch_data in stock_patches:
             self.asf.patch(patch_data, addr=off, verbose=False)
 
@@ -1743,6 +1747,9 @@ class S11FirmwarePatches(CompiledPayloadMixin):
                 menu_symbols["call_off"], menu_symbols["wrapper"]
             )
 
+        for setting, payload, symbol in self.custom_setting_bindings:
+            self._write_payload_u16(payload, symbol, setting_rows[setting]["var_id"])
+
         for request in self.custom_menu_entries:
             row = setting_rows[request["setting"]]
             print(
@@ -1756,6 +1763,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
                 (AS11_CUSTOM_SETTINGS_PAYLOAD, ver,
                  len(menu_payload), menu_flash)
             )
+        return PatchOutcome.ok()
 
     def is_blacklisted_setting(self, row):
         long_name = row["long_name"] or ""
@@ -1961,19 +1969,21 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         self.storage_register_members("HST", "TSS")
         if menu is None:
             return PatchOutcome.warn("storage and RPC enabled; menu labels unavailable for this APPX")
+        self.enabled_custom_settings_features.add("therapy_screen_style")
+        return PatchOutcome.ok("Auto follows the therapy mode" if options > TSS_AUTO else None)
+
+    def custom_patch_settings_therapy_screen_style(self):
+        """Add Therapy View to Configuration with the native option labels."""
+        menu = self._patch_version_data("therapy_screen_style")
+        options = self.asf.find_descriptors("TSS", ("g5",))[0]["n_options"]
         self.custom_enum_labels("TSS", dict(enumerate(menu["option_labels"][:options])))
         self.custom_menu_add("configuration", "TSS", menu["label_id"], 0xFFFF, "enum")
-        return PatchOutcome.ok("Auto follows the therapy mode" if options > TSS_AUTO else None)
 
     def _therapy_screen_style_auto(self, anchors):
         """Add raw TSS 3: Simple in CPAP, AutoSet and AutoSet for Her, otherwise Pressure."""
-        ver = self._payload_version_key()
         if "pressure_bar_registration_call" not in anchors:
             return False
-        data, _ = self._load_versioned_bin(AS11_THERAPY_SCREEN_STYLE_PAYLOAD)
-        if data is None:
-            return False
-        elf_path = self._versioned_artifact_path(AS11_THERAPY_SCREEN_STYLE_PAYLOAD, "elf", ver)
+        data, _, elf_path = self._load_versioned_payload(AS11_THERAPY_SCREEN_STYLE_PAYLOAD)
         register_call = self.asf.ptr_to_off(anchors["pressure_bar_registration_call"])
         read_call = self.asf.ptr_to_off(anchors["pressure_bar_style_read_call"])
         # Native: movs r1,#1; movs r0,r4; bl GuiSwitchAction_add.
@@ -2032,6 +2042,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             "Patching therapy screen... %d visibility flags enabled, "
             "%d already enabled" % (changed, already_visible)
         )
+        return PatchOutcome.ok()
 
     def fix_ivaps_patient_height_range(self):
         """Replace the stripped metric-height descriptor with usable bounds."""
@@ -2244,6 +2255,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         print("Patching GUI enum editability... %d/%d masks enabled (%d already enabled, %d skipped, %d mirrors)" % (
             n_editable, len(editable_rows), n_already, n_skipped, mirror_count
         ))
+        return PatchOutcome.ok()
 
     def rpc_json_profile_visibility(self):
         # Each globals[18] record contains independent read-enabled and
@@ -2297,6 +2309,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         print("Patching RPC JSON profile visibility... %d/%d nodes enabled" % (n, len(nodes)))
         if n_hidden:
             print("Hiding blacklisted RPC JSON profile nodes... %d nodes disabled" % n_hidden)
+        return PatchOutcome.ok()
 
     def asv_pressure_support_range(self):
         """Remove the ASV/ASVAuto 5 cmH2O MinPS/MaxPS separation."""
@@ -2368,22 +2381,14 @@ class S11FirmwarePatches(CompiledPayloadMixin):
 
         print("Patching ASV pressure support range... %d max floors, %d static bounds, %d code constants" %
               (n_max_floor, n_static_bounds, n_code))
+        return PatchOutcome.ok()
 
     def asv_backup_rate(self):
         """Install an ASV/ASVAuto update wrapper that inhibits backup breaths."""
         ver = self._payload_version_key()
         version = self._patch_version_data("asv_backup_rate", ver)
-        data, _ = self._load_versioned_bin(AS11_ASV_BACKUP_RATE_PAYLOAD)
-        if data is None:
-            return PatchOutcome.skip("compiled payload unavailable")
-
-        elf_path = self._versioned_artifact_path(
-            AS11_ASV_BACKUP_RATE_PAYLOAD, "elf", ver
-        )
+        data, _, elf_path = self._load_versioned_payload(AS11_ASV_BACKUP_RATE_PAYLOAD)
         start = self._elf_symbol_addr(elf_path, "start")
-        backup_rate_var_slot = self._elf_symbol_addr(
-            elf_path, "as11_asv_backup_rate_var_id"
-        )
         original_update = self._elf_symbol_addr(elf_path, "AsvFeature_update")
         original_ptr = original_update | 1
         vtable_update_off = self.asf.ptr_to_off(version["vtable_slot"])
@@ -2396,8 +2401,18 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         # Replace the ASV update vtable entry; the payload calls the original
         # implementation through its versioned stub after applying the gate.
         self.asf.write_u32(vtable_update_off, start | 1)
-        # Without custom-settings finalization, the untouched 0xFFFF slot keeps
-        # backup-rate suppression active unconditionally.
+
+        print(
+            "Patching ASV backup rate... build/%s_%s.bin (%dB) at 0x%08X" %
+            (AS11_ASV_BACKUP_RATE_PAYLOAD, ver, len(data), flash)
+        )
+        return PatchOutcome.ok()
+
+    def custom_patch_settings_asv_backup_rate(self):
+        """Add the ASV/ASVAuto backup-rate switch to Therapy."""
+        # Without this function, the untouched 0xFFFF slot keeps backup-rate
+        # suppression active unconditionally.
+        version = self._patch_version_data("asv_backup_rate")
         backup_rate_setting = self.custom_setting_claim("RIF", "patch-asv-backup-rate", custom_name="ASVBackupRateEnable")
         self.custom_setting_define(
             backup_rate_setting,
@@ -2410,11 +2425,8 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             mode_mask=self.therapy_mode_mask("ASV", "ASVAuto"),
             factory="text_value",
         )
-        self.custom_setting_bind(backup_rate_setting, backup_rate_var_slot)
-
-        print(
-            "Patching ASV backup rate... build/%s_%s.bin (%dB) at 0x%08X" %
-            (AS11_ASV_BACKUP_RATE_PAYLOAD, ver, len(data), flash)
+        self.custom_setting_bind(
+            backup_rate_setting, AS11_ASV_BACKUP_RATE_PAYLOAD, "as11_asv_backup_rate_var_id"
         )
 
     def airplane_reminder(self):
@@ -2482,12 +2494,10 @@ class S11FirmwarePatches(CompiledPayloadMixin):
     def cellular_download(self):
         """Expose native cellular HTTP downloads through AirbreakDownload."""
         version = self._patch_version_data("cellular_download")
-        data, ver = self._load_versioned_bin(
-            AS11_CELLULAR_DOWNLOAD_PAYLOAD, required=True
-        )
-        elf_path = self._versioned_artifact_path(
-            AS11_CELLULAR_DOWNLOAD_PAYLOAD, "elf", ver
-        )
+        outcome = self.rpc_dispatcher_available()
+        if outcome.status != "OK":
+            return outcome
+        data, ver, elf_path = self._load_versioned_payload(AS11_CELLULAR_DOWNLOAD_PAYLOAD)
 
         rpc_object = self._elf_symbol_addr(
             elf_path, "cellular_download_rpc_object"
@@ -2520,9 +2530,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
                 version["set_state_prologue"]):
             raise ValueError("cellular download: state-machine hook does not match")
 
-        outcome = self.rpc_object_register(rpc_object, "AirbreakDownload")
-        if outcome.status != "OK":
-            return outcome
+        self.rpc_object_register(rpc_object, "AirbreakDownload")
 
         flash, _off = self._inject_payload(
             AS11_CELLULAR_DOWNLOAD_PAYLOAD, data
@@ -2770,13 +2778,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         """Show local time and therapy usage in the title bar."""
         ver = self._payload_version_key()
         anchors = self._patch_version_data("header_clock", ver)
-        data, _ = self._load_versioned_bin(AS11_HEADER_CLOCK_PAYLOAD)
-        if data is None:
-            return PatchOutcome.skip("compiled payload unavailable")
-
-        elf_path = self._versioned_artifact_path(
-            AS11_HEADER_CLOCK_PAYLOAD, "elf", ver
-        )
+        data, _, elf_path = self._load_versioned_payload(AS11_HEADER_CLOCK_PAYLOAD)
         draw_wrapper = self._elf_symbol_addr(elf_path, "start")
         menu_draw_wrapper = self._elf_symbol_addr(elf_path, "header_clock_menu_label_draw")
         ctor_wrapper = self._elf_symbol_addr(
@@ -2788,7 +2790,6 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         text_ids = self._elf_symbol_addr(
             elf_path, "header_clock_text_ids"
         )
-        setting_slot = self._elf_symbol_addr(elf_path, "header_clock_var_id")
         usage_slot = self._elf_symbol_addr(elf_path, "header_clock_usage_var_id")
         usage = self.asf.find_descriptors(self.header_clock_usage, ("g2",))[0]
         page_ids = self._elf_symbol_addr(elf_path, "header_clock_page_ids")
@@ -2839,18 +2840,23 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         self.asf.write_u32(timer_slot, timer_callback | 1)
 
         if menu_draw_call is not None:
-            setting = self.custom_setting_claim("RIM", "patch-header-clock", custom_name="HeaderClockEnable")
-            self.custom_setting_define(setting, default_option=0)
-            # TODO: Replace this label shim with framework-managed GUI string
-            # redefinition once custom settings can reclaim localized text IDs.
-            self.custom_menu_add("configuration", setting, anchors["menu_text_id"], 0xFFFF, "text_value")
-            self.custom_setting_bind(setting, setting_slot)
+            self.enabled_custom_settings_features.add("header_clock")
 
         print(
             "Patching header clock... build/%s_%s.bin (%dB) at 0x%08X; usage: %s" %
             (AS11_HEADER_CLOCK_PAYLOAD, ver, len(data), flash, self.header_clock_usage)
         )
         return PatchOutcome.ok()
+
+    def custom_patch_settings_header_clock(self):
+        """Add the Clock switch to Configuration."""
+        anchors = self._patch_version_data("header_clock")
+        setting = self.custom_setting_claim("RIM", "patch-header-clock", custom_name="HeaderClockEnable")
+        self.custom_setting_define(setting, default_option=0)
+        # TODO: Replace this label shim with framework-managed GUI string
+        # redefinition once custom settings can reclaim localized text IDs.
+        self.custom_menu_add("configuration", setting, anchors["menu_text_id"], 0xFFFF, "text_value")
+        self.custom_setting_bind(setting, AS11_HEADER_CLOCK_PAYLOAD, "header_clock_var_id")
 
     def backlight(self):
         """Set ambient thresholds, LCD levels, and transition delay."""
@@ -2877,6 +2883,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         self.asf.patch_exact(anchors["delay_ms"], "40f6b931", delay_instruction)
         print("Patching backlight... ambient thresholds=%d/%d, LCD=%d/%d%%, delay=%d ms" %
               (threshold_low, threshold_high, low, high, delay_ms))
+        return PatchOutcome.ok()
 
     def scroll_animation(self):
         """Increase the native scroll step by 50%, retaining its timer interval."""
@@ -2902,20 +2909,11 @@ class S11FirmwarePatches(CompiledPayloadMixin):
 
     def flow_wave(self):
         """Draw flow and mask pressure on the reclaimed Reminders page."""
-        if not self.custom_settings_enabled:
-            return PatchOutcome.skip("requires patch-custom-settings")
         ver = self._payload_version_key()
         anchors = AS11_PATCH_VERSIONS.get(ver, {}).get("flow_wave")
         if anchors is None:
             return PatchOutcome.skip("Flow view payload not ported to this APPX")
-        data, _ = self._load_versioned_bin(AS11_FLOW_WAVE_PAYLOAD)
-        if data is None:
-            return PatchOutcome.skip("compiled payload unavailable")
-        reclaim_data, _ = self._load_versioned_bin(AS11_CUSTOM_SETTINGS_PAYLOAD)
-        if reclaim_data is None:
-            return PatchOutcome.skip("Reminders reclaim requires the custom-settings bridge")
-
-        elf_path = self._versioned_artifact_path(AS11_FLOW_WAVE_PAYLOAD, "elf", ver)
+        data, _, elf_path = self._load_versioned_payload(AS11_FLOW_WAVE_PAYLOAD)
         ctor = self._elf_symbol_addr(elf_path, "start")
         layout_addr = self._elf_symbol_addr(elf_path, "flow_layout")
         gui_call = self.asf.ptr_to_off(anchors["gui_update_call"])
@@ -2942,9 +2940,6 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         # preserving its native Simple and Pressure destinations.
         tss_switch = self.asf.u32(self.asf.ptr_to_off(anchors["tss_switch_pointer"]))
 
-        # Queue removal of Reminders navigation and its scheduler in the custom
-        # settings finalizer. Flow reuses the page, not the reminder variables.
-        self.custom_settings_reclaim("reminders")
         self._inject_payload(AS11_FLOW_WAVE_PAYLOAD, data)
         # flow_layout in the C payload: native switch pointer, reclaimed page ID.
         self.asf.patch(struct.pack("<II", tss_switch, page_index), addr=self.asf.ptr_to_off(layout_addr))
@@ -2972,15 +2967,17 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         print("Patching Flow therapy view... native page %d, reclaiming Reminders" % page_index)
         return PatchOutcome.ok()
 
+    def custom_patch_settings_flow_wave(self):
+        """Reclaim the Reminders page for the Flow view."""
+        # Removes Reminders navigation and its scheduler. Flow reuses the page,
+        # not the reminder variables.
+        self.custom_settings_reclaim("reminders")
+
     def screen_keep_awake(self):
         """Toggle LCD inactivity suppression with a three-finger hold."""
         ver = self._payload_version_key()
-        data, _ = self._load_versioned_bin(AS11_SCREEN_KEEP_AWAKE_PAYLOAD)
-        if data is None:
-            return PatchOutcome.skip("compiled payload unavailable")
         anchors = self._patch_version_data("screen_keep_awake", ver)
-
-        elf_path = self._versioned_artifact_path(AS11_SCREEN_KEEP_AWAKE_PAYLOAD, "elf", ver)
+        data, _, elf_path = self._load_versioned_payload(AS11_SCREEN_KEEP_AWAKE_PAYLOAD)
         report_wrapper = self._elf_symbol_addr(elf_path, "start")
         ui_wrapper = self._elf_symbol_addr(elf_path, "screen_keep_awake_process_touch_events")
         fade_wrapper = self._elf_symbol_addr(elf_path, "screen_keep_awake_schedule_transition")
@@ -3028,8 +3025,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         """Retry unbonded pulse oximeters without security after pairing fails."""
         ver = self._payload_version_key()
         anchors = self._patch_version_data("ble_oxi_fallback", ver)
-        data, _ = self._load_versioned_bin(AS11_BLE_OXI_FALLBACK_PAYLOAD, required=True)
-        elf_path = self._versioned_artifact_path(AS11_BLE_OXI_FALLBACK_PAYLOAD, "elf", ver)
+        data, _, elf_path = self._load_versioned_payload(AS11_BLE_OXI_FALLBACK_PAYLOAD)
         hooks = {
             "ble_oxi_gatt_client_on_stack_event": "start",
             "ble_oxi_gatt_client_queue_connect": "ble_oxi_fallback_queue_connect",
@@ -3058,14 +3054,12 @@ class S11FirmwarePatches(CompiledPayloadMixin):
 
     def vid_spoof(self):
         """Set VID from MOP after the stock writeback completes."""
-        data, ver = self._load_versioned_bin(AS11_VID_SPOOF_PAYLOAD)
-        if data is None:
-            return PatchOutcome.skip("compiled payload unavailable")
-        elf_path = self._versioned_artifact_path(AS11_VID_SPOOF_PAYLOAD, "elf", ver)
-        handler = self._elf_symbol_addr(elf_path, "start")
-        outcome = self.mop_callback_register_handler(handler, "vid_spoof")
+        outcome = self.mop_callback_dispatcher_available()
         if outcome.status != "OK":
             return outcome
+        data, ver, elf_path = self._load_versioned_payload(AS11_VID_SPOOF_PAYLOAD)
+        handler = self._elf_symbol_addr(elf_path, "start")
+        self.mop_callback_register_handler(handler, "vid_spoof")
 
         flash, _off = self._inject_payload(AS11_VID_SPOOF_PAYLOAD, data)
         print(
@@ -3084,10 +3078,12 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             from as11_edf_superset import patch_edf_superset
 
         patch_edf_superset(self.asf)
+        return PatchOutcome.ok()
 
     def enable_airbreak_info(self):
         """Request the runtime AirbreakInfo RPC object."""
         self.airbreak_info_enabled = True
+        return PatchOutcome.ok()
 
     def _airbreak_info_manifest(self):
         patch_statuses = {}
@@ -3114,11 +3110,11 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         if not self.airbreak_info_enabled:
             return PatchOutcome.skip("AirbreakInfo disabled")
 
+        outcome = self.rpc_dispatcher_available()
+        if outcome.status != "OK":
+            return outcome
         ver = self._payload_version_key()
-        data, _payload_ver = self._load_versioned_bin(AS11_AIRBREAK_INFO_PAYLOAD)
-        if data is None:
-            return PatchOutcome.skip("compiled payload unavailable")
-        elf_path = self._versioned_artifact_path(AS11_AIRBREAK_INFO_PAYLOAD, "elf", ver)
+        data, _payload_ver, elf_path = self._load_versioned_payload(AS11_AIRBREAK_INFO_PAYLOAD)
         rpc_object = self._elf_symbol_addr(elf_path, "airbreak_info_rpc_object")
         manifest_addr = self._elf_symbol_addr(elf_path, "airbreak_info_json")
         manifest_capacity = self._elf_symbol_size(elf_path, "airbreak_info_json")
@@ -3136,9 +3132,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
                 (len(manifest), manifest_capacity)
             )
 
-        outcome = self.rpc_object_register(rpc_object, "AirbreakInfo")
-        if outcome.status != "OK":
-            return outcome
+        self.rpc_object_register(rpc_object, "AirbreakInfo")
 
         flash, _off = self._inject_payload(AS11_AIRBREAK_INFO_PAYLOAD, data)
         self.asf.patch(manifest, addr=manifest_addr - self.asf.FLASH_BASE, verbose=False)
@@ -3151,38 +3145,6 @@ class S11FirmwarePatches(CompiledPayloadMixin):
 PATCH_OPTIONS = patch_options.load("air11")
 
 
-@dataclass(frozen=True)
-class PatchOutcome:
-    status: str = "OK"
-    summary: str = None
-
-    @classmethod
-    def ok(cls, summary=None):
-        return cls("OK", summary)
-
-    @classmethod
-    def warn(cls, summary):
-        return cls("WARN", summary)
-
-    @classmethod
-    def skip(cls, summary):
-        return cls("SKIP", summary)
-
-
-class TeeStream:
-    def __init__(self, *streams):
-        self.streams = streams
-
-    def write(self, data):
-        for stream in self.streams:
-            stream.write(data)
-        return len(data)
-
-    def flush(self):
-        for stream in self.streams:
-            stream.flush()
-
-
 def build_arg_parser():
     parser = argparse.ArgumentParser(description="Patch AirSense/AirCurve 11 firmware.", allow_abbrev=False)
     parser.add_argument("INFILE", help="Input original binary file")
@@ -3191,39 +3153,6 @@ def build_arg_parser():
     PATCH_OPTIONS.add_arguments(parser)
     PATCH_OPTIONS.add_run_arguments(parser)
     return parser
-
-
-def print_patch_output(text, stream=None):
-    for line in text.rstrip("\n").splitlines():
-        if line.startswith("  "):
-            line = line[2:]
-        print(("  " + line) if line else "", file=stream)
-
-
-def apply_reported_patch(option, method, args, detail_log=None):
-    output = io.StringIO()
-    try:
-        with redirect_stdout(output):
-            outcome = method()
-        if not isinstance(outcome, PatchOutcome):
-            outcome = PatchOutcome.ok()
-    except PatchVersionUnavailable as exc:
-        outcome = PatchOutcome(exc.status, str(exc))
-    except Exception as exc:
-        print("PATCH: %s [ERROR]" % option)
-        stream = None if args.verbose or detail_log is None else detail_log
-        print_patch_output(output.getvalue(), stream)
-        print("  " + str(exc))
-        raise
-
-    print("PATCH: %s [%s]" % (option, outcome.status))
-    if args.verbose:
-        print_patch_output(output.getvalue())
-    elif detail_log is not None:
-        print_patch_output(output.getvalue(), detail_log)
-    if outcome.status in ("WARN", "SKIP") and outcome.summary:
-        print("  " + outcome.summary)
-    return outcome
 
 
 def run_patcher(args, detail_log=None):
@@ -3262,11 +3191,9 @@ def run_patcher(args, detail_log=None):
         backlight_delay_ms=args.backlight_delay_ms,
     )
 
-    print("\n=== Patches")
-    for patch in PATCH_OPTIONS.patches():
-        if PATCH_OPTIONS.selected(args, patch):
-            outcome = apply_reported_patch(patch.option, getattr(patches, patch.method), args, detail_log)
-            patches.record_patch_outcome(patch.option, outcome)
+    outcomes = apply_patch_phases(PATCH_OPTIONS, patches, args, detail_log)
+    for option, outcome in outcomes.items():
+        patches.record_patch_outcome(option, outcome)
 
 
     print("\n=== Finalization")
@@ -3295,44 +3222,17 @@ def run_patcher(args, detail_log=None):
 
     apply_reported_patch("patch-rpc-dispatcher", patches.patch_rpc_dispatcher, args, detail_log)
 
-    output = io.StringIO()
-    try:
-        with redirect_stdout(output):
-            asf.fix_crcs()
-            asf.write_output(args.OUTFILE, args.overwrite)
-    except Exception:
-        stream = None if args.verbose or detail_log is None else detail_log
-        print(output.getvalue(), end="", file=stream)
-        raise
+    def write_image():
+        asf.fix_crcs()
+        asf.write_output(args.OUTFILE, args.overwrite)
 
-    if args.verbose:
-        print(output.getvalue(), end="")
-    elif detail_log is not None:
-        print(output.getvalue(), end="", file=detail_log)
+    run_unreported_step(write_image, args, detail_log)
     return 0
 
 
 def main(argv=None):
-    parser = build_arg_parser()
-    args = parse_patch_args(parser, argv, PATCH_OPTIONS)
-    if args.OPERATION == "PATCH":
-        errors = PATCH_OPTIONS.dependency_errors(args)
-        if errors:
-            parser.error("; ".join(errors))
-
-    if args.log_file is None:
-        return run_patcher(args)
-
-    with open(args.log_file, "a", encoding="utf-8") as detail_log:
-        with redirect_stdout(TeeStream(sys.stdout, detail_log)):
-            return run_patcher(args, detail_log)
+    return run_main(build_arg_parser(), PATCH_OPTIONS, run_patcher, argv)
 
 
 if __name__ == "__main__":
-    try:
-        raise SystemExit(main())
-    except BrokenPipeError:
-        raise SystemExit(1)
-    except Exception as exc:
-        print("error: %s" % exc, file=sys.stderr)
-        raise SystemExit(2)
+    exit_with(main)

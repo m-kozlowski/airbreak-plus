@@ -553,11 +553,13 @@ def cmd_session(args: argparse.Namespace) -> int:
                 command_args = argparse.Namespace(**merged)
                 _apply_common_defaults(command_args)
 
-                # SubscribeEvent has no unsubscribe operation. Preserve the
-                # normal CLI behavior by running it on an owned connection,
-                # then restore the session connection when it ends.
+                # Subscriptions need an owned connection; modem passthrough
+                # opens the adapter with a different pair of CAN IDs.
                 reconnect = (
-                    command_args.command == "subscribe" and not explicit_device
+                    (command_args.command == "subscribe" and not explicit_device)
+                    or (command_args.command == "passthrough"
+                        and resolve_device_spec(command_args) == resolve_device_spec(args)
+                        and resolve_device_spec(args).startswith("can:"))
                 )
                 if reconnect:
                     t.close()
@@ -580,6 +582,21 @@ def cmd_session(args: argparse.Namespace) -> int:
     finally:
         t.close()
     return 0
+
+
+def cmd_passthrough(args: argparse.Namespace) -> int:
+    if not resolve_device_spec(args).startswith(("can:", "tcp:")):
+        raise SystemExit("passthrough modem requires can:<target> or tcp:<aircannect>")
+    command = args.at_command
+    if command is not None and (not command.strip() or "\r" in command or "\n" in command):
+        raise SystemExit("passthrough modem expects one non-empty command line")
+    from as11_modem import modem_terminal
+    with build_transport(args) as t:
+        try:
+            return modem_terminal(t, command, timeout=args.timeout)
+        except KeyboardInterrupt:
+            eprint()
+            return 0 if command is None else 130
 
 
 def split_csv(text: str | None) -> list[str]:
@@ -1504,6 +1521,15 @@ def build_parser() -> argparse.ArgumentParser:
                        help="interactive REPL, keeps the transport open")
     add_rpc_args(s)
     s.set_defaults(func=cmd_session)
+
+    pt = sub.add_parser("passthrough", parents=[command_common],
+                        help="send an AT command or open a modem terminal via CAN or AirCANnect")
+    pt.add_argument("target", choices=["modem"])
+    pt.add_argument("at_command", nargs="?", metavar="AT_COMMAND",
+                    help="send one command and wait for its final result")
+    pt.add_argument("--timeout", type=positive_float_arg, default=30, metavar="SECONDS",
+                    help="time to wait for a single command's result (default: 30)")
+    pt.set_defaults(func=cmd_passthrough, tx_id=0x7ea, rx_id=0x7eb)
 
     stream = sub.add_parser(
         "stream", parents=[command_common],

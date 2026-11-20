@@ -86,6 +86,7 @@ from lib.as11_patch_versions import (  # noqa: E402
     AS11_OTA_FGBL_COMPATIBILITY_FINGERPRINTS,
 )
 from lib.firmware_io import paths_alias, write_output  # noqa: E402
+import resmed_image  # noqa: E402
 
 
 log = logging.getLogger("as11.flash")
@@ -1349,6 +1350,56 @@ def check_danger_ack(args, target: TargetRegion) -> None:
         f"pass {flag} to continue.")
 
 
+def bootloader_ids_compatible(device_id: str | None,
+                              image_id: str | None) -> bool:
+    """True when both IDs are known and map to the same AS11 flash layout.
+
+    An exact match passes; an unknown ID on either side does not.
+    """
+    if device_id is None or image_id is None:
+        return False
+    if device_id == image_id:
+        return True
+    layouts = resmed_image.AS11_LAYOUTS
+    device_layout = layouts.get(device_id)
+    image_layout = layouts.get(image_id)
+    return (device_layout is not None
+            and image_layout is not None
+            and device_layout == image_layout)
+
+
+def verify_bootloader_against_device(t: Transport, target: TargetRegion,
+                                     payload: bytes, *, force: bool) -> None:
+    """Abort an FGBL write when the device and image bootloaders differ.
+
+    Raises SystemExit on a layout mismatch unless `force` is set; skips when
+    the target has no FGBL or an identifier is unavailable.
+    """
+    if "FGBL" not in contained_region_codes(target):
+        return
+    image_id = resmed_image.as11_boot_id(payload)
+    if image_id is None:
+        log.warning("no bootloader identifier found in the image; "
+                    "skipping device bootloader layout check")
+        return
+    device_id = fetch_firmware_identifier(t, "BootloaderIdentifier")
+    if device_id is None:
+        log.warning("device did not report BootloaderIdentifier; "
+                    "skipping bootloader layout check")
+        return
+    if bootloader_ids_compatible(device_id, image_id):
+        if device_id != image_id:
+            print(f"[check] device bootloader {device_id} and image "
+                  f"bootloader {image_id} share a flash layout")
+        return
+    detail = (f"bootloader layout mismatch: device runs {device_id}, image "
+              f"has {image_id}; writing it could leave the device CONF and "
+              f"APPL at the wrong offsets")
+    if force:
+        log.warning("%s; continuing because --force is set", detail)
+        return
+    raise SystemExit(f"{detail}. Pass --force to flash anyway.")
+
 
 def check_and_maybe_fix_hw_crcs(payload: bytes, target: TargetRegion,
                                 *, fix: bool, force: bool,
@@ -2103,6 +2154,9 @@ def cmd_flash(args) -> int:
 
     t = build_transport_for_flash(args)
     try:
+        if "FGBL" in contained_region_codes(target):
+            verify_bootloader_against_device(
+                t, target, load_payload(args, target), force=args.force)
         abc, _, _ = build_container_with_live_defaults(args, t, target)
         if args.save_abc:
             Path(args.save_abc).write_bytes(abc)

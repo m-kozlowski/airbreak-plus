@@ -94,6 +94,7 @@ DUMP_SUPPORTED_BIDS = {'SX577-0200', 'SX585-0200'}
 SUPPORTED_BIDS = DUMP_SUPPORTED_BIDS | {'SX525-0300', 'SX525-0400'}
 
 FULL_IMAGE_SIZE = 0x100000
+READ_POLL_TIMEOUT = 0.02
 DUMP_CHUNK_SIZE = 240
 DUMP_FRAME_TYPE = 'O'
 EEPROM_SIZE = 0x40000
@@ -188,7 +189,9 @@ def read_responses(ser, timeout=1.0):
 def read_frame(ser, timeout=1.0):
     """Read one frame, retaining fragments and coalesced replies for later reads."""
     old_timeout = ser.timeout
-    ser.timeout = 0.02
+    # TCP shares its socket timeout with writes. UART already uses the poll timeout.
+    if old_timeout != READ_POLL_TIMEOUT:
+        ser.timeout = READ_POLL_TIMEOUT
     if not hasattr(ser, '_resmed_rx'):
         ser._resmed_rx = bytearray()
     data = ser._resmed_rx
@@ -235,16 +238,15 @@ def read_frame(ser, timeout=1.0):
                     'crc_ok': stored_crc == crc16_ccitt(raw[:-4]),
                     'raw': raw,
                 }
-            remaining = None if deadline is None else deadline - time.monotonic()
-            if remaining is not None and remaining <= 0:
+            if deadline is not None and time.monotonic() >= deadline:
                 return None
-            ser.timeout = 0.02 if remaining is None else min(0.02, remaining)
             # Serial.read waits for the requested byte count or its timeout.
             # Read only the header/remainder, so a complete short frame returns
             # immediately on serial ports as well as TCP sockets.
             data.extend(ser.read(needed))
     finally:
-        ser.timeout = old_timeout
+        if old_timeout != READ_POLL_TIMEOUT:
+            ser.timeout = old_timeout
 
 
 def read_blx_reply(ser, timeout=1.0, strict=False):
@@ -1296,10 +1298,14 @@ Examples:
             print('[DRY RUN] EEPROM image size checked. No device connection or writes.')
             return 0
 
-    if args.port.startswith('tcp:'):
-        ser = open_tcp(args.port, args.tcp_mode, timeout=1.0, hold=bool(eeprom or args.dump))
-    else:
-        ser = serial.Serial(args.port, 57600, timeout=1.0)
+    try:
+        if args.port.startswith('tcp:'):
+            ser = open_tcp(args.port, args.tcp_mode, timeout=1.0, hold=bool(eeprom or args.dump))
+        else:
+            ser = serial.Serial(args.port, 57600, timeout=READ_POLL_TIMEOUT)
+    except OSError as exc:
+        print(f"[!] {exc}")
+        return 1
 
     try:
         if args.info:

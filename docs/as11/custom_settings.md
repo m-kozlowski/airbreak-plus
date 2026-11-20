@@ -4,23 +4,29 @@ The custom settings framework provides persistent DataItems and clinical-menu
 controls for Air11 feature patches. Storage, descriptor changes, menu rows,
 and payload bindings are independent parts of the framework.
 
-`patch-custom-settings` enables the finalization pass. When no active feature
-registers settings, menu rows, bindings, or reclaim requests, the pass is skipped.
+`patch-custom-settings` enables the finalization pass. When no feature is
+active, the pass is skipped.
 
 ## Application Sequence
 
-Feature patches register their requirements while the normal patch list is
-processed. Afterward, the custom settings finalizer:
+While the normal patch list is processed, feature patches install only their
+own changes. A feature is active when its payload was injected or its patch
+added its name to `enabled_custom_settings_features`. The custom settings
+finalizer then:
 
-1. resolves every referenced DataItem by short tag or long name
-2. activates each requested reclaim provider, including those used by claimed fields
-3. loads the shared menu payload when rows must be added or removed
-4. applies requested descriptor-field changes
-5. writes resolved variable IDs into feature payload ABI slots
-6. disables the stock consumers owned by active reclaim providers
-7. fills the menu-entry and removed-row registries
-8. redirects clinical-menu construction through the shared menu bridge
-9. registers menu visibility with the MOP callback dispatcher
+1. calls the `custom_patch_settings_<feature>()` function of each active
+   feature in the fixed order of `custom_patch_settings_collect_features()`;
+   these functions register claims, descriptor changes, menu rows, enum
+   labels, reclaim requests, and payload bindings
+2. resolves every referenced DataItem by short tag or long name
+3. activates each requested reclaim provider, including those used by claimed fields
+4. loads the shared menu payload when rows must be added or removed
+5. checks the MOP callback dispatcher for mode-dependent rows and registers their visibility handler
+6. applies requested descriptor-field changes
+7. disables the stock consumers owned by active reclaim providers
+8. fills the menu-entry and removed-row registries
+9. redirects clinical-menu construction through the shared menu bridge
+10. writes the resolved DataItem IDs into the registered payload slots
 
 Reclaim providers and the menu payload are installed only when required by an
 active feature.
@@ -32,15 +38,16 @@ is allocated and written.
 ## Optional Integration
 
 For optional integration, a configurable payload reserves a 16-bit variable-ID
-slot with the value `0xFFFF`. The finalizer replaces it with the claimed
-DataItem ID.
+slot with the value `0xFFFF`. The finalizer replaces it with the DataItem ID
+only when the integration is applied.
 
 When `patch-custom-settings` is disabled, no field is reclaimed, no menu row is
 added, and the slot remains `0xFFFF`. The feature payload must recognize that
 sentinel and use its standalone behavior.
 
-A feature that requires reclaimed resources must skip installation when
-`patch-custom-settings` is disabled.
+A feature that requires reclaimed resources declares
+`requires=("patch-custom-settings",)`, so the patcher rejects a selection
+without custom settings.
 
 ## Persistence
 
@@ -171,8 +178,10 @@ Section indexes are:
 The menu bridge wraps the final stock clinical-settings scroller constructor.
 It identifies the five stock sections, copies their existing rows, omits row
 indexes registered by reclaim providers, and appends custom entries to the
-selected section. The current bridge adds DataItem rows to stock sections; it
-does not create headings or additional pages.
+selected section in registration order, which follows the fixed feature order
+rather than the order in which the patches run. The current bridge adds
+DataItem rows to stock sections; it does not create headings or additional
+pages.
 
 Factory addresses are deduplicated in a separate table. The built-in
 `text_value` factory creates a native On/Off switch. The `enum` factory creates
@@ -209,21 +218,28 @@ the dispatcher.
 
 ## Adding a Feature
 
-A feature using reclaimed persistence should:
+A feature patch using reclaimed persistence should:
 
 1. install and validate its compiled payload independently
 2. define standalone behavior for an unpatched `0xFFFF` ABI slot
-3. claim an exact field from a reclaim pool, supplying `custom_name` when the
+
+Its `custom_patch_settings_<feature>()` function is listed in
+`custom_patch_settings_collect_features()` under the payload name. When the
+integration depends on more than the injected payload, it is listed under a
+name that the patch adds to `enabled_custom_settings_features`. The function
+should then:
+
+1. claim an exact field from a reclaim pool, supplying `custom_name` when the
    new meaning should be published through AirbreakInfo
-4. replace only the descriptor fields required by the new setting
-5. optionally add a menu row with its section, label, mode mask, and factory
-6. bind the resolved variable ID to the payload ABI slot
+2. replace only the descriptor fields required by the new setting
+3. optionally add a menu row with its section, label, mode mask, and factory
+4. register the field, payload name, and ABI slot symbol with `custom_setting_bind()`
 
 A feature may omit the claim when it only displays an existing DataItem. It may
 also omit the menu row when the reclaimed field is controlled entirely by the
 payload or another interface.
 
-For example, the ASV backup-rate integration claims an enum, sets its default,
+For example, the ASV backup-rate function claims an enum, sets its default,
 adds a mode-dependent row, and binds the payload's variable-ID slot:
 
 ```python
@@ -231,17 +247,21 @@ setting = self.custom_setting_claim("RIF", "patch-asv-backup-rate", custom_name=
 self.custom_setting_define(setting, default_option=1)
 self.custom_menu_add("therapy", setting, version["label_id"],
                      self.therapy_mode_mask("ASV", "ASVAuto"), "text_value")
-self.custom_setting_bind(setting, backup_rate_var_slot)
+self.custom_setting_bind(setting, AS11_ASV_BACKUP_RATE_PAYLOAD, "as11_asv_backup_rate_var_id")
 ```
 
-`version["label_id"]` comes from the feature's per-version mapping;
-`backup_rate_var_slot` is the address of its 16-bit ABI slot in the payload.
+`version["label_id"]` comes from the feature's per-version mapping.
 
-For an existing enum such as TSS, the feature registers persistence and menu
-integration without claiming a reminder field:
+For an existing enum such as TSS, the feature patch registers persistence and
+its function adds the labels and the menu row without claiming a reminder
+field:
 
 ```python
+# therapy_screen_style()
 self.storage_register_members("HST", "TSS")
+self.enabled_custom_settings_features.add("therapy_screen_style")
+
+# custom_patch_settings_therapy_screen_style()
 self.custom_enum_labels("TSS", dict(enumerate(menu["option_labels"])))
 self.custom_menu_add("configuration", "TSS", menu["label_id"], 0xFFFF, "enum")
 ```

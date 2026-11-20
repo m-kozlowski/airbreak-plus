@@ -15,6 +15,8 @@ does not describe any specific USB-CAN adapter protocol.
   - [Multi-frame datagram](#multi-frame-datagram)
 - [NCP binary RPC over CAN](#ncp-binary-rpc-over-can)
 - [JSON RPC over CAN](#json-rpc-over-can)
+- [Bluetooth passthrough](#bluetooth-passthrough)
+- [Modem passthrough](#modem-passthrough)
 - [Local accessories](#local-accessories)
   - [TxLink 2](#txlink-2)
 - [Service access](#service-access)
@@ -41,6 +43,10 @@ Bus settings:
 | `0x380` | device to host | NCP binary RPC response datagrams |
 | `0x383` | host to device | JSON RPC request datagrams |
 | `0x382` | device to host | JSON RPC response and notification datagrams |
+| `0x7ec` | host to device | bytes to the Bluetooth module UART |
+| `0x7ed` | device to host | bytes from the Bluetooth module UART |
+| `0x7ea` | host to device | modem passthrough commands and data |
+| `0x7eb` | device to host | modem passthrough replies and data |
 | `0x259` | accessory to device | power-supply identification datagrams |
 | `0x25b` | accessory to device | TxLink 2 presence datagrams |
 | `0x796` | device to host | CAL/S70 debug log stream |
@@ -117,6 +123,20 @@ The device response is a DatagramCan payload on `0x382`:
 
 Notifications have a `method` field and no `id`. They can arrive while a
 request is waiting for its matching response.
+
+## Bluetooth passthrough
+
+The bridge carries the Bluetooth module's Silicon Labs BGAPI byte stream in
+DatagramCan payloads. With flight mode off, either `FGState=TestMode` or
+`BluetoothPassthrough=On` selects the passthrough driver mode. Forwarding
+starts only when `BluetoothPassthrough` (`_BNP`) is `On` and `_BCO` is `2`.
+
+## Modem passthrough
+
+Air11 handles the CRLF-terminated control lines in DatagramCan payloads.
+`AT-PASSTHROUGH-ON` requests the modem channel. Air11 replies `OK` when it
+starts forwarding AT commands and modem responses, or `NOT-READY` if it
+cannot acquire the channel. `AT-PASSTHROUGH-OFF` releases the channel.
 
 ## Local accessories
 

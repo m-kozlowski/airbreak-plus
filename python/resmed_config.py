@@ -2365,9 +2365,17 @@ Examples:
     elif args.port.startswith('tcp:'):
         from tcp_serial import open_tcp
         with redirect_stdout(sys.stderr if args.command == 'errors' and args.json else sys.stdout):
-            ser = open_tcp(args.port, args.tcp_mode, timeout=1.0)
+            try:
+                ser = open_tcp(args.port, args.tcp_mode, timeout=1.0)
+            except OSError as e:
+                print(f"[!] {e}")
+                return 1
     else:
-        ser = serial.Serial(args.port, 57600, timeout=1.0)
+        try:
+            ser = serial.Serial(args.port, 57600, timeout=1.0)
+        except OSError as e:
+            print(f"[!] {e}")
+            return 1
 
     try:
         with redirect_stdout(sys.stderr if args.command == 'errors' and args.json else sys.stdout):

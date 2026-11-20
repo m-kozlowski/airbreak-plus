@@ -90,6 +90,8 @@ class CompiledPayloadMixin(object):
 
     def _init_compiled_payloads(self):
         self.payload_layouts = {}
+        self.applied_payloads = set()
+        self.written_payload_slots = set()
 
     def _payload_version_key(self, region=None):
         raise NotImplementedError
@@ -121,24 +123,16 @@ class CompiledPayloadMixin(object):
             )
         return path
 
-    def _load_versioned_bin(self, name, required=False, region=None):
-        """Load a per-version binary, optionally failing when unavailable."""
+    def _load_versioned_bin(self, name, region=None):
+        """Load a per-version binary or fail with a build hint."""
         ver = self._payload_version_key(region)
-        bin_path = self._versioned_artifact_path(name, "bin", ver)
-        if required:
-            bin_path = self._require_versioned_artifact(name, "bin", ver)
-        if not os.path.exists(bin_path):
-            message = "%s: build/%s_%s.bin not found (run %s)" % (
-                name, name, ver, self.PAYLOAD_BUILD_COMMAND
-            )
-            print("  " + message)
-            return None, ver
+        bin_path = self._require_versioned_artifact(name, "bin", ver)
         with open(bin_path, "rb") as f:
             return f.read(), ver
 
     def _load_versioned_payload(self, name, region=None):
         """Load a payload binary and require its matching ELF metadata."""
-        data, ver = self._load_versioned_bin(name, required=True, region=region)
+        data, ver = self._load_versioned_bin(name, region=region)
         elf_path = self._require_versioned_artifact(name, "elf", ver)
         return data, ver, elf_path
 
@@ -283,4 +277,17 @@ class CompiledPayloadMixin(object):
         if bytes(self.asf.fw[off:off + len(data)]) != bytes(data):
             self.asf.patch(data, off, checkempty=empty_byte == 0xff,
                            clobber=empty_byte != 0xff, verbose=False)
+        self.applied_payloads.add(name)
         return storage, off
+
+    def _write_payload_u16(self, payload, symbol, value):
+        """Write one u16 ABI value at a named symbol of an applied payload; return its address."""
+        if payload not in self.applied_payloads:
+            raise ValueError("payload %s was not applied" % payload)
+        if (payload, symbol) in self.written_payload_slots:
+            raise ValueError("payload slot %s:%s written twice" % (payload, symbol))
+        self.written_payload_slots.add((payload, symbol))
+        elf_path = self._require_versioned_artifact(payload, "elf")
+        address = self._elf_symbol_addr(elf_path, symbol)
+        self.asf.write_u16(address - self.asf.FLASH_BASE, value)
+        return address

@@ -47,6 +47,7 @@ STATUS_NAMES = {
     0x0A: "VerifyFailure",
     0x0B: "EntryTimeout",
     0x0C: "DecodeFailure",
+    0x0D: "Busy",
 }
 
 TARGET_FGCB = 0x01

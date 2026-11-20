@@ -223,27 +223,21 @@ allocate code-cave storage, and expose final symbol addresses through the ELF.
 
 ## Patcher registration
 
-The patcher resolves the provider descriptor from the final ELF. It registers
-the object before injecting the payload:
+The patcher checks the dispatcher, resolves the provider descriptor from the
+final ELF, and registers the object before injecting the payload:
 
 ```python
 def patch_example_rpc(self):
-    ver = self._payload_version_key()
-    data, _ = self._load_versioned_bin("as11_example")
-    if data is None:
-        return PatchOutcome.skip("compiled payload unavailable")
+    outcome = self.rpc_dispatcher_available()
+    if outcome.status != "OK":
+        return outcome
 
-    elf_path = self._versioned_artifact_path(
-        "as11_example", "elf", ver
-    )
+    data, _, elf_path = self._load_versioned_payload("as11_example")
     rpc_object = self._elf_symbol_addr(
         elf_path, "example_rpc_object"
     )
 
-    outcome = self.rpc_object_register(rpc_object, "ExampleEnabled")
-    if outcome.status != "OK":
-        return outcome
-
+    self.rpc_object_register(rpc_object, "ExampleEnabled")
     self._inject_payload("as11_example", data)
     return PatchOutcome.ok("Get/Set ExampleEnabled")
 ```
@@ -251,10 +245,11 @@ def patch_example_rpc(self):
 The runtime name comes from `rpc_object_t.name`. The name passed to
 `rpc_object_register()` is only used in patcher output.
 
-Resolve payload symbols and validate provider-specific firmware anchors before
-calling `rpc_object_register()`. Registration performs the shared dispatcher
-preflight. If the dispatcher has not been ported to the input APPX, the
-provider returns `SKIP` before modifying the image.
+`rpc_dispatcher_available()` performs the shared dispatcher preflight. If the
+dispatcher has not been ported to the input APPX, it returns `SKIP`, and the
+provider returns that outcome before loading its payload or modifying the
+image. Resolve payload symbols and validate provider-specific firmware anchors
+before calling `rpc_object_register()`.
 
 Declare the patch function in `python/lib/as11_patch_options.py` when it needs
 an independent command-line switch. A provider whose manifest or parameters depend on other completed

@@ -3,16 +3,13 @@
 from __future__ import annotations
 import argparse
 import binascii
-from contextlib import redirect_stdout, redirect_stderr
-from dataclasses import dataclass
 import hashlib
-import os
 from pathlib import Path
 import struct
-import sys
 
+from lib.firmware_io import paths_alias
 from lib.s9_firmware import S9Firmware, write_output
-from lib.patch_config import parse_patch_args
+from lib.patch_runner import PatchOutcome, apply_patch_phases, exit_with, run_main, run_unreported_step
 from lib import patch_options
 from lib.compiled_payload import elf_symbol_address, elf_text_address, elf_binary_data
 
@@ -61,34 +58,6 @@ PS_CONSTRAINTS = {
 }
 
 
-@dataclass(frozen=True)
-class PatchOutcome:
-    status: str = 'OK'
-    summary: str = ''
-
-    @classmethod
-    def ok(cls, summary=''):
-        return cls('OK', summary)
-
-    @classmethod
-    def skip(cls, summary):
-        return cls('SKIP', summary)
-
-
-class TeeStream:
-    def __init__(self, *streams):
-        self.streams = streams
-
-    def write(self, data):
-        for stream in self.streams:
-            stream.write(data)
-        return len(data)
-
-    def flush(self):
-        for stream in self.streams:
-            stream.flush()
-
-
 PATCH_OPTIONS = patch_options.load('s9')
 
 
@@ -96,7 +65,6 @@ class S9Patcher:
     def __init__(self, firmware):
         self.fw = firmware
         self.data = bytearray(firmware.fl.data)
-        self.details = []
 
     def checked(self, offset, original, replacement):
         current = bytes(self.data[offset:offset + len(original)])
@@ -108,7 +76,7 @@ class S9Patcher:
         if offset < 0 or offset + len(value) > len(self.data):
             raise ValueError('patch exceeds image bounds')
         if self.data[offset:offset + len(value)] != value:
-            self.details.append(f'0x{offset:05X}: {self.data[offset:offset+len(value)].hex()} -> {value.hex()}')
+            print(f'  0x{offset:05X}: {self.data[offset:offset+len(value)].hex()} -> {value.hex()}')
             self.data[offset:offset + len(value)] = value
 
     def descriptor(self, name, kind):
@@ -268,6 +236,7 @@ class S9Patcher:
         return PatchOutcome.ok('Automatic LCD selection installed (0x9225/0x0164 or native); native entry points and window cache verified.')
 
     def checksums(self):
+        print('Updating checksums')
         for name, start, end in self.fw.regions:
             crc = binascii.crc_hqx(self.data[start:end - 2], 0xFFFF)
             self.write(end - 2, struct.pack('>H', crc))
@@ -295,34 +264,6 @@ def build_argument_parser():
     return parser
 
 
-def print_patch_details(lines, args, detail_log):
-    stream = None if args.verbose else detail_log
-    if args.verbose or detail_log is not None:
-        for line in lines:
-            print('  ' + line, file=stream)
-
-
-def apply_reported_patch(spec, patcher, args, detail_log=None):
-    start = len(patcher.details)
-    try:
-        outcome = getattr(patcher, spec.method)()
-        if not isinstance(outcome, PatchOutcome):
-            raise TypeError(f'{spec.option} did not return PatchOutcome')
-    except Exception:
-        print(f'PATCH: {spec.option} [ERROR]')
-        print_patch_details(patcher.details[start:], args, detail_log)
-        raise
-    print(f'PATCH: {spec.option} [{outcome.status}]')
-    if outcome.status == 'SKIP':
-        print('  ' + outcome.summary)
-    else:
-        lines = [outcome.summary, *patcher.details[start:]]
-        if len(patcher.details) == start:
-            lines.append('Already matches the requested patch; no bytes changed.')
-        print_patch_details(lines, args, detail_log)
-    return outcome
-
-
 def run_patcher(args, detail_log=None):
     source, target = Path(args.INFILE), Path(args.OUTFILE)
     firmware = S9Firmware(source)
@@ -347,60 +288,17 @@ def run_patcher(args, detail_log=None):
     if firmware.cdx_version == 'SX474-1301' and firmware.fl.bytes(0x61DC8, 4) == bytes.fromhex('704700bf'):
         raise ValueError('input contains the old shared-fault bypass; use the original ST-A image')
     patcher = S9Patcher(firmware)
-    for phase in PATCH_OPTIONS.phases:
-        selected = [spec for spec in phase.patches if PATCH_OPTIONS.selected(args, spec)]
-        if not selected:
-            continue
-        print('\n=== ' + phase.name)
-        for spec in selected:
-            apply_reported_patch(spec, patcher, args, detail_log)
+    apply_patch_phases(PATCH_OPTIONS, patcher, args, detail_log)
     print('\n=== Finalization')
-    start = len(patcher.details)
-    patcher.checksums()
-    print_patch_details(['BLX, CCX and CDX CRCs verified.', *patcher.details[start:]], args, detail_log)
+    run_unreported_step(patcher.checksums, args, detail_log)
     write_output(target, patcher.data, args.overwrite)
     print(hashlib.sha256(patcher.data).hexdigest(), target)
     return 0
 
 
-def paths_alias(left, right):
-    left, right = Path(left), Path(right)
-    return left.resolve() == right.resolve() or (left.exists() and right.exists() and os.path.samefile(left, right))
-
-
-def run_handled(args, detail_log=None):
-    try:
-        return run_patcher(args, detail_log)
-    except (OSError, ValueError, struct.error) as exc:
-        print(f'ERROR: {exc}', file=sys.stderr)
-        return 1
-
-
 def main(argv=None):
-    parser = build_argument_parser()
-    args = parse_patch_args(parser, argv, PATCH_OPTIONS)
-    if args.OPERATION == 'PATCH':
-        errors = PATCH_OPTIONS.dependency_errors(args)
-        if errors:
-            parser.error('; '.join(errors))
-    if args.log_file is None:
-        return run_handled(args)
-    try:
-        if any(paths_alias(args.log_file, image) for image in (args.INFILE, args.OUTFILE)):
-            raise ValueError('log file must differ from input and output images')
-        with open(args.log_file, 'a', encoding='utf-8') as detail_log:
-            with redirect_stdout(TeeStream(sys.stdout, detail_log)), redirect_stderr(TeeStream(sys.stderr, detail_log)):
-                return run_handled(args, detail_log)
-    except OSError as exc:
-        print(f'ERROR: {exc}', file=sys.stderr)
-        return 1
-    except ValueError as exc:
-        print(f'ERROR: {exc}', file=sys.stderr)
-        return 1
+    return run_main(build_argument_parser(), PATCH_OPTIONS, run_patcher, argv)
 
 
 if __name__ == '__main__':
-    try:
-        sys.exit(main())
-    except BrokenPipeError:
-        sys.exit(1)
+    exit_with(main)

@@ -94,7 +94,7 @@ If Fall Time is installed, flow-shape analysis uses its selected duration.
 
 ## Learn Targets
 
-This optional patch calculates **Target Pt Rate** and **Target Va** for iVAPS
+This patch calculates **Target Pt Rate** and **Target Va** for iVAPS
 from breathing during a 20-minute learning session.
 
 With custom settings, **Learn Targets** appears in clinical **Therapy**.

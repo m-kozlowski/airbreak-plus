@@ -20,6 +20,7 @@
   - [reset](#reset)
   - [gettime / settime](#gettime--settime)
   - [session](#session)
+  - [passthrough modem](#passthrough-modem)
   - [stream / subscribe](#stream--subscribe)
   - [spool](#spool)
   - [known](#known)
@@ -226,6 +227,22 @@ interactive `subscribe` the session reconnects before the next prompt.
 ```sh
 as11_config.py -d ble:as11 session
 ```
+
+### passthrough modem
+
+```sh
+as11_config.py -d can:can0 passthrough modem
+as11_config.py -d tcp:aircannect-dev passthrough modem 'AT+CGMM'
+```
+
+AirCANnect requires an active CAN link to Air11. After `OK`, enter AT
+commands one per line. Replies and unsolicited modem
+messages appear as they arrive. Ctrl-C or EOF releases the
+[modem channel](../as11/can_protocol.md#modem-passthrough).
+
+With a command argument, the tool prints the modem response, waits for the
+final text result, then releases the channel. A modem error or timeout gives
+a nonzero exit status. `--timeout SECONDS` defaults to 30 for the command.
 
 ### stream / subscribe
 

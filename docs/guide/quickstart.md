@@ -8,7 +8,7 @@ Two paths depending on whether you have an original firmware image.
 
 ### Path A: already have a firmware image
 
-If you obtained an original firmware dump elsewhere and don’t need to back up the current firmware, you can skip the device disassembly and SWD hardware entirely and [flash over UART](serial_connection.md).
+If you obtained an original firmware dump elsewhere and don't need to back up the current firmware, you can skip the device disassembly and SWD hardware entirely and [flash over UART](serial_connection.md).
 
 Copy original firmware to cloned directory as `stm32.bin` and jump to [step 4 (patch)](#4-patch).
 
@@ -52,14 +52,10 @@ Connect SWD wires from programmer to the programming header.
 *Path B only.*
 
 ```
- openocd -f interface/stlink.cfg -f tcl/airsense.cfg
+./run-ocd.sh -c dump -c shutdown
 ```
-or simply `./run-ocd.sh` inside cloned repo directory
-Then in another terminal type:
-```
-telnet localhost 4444
-> dump
-```
+
+To run several commands in one session instead, see [OpenOCD](openocd.md).
 
 **Keep `stm32.bin` safe. This is your only backup.**
 
@@ -76,7 +72,7 @@ builds the image and flashes it, on Windows, Linux and WSL.
 
 OpenOCD (path B):
 ```
-> flash_new build/stm32-patched.bin
+./run-ocd.sh -c "flash_new build/stm32-patched.bin" -c shutdown
 ```
 
 UART (path A or B):
@@ -92,7 +88,7 @@ Hold **Home** + push knob for 3 seconds to enter clinical menu. All therapy mode
 
 OpenOCD:
 ```
-> flash_new stm32.bin
+./run-ocd.sh -c "flash_new stm32.bin" -c shutdown
 ```
 
 UART:

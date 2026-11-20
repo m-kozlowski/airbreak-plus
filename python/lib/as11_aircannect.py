@@ -2,8 +2,8 @@
 """AS11 JSON-RPC over TCP - AirCANnect host transport
 
 This backend bridges to an AS11 device through an AirCANnect TCP server (or
-any compatible host-transport server). The wire protocol is one complete
-AS11 JSON-RPC document per line, LF-delimited, in both directions.
+any compatible host-transport server). RPC uses one LF-delimited JSON document
+per line. Modem passthrough uses the raw byte stream on a separate connection.
 
 - Plain TCP, no TLS, no HTTP, no auth, no banner, no greeting.
 - Multi-client broadcast: the bridge forwards every AS11 response and
@@ -176,15 +176,31 @@ class AirCannectTransport:
         self._rpc_id += 1
         return self._rpc_id
 
+    def send_payload(self, payload: bytes) -> None:
+        try:
+            self.sock.settimeout(DEFAULT_TIMEOUT)
+            self.sock.sendall(payload)
+        except OSError as exc:
+            raise TransportError(f"aircannect send failed: {exc}") from exc
+
+    def recv_payload(self, *, timeout: float | None) -> bytes:
+        try:
+            self.sock.settimeout(timeout)
+            chunk = self.sock.recv(4096)
+        except socket.timeout as exc:
+            raise TimeoutError("aircannect read timed out") from exc
+        except OSError as exc:
+            raise TransportError(f"aircannect read failed: {exc}") from exc
+        if not chunk:
+            raise TransportError("aircannect connection closed by peer")
+        return chunk
+
     def _send_line(self, payload: bytes) -> None:
         if len(payload) + 1 > LINE_LIMIT_HOST_TO_BRIDGE:
             raise TransportError(
                 f"request line {len(payload) + 1} B exceeds AirCANnect "
                 f"host->bridge line limit ({LINE_LIMIT_HOST_TO_BRIDGE} B)")
-        try:
-            self.sock.sendall(payload + b"\n")
-        except OSError as exc:
-            raise TransportError(f"aircannect send failed: {exc}") from exc
+        self.send_payload(payload + b"\n")
         if self._cfg.debug:
             _log.debug("TX %s", payload[:120].decode("utf-8", "replace"))
 
@@ -203,17 +219,7 @@ class AirCannectTransport:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise TimeoutError("aircannect read deadline reached")
-            try:
-                self.sock.settimeout(remaining if remaining is not None else None)
-                chunk = self.sock.recv(4096)
-            except socket.timeout as exc:
-                raise TimeoutError(
-                    "aircannect read timed out") from exc
-            except OSError as exc:
-                raise TransportError(
-                    f"aircannect read failed: {exc}") from exc
-            if not chunk:
-                raise TransportError("aircannect connection closed by peer")
+            chunk = self.recv_payload(timeout=remaining)
             self._buf.extend(chunk)
             if self._cfg.debug:
                 _log.debug("rx %d B (buf=%d)", len(chunk), len(self._buf))

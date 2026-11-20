@@ -14,7 +14,7 @@ PATCHER_OUTPUT_ARGS += --verbose
 endif
 
 # Use all cores unless the caller selected -j, and keep output lines intact.
-JOBS ?= $(shell nproc)
+JOBS ?= $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1)
 ifeq ($(MAKELEVEL),0)
 ifeq ($(filter -j%,$(MAKEFLAGS)),)
 MAKEFLAGS += -j$(JOBS)
@@ -59,6 +59,8 @@ S10_PATCHER_DEPS := \
 	python/edf_ccx_merge.py \
 	python/lib/as10_patch_options.py \
 	python/lib/as10_firmware.py \
+	python/lib/as10_languages.py \
+	python/lib/language_tsv.py \
 	python/lib/custom_menu.py \
 	python/lib/custom_menu_stock.py \
 	python/lib/compiled_payload.py
@@ -95,7 +97,7 @@ endef
 # options file and the selected presets; a change rebuilds the image.
 .PHONY: patch-config-force
 define patch_image_rule
-$(1): $(4) $(1).config Makefile python/lib/patch_config.py python/lib/patch_options.py | $(BUILD)
+$(1): $(4) $(1).config Makefile python/lib/patch_config.py python/lib/patch_options.py python/lib/patch_runner.py python/lib/firmware_io.py | $(BUILD)
 	$$(announce_image)
 	python3 python/$(3) '$(4)' '$$@' PATCH $$(PATCHER_OUTPUT_ARGS) $(5) $$($(6))
 $(1).config: patch-config-force
@@ -142,8 +144,9 @@ PAYLOAD_PROBE_BINS_$(1) := $$(foreach p,$$(call allocated_payloads,$(1)),$$(BUIL
 
 $$(BUILD)/payload_sizes_$(1).tsv: $$(PAYLOAD_PROBE_BINS_$(1)) Makefile | $$(BUILD)
 	@rm -f $$@.tmp
-	@$(foreach p,$(call allocated_payloads,$(1)),\
-		printf '%s\t%s\t%s\n' '$(p)' "$$$$(stat -c %s $(BUILD)/$(p)_$(1).probe.bin)" \
+	@set -e; $(foreach p,$(call allocated_payloads,$(1)),\
+		size=$$$$(wc -c < "$(BUILD)/$(p)_$(1).probe.bin"); \
+		printf '%s\t%s\t%s\n' '$(p)' "$$$$size" \
 		'$(call payload_region,$(p))' >> $$@.tmp;)
 	@mv $$@.tmp $$@
 
@@ -204,7 +207,7 @@ S10_PAYLOAD_LDFLAGS_$(1) ?= --sort-section=name
 
 $(foreach p,$(S10_PAYLOAD_IMPORTS_$(1)),$(if $(filter $(p),$(PAYLOADS_$(2))),,$(error $(1)_$(2) requires payload $(p) in PAYLOADS_$(2))))
 
-$(BUILD)/$(1)_$(2).bin: private PAYLOAD_LINKER_SCRIPT := $(call payload_linker_script,$(1))
+$(BUILD)/$(1)_$(2).bin: PAYLOAD_LINKER_SCRIPT := $(call payload_linker_script,$(1))
 
 $(BUILD)/$(1)_$(2).probe.elf: $$(call s10_payload_objects,$(1),$(2)) $$(call s10_payload_imports,$(1),$(2),.probe) $(or $(call payload_linker_script,$(1)),$(SRC)/s10_code_caves.tsv) | $(BUILD)
 	@set -e; $(if $(call payload_linker_script,$(1)),,addr=$$$$($(call probe_addr,$(1),$(2)));) \
@@ -261,7 +264,7 @@ DEPFLAGS = -MMD -MP -MF $(basename $@).d -MT $@
 # $(1): file stem, $(2): compiler/flag variable names
 define compiler_config
 compile_config_$(1) := $$(foreach name,$(2),$$(name)=$$($$(name)))
-ifneq ($$(file <$(BUILD)/$(1).flags),$$(compile_config_$(1)))
+ifneq ($$(shell cat '$(BUILD)/$(1).flags' 2>/dev/null),$$(compile_config_$(1)))
 .PHONY: $(BUILD)/$(1).flags
 endif
 $(BUILD)/$(1).flags: | $(BUILD)
@@ -285,7 +288,7 @@ $(BUILD)/%.bin: $(BUILD)/%.elf
 				echo "$@: no payload row for $$payload in $$layout" >&2; \
 				exit 1; \
 			}; \
-			actual=$$(stat -c %s "$@"); \
+			actual=$$(wc -c < "$@"); \
 			[ "$$actual" -eq "$$expected" ] || { \
 				echo "$@: final size $$actual differs from layout size $$expected" >&2; \
 				exit 1; \

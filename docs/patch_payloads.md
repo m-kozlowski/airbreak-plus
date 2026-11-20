@@ -193,7 +193,9 @@ contains:
 3. a `0xFFFFFFFF` sentinel
 
 The stock callback therefore updates normal mode state before custom handlers
-run. Current registered users are VID spoof and custom menu visibility.
+run. Current registered users are VID spoof, AutoEPAP and custom menu
+visibility. Dependent patches check the dispatcher before modifying the image
+and are skipped when it is unavailable for the CDX version.
 
 ## Button hooks
 
