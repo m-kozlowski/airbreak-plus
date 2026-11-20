@@ -94,32 +94,19 @@ sudo apt install python3-serial
 ### SWD
 
 [Open the device](disassembly.md) and
-[connect the SWD programmer](connection.md#swd), then follow
-[OpenOCD and Firmware Dump](openocd.md), or start OpenOCD from the
-repository root:
+[connect the SWD programmer](connection.md#swd), then dump the flash in one
+command from the repository root:
 
 ```bash
-./run-ocd.sh as11
-```
-
-In another terminal:
-
-```bash
-telnet localhost 4444
-```
-
-At the OpenOCD prompt:
-
-```tcl
-dump
+./run-ocd.sh as11 -c dump -c shutdown
 ```
 
 This creates `as11.bin`. Keep an unchanged copy as the device backup.
 
-The same SWD session can also
+To run several commands in one interactive session instead, see
+[OpenOCD and Firmware Dump](openocd.md): the same SWD session can also
 [retrieve the device-specific OTA key](../../as11/ota_protocol.md#retrieving-the-local-ota-key)
-or check and correct the device's hardware clock (RTC) with `rtc::now`,
-`rtc::sync`, and `rtc::set_time`.
+or check and correct the device's hardware clock (RTC).
 
 ### CAN (no SWD)
 
@@ -171,10 +158,10 @@ update completes.
 
 ### SWD (Path B)
 
-With the programmer still attached, at the OpenOCD prompt:
+With the programmer attached:
 
-```tcl
-flash_new build/as11-patched.bin
+```bash
+./run-ocd.sh as11 -c "flash_new build/as11-patched.bin" -c shutdown
 ```
 
 ## 5. Verify
@@ -186,8 +173,8 @@ are available.
 
 Over SWD:
 
-```tcl
-flash_new /path/to/as11-original.bin
+```bash
+./run-ocd.sh as11 -c "flash_new /path/to/as11-original.bin" -c shutdown
 ```
 
 If the application still runs, the backup can also be restored over CAN. See

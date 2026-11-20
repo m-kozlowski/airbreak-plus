@@ -5,13 +5,13 @@ Two methods: SWD (via OpenOCD) or UART (via [`resmed_flash.py`](../tools/resmed_
 
 ## Method 1: OpenOCD (SWD)
 
-Requires the device to be [opened](disassembly.md) with a [programmer attached](wiring.md) and [OpenOCD running](openocd.md).
+Requires the device to be [opened](disassembly.md) with a [programmer attached](wiring.md).
 
 ### Flash patched firmware
 
-In the OpenOCD console:
+With the programmer attached, from the repository root:
 ```
-flash_new build/stm32-patched.bin
+./run-ocd.sh -c "flash_new build/stm32-patched.bin" -c shutdown
 ```
 
 Takes about 30 seconds. The device reboots automatically.
@@ -19,7 +19,7 @@ Takes about 30 seconds. The device reboots automatically.
 ### Restore original firmware
 
 ```
-flash_new stm32.bin
+./run-ocd.sh -c "flash_new stm32.bin" -c shutdown
 ```
 
 ## Method 2: UART

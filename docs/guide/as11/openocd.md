@@ -3,33 +3,36 @@
 Using OpenOCD to connect to the Air11 processor and back up its firmware, with
 optional OTA-key retrieval and hardware RTC correction.
 
-## Start OpenOCD
+## Dump the Firmware
 
 Connect and power the device as described in [Connection](connection.md#swd),
-then start OpenOCD from the repository root:
+then dump the flash in one command from the repository root:
+
+```bash
+./run-ocd.sh as11 -c dump -c shutdown
+```
+
+`run-ocd.sh` loads the Air11 configuration, which initializes the STM32H753
+target and defines the helper commands; `-c` runs them without an interactive
+prompt and `-c shutdown` exits when the dump finishes. This writes the complete
+internal flash to `as11.bin` in the directory where OpenOCD was started.
+Preserve an unchanged copy under a device-specific private filename before
+patching.
+
+## Interactive Session
+
+To run several commands against the device, start OpenOCD and open its console:
 
 ```bash
 ./run-ocd.sh as11
 ```
 
-The configuration initializes the STM32H753 target and loads the Air11 helper
-commands. In another terminal, open the OpenOCD console:
-
 ```bash
 telnet localhost 4444
 ```
 
-## Dump the Firmware
-
-At the OpenOCD prompt:
-
-```tcl
-dump
-```
-
-This writes the complete internal flash to `as11.bin` in the directory where
-OpenOCD was started. Preserve an unchanged copy under a device-specific private
-filename before patching.
+The optional steps below use this prompt; each also works as a `-c COMMAND`
+argument to `run-ocd.sh`.
 
 ## Optional: Retrieve the OTA Key
 

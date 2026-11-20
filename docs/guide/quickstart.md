@@ -52,14 +52,10 @@ Connect SWD wires from programmer to the programming header.
 *Path B only.*
 
 ```
- openocd -f interface/stlink.cfg -f tcl/airsense.cfg
+./run-ocd.sh -c dump -c shutdown
 ```
-or simply `./run-ocd.sh` inside cloned repo directory
-Then in another terminal type:
-```
-telnet localhost 4444
-> dump
-```
+
+To run several commands in one session instead, see [OpenOCD](openocd.md).
 
 **Keep `stm32.bin` safe. This is your only backup.**
 
@@ -76,7 +72,7 @@ builds the image and flashes it, on Windows, Linux and WSL.
 
 OpenOCD (path B):
 ```
-> flash_new build/stm32-patched.bin
+./run-ocd.sh -c "flash_new build/stm32-patched.bin" -c shutdown
 ```
 
 UART (path A or B):
@@ -92,7 +88,7 @@ Hold **Home** + push knob for 3 seconds to enter clinical menu. All therapy mode
 
 OpenOCD:
 ```
-> flash_new stm32.bin
+./run-ocd.sh -c "flash_new stm32.bin" -c shutdown
 ```
 
 UART:
