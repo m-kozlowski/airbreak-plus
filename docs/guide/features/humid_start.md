@@ -133,47 +133,20 @@ It has not been checked against a hygrometer.
 
 ## Plate coupling
 
-The coupling is a fixed value, not a setting: it is hard to choose without a
-hygrometer. It is `HUMIDITY_PLATE_COUPLING` in `patches/humidity_model.h`, where
-a programmer can change it; this section explains what it does. The coupling is
-the fraction of the plate's rise above room temperature over which the air
-leaving the chamber is assumed to pick up moisture. It scales the
-plate bound, so it only matters while the plate bound is the smaller one: during
-the first minutes. It has no effect once the heater-power bound takes over. The
-default is **0.25**, which has not been calibrated.
+The coupling is a fixed value, not a setting. It is the fraction of the plate's
+rise above room temperature over which the air leaving the chamber is assumed
+to pick up moisture. It scales the plate bound, so it only matters while the
+plate bound is the smaller one: during the first minutes. It has no effect once
+the heater-power bound takes over.
+
+The value is **0.25**. Several values were tried in tests, and 0.25 seemed the
+most accurate, but it has not been measured with a hygrometer.
 
 - **Lower values** estimate less moisture while the plate warms, so the cap is
   lower, the tube is held colder for longer, and the air in the first minutes is
   more humid. There is more risk of condensation in the tube.
 - **Higher values** estimate more moisture, so the tube warms sooner. The early
   air is warmer and drier, and condensation is less likely.
-
-In tests the power bound took over after about 2 to 3 minutes with a coupling of
-0.30, about 4 to 5 minutes with 0.25, and about 7 minutes with 0.20. With 0.30 the
-estimated moisture was therefore flat after the first few minutes while the plate
-was still heating, which suggests 0.30 is too generous. The differences between
-neighbouring values are small and only show in the first minutes. The measured
-tube temperature over the first 15 minutes shows them better than condensation
-does.
-
-**Calibrating it from steady state.** Once the plate sits at its limit, the
-power bound is the stock model's own prediction. Choose the coupling so the plate
-bound reaches that value at that point:
-
-```
-ah_sat(T) = ah_sat(ambient) + power bound     solve for T
-coupling  = (T − ambient) / (plate − ambient)
-```
-
-where `ah_sat(T) = 4.61 + 0.436 T + 0.00122 T² + 0.000427 T³` g/m³. For a plate at
-68 °C, ambient 32 °C and a power bound of 13.7 g/m³ this gives about 0.18. This
-assumes the stock calibration is right in steady state.
-
-To try another value, change `HUMIDITY_PLATE_COUPLING`, rebuild and flash. A
-practical procedure is to start at the default 0.25 and step down by 0.05 on
-successive nights, keeping the tube setting, target RH and water level the same,
-until you see condensation near the mask, then keep the previous value. If 0.25
-already condenses, raise it.
 
 ## Min Tube
 

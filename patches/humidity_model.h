@@ -40,7 +40,25 @@ extern int humidity_model_coefficients_get(void *unused, float *k0, float *k1,
  * while the plate bound is the smaller one. Lower values estimate less moisture,
  * so the tube is held colder for longer (more humid early air, more condensation
  * risk); higher values let the tube warm sooner (drier early air). Sensible
- * range 0.10-1.00; 0.25 is not calibrated (see docs/guide/features/humid_start.md).
+ * range 0.10-1.00.
+ *
+ * 0.25 was chosen from several values tried in tests as the one that seemed most
+ * accurate; it has not been measured with a hygrometer. In those tests (with a
+ * partly filled chamber) the power bound took over after about 2-3 minutes at
+ * 0.30, 4-5 minutes at 0.25 and 7 minutes at 0.20; 0.30 left the estimate flat
+ * while the plate was still heating. The tube temperature over the first 15
+ * minutes shows the differences better than condensation does.
+ *
+ * To calibrate it from steady state: once the plate sits at its limit, the
+ * power bound is the stock model's own prediction. Choose the coupling so the
+ * plate bound reaches that value there:
+ *   ah_sat(T) = ah_sat(ambient) + power bound      (solve for T)
+ *   coupling  = (T - ambient) / (plate - ambient)
+ * For a plate at 68 degC, ambient 32 degC and a power bound of 13.7 g/m3 this
+ * gives about 0.18. It assumes the stock calibration is right in steady state.
+ * In practice: step down by 0.05 on successive nights with the same tube
+ * setting, target RH and water level until the tube condenses near the mask,
+ * then keep the previous value.
  */
 #define HUMIDITY_PLATE_COUPLING 0.25f
 
