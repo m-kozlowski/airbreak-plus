@@ -868,8 +868,8 @@ class S11Firmware(object):
             for field, field_off, width in self._descriptor_field_layout(row, fields)
         }
 
-    def enum_rpc_values(self, row, table):
-        """Return enabled RPC symbols from a final g[5] descriptor."""
+    def enum_rpc_symbols(self, row, table):
+        """Map raw g[5] values to their firmware RPC names."""
         if row["array"] != "g5":
             raise ValueError("enum RPC values require a g5 descriptor")
 
@@ -883,7 +883,11 @@ class S11Firmware(object):
                 symbol = self.string_at_ptr(self.u32(off + 8))
                 if symbol is not None:
                     symbols[raw_value] = symbol
+        return symbols
 
+    def enum_rpc_values(self, row, table):
+        """Return enabled RPC symbols from a final g[5] descriptor."""
+        symbols = self.enum_rpc_symbols(row, table)
         enabled = [
             option for option in range(row["n_options"])
             if option >= 32 or row["option_mask"] & (1 << option)
@@ -1007,6 +1011,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         self.custom_setting_bindings = []
         self.custom_reclaim_pools = set()
         self.custom_menu_entries = []
+        self.custom_texts = {}
         self.custom_enum_label_requests = {}
         self.storage_member_requests = {}
         self.airbreak_info_enabled = False
@@ -1433,9 +1438,55 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         })
 
     def custom_enum_labels(self, setting, labels):
-        """Assign existing GUI text IDs to raw enum values."""
+        """Assign GUI text IDs to raw enum values."""
         setting = self._custom_setting_key(setting)
         self.custom_enum_label_requests.setdefault(setting, {}).update(labels)
+
+    def custom_text(self, name, translations):
+        """Register a localized label and return its ID for stock widgets."""
+        if name in self.custom_texts:
+            text_id, existing = self.custom_texts[name]
+            if existing != translations:
+                raise ValueError("custom text %s has conflicting translations" % name)
+            return text_id
+        first = self._patch_version_data("custom_settings")["first_custom_text_id"]
+        text_id = first + len(self.custom_texts)
+        self.custom_texts[name] = (text_id, translations)
+        return text_id
+
+    def _install_custom_texts(self, layout, elf_path):
+        # Each uint16 offset is relative to the start of this bank in CONF.
+        # Missing translations share the English string, also across labels.
+        lan = self.asf.find_descriptors("LAN", ("g5",))[0]
+        language_ids = {name: raw for raw, name in self.asf.enum_rpc_symbols(lan, layout).items()}
+        languages = lan["n_options"]
+        count = len(self.custom_texts)
+        offsets_size = count * languages * 2
+        offsets, strings, pool = [], {}, bytearray()
+        for _, translations in self.custom_texts.values():
+            rows = {language_ids[name]: text for name, text in translations.items()}
+            for lang in range(languages):
+                text = rows.get(lang, translations["English"])
+                if text not in strings:
+                    if "\0" in text:
+                        raise ValueError("custom text contains a NUL")
+                    strings[text] = offsets_size + len(pool)
+                    pool.extend(text.encode("utf-8") + b"\0")
+                offsets.append(strings[text])
+        if offsets_size + len(pool) > 0x10000 or layout["first_custom_text_id"] + count > 0x8000:
+            raise ValueError("custom text bank exceeds its offset or GUI ID range")
+        bank = struct.pack("<%dH" % len(offsets), *offsets) + pool
+        off = self.asf.allocate_conf(len(bank), alignment=2)
+        self.asf.fw[off:off + len(bank)] = bank
+
+        branch = layout["text_lookup_branch"]
+        site = self.asf.ptr_to_off(branch)
+        decoder = layout["text_decode"]
+        params = struct.pack("<IIHHH", decoder | 1, self.asf.off_to_addr(off),
+                             layout["first_custom_text_id"], count, languages)
+        self.asf.patch(params, addr=self.asf.ptr_to_off(self._elf_symbol_addr(elf_path, "custom_text_bank")), verbose=False)
+        handler = self._elf_symbol_addr(elf_path, "custom_text_decode")
+        self.asf.patch_exact(branch, self.asf.thumb2_bw_bytes(site, decoder), self.asf.thumb2_bw_bytes(site, handler))
 
     def finalize_enum_labels(self):
         """Merge registered labels into the native GUI enum table."""
@@ -1547,7 +1598,7 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         pools = sorted(self.custom_reclaim_pools)
         layout = (
             self._patch_version_data("custom_settings", ver)
-            if pools or self.custom_menu_entries else None
+            if pools or self.custom_menu_entries or self.custom_texts else None
         )
         for pool in pools:
             handler_name = self.CUSTOM_SETTING_RECLAIM_POOLS[pool]["handler"]
@@ -1561,11 +1612,9 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         menu_factory_indexes = {}
         menu_payload = None
         menu_symbols = None
+        if self.custom_menu_entries or removed_rows or self.custom_texts:
+            menu_payload, _payload_ver, elf_path = self._load_versioned_payload(AS11_CUSTOM_SETTINGS_PAYLOAD)
         if self.custom_menu_entries or removed_rows:
-            # Menu rows and reclaimed stock rows share one bridge payload.
-            data, _payload_ver, elf_path = self._load_versioned_payload(
-                AS11_CUSTOM_SETTINGS_PAYLOAD
-            )
             factory_symbols = {
                 name: self._elf_symbol_addr(elf_path, symbol)
                 for name, symbol in self.CUSTOM_MENU_FACTORY_SYMBOLS.items()
@@ -1647,7 +1696,6 @@ class S11FirmwarePatches(CompiledPayloadMixin):
                     "custom settings: clinical settings scroller does not match"
                 )
             menu_symbols["call_off"] = call_off
-            menu_payload = data
 
             if any(
                     request["mode_mask"] != 0xFFFF
@@ -1665,6 +1713,8 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             menu_flash, _off = self._inject_payload(
                 AS11_CUSTOM_SETTINGS_PAYLOAD, menu_payload
             )
+            if self.custom_texts:
+                self._install_custom_texts(layout, elf_path)
 
         # Recast claimed persistent DataItems for their new feature roles.
         menu_metadata = {
@@ -2780,7 +2830,6 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         anchors = self._patch_version_data("header_clock", ver)
         data, _, elf_path = self._load_versioned_payload(AS11_HEADER_CLOCK_PAYLOAD)
         draw_wrapper = self._elf_symbol_addr(elf_path, "start")
-        menu_draw_wrapper = self._elf_symbol_addr(elf_path, "header_clock_menu_label_draw")
         ctor_wrapper = self._elf_symbol_addr(
             elf_path, "header_clock_root_widget_ctor"
         )
@@ -2805,17 +2854,10 @@ class S11FirmwarePatches(CompiledPayloadMixin):
         )
 
         draw_call = self.asf.ptr_to_off(anchors["draw_call"])
-        menu_draw_call = (
-            self.asf.ptr_to_off(anchors["menu_draw_call"])
-            if "menu_draw_call" in anchors else None
-        )
         ctor_call = self.asf.ptr_to_off(anchors["root_ctor_call"])
         timer_slot = self.asf.ptr_to_off(anchors["timer_callback_slot"])
         if self.asf.read_thumb2_bl_target(draw_call) != stock_draw:
             raise ValueError("header_clock: title-bar draw call does not match")
-        if (menu_draw_call is not None and
-                self.asf.read_thumb2_bl_target(menu_draw_call) != stock_draw):
-            raise ValueError("header_clock: menu-label draw call does not match")
         if self.asf.read_thumb2_bl_target(ctor_call) != stock_ctor:
             raise ValueError("header_clock: root-widget constructor call does not match")
         if self.asf.u32(timer_slot) != (stock_timer_callback | 1):
@@ -2828,18 +2870,13 @@ class S11FirmwarePatches(CompiledPayloadMixin):
             self.asf.write_u16(page_ids - self.asf.FLASH_BASE + 2 * index, page)
         self.asf.write_u16(text_ids_off, anchors["home_text_id"])
         self.asf.write_u16(text_ids_off + 2, anchors["empty_text_id"])
-        if menu_draw_call is not None:
-            self.asf.write_u16(text_ids_off + 4, anchors["menu_text_id"])
         # bl stock title draw -> bl clock-aware title draw
         self.asf.write_thumb2_bl_target(draw_call, draw_wrapper)
-        if menu_draw_call is not None:
-            # bl stock menu-label draw -> bl clock-setting label draw
-            self.asf.write_thumb2_bl_target(menu_draw_call, menu_draw_wrapper)
         # bl stock root constructor -> bl clock timer constructor wrapper
         self.asf.write_thumb2_bl_target(ctor_call, ctor_wrapper)
         self.asf.write_u32(timer_slot, timer_callback | 1)
 
-        if menu_draw_call is not None:
+        if AS11_PATCH_VERSIONS[ver].get("custom_settings"):
             self.enabled_custom_settings_features.add("header_clock")
 
         print(
@@ -2850,12 +2887,10 @@ class S11FirmwarePatches(CompiledPayloadMixin):
 
     def custom_patch_settings_header_clock(self):
         """Add the Clock switch to Configuration."""
-        anchors = self._patch_version_data("header_clock")
         setting = self.custom_setting_claim("RIM", "patch-header-clock", custom_name="HeaderClockEnable")
         self.custom_setting_define(setting, default_option=0)
-        # TODO: Replace this label shim with framework-managed GUI string
-        # redefinition once custom settings can reclaim localized text IDs.
-        self.custom_menu_add("configuration", setting, anchors["menu_text_id"], 0xFFFF, "text_value")
+        label = self.custom_text("Clock", {"English": "Clock", "French": "Horloge", "German": "Uhr", "Polish": "Zegar"})
+        self.custom_menu_add("configuration", setting, label, 0xFFFF, "text_value")
         self.custom_setting_bind(setting, AS11_HEADER_CLOCK_PAYLOAD, "header_clock_var_id")
 
     def backlight(self):
