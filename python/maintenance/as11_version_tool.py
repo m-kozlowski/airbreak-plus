@@ -94,6 +94,7 @@ class TimezoneWriteCandidates:
 class CustomSettingsCandidates:
     rpc_enum_symbols: AddressResult
     rpc_enum_symbol_count: int | None
+    first_text_id: int | None
     sites: dict[str, AddressResult]
     row_constructor: AddressResult
     scheduler_target: AddressResult
@@ -788,14 +789,13 @@ def find_row_label_load(data: bytes, call_address: int) -> tuple[int, int] | Non
     return candidates[-1] if candidates else None
 
 
-def find_row_array_store(data: bytes, call_address: int) -> int | None:
-    """Find the post-constructor STR.W r0 into the clinical item array."""
+def find_row_array_store(data: bytes, call_address: int, base_register: int = 11) -> int | None:
+    """Find the post-constructor STR.W r0 into the array held in base_register."""
     start = call_address - FLASH_BASE + 4
     end = min(len(data) - 3, start + 16)
     for off in range(start, end, 2):
         first, second = struct.unpack_from("<HH", data, off)
-        if ((first & 0xFFF0) == 0xF8C0 and (first & 0x0F) == 11 and
-                ((second >> 12) & 0x0F) == 0):
+        if first == 0xF8C0 | base_register and second >> 12 == 0:
             return FLASH_BASE + off
     return None
 
@@ -823,6 +823,28 @@ def corroborate(result: AddressResult, evidence: str) -> AddressResult:
         evidence=result.evidence + "; " + evidence,
         alternatives=result.alternatives,
     )
+
+
+def confirm_from_callers(matcher: AddressMatcher, function: AddressResult) -> AddressResult:
+    """Confirm an entry when independently matched BL sites agree on one candidate."""
+    candidates = tuple(a for a in (function.address, *function.alternatives) if a is not None)
+    if function.quality == "strong" or not candidates:
+        return function
+    confirmed = {}
+    for call in thumb2_bl_calls_to(matcher.source, function.source_address):
+        site = matcher.site(call)
+        if site.quality != "strong":
+            continue
+        target = thumb2_bl_target(matcher.target, site.address)
+        if target is None or target not in candidates:
+            return function
+        confirmed[target] = (call, site.address)
+    if len(confirmed) != 1:
+        return function
+    target, calls = confirmed.popitem()
+    return AddressResult(function.source_address, target, "strong",
+                         "BL at transferred callsite 0x%08X -> 0x%08X selects this entry" % calls,
+                         tuple(a for a in candidates if a != target))
 
 
 def resolve_callsite(
@@ -897,6 +919,32 @@ def find_exact_gui_text_id(fw: AS11Firmware, value: str) -> int | None:
     return matches[0] if len(matches) == 1 else None
 
 
+def resolve_home_page_store(data: bytes, source: int, home_text_id: int | None) -> AddressResult:
+    stores = []
+    if home_text_id is not None:
+        # The dashboard constructor gets 1 on the stack and the Home title in r3.
+        # Other pages can share either the constructor or the Home title.
+        for setup in re.compile(rb"\x01\x22\x00\x92").finditer(data, APPX_BASE, len(data) - 16):
+            off = setup.end()  # after movs r2,#1; str r2,[sp]
+            if off % 2:
+                continue
+            op = struct.unpack_from("<H", data, off)[0]
+            if op >> 8 == 0x23:  # movs r3,#imm8
+                title, off = op & 0xFF, off + 2
+            else:
+                title, off = thumb2_mov_immediate(data, FLASH_BASE + off, register=3), off + 4
+            call = FLASH_BASE + off + 2
+            if title != home_text_id or data[off:off + 2] != b"\x22\x00" or thumb2_bl_target(data, call) is None:
+                continue  # movs r2,r4; bl constructor
+            store = find_row_array_store(data, call, base_register=9)
+            if store is not None:
+                stores.append(store)
+    return AddressResult(source, stores[0] if len(stores) == 1 else None,
+                         "strong" if len(stores) == 1 else "missing",
+                         "page-array store after constructor with Home title and stack argument 1",
+                         tuple(stores) if len(stores) != 1 else ())
+
+
 def decode_header_clock_pages(data: bytes, sites: dict[str, AddressResult]) -> tuple[int, int, int] | None:
     """Derive page IDs from menu-array stores and the native lookup's ADD."""
     names = ("home_page_store", "single_pressure_page_store", "pressure_bar_page_store")
@@ -928,9 +976,9 @@ def resolve_header_clock_candidates(
     sites = {
         name: matcher.site(reference[name])
         for name in (
-            "draw_call", "menu_draw_call", "root_ctor_call",
+            "draw_call", "root_ctor_call",
             "timer_callback_slot",
-            "home_page_store", "single_pressure_page_store",
+            "single_pressure_page_store",
             "pressure_bar_page_store", "page_array_base",
         )
         if name in reference
@@ -941,11 +989,6 @@ def resolve_header_clock_candidates(
     sites["draw_call"] = resolve_callsite(
         data, sites["draw_call"], draw_stub, "GuiPaint_DrawLocalizedTextById"
     )
-    if "menu_draw_call" in sites:
-        sites["menu_draw_call"] = resolve_callsite(
-            data, sites["menu_draw_call"], draw_stub,
-            "GuiMenuTextValueListItem label draw",
-        )
     sites["root_ctor_call"] = resolve_callsite(
         data, sites["root_ctor_call"], ctor_stub, "root-widget constructor"
     )
@@ -1037,8 +1080,8 @@ def resolve_header_clock_candidates(
     text_ids = {
         "home_text_id": find_exact_gui_text_id(fw, "Home"),
         "empty_text_id": find_exact_gui_text_id(fw, ""),
-        "menu_text_id": find_exact_gui_text_id(fw, "Reminders"),
     }
+    sites["home_page_store"] = resolve_home_page_store(data, reference["home_page_store"], text_ids["home_text_id"])
     return HeaderClockCandidates(sites, text_ids, decode_header_clock_pages(data, sites))
 
 
@@ -1157,9 +1200,9 @@ def tss_switch_pointers(firmware: AS11Firmware, stubs: dict[str, AddressResult])
     # containing the switch object address.
     data = firmware.data
     tss = firmware._resolve_var_ident("TSS")
-    switch_ctor = stubs["GuiDataItemSwitch_ctor"]
+    switch_ctor = stubs.get("GuiDataItemSwitch_ctor")
     pointers = []
-    if tss is not None and switch_ctor.address is not None:
+    if tss is not None and switch_ctor is not None and switch_ctor.address is not None:
         for call in thumb2_bl_calls_to(data, switch_ctor.address):
             if thumb2_mov_immediate(data, call - 8, register=1) != tss:
                 continue
@@ -1178,8 +1221,8 @@ def resolve_therapy_screen_style_sites(
     pointers = tss_switch_pointers(firmware, stubs)
     switch = struct.unpack_from("<I", data, pointers[0] - FLASH_BASE)[0] if len(pointers) == 1 else None
     registrations = []
-    add = stubs["GuiSwitchAction_add"]
-    if switch is not None and add.address is not None:
+    add = stubs.get("GuiSwitchAction_add")
+    if switch is not None and add is not None and add.address is not None:
         for call in thumb2_bl_calls_to(data, add.address):
             # ldr r4,[pc,#imm] (switch); movs r1,#1; movs r0,r4; bl add.
             load = struct.unpack_from("<H", data, call - 6 - FLASH_BASE)[0]
@@ -1245,6 +1288,41 @@ def resolve_flow_wave_candidates(
     return sites
 
 
+def find_custom_text_lookup(fw: AS11Firmware, localized_draw: int | None):
+    """Find the decoder by its reference to this image's language-row table."""
+    if not fw._ensure_gui_text_decoder():
+        return None, None, None
+    data = fw.data
+    matches = []
+    # mov r3,r0; mov/uxth r2,r6; mov r1,r5; mov r0,r4; pop {r4-r6,lr}; b.w decoder
+    epilogue = rb"\x03\x46(?:\x32\x46|\xb2\xb2)\x29\x46\x20\x46\xbd\xe8\x70\x40"
+    for match in re.finditer(epilogue, data):
+        site = FLASH_BASE + match.end()
+        target = thumb2_bw_target(data, site)
+        if target is None or not FLASH_BASE + APPX_BASE <= target < FLASH_BASE + len(data) - 0x30:
+            continue
+        for addr in range(target, target + 0x30, 2):
+            op = struct.unpack_from("<H", data, addr - FLASH_BASE)[0]
+            if op >> 8 == 0x49:  # ldr r1, [pc, #imm]
+                literal = ((addr + 4) & ~3) + 4 * (op & 0xFF)
+                if fw.u32(literal - FLASH_BASE) == fw.gui_text_record_base:
+                    matches.append((site, target))
+                    break
+
+    first = None
+    if localized_draw is not None:
+        # The neighbouring formatted-value draw supplies the no-label ID in
+        # r7, then pushes it as the fifth formatter argument (str r7,[sp]).
+        off = localized_draw - FLASH_BASE
+        store = data.find(bytes.fromhex("009700234322"), off, off + 0xA0)
+        if store >= 0:
+            sentinel = thumb2_mov_immediate(data, FLASH_BASE + store - 8, register=7)
+            if sentinel in (fw.gui_text_count, fw.gui_text_count - 1):
+                first = sentinel + 1
+    branch, decoder = matches[0] if len(matches) == 1 else (None, None)
+    return branch, decoder, first
+
+
 def resolve_custom_settings_candidates(
         firmware: AS11Firmware,
         matcher: AddressMatcher,
@@ -1269,6 +1347,10 @@ def resolve_custom_settings_candidates(
     }
     for name in ("gui_enum_count_pointer", "gui_enum_table_pointer"):
         sites[name] = matcher.site(reference[name])
+    branch, decoder, first_text_id = find_custom_text_lookup(firmware, stubs["GuiPaint_DrawLocalizedTextById"].address)
+    for name, value in (("text_lookup_branch", branch), ("text_decode", decoder)):
+        sites[name] = AddressResult(reference[name], value, "strong" if value is not None else "missing",
+                                    "language-row table referenced by the tail-called text decoder")
     for name in ("row_call", "row_label", "row_store", "scheduler_call"):
         value = reminders[name]
         sites[name] = matcher.site(
@@ -1395,6 +1477,7 @@ def resolve_custom_settings_candidates(
             firmware.opt_table_count if enum_table_off is not None else None
         ),
         sites=sites,
+        first_text_id=first_text_id,
         row_constructor=row_constructor,
         scheduler_target=scheduler_target,
         reference_reminders=reminders,
@@ -1851,6 +1934,9 @@ def resolve_port_candidates(
         name: matcher.function(address)
         for name, address in parse_stubs(reference_key).items()
     }
+    for name in ("json_encoder_write_raw_span", "led_status_controller_singleton"):
+        if name in stubs:
+            stubs[name] = confirm_from_callers(matcher, stubs[name])
     cloud_firmware_change = resolve_cloud_firmware_change_candidates(
         target_fw.data, matcher, reference["cloud_firmware_change"]
     )
@@ -2180,7 +2266,7 @@ def self_check_candidates(
     header_clock_expected = expected_version.get("header_clock")
     if header_clock_expected is not None:
         for name in (
-                "draw_call", "menu_draw_call", "root_ctor_call",
+                "draw_call", "root_ctor_call",
                 "timer_callback_slot", "home_page_store", "single_pressure_page_store",
                 "pressure_bar_page_store", "page_array_base"):
             if name not in header_clock_expected:
@@ -2200,7 +2286,7 @@ def self_check_candidates(
                            "strong" if all(site.quality == "strong" for site in page_sites) else "weak",
                            "native menu-array stores relative to the lookup base"),
         ))
-        for name in ("home_text_id", "empty_text_id", "menu_text_id"):
+        for name in ("home_text_id", "empty_text_id"):
             if name not in header_clock_expected:
                 continue
             value = candidates.header_clock.text_ids[name]
@@ -2315,7 +2401,10 @@ def self_check_candidates(
         ))
 
         sites = candidates.custom_settings.sites
-        for name in ("gui_enum_count_pointer", "gui_enum_table_pointer"):
+        first = candidates.custom_settings.first_text_id
+        checks.append(compare_candidate("custom_settings.first_custom_text_id", custom_expected["first_custom_text_id"],
+                                        CandidateValue(first, "strong" if first is not None else "missing", "ID after formatter sentinel")))
+        for name in ("gui_enum_count_pointer", "gui_enum_table_pointer", "text_lookup_branch", "text_decode"):
             result = sites[name]
             checks.append(compare_candidate(
                 "custom_settings." + name, custom_expected[name],
@@ -2853,9 +2942,6 @@ def prepare(args) -> int:
         "        \"draw_call\": %s," % format_address(
             header_clock_sites["draw_call"].address
         ),
-        "        \"menu_draw_call\": %s," % format_address(
-            header_clock_sites["menu_draw_call"].address
-        ),
         "        \"root_ctor_call\": %s," % format_address(
             header_clock_sites["root_ctor_call"].address
         ),
@@ -2871,13 +2957,13 @@ def prepare(args) -> int:
         "        \"empty_text_id\": %s," % format_text_id(
             candidates.header_clock.text_ids["empty_text_id"]
         ),
-        "        \"menu_text_id\": %s," % format_text_id(
-            candidates.header_clock.text_ids["menu_text_id"]
-        ),
         "    },",
         "    \"custom_settings\": {",
         "        \"gui_enum_count_pointer\": %s," % format_address(custom_site_results["gui_enum_count_pointer"].address),
         "        \"gui_enum_table_pointer\": %s," % format_address(custom_site_results["gui_enum_table_pointer"].address),
+        "        \"text_lookup_branch\": %s," % format_address(custom_site_results["text_lookup_branch"].address),
+        "        \"text_decode\": %s," % format_address(custom_site_results["text_decode"].address),
+        "        \"first_custom_text_id\": %s," % format_text_id(candidates.custom_settings.first_text_id),
         "        \"rpc_enum_symbols\": %s," % format_address(
             rpc_enum_symbols.address
         ),
