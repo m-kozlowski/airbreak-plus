@@ -193,7 +193,8 @@ EEPROM image. Dumps are written to `FILE.part` and renamed
 only after successful completion. A failed dump leaves the partial file and
 preserves an existing destination file.
 
-Press Ctrl+C to cancel a stalled dump.
+If a dump frame times out, fails its CRC, or arrives out of sequence, the tool
+resumes from the first unwritten byte. It retries up to three times per dump.
 
 An `unconfirmed` result means the device did not provide a conclusive response;
 it does not necessarily mean flashing failed. Check the device before retrying.

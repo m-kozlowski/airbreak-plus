@@ -34,6 +34,10 @@ class FlashUnconfirmed(RuntimeError):
     """Transmission started, but the device's final result is not known."""
 
 
+class ReadStreamInterrupted(RuntimeError):
+    """The next expected dump frame was lost or damaged."""
+
+
 # Platform profiles, keyed by bootloader BID prefix.
 PLATFORMS = {
     'SX577': {'baud_method': 'bdd', 'default_baud': 57600,
@@ -257,9 +261,13 @@ def read_blx_reply(ser, timeout=1.0, strict=False):
         if frame is None:
             return None
         payload = frame['payload']
-        if not frame['crc_ok'] or frame['type'] != DUMP_FRAME_TYPE or len(payload) < 7:
+        if not frame['crc_ok']:
             if strict:
-                raise RuntimeError('invalid BLX stream frame or CRC')
+                raise ReadStreamInterrupted('invalid BLX stream CRC')
+            continue
+        if frame['type'] != DUMP_FRAME_TYPE or len(payload) < 7:
+            if strict:
+                raise RuntimeError('invalid BLX stream frame')
             continue
         offset, n = struct.unpack_from('<IH', payload, 1)
         if len(payload) == 7 + n:
@@ -353,8 +361,23 @@ def transfer_ranges(size):
         offset += length
 
 
-def read_memory(ser, command, size):
-    yield from read_memory_range(ser, command, 0, size)
+def read_memory(ser, command, size, retries=0):
+    start = 0
+    for attempt in range(retries + 1):
+        try:
+            for offset, data in read_memory_range(ser, command, start, size):
+                yield offset, data
+                start = offset + len(data)
+            return
+        except ReadStreamInterrupted as exc:
+            if attempt == retries:
+                raise
+            # The cancelled range can consume the first probe along with the
+            # cancel frame. Only the BLX command loop can answer BLS.
+            if not any(query_boot_var(ser, 'BLS', timeout=1.0) in (1, 2) for _ in range(3)):
+                raise RuntimeError('cannot resynchronize with BLX at 0x%05X: %s' % (start, exc)) from exc
+            print('\n[!] %s; resuming at 0x%05X (retry %d/%d)' %
+                  (exc, start, attempt + 1, retries))
 
 
 def read_memory_range(ser, command, start, end):
@@ -374,24 +397,28 @@ def read_memory_range(ser, command, start, end):
     send_blx_request(ser, b'X' + struct.pack('<IH', start, window) + command + struct.pack('<I', end))
     try:
         while True:
-            reply = read_blx_reply(ser, timeout=None, strict=True)
+            reply = read_blx_reply(ser, timeout=5.0, strict=True)
             if reply is None:
-                raise RuntimeError('memory stream timed out at 0x%05X' % offset)
+                raise ReadStreamInterrupted('memory stream timed out at 0x%05X' % offset)
             op, reply_offset, data = reply
-            if reply_offset < start:
-                continue
             check_blx_error(command, op, reply_offset, data)
-            if op != command.lower() or reply_offset != offset:
-                raise RuntimeError('unexpected memory stream reply at 0x%05X (expected 0x%05X)' %
-                                   (reply_offset, offset))
+            if op != command.lower():
+                raise RuntimeError('unexpected memory stream reply %r' % op)
+            if reply_offset != offset:
+                raise ReadStreamInterrupted('memory stream offset 0x%05X (expected 0x%05X)' %
+                                            (reply_offset, offset))
             if offset == end and not data:
                 complete = True
+                yield tail
                 return
             if not data or len(data) != min(DUMP_CHUNK_SIZE, end - offset):
                 raise RuntimeError('incomplete memory stream at 0x%05X' % offset)
-            yield offset, data
+            if offset + len(data) == end:
+                # A lost end marker must leave a non-empty range to retry.
+                tail = offset, data
+            else:
+                yield offset, data
             offset += len(data)
-            # Yield first: a slow file writer or comparison must also stop BLX.
             if offset == end or offset - acknowledged >= acknowledge_every:
                 frame = build_frame(DUMP_FRAME_TYPE, b'A' + struct.pack('<IH', offset, 0))
                 write_transfer_frame(ser, frame, 'memory read acknowledgement')
@@ -928,7 +955,7 @@ def dump_memory(ser, output_path, size, command, validate=None):
     tty_progress = sys.stdout.isatty()
     next_percent = 5
     with open(part_path, 'wb') as output:
-        for offset, chunk in read_memory(ser, command, size):
+        for offset, chunk in read_memory(ser, command, size, retries=3):
             output.write(chunk)
             done = offset + len(chunk)
             progress = ("    %s/%s (%3d%%)" %
