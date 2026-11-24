@@ -960,7 +960,7 @@ AS11_DESCRIPTOR_FIELDS = {
                             "B", "hex8",
                             aliases=("change_event_queue_index",)),
         DescriptorEditField("default_option", "default_option", 0x08, "B",
-                            aliases=("default_opt",)),
+                            aliases=("default_opt", "default")),
         DescriptorEditField("option_count", "n_options", 0x09, "B",
                             aliases=("n_opts", "n_options")),
         DescriptorEditField("reserved", "reserved", 0x0A, "H", "hex16"),
@@ -4258,74 +4258,50 @@ def _encode_scaled_edit(value, scale, field):
     return field.normalize_int(int(integral))
 
 
-def _parse_edit_assignment(fw, text):
-    if "=" not in text:
-        raise ValueError("invalid assignment %r; expected VAR.FIELD=VALUE" % text)
-    target, value = text.split("=", 1)
+def resolve_var_selector(fw, target):
     if "." not in target:
-        raise ValueError(
-            "invalid assignment target %r; expected VAR.FIELD" % target)
+        return {"vid": resolve_var_arg(fw, target)}
     ident, field_name = target.rsplit(".", 1)
     ident = ident.strip()
     field_key = field_name.strip().lower()
     if not ident or not field_key:
-        raise ValueError(
-            "invalid assignment target %r; expected VAR.FIELD" % target)
+        raise ValueError("invalid selector %r; expected VAR.FIELD" % target)
 
     raw = field_key.endswith("_raw")
-    base_field_key = field_key[:-4] if raw else field_key
     vid = resolve_var_arg(fw, ident)
     dispatch = fw.dispatch_var_id(vid)
     if dispatch is None:
         raise ValueError("var 0x%04X has no descriptor" % vid)
 
     arr = _array_from_dispatch(dispatch)
-    fields = editable_field_map(arr)
-    field = fields.get(field_key)
-    if field is not None:
-        if raw and field.kind != "scaled":
-            field = None
-        else:
-            idx = dispatch[3]
-            return {
-                "text": text,
-                "vid": vid,
-                "array": arr,
-                "index": idx,
-                "rec": fw.read_descriptor(arr, idx),
-                "field": field,
-                "field_name": field_name.strip(),
-                "value_text": value.strip(),
-                "raw": raw,
-                "target_key": (arr, idx),
-            }
-
-    g10_fields = editable_field_map("g10")
-    field = g10_fields.get(base_field_key)
-    if field is not None and not raw:
+    field = editable_field_map(arr).get(field_key)
+    idx = dispatch[3]
+    if field is None and field_key in editable_field_map("g10"):
         idx = fw.g10_index_for_var(vid)
         if idx is not None:
-            return {
-                "text": text,
-                "vid": vid,
-                "array": "g10",
-                "index": idx,
-                "rec": fw.read_descriptor("g10", idx),
-                "field": field,
-                "field_name": field_name.strip(),
-                "value_text": value.strip(),
-                "raw": False,
-                "target_key": ("g10", idx),
-            }
+            arr = "g10"
+            field = editable_field_map(arr)[field_key]
+    if field is not None:
+        return {
+            "vid": vid, "array": arr, "index": idx, "rec": fw.read_descriptor(arr, idx),
+            "field": field, "field_name": field_name.strip(), "raw": raw, "target_key": (arr, idx),
+        }
 
     available = ", ".join(edit_field_names(arr))
     g10_idx = fw.g10_index_for_var(vid)
     if g10_idx is not None:
         available += ", " + ", ".join(edit_field_names("g10"))
     raise ValueError(
-        "field %s is not editable for 0x%04X; available fields: %s" %
+        "unknown field %s for 0x%04X; available fields: %s" %
         (field_name.strip(), vid, available)
     )
+
+
+def _parse_edit_assignment(fw, text):
+    target, sep, value = text.partition("=")
+    if not sep or "." not in target:
+        raise ValueError("invalid assignment %r; expected VAR.FIELD=VALUE" % text)
+    return {**resolve_var_selector(fw, target), "text": text, "value_text": value.strip()}
 
 
 def _initial_edit_state(fw, rec):
@@ -4468,13 +4444,14 @@ def prepare_edits(fw, assignments):
     return edits, warnings
 
 
-def _format_edit_value(fw, rec, field, value):
+def _format_field_value(rec, field, value, with_raw=False):
     if field.kind == "mode_visibility":
         return _format_mode_visibility(value)
     if field.kind == "scaled":
         scale = rec.get("scale") or 0
         if scale:
-            return "%s (raw %d)" % (fmt_number(value / scale), value)
+            display = fmt_number(value / scale)
+            return "%s (raw %d)" % (display, value) if with_raw else display
         return str(value)
     if field.kind == "hex8":
         return "0x%02X" % value
@@ -4537,10 +4514,8 @@ def _run_edit(fw, args):
         else:
             old_value = struct.unpack_from(
                 "<" + edit["field"].fmt, bytes(old_storage), 0)[0]
-        old_text = _format_edit_value(
-            fw, edit["rec"], edit["field"], old_value)
-        new_text = _format_edit_value(
-            new_fw, edit["new_rec"], edit["field"], edit["new_value"])
+        old_text = _format_field_value(edit["rec"], edit["field"], old_value, with_raw=True)
+        new_text = _format_field_value(edit["new_rec"], edit["field"], edit["new_value"], with_raw=True)
         name = new_fw.var_name(edit["vid"]) or "0x%04X" % edit["vid"]
         print("  %s.%s: %s -> %s" %
               (name, edit["field_name"], old_text, new_text))
@@ -4703,7 +4678,7 @@ def add_command_parsers(subparsers):
     p.add_argument(
         "ident",
         nargs="+",
-        help="one or more var_ids, long names, tags, or _TAG aliases",
+        help="variable IDs, long names, tags, or _TAG aliases; append .FIELD to read an edit field",
     )
     p.add_argument("--verbose", action="store_true", help="show multi-line details")
 
@@ -4857,11 +4832,16 @@ def run_command(fw, args):
     if command == "info":
         fw.cmd_info()
     elif command == "var":
-        vids = [resolve_var_arg(fw, ident) for ident in args.ident]
-        for idx, vid in enumerate(vids):
+        selectors = [resolve_var_selector(fw, ident) for ident in args.ident]
+        for idx, selector in enumerate(selectors):
             if args.verbose and idx:
                 print()
-            fw.cmd_var(vid, args.verbose)
+            if "field" in selector:
+                field, rec = selector["field"], selector["rec"]
+                value = field.read_storage(fw, rec)
+                print(value if selector["raw"] else _format_field_value(rec, field, value))
+            else:
+                fw.cmd_var(selector["vid"], args.verbose)
     elif command == "globals":
         fw.cmd_globals(args.index)
     elif command == "conf-layout":

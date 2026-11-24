@@ -63,6 +63,34 @@ volatile const unsigned short custom_menu_removed_rows[CUSTOM_MENU_REMOVAL_CAPAC
         [0 ... CUSTOM_MENU_REMOVAL_CAPACITY - 1] = 0xFFFFu,
     };
 
+typedef void (*text_decoder_t)(char *, int, unsigned int, int);
+volatile const struct {
+    text_decoder_t stock_decode;
+    const unsigned short *offsets;
+    unsigned short first_id, count, languages;
+} custom_text_bank __attribute__((used, section(".rodata.registry.text"))) = {0};
+
+void custom_text_decode(char *out, int capacity, unsigned int id, int language)
+{
+    unsigned int row = id - custom_text_bank.first_id;
+    if (row >= custom_text_bank.count) {
+        custom_text_bank.stock_decode(out, capacity, id, language);
+        return;
+    }
+    if (capacity <= 0)
+        return;
+    unsigned int languages = custom_text_bank.languages;
+    if ((unsigned int)language >= languages)
+        language = 0;
+    const unsigned short *offsets = custom_text_bank.offsets;
+    const char *text = (const char *)offsets + offsets[row * languages + language];
+    for (int i = 0; i < capacity; ++i) {
+        if (!(out[i] = text[i]))
+            return;
+    }
+    out[0] = 0; /* Do not return a partial multi-byte label. */
+}
+
 static unsigned int custom_menu_entry_count(void)
 {
     unsigned int count = 0;

@@ -80,10 +80,13 @@ as10_descriptors.py firmware.bin info
 ### var
 
 ```text
-var VAR
+var VAR[.FIELD] ...
 ```
 
-Show one variable descriptor. `VAR` is a numeric variable ID or UART tag.
+Show variable descriptors by numeric ID or UART tag. Append a field name from
+[edit](#edit) to print just that value. Results follow the input order.
+For scaled fields, `MXS.max` gives the display value and `MXS.max_raw` the
+stored integer.
 
 For numeric variables the output includes the raw limits, display scaling,
 step, units, and dependency-chain link if present. For enum variables it
@@ -92,6 +95,7 @@ head if present.
 
 ```sh
 as10_descriptors.py firmware.bin var 0x020D
+as10_descriptors.py firmware.bin var MOP.default MXS.max MXS.max_raw
 as10_descriptors.py firmware.bin --verbose var MOP
 ```
 

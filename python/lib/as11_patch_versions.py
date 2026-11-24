@@ -155,7 +155,6 @@ AS11_PATCH_VERSIONS = {
         },
         "header_clock": {
             "draw_call": 0x08061F52,
-            "menu_draw_call": 0x08066A7A,
             "root_ctor_call": 0x0809D554,
             "timer_callback_slot": 0x081A3AC0,
             "home_page_store": 0x08056780,
@@ -165,13 +164,15 @@ AS11_PATCH_VERSIONS = {
             "page_ids": (0, 2, 3),
             "home_text_id": 0x0072,
             "empty_text_id": 0x006A,
-            "menu_text_id": 0x00BB,
         },
         "custom_settings": {
             "rpc_enum_symbols": 0x08105318,
             "rpc_enum_symbol_count": 974,
             "gui_enum_count_pointer": 0x08073A5C,
             "gui_enum_table_pointer": 0x08073A60,
+            "text_lookup_branch": 0x0807B9E4,
+            "text_decode": 0x080854F2,
+            "first_custom_text_id": 0x0232,
             "menu": {
                 "scroller_call": 0x0805AC68,
             },
@@ -239,7 +240,6 @@ AS11_PATCH_VERSIONS = {
         },
         "header_clock": {
             "draw_call": 0x0806393E,
-            "menu_draw_call": 0x08068DEE,
             "root_ctor_call": 0x0809FA98,
             "timer_callback_slot": 0x081A8604,
             "home_page_store": 0x08059806,
@@ -249,7 +249,6 @@ AS11_PATCH_VERSIONS = {
             "page_ids": (0, 2, 3),
             "home_text_id": 0x0075,
             "empty_text_id": 0x0068,
-            "menu_text_id": 0x012C,
         },
         "therapy_screen_style": {
             "label_id": 0x00AF,
@@ -262,6 +261,9 @@ AS11_PATCH_VERSIONS = {
             "rpc_enum_symbol_count": 1027,
             "gui_enum_count_pointer": 0x080761A0,
             "gui_enum_table_pointer": 0x080761A4,
+            "text_lookup_branch": 0x0807E3AC,
+            "text_decode": 0x080878EA,
+            "first_custom_text_id": 0x020A,
             "menu": {
                 "scroller_call": 0x0805E014,
             },
@@ -340,7 +342,6 @@ AS11_PATCH_VERSIONS = {
         },
         "header_clock": {
             "draw_call": 0x08063B1A,
-            "menu_draw_call": 0x08068FCA,
             "root_ctor_call": 0x080A001C,
             "timer_callback_slot": 0x081AA5C0,
             "home_page_store": 0x0805986C,
@@ -350,7 +351,6 @@ AS11_PATCH_VERSIONS = {
             "page_ids": (0, 2, 3),
             "home_text_id": 0x0078,
             "empty_text_id": 0x006A,
-            "menu_text_id": 0x0131,
         },
         "therapy_screen_style": {
             "label_id": 0x00B4,
@@ -364,6 +364,9 @@ AS11_PATCH_VERSIONS = {
             # Literal-pool slots read by the GUI enum-label resolver.
             "gui_enum_count_pointer": 0x0807667C,
             "gui_enum_table_pointer": 0x08076680,
+            "text_lookup_branch": 0x0807E8C4,
+            "text_decode": 0x08087E2A,
+            "first_custom_text_id": 0x0210,
             "menu": {
                 # Final GuiScroller_ctor call in the clinical-settings
                 # constructor; redirected through the menu bridge.
@@ -459,7 +462,6 @@ AS11_PATCH_VERSIONS = {
         },
         "header_clock": {
             "draw_call": 0x08064076,
-            "menu_draw_call": 0x08069606,
             "root_ctor_call": 0x080A0864,
             "timer_callback_slot": 0x081AB534,
             "home_page_store": 0x08059D9C,
@@ -469,7 +471,6 @@ AS11_PATCH_VERSIONS = {
             "page_ids": (0, 2, 3),
             "home_text_id": 0x0078,
             "empty_text_id": 0x006A,
-            "menu_text_id": 0x0131,
         },
         "therapy_screen_style": {
             "label_id": 0x00B4,
@@ -482,6 +483,9 @@ AS11_PATCH_VERSIONS = {
             "rpc_enum_symbol_count": 1041,
             "gui_enum_count_pointer": 0x08076CE8,
             "gui_enum_table_pointer": 0x08076CEC,
+            "text_lookup_branch": 0x08078746,
+            "text_decode": 0x0808166E,
+            "first_custom_text_id": 0x0211,
             "menu": {
                 "scroller_call": 0x0805E586,
             },
@@ -600,7 +604,6 @@ AS11_PATCH_VERSIONS = {
         },
         "header_clock": {
             "draw_call": 0x080645C6,
-            "menu_draw_call": 0x08069C5E,
             "root_ctor_call": 0x080A1434,
             "timer_callback_slot": 0x081AE568,
             "home_page_store": 0x0805A2B0,
@@ -610,11 +613,13 @@ AS11_PATCH_VERSIONS = {
             "page_ids": (1, 3, 4),
             "home_text_id": 0x0079,
             "empty_text_id": 0x006B,
-            "menu_text_id": 0x0133,
         },
         "custom_settings": {
             "gui_enum_count_pointer": 0x08077598,
             "gui_enum_table_pointer": 0x0807759C,
+            "text_lookup_branch": 0x0807900E,
+            "text_decode": 0x08081F2E,
+            "first_custom_text_id": 0x0214,
             "rpc_enum_symbols": 0x08109A2C,
             "rpc_enum_symbol_count": 1051,
             "menu": {
@@ -744,7 +749,6 @@ AS11_PATCH_VERSIONS = {
         },
         "header_clock": {
             "draw_call": 0x080645C6,
-            "menu_draw_call": 0x08069C5E,
             "root_ctor_call": 0x080A14F8,
             "timer_callback_slot": 0x081AE4A8,
             "home_page_store": 0x0805A2B0,
@@ -754,11 +758,13 @@ AS11_PATCH_VERSIONS = {
             "page_ids": (1, 3, 4),
             "home_text_id": 0x0079,
             "empty_text_id": 0x006B,
-            "menu_text_id": 0x0133,
         },
         "custom_settings": {
             "gui_enum_count_pointer": 0x08077664,
             "gui_enum_table_pointer": 0x08077668,
+            "text_lookup_branch": 0x080790DA,
+            "text_decode": 0x08081FF6,
+            "first_custom_text_id": 0x0214,
             "rpc_enum_symbols": 0x08109AE4,
             "rpc_enum_symbol_count": 1065,
             "menu": {

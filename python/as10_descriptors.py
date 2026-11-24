@@ -635,8 +635,10 @@ class Entry4:
         self.var_id = id_base + idx
         load_descriptor_fields(self, fl, self.TABLE)
 
-    def _fmt(self, v):
+    def _fmt(self, v, *, full_precision=False):
         s = self.scale_factor
+        if full_precision and s > 0:
+            return str(Decimal(v) / s)
         dp = self.decimal_places if self.decimal_places is not None and self.decimal_places < 10 else 0
         if s and s > 0:  return f"{v / s:.{dp}f}"
         if s and s < 0:  return f"{v * (-s)}"
@@ -2529,23 +2531,15 @@ def _encode_scaled_value(value, scale, field):
     return field.normalize(int(integral))
 
 
-def _parse_edit_assignment(db, text):
-    if "=" not in text:
-        raise ValueError(
-            f"invalid assignment {text!r}; expected VAR.FIELD=VALUE")
-    target, value = text.split("=", 1)
-    if "." not in target:
-        raise ValueError(
-            f"invalid assignment target {target!r}; expected VAR.FIELD")
-    ident, field_name = target.rsplit(".", 1)
-    ident = ident.strip()
+def resolve_var_selector(db, target):
+    ident, dot, field_name = target.partition(".")
     field_name = field_name.strip().lower()
-    if not ident or not field_name:
-        raise ValueError(
-            f"invalid assignment target {target!r}; expected VAR.FIELD")
-
-    vid = resolve_var_arg(db, ident)
+    if dot and (not ident.strip() or not field_name):
+        raise ValueError(f"invalid selector {target!r}; expected VAR.FIELD")
+    vid = resolve_var_arg(db, ident.strip())
     entry = db.get(vid)
+    if not dot:
+        return {"vid": vid, "entry": entry}
     if entry is None:
         raise ValueError(f"variable {_vid_str(vid, db)} has no loaded descriptor")
     fields = editable_field_map(entry.TABLE)
@@ -2558,14 +2552,19 @@ def _parse_edit_assignment(db, text):
             f"{_vid_str(vid, db)}.{field_name} is not valid for g[{entry.TABLE}]; "
             f"available fields: {available}")
     return {
-        "text": text,
         "vid": vid,
         "entry": entry,
         "field": field,
         "field_name": field_name,
-        "value_text": value.strip(),
         "raw": raw,
     }
+
+
+def _parse_edit_assignment(db, text):
+    target, sep, value = text.partition("=")
+    if not sep or "." not in target:
+        raise ValueError(f"invalid assignment {text!r}; expected VAR.FIELD=VALUE")
+    return {**resolve_var_selector(db, target), "text": text, "value_text": value.strip()}
 
 
 def _parse_edit_value(db, edit, state):
@@ -2668,27 +2667,33 @@ def prepare_edits(db, assignments):
     return edits, warnings
 
 
-def _format_edit_value(db, entry, field, value):
+def _format_field_value(db, entry, field, value, *, details=False):
     if field.kind == "scaled":
-        return f"{entry._fmt(value)} (raw {value})"
+        return f"{entry._fmt(value)} (raw {value})" if details else entry._fmt(value, full_precision=True)
     if field.kind == "flags":
-        return f"0x{value:04X} ({decode_flags(value, entry.TABLE)})"
+        return f"0x{value:04X}" + (f" ({decode_flags(value, entry.TABLE)})" if details else "")
     if field.kind == "dependency":
-        return _g4_idx_ref(value, db, none="none")
+        if details:
+            return _g4_idx_ref(value, db, none="none")
+        return "none" if value == 0x7FFF else str(value)
     if field.kind == "str_id":
         sid = value & 0xFFFF
-        label = db.string(sid) if db.strtab and sid < db.strtab.count else None
+        label = db.string(sid) if details and db.strtab and sid < db.strtab.count else None
         return f"0x{sid:04X}" + (f' ("{label}")' if label else "")
     if field.kind == "mask":
         return f"0x{value:0{field.size * 2}X}"
     return str(value)
 
 
-def _print_var_detail(db, ident, verbose=False):
-    vid = resolve_var_arg(db, ident)
-    e = db.get(vid)
+def _print_var_detail(db, selector, verbose=False):
+    e = selector["entry"]
+    if "field" in selector:
+        field = selector["field"]
+        value = getattr(e, field.attr)
+        print(value if selector["raw"] else _format_field_value(db, e, field, value))
+        return
     if not e:
-        print(f"  var 0x{vid:04X} not found")
+        print(f"  var 0x{selector['vid']:04X} not found")
         return
     print(e.detail(db) if verbose else f"  {e.oneline(db)}")
     if verbose and e.TABLE in DESCRIPTOR_FIELDS:
@@ -2969,8 +2974,8 @@ def _run_edit(db, args):
         old_value = getattr(old_entry, field.attr)
         new_value = getattr(new_entry, field.attr)
         name = db.uart_name(edit["vid"]) or f"0x{edit['vid']:04X}"
-        old_text = _format_edit_value(db, old_entry, field, old_value)
-        new_text = _format_edit_value(new_db, new_entry, field, new_value)
+        old_text = _format_field_value(db, old_entry, field, old_value, details=True)
+        new_text = _format_field_value(new_db, new_entry, field, new_value, details=True)
         print(f"  {name}.{edit['field_name']}: {old_text} -> {new_text}")
     print(f"  CCX CRC: 0x{crc:04X}")
 
@@ -2986,8 +2991,8 @@ def add_command_parsers(subparsers, include_edit=False):
     p.add_argument("items", nargs="*", metavar="SELECTOR",
                    help="TABLE, TABLE:INDEX, TABLE:FROM,TO, 16:GROUP, or 23:QUERY")
 
-    p = subparsers.add_parser("var", help="show one variable descriptor")
-    p.add_argument("ident", help="var_id or UART tag")
+    p = subparsers.add_parser("var", help="show variable descriptors or individual fields")
+    p.add_argument("ident", nargs="+", metavar="VAR[.FIELD]", help="variable ID or UART tag, optionally followed by an edit field")
 
     p = subparsers.add_parser("channels", help="show signal channels")
     p.add_argument("name", nargs="?")
@@ -3122,7 +3127,9 @@ def run_command(db, args):
             _print_globals(db)
     elif command == "var":
         verbose = getattr(args, "verbose", getattr(db, "verbose", False))
-        _print_var_detail(db, args.ident, verbose)
+        selectors = [resolve_var_selector(db, ident) for ident in args.ident]
+        for selector in selectors:
+            _print_var_detail(db, selector, verbose)
     elif command == "channels":
         _run_channels(db, None, args.name)
     elif command == "mode":

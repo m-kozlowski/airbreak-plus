@@ -20,7 +20,7 @@ finalizer then:
    labels, reclaim requests, and payload bindings
 2. resolves every referenced DataItem by short tag or long name
 3. activates each requested reclaim provider, including those used by claimed fields
-4. loads the shared menu payload when rows must be added or removed
+4. loads the shared payload for added or removed rows or localized labels
 5. checks the MOP callback dispatcher for mode-dependent rows and registers their visibility handler
 6. applies requested descriptor-field changes
 7. disables the stock consumers owned by active reclaim providers
@@ -129,12 +129,20 @@ descriptor without rewriting unrelated metadata or option tables.
 
 ## GUI Labels
 
-Menu entries use existing firmware GUI text IDs. Text IDs move between APPX
-versions, so the feature owns the per-version label mapping. The framework
-does not currently allocate new localized strings or rewrite the Markov text
-tables.
+Menu rows and enum choices accept either a stock text ID from the feature's
+per-version mapping or an ID returned by `custom_text(name, translations)`:
 
-For an enum selector, a feature can associate raw values with existing GUI
+```python
+label = self.custom_text("Clock", {"English": "Clock", "Polish": "Zegar"})
+self.custom_menu_add("configuration", setting, label, 0xFFFF, "text_value")
+```
+
+Translation keys are firmware `LAN` names; `English` supplies the required fallback.
+The patcher allocates consecutive IDs after the firmware's reserved no-label
+ID and stores their UTF-8 strings in CONF. Reusing a name with the same
+translations returns the same ID.
+
+For an enum selector, a feature can associate raw values with GUI
 text IDs through `custom_enum_labels(setting, {raw_value: text_id, ...})`.
 `finalize_enum_labels()` merges these requests into the native option-label
 table and relocates it into CONF. The native formatter and selector both use

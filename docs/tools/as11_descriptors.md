@@ -82,11 +82,14 @@ as11_descriptors.py firmware.bin info
 ### var
 
 ```text
-var VAR ... [--verbose]
+var VAR[.FIELD] ... [--verbose]
 ```
 
 Show one or more variable descriptors. Each `VAR` is a numeric variable ID,
 long name, short tag, or underscored short tag. Results follow the input order.
+Append a field name from [edit](#edit) to print just its value. For numeric
+fields such as `min` and `step`, use `min_raw` or `step_raw` for the stored
+integer. For enums, `default` is the default option index.
 
 | Option | Meaning | Default |
 |--------|---------|---------|
@@ -94,6 +97,7 @@ long name, short tag, or underscored short tag. Results follow the input order.
 
 ```sh
 as11_descriptors.py firmware.bin var 0x0420 _MOP AutoSet-MaxPressure
+as11_descriptors.py firmware.bin var tss.default RRR.visibility
 as11_descriptors.py firmware.bin var ActiveTherapyProfile --verbose
 ```
 
