@@ -108,13 +108,11 @@ extern int variable_get_by_id(int var_id);
 static float call_f(struct obj *o, int slot) { return ((getf_t)o->vptr[slot])(o); }
 static int call_i(struct obj *o, int slot) { return ((geti_t)o->vptr[slot])(o); }
 
-/* Plate bound coupling: the constant in humidity_model.h. A fixed value, not
- * a setting; a programmer can change HUMIDITY_PLATE_COUPLING there.
+/* The plate coupling (HUMIDITY_PLATE_COUPLING in humidity_model.h) in percent,
+ * only so the patcher can report the value it built with.
  */
-static float coupling(void)
-{
-    return HUMIDITY_PLATE_COUPLING;
-}
+const unsigned short humid_start_plate_coupling_pct __attribute__((used)) =
+    (unsigned short)(HUMIDITY_PLATE_COUPLING * 100.0f + 0.5f);
 
 /* Lowest the cap goes: the patch-time Min Tube (whole degC), never below
  * the lowest tube setting.
@@ -144,6 +142,9 @@ static void finish(struct state *s)
     millisecond_timer_init(s->sample, 0);
 }
 
+/* inputs->vptr is the stock vtable or the block installed here. Anything else
+ * would fail the magic check, which only reads the word after the slots.
+ */
 static struct state *state_of(struct obj *inputs, int create)
 {
     struct state *s = (struct state *)inputs->vptr;
@@ -221,7 +222,7 @@ float start(struct obj *inputs)
                                    call_f(sensors, SENSOR_AMBIENT_RH),
                                    variable_get_by_id(VAR_ID_HPM) * 0.01f,
                                    variable_get_by_id(VAR_ID_AFL) * 0.01f,
-                                   coupling());
+                                   HUMIDITY_PLATE_COUPLING);
     /* Without a usable estimate (a sensor reading NaN) the tube behaves as stock
      * instead of waiting at the floor.
      */

@@ -256,6 +256,7 @@ NSTUB_VAR(0x08077530, ivaps_calculate_vk_read_height)
 
 // Climate control: inputs/sensors interfaces used by the tube and plate controllers
 NSTUB_VAR(0x080F4148, climate_inputs_vtable)
+NSTUB_VAR(0x080F5F2C, climate_sensors_vtable)
 NSTUB(0x080D2A07, climate_tube_setpoint_get)
 NSTUB(0x080D2A1F, climate_reference_temperature_get)
 // Stock humidity model calibration k0..k4

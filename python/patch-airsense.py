@@ -2634,23 +2634,19 @@ class ASFirmwarePatches(CompiledPayloadMixin):
 
     def patch_humid_start(self):
         """Hold the heated tube at the target RH's temperature while the plate warms."""
-        # Climate inputs vtable slot +0x3c (HTS getter) and sensors slot +0x1c
-        # (humidity-model reference temperature).
-        sites = {
-            'SX567-0302': (0xf3a70, 0xf5834),
-            'SX567-0305': (0xf4184, 0xf5f48),
-            'SX567-0306': (0xf4188, 0xf5f4c),
-            'SX567-0401': (0xf43e8, 0xf61ac),
-            'SX567-0402': (0xf4660, 0xf6424),
-        }.get(self.asf.cdx_ver)
-        if sites is None:
+        if not self._supports_compiled_payloads() or 'humid_start' not in self._load_payload_layout()[1]:
             return PatchOutcome.skip("unsupported CDX version %s" % self.asf.cdx_ver)
 
         data, _, elf_path = self._load_versioned_payload('humid_start')
+        # Climate inputs vtable slot +0x3c (HTS getter) and sensors vtable slot
+        # +0x1c (humidity-model reference temperature); the vtables come from
+        # the version's stubs.
         hooks = []
-        for offset, stock, wrapper in zip(sites, (
-                'climate_tube_setpoint_get', 'climate_reference_temperature_get'),
-                ('start', 'humid_start_reference')):
+        for vtable, slot, stock, wrapper in (
+                ('climate_inputs_vtable', 0x3c, 'climate_tube_setpoint_get', 'start'),
+                ('climate_sensors_vtable', 0x1c, 'climate_reference_temperature_get',
+                 'humid_start_reference')):
+            offset = self._elf_symbol_addr(elf_path, vtable) + slot - self.asf.FLASH_BASE
             original = self._elf_symbol_addr(elf_path, stock) | 1
             target = self._elf_symbol_addr(elf_path, wrapper) | 1
             if self.asf.read_u32(offset) not in (original, target):
@@ -2668,6 +2664,10 @@ class ASFirmwarePatches(CompiledPayloadMixin):
         addr = self._write_payload_u16('humid_start', 'humid_start_min_tube_c',
                                        self.humid_start_min_tube)
         details.append('Min Tube: %d C at 0x%08X' % (self.humid_start_min_tube, addr))
+        coupling_addr = self._elf_symbol_addr(elf_path, 'humid_start_plate_coupling_pct')
+        runtime = self._load_payload_layout()[1]['humid_start']['runtime']
+        coupling = struct.unpack_from('<H', data, coupling_addr - runtime)[0]
+        details.append('Plate coupling: %.2f (fixed in the payload)' % (coupling / 100.0))
         return PatchOutcome.ok(None, *details)
 
     def patch_defaults(self):

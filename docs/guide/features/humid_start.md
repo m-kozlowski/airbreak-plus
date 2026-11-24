@@ -15,11 +15,8 @@ setting: the patch is the switch. To turn it off, build and flash without it.
   a heated tube. In any other case the tube behaves as stock.
 - [Min Tube](#min-tube) is chosen when patching. The
   [plate coupling](#plate-coupling) is fixed at 0.25.
-- It supports the SX567 firmware versions 0302, 0305, 0306, 0401 and 0402. It
-  has been tested on a device with 0401 only.
-- Humid Start does not use the fonts: the requirement is for flash space. Its
-  payload (about 1 KB) is placed in the code caves that repacking frees in the
-  font storage (see `patches/s10_code_caves.tsv`).
+- Humid Start does not use the fonts: the requirement is only for free space
+  in the firmware, which font repacking provides.
 
 ## How it works
 
