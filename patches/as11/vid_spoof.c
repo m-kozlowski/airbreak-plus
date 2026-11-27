@@ -30,7 +30,7 @@ static const unsigned char vid_lut[11] = {
     5,   // Spont
     10,  // ST
     10,  // Timed
-    5,   // VAuto
+    6,   // VAuto
     12,  // ASV
     12,  // ASVAuto
     0,   // iVAPS
