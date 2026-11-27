@@ -114,6 +114,16 @@ Device dumps so far indicate the OTA key can vary per device.
 
 ## Retrieving the local OTA key
 
+With the [bootloader service](../guide/as11/service_dump.md) installed, save
+the key directly to a file over CAN:
+
+```sh
+python3 python/as11_flash.py -d can:/dev/ttyACM0 service ota-key ota-key.hex --enter
+```
+
+The device stays in service mode after the read. Use `service reset` to return
+to the application.
+
 For a device connected over SWD/OpenOCD, the repository includes a small
 read-only helper:
 

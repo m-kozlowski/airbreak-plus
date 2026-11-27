@@ -232,14 +232,6 @@ def cmd_region_get(image, args):
     _write_bytes(image.read_region(args.region), args.output)
 
 
-def _key_state(key: bytes) -> str:
-    if key == bytes(len(key)):
-        return "all-zero"
-    if key == b"\xff" * len(key):
-        return "erased"
-    return "set"
-
-
 def cmd_key_list(image, args):
     keys = []
     for definition in NAMED_KEYS:
@@ -248,7 +240,7 @@ def cmd_key_list(image, args):
             "name": definition.name,
             "offset": definition.offset,
             "size": definition.size,
-            "state": _key_state(value),
+            "state": definition.state(value),
         })
     if args.json:
         print(json.dumps(keys, indent=2))
@@ -268,12 +260,7 @@ def cmd_key_list(image, args):
 def cmd_key_get(image, args):
     definition = image.named_key(args.name)
     value = image.key(definition.name)
-    state = _key_state(value)
-    if state != "set":
-        raise NorFormatError(
-            f"{definition.name} key is {state}; refusing extraction"
-        )
-    text = value.hex().upper() + "\n"
+    text = definition.hex_text(value)
     if args.output:
         path = Path(args.output)
         path.parent.mkdir(parents=True, exist_ok=True)

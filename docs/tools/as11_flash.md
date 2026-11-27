@@ -336,6 +336,7 @@ TCP bridge. It requires `patch-fgbl-service`; see the
 | `flash` | Program selected firmware regions and reset |
 | `read-flash` / `write-flash` | Read/write internal flash |
 | `read-nor` / `write-nor` | Read/write physical NOR |
+| `ota-key` | Save the device-specific OTA key as 64 hexadecimal characters |
 | `read-bkpsram` / `write-bkpsram` | Read/write backup SRAM |
 
 ### enter
@@ -411,11 +412,13 @@ as11_flash.py -d can:/dev/ttyACM0 service flash --conf conf.bin --appl appl.bin
 service read-flash FILE [REGION | OFFSET LENGTH] [--enter] [OPTIONS]
 service read-nor FILE [VOLUME | OFFSET LENGTH] [--enter] [OPTIONS]
 service read-bkpsram FILE [OFFSET LENGTH] [--enter] [OPTIONS]
+service ota-key FILE [--enter] [OPTIONS]
 ```
 
 `read-flash` reads internal STM32 flash, `read-nor` reads the physical SPI NOR,
-and `read-bkpsram` reads the 4 KiB battery-backed SRAM. All commands require an
-output file `FILE`; the default range is the complete target. `--enter` first
+and `read-bkpsram` reads the 4 KiB battery-backed SRAM. Their default range is
+the complete target. `ota-key` reads just the key and writes a hex file for
+`--key-file`. All four commands require an output file `FILE`. `--enter` first
 enters service mode as [enter](#enter) does, within a 30-second entry window;
 the service stays active after the read.
 `REGION` selects a named flash region. `OFFSET` and `LENGTH` select a byte
@@ -428,8 +431,8 @@ offset zero. Volume sizes and NOR offsets are listed in the
 [NOR layout](as11_nor_tool.md#layout).
 
 Flash reads accept the named regions `FGBL`, `CONF`, `APPL`, `APCX`, and
-`FGCB`, together with their normal `as11_flash.py` aliases. The output file is
-opened directly; a failed transfer leaves the bytes received before the
+`FGCB`, together with their normal `as11_flash.py` aliases. For the raw
+`read-*` commands, a failed transfer leaves the bytes received before the
 failure in that file.
 
 Complete NOR and single-volume dumps can be inspected and extracted with

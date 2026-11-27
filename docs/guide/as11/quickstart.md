@@ -114,12 +114,11 @@ With a separate unmodified Air11 image as a reference, follow
 [CAN firmware dump](service_dump.md). Use the resulting `device-original.bin`
 as `as11.bin`.
 
-While the device is in service mode, also
-[back up its NOR chip and extract the OTA key](service_dump.md#optional-back-up-the-nor-chip-and-ota-key).
+While the device is in service mode, you can
+[back up its NOR chip or save just the OTA key](service_dump.md#optional-back-up-the-nor-chip-and-ota-key).
 The NOR is a small memory chip, separate from the firmware, holding data unique
 to your device (identity, factory calibration, the OTA key) that cannot be
-regenerated. This is the only convenient chance to capture it without SWD, and
-[later authenticated BLE updates](#later-ble-updates) need the key.
+regenerated. [Later authenticated BLE updates](#later-ble-updates) need the key.
 
 ## 3. Patch
 

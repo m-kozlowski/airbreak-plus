@@ -155,14 +155,15 @@ python3 python/as11_flash.py \
     -d can:/dev/ttyACM0 service read-nor device-nor.bin
 ```
 
-The OTA key inside that backup is what authenticated Bluetooth updates need, and
-this is the only way to capture it without an SWD session. Extract it:
+For authenticated Bluetooth updates, you can save just the OTA key instead:
 
 ```
-python3 python/as11_nor_tool.py device-nor.bin key-get OTA -o ota-key.hex
+python3 python/as11_flash.py -d can:/dev/ttyACM0 service ota-key ota-key.hex
 ```
 
-Store it against a Bluetooth device alias for later updates:
+If you already have the NOR backup, use
+`python3 python/as11_nor_tool.py device-nor.bin key-get OTA -o ota-key.hex` offline.
+Store the key against a Bluetooth device alias for later updates:
 
 ```
 python3 python/as11_config.py devices ota-key <alias> --key-file ota-key.hex

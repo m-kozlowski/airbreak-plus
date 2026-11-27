@@ -1589,6 +1589,21 @@ def cmd_service(args) -> int:
             print("Reset requested.")
             return 0
 
+        if args.service_cmd == "ota-key":
+            from as11_nor import OTA_KEY, NorFormatError
+            from as11_service import TARGET_SPIN
+
+            value = client.read(TARGET_SPIN, OTA_KEY.offset, OTA_KEY.size, timeout=args.timeout)
+            try:
+                text = OTA_KEY.hex_text(value)
+            except NorFormatError as exc:
+                raise SystemExit(str(exc)) from exc
+            path = Path(args.file)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="ascii")
+            print(f"Saved OTA key to {args.file}")
+            return 0
+
         if args.service_cmd in ("read-flash", "read-nor", "read-bkpsram"):
             (target, target_name, offset, length, _target_start, _target_size,
              _erase_size, _program_size) = _service_range(
@@ -2473,17 +2488,19 @@ def main(argv=None) -> int:
     for command, selection_help in (
             ("read-flash", "optional REGION or absolute OFFSET LENGTH"),
             ("read-nor", "optional VOLUME (settings, datalog, upgrade, nor:N) or physical OFFSET LENGTH"),
-            ("read-bkpsram", "optional OFFSET LENGTH")):
+            ("read-bkpsram", "optional OFFSET LENGTH"),
+            ("ota-key", None)):
         p_s_read = service_sub.add_parser(
-            command, help="read storage to a raw file"
+            command, help="save the device OTA key as hex" if command == "ota-key" else "read storage to a raw file"
         )
         _add_device_args(p_s_read, show_help=False)
         _add_service_link_args(p_s_read, defaults=False)
         p_s_read.add_argument("file", help="output file")
-        p_s_read.add_argument(
-            "selection", nargs="*", metavar="RANGE",
-            help=f"{selection_help}; omit for the complete target",
-        )
+        if selection_help:
+            p_s_read.add_argument(
+                "selection", nargs="*", metavar="RANGE",
+                help=f"{selection_help}; omit for the complete target",
+            )
         p_s_read.add_argument(
             "--enter", action="store_true",
             help="enter service mode first, as service enter does",

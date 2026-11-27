@@ -74,10 +74,22 @@ class NamedKey:
     offset: int
     size: int
 
+    def state(self, value: bytes) -> str:
+        if value == bytes(self.size):
+            return "all-zero"
+        if value == b"\xff" * self.size:
+            return "erased"
+        return "set"
 
-NAMED_KEYS = (
-    NamedKey("OTA", OTA_KEY_OFFSET, OTA_KEY_SIZE),
-)
+    def hex_text(self, value: bytes) -> str:
+        state = self.state(value)
+        if state != "set":
+            raise NorFormatError(f"{self.name} key is {state}; refusing extraction")
+        return value.hex().upper() + "\n"
+
+
+OTA_KEY = NamedKey("OTA", OTA_KEY_OFFSET, OTA_KEY_SIZE)
+NAMED_KEYS = (OTA_KEY,)
 
 
 RAW_REGIONS = (

@@ -47,7 +47,7 @@ reference, including partial images and advanced apply modes, is in
 ## BLE
 
 Stock authenticated BLE updates require the device-specific OTA key, retrieved
-over SWD or from a [CAN NOR backup](service_dump.md#optional-back-up-the-nor-chip-and-ota-key).
+over SWD or through the [CAN bootloader service](service_dump.md#optional-back-up-the-nor-chip-and-ota-key).
 After pairing the device, store the key with its alias:
 
 ```bash
