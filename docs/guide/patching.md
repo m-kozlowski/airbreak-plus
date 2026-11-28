@@ -107,6 +107,7 @@ These payloads require `arm-none-eabi-gcc` and are off by default unless noted.
 | `--patch-st-ibr y` | Add [adaptive backup timing in ST](features/general.md#st-ibr) through custom settings |
 | `--patch-learn-targets` | Add [Learn Targets](features/general.md#learn-targets), which calculates iVAPS therapy targets from breathing; requires custom settings. Enabled by default. |
 | `--patch-autoepap y` | Add [iVAPS AutoEPAP](features/general.md#ivaps-autoepap); requires font repacking and expanded heap |
+| `--patch-humid-start y` | Add [Humid Start](features/humid_start.md), which holds the heated tube back while the humidifier warms up; no menu setting, SX567 only, requires font repacking; `--humid-start-min-tube DEGC` sets the [Min Tube](features/humid_start.md#min-tube) temperature (16-30, default 16) |
 
 Example with custom VAuto:
 ```

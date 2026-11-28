@@ -21,6 +21,7 @@ Firmware modification toolkit for ResMed AirSense and AirCurve devices.
 - [Runtime ASV and ASVAuto backup-rate control](docs/guide/features/asv_backup_rate.md)
 - [Selectable Square Wave pressure shaping](docs/guide/features/squarewave.md) for S, ST, T, and PAC
 - [Continuous LCD and button brightness adaptation](docs/guide/features/backlight.md)
+- [Humid Start](docs/guide/features/humid_start.md): holds the heated tube back so the air reaches the target humidity sooner
 - [ILI9325/ILI9328 LCD driver](docs/guide/features/general.md#replacement-lcd-driver) (the most common replacement panel available for these devices)
 
 <p align="center">

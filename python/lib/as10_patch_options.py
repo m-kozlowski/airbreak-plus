@@ -15,6 +15,16 @@ def percentage(value):
     return percent
 
 
+def tube_temperature(value):
+    try:
+        degrees = int(value)
+    except ValueError:
+        degrees = None
+    if degrees is None or not 16 <= degrees <= 30:
+        raise argparse.ArgumentTypeError('Whole degrees C from 16 to 30 expected.')
+    return degrees
+
+
 # Patch order is part of the implementation. Payloads must be present before
 # custom settings patch their ABI slots; all MOP handlers must be registered
 # before finalization installs the shared dispatcher and expands the variable
@@ -82,6 +92,16 @@ PLATFORM = Platform('air10', categories=(
               True, 'patch_target_rh', category='Quality of life', parameters=(
                   Parameter('target-rh', 'Target RH, 0..100%. Default: 85.',
                             Value(percentage, 'PERCENT'), 85.0),
+              )),
+        Patch('patch-humid-start',
+              'Hold the heated tube back while the humidifier warms up',
+              False, 'patch_humid_start', category='Quality of life',
+              requires=('patch-font-repack',), parameters=(
+                  Parameter('humid-start-min-tube',
+                            'Humid Start: lowest tube temperature the warm-up cap goes to, whole '
+                            'degC, 16..30. 16 is the lowest tube setting, so no extra minimum. '
+                            'Default: 16.',
+                            Value(tube_temperature, 'DEGC'), 16),
               )),
         Patch('patch-past-date', 'Allow setting past date in the menu and over UART',
               True, 'patch_past_date', category='Quality of life'),

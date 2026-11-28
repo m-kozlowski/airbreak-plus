@@ -131,6 +131,12 @@ to the therapy mode.
 
 The **+Graph** variants add live flow and pressure traces. Bar is the default.
 
+## Humid Start
+
+Holds the heated tube back at the start of therapy until the humidifier has
+warmed the water, so the air reaches the target humidity sooner. It is an
+optional patch with no menu setting. See [Humid Start](humid_start.md).
+
 ## Header Clock
 
 Enable **Clock** in clinical **Options** to replace the Home and active
